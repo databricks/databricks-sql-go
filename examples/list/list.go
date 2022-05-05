@@ -6,69 +6,51 @@ import (
 	"context"
 	"database/sql"
 	"log"
+	"os"
 
-	dbsql "github.com/arikfr/go-dbsql"
+	_ "github.com/arikfr/go-dbsql"
 )
 
 func main() {
+	dsn := os.Getenv("DATABRICKS_DSN")
+	if dsn == "" {
+		log.Fatalf("Please provide a connection string by setting the DATABRICKS_DSN environment variable.")
+	}
 
-	opts := dbsql.DefaultOptions
-
-	opts.Host = ""
-
-	// enable LDAP authentication:
-	opts.Token = ""
-	opts.HTTPPath = "/sql/1.0/endpoints/5c89f447c476a5a8"
-
-	connector := dbsql.NewConnector(&opts)
-
-	db := sql.OpenDB(connector)
 	db, err := sql.Open("databricks", dsn)
+	if err != nil {
+		log.Fatalf("Could not connect to %s: %s", dsn, err)
+	}
 	defer db.Close()
 
 	ctx := context.Background()
 
-	log.Println("select 1...")
-	rows, err := db.QueryContext(ctx, "select 1")
+	rows, err := db.QueryContext(ctx, "SHOW DATABASES")
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	var i int32
-	for rows.Next() {
-		log.Println("select 1 returned seomthing")
+	var name string
 
-		if err := rows.Scan(&i); err != nil {
+	databases := make([]string, 0)
+
+	for rows.Next() {
+		if err := rows.Scan(&name); err != nil {
+			log.Println("Error scanning database name:")
 			log.Fatal(err)
 		}
-
-		log.Println(i)
+		databases = append(databases, name)
 	}
 
-	rows, err = db.QueryContext(ctx, "SHOW DATABASES")
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	r := struct {
-		name    string
-		comment string
-	}{}
-
-	databases := make([]string, 0) // databases will contain all the DBs to enumerate later
-	for rows.Next() {
-		log.Println("- rows.Next()")
-		// if err := rows.Scan(&r.name, &r.comment); err != nil {
-		if err := rows.Scan(&r.name); err != nil {
-			log.Println("err with scan")
-			log.Fatal(err)
-		}
-		databases = append(databases, r.name)
-	}
 	if err := rows.Err(); err != nil {
 		log.Fatal(err)
 	}
-	log.Println("List of Databases", databases)
+
+	log.Println("Databases:")
+
+	for i, database := range databases {
+		log.Printf("%d. %s", i, database)
+	}
 
 	stmt, err := db.PrepareContext(ctx, "SHOW TABLES IN @p1")
 	if err != nil {
@@ -88,19 +70,14 @@ func main() {
 			continue
 		}
 
-		tables := make([]string, 0)
-		// columns, err := rows.ColumnTypes()
-		// for i, col := range columns {
-		// 	log.Printf("%d %s: %s", i, col.Name(), col.DatabaseTypeName())
-		// }
+		log.Printf("Tables in %s:", d)
 
 		for rows.Next() {
 			if err := rows.Scan(&tbl.database, &tbl.name, &tbl.isTemporary); err != nil {
 				log.Println(err)
 				continue
 			}
-			tables = append(tables, tbl.name)
+			log.Printf("  %s", tbl.name)
 		}
-		log.Printf("List of Tables in Database %s: %v\n", d, tables)
 	}
 }
