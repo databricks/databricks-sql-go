@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"time"
 
-	dbsql "github.com/arikfr/go-dbsql"
+	_ "github.com/arikfr/go-dbsql"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )
@@ -28,8 +28,7 @@ var (
 func main() {
 	// Get connect string from the command line.
 	if len(os.Args) < 2 {
-		fmt.Println(`Please provide a PostgreSQL connect string.`)
-		fmt.Println("See https://godoc.org/github.com/lib/pq for details.")
+		fmt.Println(`Please provide a connect string.`)
 		return
 	}
 
@@ -63,19 +62,10 @@ func finder(connString string) {
 		AddItem(tables, 0, 1, false).
 		AddItem(columns, 0, 3, false)
 
-	// Get a list of all databases.
-	opts := dbsql.DefaultOptions
-
-	opts.HTTPPath = "/sql/1.0/endpoints/5c89f447c476a5a8"
-
-	connector := dbsql.NewConnector(&opts)
-
-	generalDB := sql.OpenDB(connector)
-	// generalDB, err := sql.Open("postgres", connString)
-	// if err != nil {
-	// 	panic(err)
-	// }
-	// defer generalDB.Close() // We really close the DB because we only use it for this one query.
+	generalDB, err := sql.Open("databricks", connString)
+	if err != nil {
+		panic(err)
+	}
 	rows, err := generalDB.Query("show databases")
 	if err != nil {
 		panic(err)
