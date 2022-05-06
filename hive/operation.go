@@ -84,7 +84,6 @@ func fetch(ctx context.Context, op *Operation, schema *TableSchema) (*cli_servic
 	req := cli_service.TFetchResultsReq{
 		OperationHandle: op.h,
 		MaxRows:         op.hive.opts.MaxRows,
-		// Orientation:     cli_service.TFetchOrientation_FETCH_NEXT,
 	}
 
 	op.hive.log.Printf("fetch max rows: %v", op.hive.opts.MaxRows)

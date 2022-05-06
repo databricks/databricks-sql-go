@@ -14,16 +14,16 @@ func TestStatement(t *testing.T) {
 		{
 			stmt: "@p1 p1",
 			args: []driver.NamedValue{
-				driver.NamedValue{Ordinal: 1, Value: "val_1"},
+				{Ordinal: 1, Value: "val_1"},
 			},
 			target: "val_1 p1",
 		},
 		{
 			stmt: "@p1 @p10 @p11 @named @named1 @p1",
 			args: []driver.NamedValue{
-				driver.NamedValue{Ordinal: 1, Value: "val_1"},
-				driver.NamedValue{Ordinal: 10, Name: "named", Value: "val_named"},
-				driver.NamedValue{Ordinal: 11, Value: "val_11"},
+				{Ordinal: 1, Value: "val_1"},
+				{Ordinal: 10, Name: "named", Value: "val_named"},
+				{Ordinal: 11, Value: "val_11"},
 			},
 			target: "val_1 @p10 val_11 val_named @named1 val_1",
 		},

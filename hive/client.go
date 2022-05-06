@@ -17,9 +17,7 @@ type Client struct {
 
 // Options for Hive Client
 type Options struct {
-	MaxRows      int64
-	MemLimit     string
-	QueryTimeout int
+	MaxRows int64
 }
 
 // NewClient creates Hive Client
@@ -33,11 +31,7 @@ func NewClient(client thrift.TClient, log *log.Logger, opts *Options) *Client {
 
 // OpenSession creates new hive session
 func (c *Client) OpenSession(ctx context.Context) (*Session, error) {
-
-	cfg := map[string]string{
-		// "MEM_LIMIT":       c.opts.MemLimit,
-		// "QUERY_TIMEOUT_S": strconv.Itoa(c.opts.QueryTimeout),
-	}
+	cfg := map[string]string{}
 
 	req := cli_service.TOpenSessionReq{
 		ClientProtocol: cli_service.TProtocolVersion_HIVE_CLI_SERVICE_PROTOCOL_V6,

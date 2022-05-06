@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/apache/thrift/lib/go/thrift"
 	"github.com/arikfr/go-dbsql/hive"
@@ -139,7 +140,7 @@ func connect(opts *Options) (*Conn, error) {
 	logger := log.New(opts.LogOut, "databricks: ", log.LstdFlags)
 
 	httpClient := &http.Client{
-		// Timeout: configuration.HttpTimeout,
+		Timeout: time.Duration(opts.Timeout),
 		Transport: &http.Transport{
 			TLSClientConfig: &tls.Config{},
 		},
@@ -150,14 +151,16 @@ func connect(opts *Options) (*Conn, error) {
 	}
 
 	httpOptions := thrift.THttpClientOptions{Client: httpClient}
-	transport, err = thrift.NewTHttpClientTransportFactoryWithOptions(fmt.Sprintf("https://%s:%s@%s:%s"+opts.HTTPPath, "token", url.QueryEscape(opts.Token), opts.Host, opts.Port), httpOptions).GetTransport(socket)
+	endpointUrl := fmt.Sprintf("https://%s:%s@%s:%s"+opts.HTTPPath, "token", url.QueryEscape(opts.Token), opts.Host, opts.Port)
+	transport, err = thrift.NewTHttpClientTransportFactoryWithOptions(endpointUrl, httpOptions).GetTransport(socket)
+	if err != nil {
+		return nil, err
+	}
+
 	httpTransport, ok := transport.(*thrift.THttpClient)
 	if ok {
 		// TODO: currently masking as a python connector until additional user agents are white listed.
 		httpTransport.SetHeader("User-Agent", "pydatabrickssqlconnector/0.9.0 (go-dbsql)")
-	}
-	if err != nil {
-		return nil, err
 	}
 
 	protocolFactory := thrift.NewTBinaryProtocolFactoryDefault()
