@@ -8,7 +8,7 @@ on:
 
 jobs:
 
-  build:
+  build-and-test:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v3
@@ -22,4 +22,7 @@ jobs:
       run: go build -v ./...
 
     - name: Test
-      run: go test -v ./...
+      run: |
+        go install github.com/mfridman/tparse@latest
+        set -o pipefail && go test ./... -json | tparse -all >> $GITHUB_STEP_SUMMARY
+        echo $GITHUB_STEP_SUMMARY
