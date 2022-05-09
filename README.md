@@ -39,7 +39,11 @@ databricks://:[your token]@[Workspace hostname][Endpoint HTTP Path]?timeout=1000
 
 ## Testing
 
-(set DSN)
+To run only unit tests you can use `go test`, but if you want to run tests against a SQL endpoint, youw will need to pass a DSN environment variable:
+
+```
+$ DATABRICKS_DSN="databricks://:dapi-secret-token@example.cloud.databricks.com/sql/1.0/endpoints/12345a1b2c3d456f" go test
+```
 
 ## License
 
