@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"time"
 
-	_ "github.com/arikfr/go-dbsql"
+	_ "github.com/databricks/databricks-sql-node"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )

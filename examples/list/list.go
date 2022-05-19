@@ -8,7 +8,7 @@ import (
 	"log"
 	"os"
 
-	_ "github.com/arikfr/go-dbsql"
+	_ "github.com/databricks/databricks-sql-node"
 )
 
 func main() {

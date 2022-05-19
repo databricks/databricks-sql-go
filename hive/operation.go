@@ -4,7 +4,7 @@ import (
 	"context"
 	"strings"
 
-	"github.com/arikfr/go-dbsql/cli_service"
+	"github.com/databricks/databricks-sql-node/cli_service"
 )
 
 // Operation represents hive operation
