@@ -1,8 +1,9 @@
-module github.com/databricks/databricks-sql-go/examples
+module github.com/databricks/databricks-sql-node/examples
 
 go 1.18
 
 require (
+	github.com/databricks/databricks-sql-node
 	github.com/gdamore/tcell/v2 v2.5.1
 	github.com/rivo/tview v0.0.0-20220307222120-9994674d60a8
 )
