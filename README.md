@@ -9,7 +9,7 @@ import (
 	"database/sql"
 	"time"
 
-	_ "github.com/arikfr/go-dbsql"
+	_ "github.com/databricks/databricks-sql-go"
 )
 
 db, err := sql.Open("databricks", "databricks://:dapi-secret-token@example.cloud.databricks.com/sql/1.0/endpoints/12345a1b2c3d456f")
@@ -21,7 +21,7 @@ if err != nil {
 rows, err := db.Query("SELECT 1")
 ```
 
-(see additional usage examples in [examples](https://github.com/arikfr/go-dbsql/tree/main/examples))
+(see additional usage examples in [examples](https://github.com/databricks/databricks-sql-go/tree/main/examples))
 
 ## DSN (Data Source Name)
 
