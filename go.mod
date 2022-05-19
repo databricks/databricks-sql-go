@@ -1,4 +1,4 @@
-module github.com/databricks/databricks-sql-node
+module github.com/databricks/databricks-sql-go
 
 go 1.18
 
