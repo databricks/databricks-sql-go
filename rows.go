@@ -4,7 +4,7 @@ import (
 	"database/sql/driver"
 	"reflect"
 
-	"github.com/databricks/databricks-sql-go/hive"
+	"github.com/databricks/databricks-sql-node/hive"
 )
 
 // Rows is an iterator over an executed query's results.
