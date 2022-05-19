@@ -5,7 +5,7 @@ import (
 	"log"
 
 	"github.com/apache/thrift/lib/go/thrift"
-	"github.com/databricks/databricks-sql-node/cli_service"
+	"github.com/databricks/databricks-sql-go/cli_service"
 )
 
 // Client represents Hive Client
