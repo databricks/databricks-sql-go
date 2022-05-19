@@ -47,4 +47,4 @@ $ DATABRICKS_DSN="databricks://:dapi-secret-token@example.cloud.databricks.com/s
 
 ## License
 
-TBD.
+Apache 2.0.
