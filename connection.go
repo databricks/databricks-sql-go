@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/apache/thrift/lib/go/thrift"
-	"github.com/arikfr/go-dbsql/hive"
+	"github.com/databricks/databricks-sql-node/hive"
 )
 
 // Connection
