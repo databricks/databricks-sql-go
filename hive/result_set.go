@@ -5,7 +5,7 @@ import (
 	"io"
 	"time"
 
-	"github.com/databricks/databricks-sql-go/cli_service"
+	"databricks-sql-go/cli_service"
 )
 
 // ResultSet ...

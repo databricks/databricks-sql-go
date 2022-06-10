@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/databricks/databricks-sql-go/cli_service"
+	"databricks-sql-go/cli_service"
 )
 
 const (
