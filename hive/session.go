@@ -3,7 +3,7 @@ package hive
 import (
 	"context"
 
-	"databricks-sql-go/cli_service"
+	"github.com/databricks/databricks-sql-go/cli_service"
 )
 
 // Session represents hive session

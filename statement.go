@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"databricks-sql-go/hive"
+	"github.com/databricks/databricks-sql-go/hive"
 )
 
 // Stmt is statement
