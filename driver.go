@@ -138,9 +138,9 @@ func connect(opts *Options) (*Conn, error) {
 	var err error
 	var transport thrift.TTransport
 	logger := log.New(opts.LogOut, "databricks: ", log.LstdFlags)
-
+	timeout := time.Duration(opts.Timeout * int(time.Millisecond))
 	httpClient := &http.Client{
-		Timeout: time.Duration(opts.Timeout),
+		Timeout: timeout,
 		Transport: &http.Transport{
 			TLSClientConfig: &tls.Config{},
 		},

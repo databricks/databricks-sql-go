@@ -3,6 +3,7 @@ package dbsql
 import (
 	"context"
 	"database/sql/driver"
+	"fmt"
 	"log"
 	"time"
 
@@ -91,7 +92,7 @@ func (c *Conn) OpenSession(ctx context.Context) (*hive.Session, error) {
 		session, err := c.client.OpenSession(ctx)
 		if err != nil {
 			c.log.Printf("failed to open session: %v", err)
-			return nil, driver.ErrBadConn
+			return nil, fmt.Errorf("%v: %v", driver.ErrBadConn, err)
 		}
 		c.session = session
 	}
