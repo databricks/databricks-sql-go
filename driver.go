@@ -140,7 +140,7 @@ func connect(opts *Options) (*Conn, error) {
 	logger := log.New(opts.LogOut, "databricks: ", log.LstdFlags)
 
 	httpClient := &http.Client{
-		Timeout: time.Duration(opts.Timeout),
+		Timeout: time.Duration(opts.Timeout * int(time.Millisecond)),
 		Transport: &http.Transport{
 			TLSClientConfig: &tls.Config{},
 		},
