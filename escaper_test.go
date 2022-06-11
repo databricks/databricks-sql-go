@@ -15,7 +15,7 @@ func TestEscaper(t *testing.T) {
 		{Value: int64(1024), ExpectedOutput: `1024`},
 		{Value: float64(1024.5), ExpectedOutput: `1024.5`},
 		{Value: true, ExpectedOutput: "true"},
-		{Value: time.Date(2020, time.April, 11, 21, 34, 01, 0, time.UTC), ExpectedOutput: "2020-04-11T21:34:01+00:00"},
+		{Value: time.Date(2020, time.April, 11, 21, 34, 01, 0, time.UTC), ExpectedOutput: "'2020-04-11T21:34:01+00:00'"},
 	}
 
 	for _, test := range testcases {

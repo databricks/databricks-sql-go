@@ -22,7 +22,7 @@ func EscapeArg(arg driver.NamedValue) (string, error) {
 	case string:
 		return fmt.Sprintf("'%v'", strings.ReplaceAll(v, "'", "''")), nil
 	case time.Time:
-		return v.Format(KTimeFmt), nil
+		return "'" + v.Format(KTimeFmt) + "'", nil
 	default:
 		return "", fmt.Errorf("unsupported parameter type %T for value %v", v, v)
 	}
