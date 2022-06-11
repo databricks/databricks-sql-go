@@ -30,7 +30,10 @@ func TestStatement(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		result := statement(tt.stmt, tt.args)
+		result, err := statement(tt.stmt, tt.args)
+		if err != nil {
+			t.Error(err)
+		}
 
 		if result != tt.target {
 			t.Fatalf("mismatch for statement: %q\n\ttarget: %q\n\tresult: %q", tt.stmt, tt.target, result)
