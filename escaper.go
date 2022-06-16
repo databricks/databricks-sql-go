@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	KTimeFmt = "2006-01-02T15:04:05.999-07:00"
+	TimeFmt = "2006-01-02T15:04:05.999-07:00"
 )
 
 func EscapeArg(arg driver.NamedValue) (string, error) {
@@ -22,7 +22,7 @@ func EscapeArg(arg driver.NamedValue) (string, error) {
 	case string:
 		return fmt.Sprintf("'%v'", strings.ReplaceAll(v, "'", "''")), nil
 	case time.Time:
-		return "'" + v.Format(KTimeFmt) + "'", nil
+		return "'" + v.Format(TimeFmt) + "'", nil
 	default:
 		return "", fmt.Errorf("unsupported parameter type %T for value %v", v, v)
 	}
