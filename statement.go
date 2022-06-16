@@ -64,7 +64,10 @@ func (s *Stmt) QueryContext(ctx context.Context, args []driver.NamedValue) (driv
 	if err != nil {
 		return nil, err
 	}
-	stmt := statement(s.stmt, args)
+	stmt, err := statement(s.stmt, args)
+	if err != nil {
+		return nil, err
+	}
 	return query(ctx, session, stmt)
 }
 
@@ -74,7 +77,10 @@ func (s *Stmt) ExecContext(ctx context.Context, args []driver.NamedValue) (drive
 	if err != nil {
 		return nil, err
 	}
-	stmt := statement(s.stmt, args)
+	stmt, err := statement(s.stmt, args)
+	if err != nil {
+		return nil, err
+	}
 	return exec(ctx, session, stmt)
 }
 
@@ -92,7 +98,7 @@ func template(query string) string {
 	return query
 }
 
-func statement(tmpl string, args []driver.NamedValue) string {
+func statement(tmpl string, args []driver.NamedValue) (string, error) {
 	stmt := tmpl
 	for _, arg := range args {
 		var re *regexp.Regexp
@@ -101,10 +107,14 @@ func statement(tmpl string, args []driver.NamedValue) string {
 		} else {
 			re = regexp.MustCompile(fmt.Sprintf("@p%d%s", arg.Ordinal, `\b`))
 		}
-		val := fmt.Sprintf("%v", arg.Value)
+		escaped, err := EscapeArg(arg)
+		if err != nil {
+			return "", err
+		}
+		val := fmt.Sprintf("%v", escaped)
 		stmt = re.ReplaceAllString(stmt, val)
 	}
-	return stmt
+	return stmt, nil
 }
 
 func query(ctx context.Context, session *hive.Session, stmt string) (driver.Rows, error) {
