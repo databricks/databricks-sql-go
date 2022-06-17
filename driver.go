@@ -160,7 +160,7 @@ func connect(opts *Options) (*Conn, error) {
 	httpTransport, ok := transport.(*thrift.THttpClient)
 	if ok {
 		// TODO: currently masking as a python connector until additional user agents are white listed.
-		httpTransport.SetHeader("User-Agent", "pydatabrickssqlconnector/0.9.0 (go-dbsql)")
+		httpTransport.SetHeader("User-Agent", "godatabrickssqlconnector/0.9.0 (go-dbsql)")
 	}
 
 	protocolFactory := thrift.NewTBinaryProtocolFactoryDefault()
