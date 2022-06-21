@@ -1,8 +1,8 @@
-# Preview Go Databricks SQL Driver
+# Go Databricks SQL Driver (Beta)
 
 Databricks SQL driver for Go's [database/sql](https://golang.org/pkg/database/sql) package.
 
-**NOTE: This Driver is in Preview mode.**
+**NOTE: This Driver is in Beta mode.**
 
 ## Usage
 
