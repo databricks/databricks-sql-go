@@ -13,4 +13,8 @@
 
 ## 0.1.1 (2022-05-19)
 
+- Fix module name
+
+## 0.1.0 (2022-05-19)
+
 - Initial release
