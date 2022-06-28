@@ -23,7 +23,7 @@ import (
 	_ "github.com/databricks/databricks-sql-go"
 )
 
-db, err := sql.Open("databricks", "databricks://:dapi-secret-token@example.cloud.databricks.com/sql/1.0/endpoints/12345a1b2c3d456f")
+db, err := sql.Open("databricks", "databricks://:dapi********@********.databricks.com/sql/1.0/endpoints/********")
 if err != nil {
 	panic(err)
 }
