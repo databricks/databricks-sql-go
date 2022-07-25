@@ -22,19 +22,26 @@ type ResultSet struct {
 
 // Next ...
 func (rs *ResultSet) Next(dest []driver.Value) error {
-	if rs.idx >= rs.length {
-		if !rs.more {
-			return io.EOF
-		}
 
+	var thisPageExhausted bool = rs.idx >= length(rs.result)
+
+	if thisPageExhausted {
+
+		// Fetch another page
 		resp, err := rs.fetchfn()
+
 		if err != nil {
 			return err
 		}
+
+		// Replace previous page of results with new page of results
 		rs.result = resp.Results
-		rs.more = resp.GetHasMoreRows()
-		rs.idx = 0
+
+		// Replace previous page length with new page length
 		rs.length = length(rs.result)
+
+		// Reset index to the start of the new page
+		rs.idx = 0
 	}
 
 	if rs.length == 0 {
@@ -43,11 +50,14 @@ func (rs *ResultSet) Next(dest []driver.Value) error {
 
 	for i := range dest {
 		val, err := value(rs.result.Columns[i], rs.schema.Columns[i], rs.idx)
+
 		if err != nil {
 			return err
 		}
+
 		dest[i] = val
 	}
+
 	rs.idx++
 	return nil
 }
