@@ -1,6 +1,7 @@
 package dbsql
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"os"
@@ -58,6 +59,38 @@ func TestSelect(t *testing.T) {
 				t.Errorf("got: %v (%T), want: %v (%T)", res, res, tt.res, tt.res)
 			}
 		})
+	}
+}
+
+func TestExhaustCursor(t *testing.T) {
+	// GIVEN: Session MaxRows < expected result length
+	// WHEN: Caller fetches all results
+	// THEN: The expected result length is pulled by successive calls to
+
+	// MaxRows is defined in databricks.go as 10_000
+
+	db := open(t)
+	defer db.Close()
+
+	// Pull more results than the known MaxRows value
+	ctx := context.Background()
+	rows, _ := db.QueryContext(ctx, "SELECT id FROM RANGE(100000)")
+
+	rowIds := make([]int, 0)
+
+	// Fetch all results from the `rows` iterator
+	var rowId int
+	for rows.Next() {
+		rows.Scan(&rowId)
+		rowIds = append(rowIds, rowId)
+	}
+
+	expectedLength := 100_000
+	actualLength := len(rowIds)
+
+	if expectedLength != actualLength {
+		t.Errorf("Result length mismatch. Expected %d, Actual: %d", expectedLength, actualLength)
+
 	}
 }
 
