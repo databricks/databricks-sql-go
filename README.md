@@ -42,7 +42,7 @@ The DSN format is:
 databricks://:[your token]@[Workspace hostname][Endpoint HTTP Path]
 ```
 
-You can set HTTP Timeout value by appending a `timeout` query parameter (in milliseconds) and you can set max rows to retrieve by setting the `maxRows` query parameter:
+You can set HTTP Timeout value by appending a `timeout` query parameter (in milliseconds) and you can set max rows to retrieve per network request by setting the `maxRows` query parameter:
 
 ```
 databricks://:[your token]@[Workspace hostname][Endpoint HTTP Path]?timeout=1000&maxRows=1000
