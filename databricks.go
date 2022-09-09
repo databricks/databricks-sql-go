@@ -16,6 +16,8 @@ type Options struct {
 	Port     string
 	Token    string
 	HTTPPath string
+	ClientId string
+	Version  string
 	MaxRows  int64
 	Timeout  int
 
@@ -24,5 +26,5 @@ type Options struct {
 
 var (
 	// DefaultOptions for the driver
-	DefaultOptions = Options{Port: "443", MaxRows: 10000, LogOut: ioutil.Discard}
+	DefaultOptions = Options{Port: "443", ClientId: "go-dbsql", Version: "0.9.0", MaxRows: 10000, LogOut: ioutil.Discard}
 )

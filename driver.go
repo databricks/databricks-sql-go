@@ -101,6 +101,12 @@ func parseURI(uri string) (*Options, error) {
 		}
 	}
 
+	clientId, ok := query["clientId"]
+
+	if ok {
+		opts.ClientId = clientId[0]
+	}
+
 	return &opts, nil
 }
 
@@ -159,8 +165,8 @@ func connect(opts *Options) (*Conn, error) {
 
 	httpTransport, ok := transport.(*thrift.THttpClient)
 	if ok {
-		// TODO: currently masking as a python connector until additional user agents are white listed.
-		httpTransport.SetHeader("User-Agent", "godatabrickssqlconnector/0.9.0 (go-dbsql)")
+		userAgent := fmt.Sprintf("godatabrickssqlconnector/%s (%s)", opts.Version, opts.ClientId)
+		httpTransport.SetHeader("User-Agent", userAgent)
 	}
 
 	protocolFactory := thrift.NewTBinaryProtocolFactoryDefault()
