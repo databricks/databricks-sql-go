@@ -10,7 +10,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -102,10 +101,10 @@ func parseURI(uri string) (*Options, error) {
 		}
 	}
 
-	clientId, ok := query["clientId"]
+	userAgentEntry, ok := query["userAgentEntry"]
 
 	if ok {
-		opts.ClientId = clientId[0]
+		opts.UserAgentEntry = userAgentEntry[0]
 	}
 
 	return &opts, nil
@@ -166,8 +165,12 @@ func connect(opts *Options) (*Conn, error) {
 
 	httpTransport, ok := transport.(*thrift.THttpClient)
 	if ok {
-		userAgentSuffix := buildUserAgentSuffix(opts.ClientId)
-		userAgent := fmt.Sprintf("%s/%s (%s)", DriverName, DriverVersion, userAgentSuffix)
+		var userAgent string
+		if opts.UserAgentEntry != "" {
+			userAgent = fmt.Sprintf("%s/%s", DriverName, DriverVersion)
+		} else {
+			userAgent = fmt.Sprintf("%s/%s (%s)", DriverName, DriverVersion, opts.UserAgentEntry)
+		}
 		httpTransport.SetHeader("User-Agent", userAgent)
 	}
 
@@ -177,15 +180,4 @@ func connect(opts *Options) (*Conn, error) {
 	client := hive.NewClient(tclient, logger, &hive.Options{MaxRows: opts.MaxRows})
 
 	return &Conn{client: client, t: transport, log: logger}, nil
-}
-
-func buildUserAgentSuffix(clientId string) string {
-	strs := []string{runtime.Version(), runtime.GOOS, clientId}
-	var filtered []string
-	for _, str := range strs {
-		if str != "" {
-			filtered = append(filtered, str)
-		}
-	}
-	return strings.Join(filtered, "; ")
 }
