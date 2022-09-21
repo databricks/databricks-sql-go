@@ -118,3 +118,21 @@ func (op *Operation) Close(ctx context.Context) error {
 	op.hive.log.Printf("close operation: %v", guid(op.h.OperationId.GUID))
 	return nil
 }
+
+// Cancel cancels operation
+func (op *Operation) Cancel(ctx context.Context) error {
+	req := cli_service.TCancelOperationReq{
+		OperationHandle: op.h,
+	}
+
+	resp, err := op.hive.client.CancelOperation(ctx, &req)
+	if err != nil {
+		return err
+	}
+	if err := checkStatus(resp); err != nil {
+		return err
+	}
+
+	op.hive.log.Printf("cancel operation: %v", guid(op.h.OperationId.GUID))
+	return nil
+}
