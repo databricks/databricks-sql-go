@@ -11,7 +11,7 @@ func TestEscaper(t *testing.T) {
 		Value          driver.Value
 		ExpectedOutput string
 	}{
-		{Value: "a'b'c", ExpectedOutput: `'a''b''c'`},
+		{Value: "a'b'c", ExpectedOutput: `a''b''c`},
 		{Value: int64(1024), ExpectedOutput: `1024`},
 		{Value: float64(1024.5), ExpectedOutput: `1024.5`},
 		{Value: true, ExpectedOutput: "true"},

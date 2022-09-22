@@ -107,11 +107,10 @@ func statement(tmpl string, args []driver.NamedValue) (string, error) {
 		} else {
 			re = regexp.MustCompile(fmt.Sprintf("@p%d%s", arg.Ordinal, `\b`))
 		}
-		escaped, err := EscapeArg(arg)
+		val, err := EscapeArg(arg)
 		if err != nil {
 			return "", err
 		}
-		val := fmt.Sprintf("%v", escaped)
 		stmt = re.ReplaceAllString(stmt, val)
 	}
 	return stmt, nil

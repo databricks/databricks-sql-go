@@ -20,7 +20,7 @@ func EscapeArg(arg driver.NamedValue) (string, error) {
 	case bool:
 		return fmt.Sprintf("%v", v), nil
 	case string:
-		return fmt.Sprintf("'%v'", strings.ReplaceAll(v, "'", "''")), nil
+		return fmt.Sprintf("%v", strings.ReplaceAll(v, "'", "''")), nil
 	case time.Time:
 		return "'" + v.Format(TimeFmt) + "'", nil
 	default:
