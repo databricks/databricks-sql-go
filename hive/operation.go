@@ -119,8 +119,8 @@ func (op *Operation) Close(ctx context.Context) error {
 	return nil
 }
 
-// Cancel cancels operation
-func (op *Operation) Cancel(ctx context.Context) error {
+// private method to cancel operation
+func (op *Operation) cancel(ctx context.Context) error {
 	req := cli_service.TCancelOperationReq{
 		OperationHandle: op.h,
 	}
