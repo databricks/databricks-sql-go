@@ -58,6 +58,8 @@ func parseURI(uri string) (*Options, error) {
 		if ok {
 			opts.Token = token
 		}
+		opts.User = u.User.Username()
+
 	} else {
 		return nil, fmt.Errorf("Token is required.")
 	}
@@ -157,7 +159,11 @@ func connect(opts *Options) (*Conn, error) {
 	}
 
 	httpOptions := thrift.THttpClientOptions{Client: httpClient}
-	endpointUrl := fmt.Sprintf("https://%s:%s@%s:%s"+opts.HTTPPath, "token", url.QueryEscape(opts.Token), opts.Host, opts.Port)
+	user := opts.User
+	if user == "" {
+		user = "token"
+	}
+	endpointUrl := fmt.Sprintf("https://%s:%s@%s:%s"+opts.HTTPPath, user, url.QueryEscape(opts.Token), opts.Host, opts.Port)
 	transport, err = thrift.NewTHttpClientTransportFactoryWithOptions(endpointUrl, httpOptions).GetTransport(socket)
 	if err != nil {
 		return nil, err
