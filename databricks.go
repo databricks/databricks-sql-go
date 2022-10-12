@@ -19,8 +19,8 @@ type Options struct {
 	MaxRows        int64
 	Timeout        int
 	UserAgentEntry string
-
-	LogOut io.Writer
+	User           string
+	LogOut         io.Writer
 }
 
 const (
