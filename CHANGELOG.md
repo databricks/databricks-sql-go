@@ -2,6 +2,10 @@
 
 ## 0.1.x (Unreleased)
 
+## 0.1.5 (2022-10-12)
+
+- Feat: Allow username/password in the DSN
+
 ## 0.1.4 (2022-07-30)
 
 - Fix: Could not fetch rowsets greater than the value of `maxRows` (#18)
