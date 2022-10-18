@@ -19,6 +19,7 @@ type Options struct {
 	MaxRows        int64
 	Timeout        int
 	UserAgentEntry string
+	RunAsync       bool
 
 	LogOut io.Writer
 }
@@ -31,5 +32,5 @@ const (
 
 var (
 	// DefaultOptions for the driver
-	DefaultOptions = Options{Port: "443", MaxRows: 10000, LogOut: ioutil.Discard}
+	DefaultOptions = Options{Port: "443", MaxRows: 10000, RunAsync: true, LogOut: ioutil.Discard}
 )

@@ -107,6 +107,16 @@ func parseURI(uri string) (*Options, error) {
 		opts.UserAgentEntry = userAgentEntry[0]
 	}
 
+	runAsync, ok := query["runAsync"]
+
+	if ok {
+		boolValue, err := strconv.ParseBool(runAsync[0])
+		if err != nil {
+			return nil, fmt.Errorf("runAsync value wrongly formatted: %w", err)
+		}
+		opts.RunAsync = boolValue
+	}
+
 	return &opts, nil
 }
 
@@ -177,7 +187,7 @@ func connect(opts *Options) (*Conn, error) {
 	protocolFactory := thrift.NewTBinaryProtocolFactoryDefault()
 	tclient := thrift.NewTStandardClient(protocolFactory.GetProtocol(transport), protocolFactory.GetProtocol(transport))
 
-	client := hive.NewClient(tclient, logger, &hive.Options{MaxRows: opts.MaxRows})
+	client := hive.NewClient(tclient, logger, &hive.Options{MaxRows: opts.MaxRows, RunAsync: opts.RunAsync})
 
 	return &Conn{client: client, t: transport, log: logger}, nil
 }

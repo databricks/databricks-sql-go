@@ -17,7 +17,8 @@ type Client struct {
 
 // Options for Hive Client
 type Options struct {
-	MaxRows int64
+	MaxRows  int64
+	RunAsync bool
 }
 
 // NewClient creates Hive Client
