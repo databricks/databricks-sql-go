@@ -12,27 +12,27 @@ func TestParseURI(t *testing.T) {
 	}{
 		{
 			"databricks://token:supersecret@example.cloud.databricks.com/sql/1.0/endpoints/12346a5b5b0e123a",
-			Options{Host: "example.cloud.databricks.com", Port: "443", Token: "supersecret", HTTPPath: "/sql/1.0/endpoints/12346a5b5b0e123a", MaxRows: 10000, Timeout: 0, LogOut: ioutil.Discard},
+			Options{Host: "example.cloud.databricks.com", Port: "443", Token: "supersecret", HTTPPath: "/sql/1.0/endpoints/12346a5b5b0e123a", MaxRows: 10000, RunAsync: true, Timeout: 0, LogOut: ioutil.Discard},
 		},
 		{
 			"databricks://token:supersecret@example.cloud.databricks.com/sql/1.0/endpoints/12346a5b5b0e123a?timeout=123",
-			Options{Host: "example.cloud.databricks.com", Port: "443", Token: "supersecret", HTTPPath: "/sql/1.0/endpoints/12346a5b5b0e123a", Timeout: 123, MaxRows: 10000, LogOut: ioutil.Discard},
+			Options{Host: "example.cloud.databricks.com", Port: "443", Token: "supersecret", HTTPPath: "/sql/1.0/endpoints/12346a5b5b0e123a", Timeout: 123, RunAsync: true, MaxRows: 10000, LogOut: ioutil.Discard},
 		},
 		{
 			"databricks://token:supersecret@example.cloud.databricks.com/sql/1.0/endpoints/12346a5b5b0e123a?timeout=123&maxRows=1000",
-			Options{Host: "example.cloud.databricks.com", Port: "443", Token: "supersecret", HTTPPath: "/sql/1.0/endpoints/12346a5b5b0e123a", Timeout: 123, MaxRows: 1000, LogOut: ioutil.Discard},
+			Options{Host: "example.cloud.databricks.com", Port: "443", Token: "supersecret", HTTPPath: "/sql/1.0/endpoints/12346a5b5b0e123a", Timeout: 123, RunAsync: true, MaxRows: 1000, LogOut: ioutil.Discard},
 		},
 		{
-			"databricks://token:supersecret@example.cloud.databricks.com/sql/1.0/endpoints/12346a5b5b0e123a?timeout=123&maxRows=1000&userAgentEntry=client-provided-info",
-			Options{Host: "example.cloud.databricks.com", Port: "443", Token: "supersecret", HTTPPath: "/sql/1.0/endpoints/12346a5b5b0e123a", UserAgentEntry: "client-provided-info", Timeout: 123, MaxRows: 1000, LogOut: ioutil.Discard},
+			"databricks://token:supersecret@example.cloud.databricks.com/sql/1.0/endpoints/12346a5b5b0e123a?timeout=123&maxRows=1000&userAgentEntry=client-provided-info&runAsync=false",
+			Options{Host: "example.cloud.databricks.com", Port: "443", Token: "supersecret", HTTPPath: "/sql/1.0/endpoints/12346a5b5b0e123a", UserAgentEntry: "client-provided-info", Timeout: 123, MaxRows: 1000, RunAsync: false, LogOut: ioutil.Discard},
 		},
 		{
 			"databricks://token:supersecret@example.cloud.databricks.com/sql/1.0/endpoints/12346a5b5b0e123a?maxRows=1000",
-			Options{Host: "example.cloud.databricks.com", Port: "443", Token: "supersecret", HTTPPath: "/sql/1.0/endpoints/12346a5b5b0e123a", MaxRows: 1000, Timeout: 0, LogOut: ioutil.Discard},
+			Options{Host: "example.cloud.databricks.com", Port: "443", Token: "supersecret", HTTPPath: "/sql/1.0/endpoints/12346a5b5b0e123a", MaxRows: 1000, Timeout: 0, RunAsync: true, LogOut: ioutil.Discard},
 		},
 		{
 			"databricks://:supersecret@example.cloud.databricks.com/sql/1.0/endpoints/12346a5b5b0e123a?maxRows=1000",
-			Options{Host: "example.cloud.databricks.com", Port: "443", Token: "supersecret", HTTPPath: "/sql/1.0/endpoints/12346a5b5b0e123a", MaxRows: 1000, Timeout: 0, LogOut: ioutil.Discard},
+			Options{Host: "example.cloud.databricks.com", Port: "443", Token: "supersecret", HTTPPath: "/sql/1.0/endpoints/12346a5b5b0e123a", MaxRows: 1000, Timeout: 0, RunAsync: true, LogOut: ioutil.Discard},
 		},
 	}
 
