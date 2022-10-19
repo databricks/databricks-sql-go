@@ -36,6 +36,7 @@ func (s *Session) ExecuteStatement(ctx context.Context, stmt string) (*Operation
 	req := cli_service.TExecuteStatementReq{
 		SessionHandle: s.h,
 		Statement:     stmt,
+		RunAsync:      s.hive.opts.RunAsync,
 	}
 	resp, err := s.hive.client.ExecuteStatement(ctx, &req)
 
