@@ -132,7 +132,8 @@ func query(ctx context.Context, session *hive.Session, stmt string) (driver.Rows
 		return nil, err
 	}
 
-	return &Rows{
+	// TODO: fix the below
+	return &hive.Rows{
 		rs:      rs,
 		schema:  schema,
 		closefn: func() error { return operation.Close(ctx) },

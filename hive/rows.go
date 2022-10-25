@@ -1,16 +1,14 @@
-package dbsql
+package hive
 
 import (
 	"database/sql/driver"
 	"reflect"
-
-	"github.com/databricks/databricks-sql-go/hive"
 )
 
 // Rows is an iterator over an executed query's results.
 type Rows struct {
-	rs      *hive.ResultSet
-	schema  *hive.TableSchema
+	rs      *ResultSet
+	schema  *TableSchema
 	closefn func() error
 }
 
