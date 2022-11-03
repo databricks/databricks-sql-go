@@ -1,4 +1,4 @@
-package utils
+package sentinel
 
 import (
 	"context"
@@ -42,9 +42,9 @@ func (s WatchStatus) String() string {
 type Done func() bool
 
 type Sentinel struct {
-	StatusFn  func() (Done, error)
-	CancelFn  func() (any, error)
-	ProcessFn func() (any, error)
+	StatusFn   func() (Done, error)
+	OnCancelFn func() (any, error)
+	OnDoneFn   func() (any, error)
 }
 
 // Wait takes care of checking the status of something on a given interval, up to a timeout.
@@ -74,7 +74,7 @@ func (s Sentinel) Watch(ctx context.Context, interval, timeout time.Duration) (W
 	resCh := make(chan any, 1)
 	errCh := make(chan error, 1)
 	processor := func() {
-		ret, err := s.ProcessFn()
+		ret, err := s.OnDoneFn()
 		if err != nil {
 			errCh <- err
 		} else {
@@ -90,24 +90,24 @@ func (s Sentinel) Watch(ctx context.Context, interval, timeout time.Duration) (W
 			if err != nil {
 				return WatchErr, nil, err
 			}
+			// resetting it here so statusFn is called again after interval time
 			_ = intervalTimer.Reset(interval)
 			if done() {
 				intervalTimer.Stop()
-				if s.ProcessFn != nil {
+				if s.OnDoneFn != nil {
 					go processor()
 				} else {
 					return WatchSuccess, nil, nil
 				}
 			}
 		case err := <-errCh:
-			_ = intervalTimer.Stop()
 			return WatchErr, nil, err
 		case res := <-resCh:
 			return WatchSuccess, res, nil
 		case <-ctx.Done():
 			_ = intervalTimer.Stop()
-			if s.CancelFn != nil {
-				ret, err := s.CancelFn()
+			if s.OnCancelFn != nil {
+				ret, err := s.OnCancelFn()
 				if err == nil {
 					err = ctx.Err()
 				}
@@ -119,6 +119,5 @@ func (s Sentinel) Watch(ctx context.Context, interval, timeout time.Duration) (W
 			log.Info().Msgf("wait timed out after %s", timeout.String())
 			return WatchTimeout, nil, fmt.Errorf("sentinel timed out")
 		}
-
 	}
 }

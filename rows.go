@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/databricks/databricks-sql-go/cli_service"
+	"github.com/databricks/databricks-sql-go/internal/cli_service"
 )
 
 type rows struct {

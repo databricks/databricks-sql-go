@@ -41,5 +41,3 @@ func (s *dbsqlStmt) ExecContext(ctx context.Context, args []driver.NamedValue) (
 func (s *dbsqlStmt) QueryContext(ctx context.Context, args []driver.NamedValue) (driver.Rows, error) {
 	return nil, ErrNotImplemented
 }
-
-var _ driver.Connector = (*connector)(nil)

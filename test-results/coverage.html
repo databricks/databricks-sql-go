@@ -1,0 +1,1276 @@
+
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+		<title>databricks-sql-go: Go Coverage Report</title>
+		<style>
+			body {
+				background: black;
+				color: rgb(80, 80, 80);
+			}
+			body, pre, #legend span {
+				font-family: Menlo, monospace;
+				font-weight: bold;
+			}
+			#topbar {
+				background: black;
+				position: fixed;
+				top: 0; left: 0; right: 0;
+				height: 42px;
+				border-bottom: 1px solid rgb(80, 80, 80);
+			}
+			#content {
+				margin-top: 50px;
+			}
+			#nav, #legend {
+				float: left;
+				margin-left: 10px;
+			}
+			#legend {
+				margin-top: 12px;
+			}
+			#nav {
+				margin-top: 10px;
+			}
+			#legend span {
+				margin: 0 5px;
+			}
+			.cov0 { color: rgb(192, 0, 0) }
+.cov1 { color: rgb(128, 128, 128) }
+.cov2 { color: rgb(116, 140, 131) }
+.cov3 { color: rgb(104, 152, 134) }
+.cov4 { color: rgb(92, 164, 137) }
+.cov5 { color: rgb(80, 176, 140) }
+.cov6 { color: rgb(68, 188, 143) }
+.cov7 { color: rgb(56, 200, 146) }
+.cov8 { color: rgb(44, 212, 149) }
+.cov9 { color: rgb(32, 224, 152) }
+.cov10 { color: rgb(20, 236, 155) }
+
+		</style>
+	</head>
+	<body>
+		<div id="topbar">
+			<div id="nav">
+				<select id="files">
+				
+				<option value="file0">github.com/databricks/databricks-sql-go/config.go (41.7%)</option>
+				
+				<option value="file1">github.com/databricks/databricks-sql-go/connection.go (0.0%)</option>
+				
+				<option value="file2">github.com/databricks/databricks-sql-go/connector.go (0.0%)</option>
+				
+				<option value="file3">github.com/databricks/databricks-sql-go/driver.go (4.2%)</option>
+				
+				<option value="file4">github.com/databricks/databricks-sql-go/internal/sentinel/sentinel.go (81.1%)</option>
+				
+				<option value="file5">github.com/databricks/databricks-sql-go/logger.go (0.0%)</option>
+				
+				<option value="file6">github.com/databricks/databricks-sql-go/result.go (0.0%)</option>
+				
+				<option value="file7">github.com/databricks/databricks-sql-go/rows.go (0.0%)</option>
+				
+				<option value="file8">github.com/databricks/databricks-sql-go/statement.go (0.0%)</option>
+				
+				<option value="file9">github.com/databricks/databricks-sql-go/testserver.go (0.0%)</option>
+				
+				</select>
+			</div>
+			<div id="legend">
+				<span>not tracked</span>
+			
+				<span class="cov0">no coverage</span>
+				<span class="cov1">low coverage</span>
+				<span class="cov2">*</span>
+				<span class="cov3">*</span>
+				<span class="cov4">*</span>
+				<span class="cov5">*</span>
+				<span class="cov6">*</span>
+				<span class="cov7">*</span>
+				<span class="cov8">*</span>
+				<span class="cov9">*</span>
+				<span class="cov10">high coverage</span>
+			
+			</div>
+		</div>
+		<div id="content">
+		
+		<pre class="file" id="file0" style="display: none">package dbsql
+
+import (
+        "crypto/tls"
+        "fmt"
+        "net/url"
+        "time"
+
+        "github.com/databricks/databricks-sql-go/internal/cli_service"
+)
+
+type config struct {
+        Host           string // from databricks UI
+        Port           int    // from databricks UI
+        Catalog        string //??
+        Database       string
+        AccessToken    string      // from databricks UI
+        TLSConfig      *tls.Config // nil disables TLS. Is it needed?
+        ConnectTimeout time.Duration
+        Protocol       string // defaults to https. From databricks UI
+        HTTPPath       string // from databricks UI
+        Authenticator  string //TODO for oauth
+
+        RunAsync       bool // TODO
+        MaxRows        int  // TODO
+        TimeoutSeconds int  // There are several timeouts that can be possibly configurable
+        UserAgentEntry string
+        Thrift         *thriftConfig
+}
+
+// Thrift config sets several low level configurations. Change with care.
+type thriftConfig struct {
+        Protocol            string
+        Transport           string
+        ProtocolVersion     cli_service.TProtocolVersion
+        DebugClientProtocol bool
+}
+
+func newConfigWithDefaults() *config <span class="cov0" title="0">{
+        return &amp;config{
+                Port:     443,
+                MaxRows:  10000,
+                Database: "default",
+                Protocol: "https",
+                Thrift: &amp;thriftConfig{
+                        Protocol:        "binary",
+                        Transport:       "http",
+                        ProtocolVersion: cli_service.TProtocolVersion_SPARK_CLI_SERVICE_PROTOCOL_V6,
+                },
+        }
+}</span>
+
+func parseURI(uri string) (*config, error) <span class="cov8" title="1">{
+        parsedURL, err := url.Parse(uri)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+        <span class="cov8" title="1">cfg := &amp;config{}
+        cfg.Host = parsedURL.Hostname()
+        // cfg.Port =  parsedURL.Port()
+        // userinfo := parsedURL.User.Password()
+        // cfg.AccessToken = userinfo
+        return cfg, ErrNotImplemented</span>
+}
+
+func (c *config) ToEndpointURL() string <span class="cov0" title="0">{
+        endpointUrl := fmt.Sprintf("%s://%s:%s@%s:%d%s", c.Protocol, "token", url.QueryEscape(c.AccessToken), c.Host, c.Port, c.HTTPPath)
+        return endpointUrl
+}</span>
+
+func (c *config) DeepCopy() *config <span class="cov0" title="0">{
+        if c == nil </span><span class="cov0" title="0">{
+                return nil
+        }</span>
+
+        <span class="cov0" title="0">return &amp;config{
+                Host:           c.Host,
+                Port:           c.Port,
+                Catalog:        c.Catalog,
+                Database:       c.Database,
+                AccessToken:    c.AccessToken,
+                TLSConfig:      c.TLSConfig.Clone(),
+                ConnectTimeout: c.ConnectTimeout,
+                Protocol:       c.Protocol,
+                HTTPPath:       c.HTTPPath,
+                Authenticator:  c.Authenticator,
+                RunAsync:       c.RunAsync,
+                MaxRows:        c.MaxRows,
+                TimeoutSeconds: c.TimeoutSeconds,
+                UserAgentEntry: c.UserAgentEntry,
+                Thrift: &amp;thriftConfig{
+                        Protocol:            c.Thrift.Protocol,
+                        Transport:           c.Thrift.Transport,
+                        ProtocolVersion:     c.Thrift.ProtocolVersion,
+                        DebugClientProtocol: c.Thrift.DebugClientProtocol,
+                },
+        }</span>
+}
+</pre>
+		
+		<pre class="file" id="file1" style="display: none">package dbsql
+
+import (
+        "context"
+        "database/sql/driver"
+        "fmt"
+        "time"
+
+        "github.com/databricks/databricks-sql-go/internal/cli_service"
+        "github.com/databricks/databricks-sql-go/internal/sentinel"
+)
+
+type conn struct {
+        cfg     *config
+        client  *cli_service.TCLIServiceClient
+        session *cli_service.TOpenSessionResp
+}
+
+func (c *conn) Prepare(query string) (driver.Stmt, error) <span class="cov0" title="0">{
+        return nil, ErrNotImplemented
+}</span>
+
+func (c *conn) PrepareContext(ctx context.Context, query string) (driver.Stmt, error) <span class="cov0" title="0">{
+        return &amp;dbsqlStmt{}, ErrNotImplemented
+}</span>
+
+func (c *conn) Close() error <span class="cov0" title="0">{
+        return ErrNotImplemented
+}</span>
+
+func (c *conn) Begin() (driver.Tx, error) <span class="cov0" title="0">{
+        return nil, ErrNotImplemented
+}</span>
+
+func (c *conn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, error) <span class="cov0" title="0">{
+        return nil, ErrNotImplemented
+}</span>
+
+func (c *conn) Ping(ctx context.Context) error <span class="cov0" title="0">{
+        return ErrNotImplemented
+}</span>
+
+func (c *conn) ResetSession(ctx context.Context) error <span class="cov0" title="0">{
+        return ErrNotImplemented
+}</span>
+
+func (c *conn) IsValid() bool <span class="cov0" title="0">{
+        return true
+}</span>
+
+func (c *conn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) <span class="cov0" title="0">{
+        req := cli_service.TExecuteStatementReq{
+                SessionHandle: c.session.SessionHandle,
+                Statement:     query,
+                QueryTimeout:  int64(c.cfg.TimeoutSeconds),
+        }
+        resp, err := c.client.ExecuteStatement(ctx, &amp;req)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span> else<span class="cov0" title="0"> {
+                fmt.Println(resp)
+        }</span>
+
+        <span class="cov0" title="0">return nil, ErrNotImplemented</span>
+}
+
+func (c *conn) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) <span class="cov0" title="0">{
+        // first we try to get the results synchronously.
+
+        var resultSet *cli_service.TFetchResultsResp
+
+        // at any point in time that the context is done we must cancel and return
+        querySentinel := sentinel.Sentinel{
+                OnDoneFn: func() (any, error) </span><span class="cov0" title="0">{
+                        req := cli_service.TExecuteStatementReq{
+                                SessionHandle: c.session.SessionHandle,
+                                Statement:     query,
+                                RunAsync:      true,
+                                QueryTimeout:  int64(c.cfg.TimeoutSeconds),
+                                // this is specific for databricks. It shortcuts server roundtrips
+                                GetDirectResults: &amp;cli_service.TSparkGetDirectResults{
+                                        MaxRows: int64(c.cfg.MaxRows),
+                                },
+                                // CanReadArrowResult_: &amp;t,
+                                // CanDecompressLZ4Result_: &amp;f,
+                                // CanDownloadResult_: &amp;t,
+                        }
+                        resp, err := c.client.ExecuteStatement(ctx, &amp;req)
+                        return resp, err
+                }</span>,
+        }
+
+        <span class="cov0" title="0">_, res, err := querySentinel.Watch(ctx, 0, 0)
+
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+        <span class="cov0" title="0">exStmtResp := res.(*cli_service.TExecuteStatementResp)
+        // hold on to the operation handle
+        opHandle := exStmtResp.OperationHandle
+
+        if exStmtResp.DirectResults != nil </span><span class="cov0" title="0">{
+                opStatus := exStmtResp.DirectResults.GetOperationStatus()
+                resultSet = exStmtResp.DirectResults.ResultSet
+                if opStatus.GetOperationState() == cli_service.TOperationState_RUNNING_STATE </span><span class="cov0" title="0">{
+
+                        // if the query took too long, we'll watch the operation until it completes
+                        // at any point in time that the context is done we must cancel and return
+                        pollSentinel := sentinel.Sentinel{
+                                StatusFn: func() (sentinel.Done, error) </span><span class="cov0" title="0">{
+                                        resp, err := c.client.GetOperationStatus(ctx, &amp;cli_service.TGetOperationStatusReq{
+                                                OperationHandle: opHandle,
+                                        })
+                                        return func() bool </span><span class="cov0" title="0">{
+                                                // which other states?
+                                                return resp.GetOperationState() != cli_service.TOperationState_RUNNING_STATE
+                                        }</span>, err
+                                },
+                                OnCancelFn: func() (any, error) <span class="cov0" title="0">{
+                                        ret, err := c.client.CancelOperation(context.Background(), &amp;cli_service.TCancelOperationReq{
+                                                OperationHandle: opHandle,
+                                        })
+                                        return ret, err
+                                }</span>,
+                        }
+                        <span class="cov0" title="0">_, _, err := pollSentinel.Watch(ctx, 100*time.Millisecond, 0)
+                        if err != nil </span><span class="cov0" title="0">{
+                                return nil, err
+                        }</span>
+
+                } else<span class="cov0" title="0"> {
+                        // TODO
+                        panic("operation in weird state")</span>
+                }
+
+        } else<span class="cov0" title="0"> {
+                // what happens here? do normal polling I guess
+                panic("direct result was nil")</span>
+        }
+        <span class="cov0" title="0">rows := rows{
+                client:       c.client,
+                opHandle:     opHandle,
+                pageSize:     int64(c.cfg.MaxRows),
+                fetchResults: resultSet,
+        }
+        return &amp;rows, nil</span>
+}
+
+var _ driver.Conn = (*conn)(nil)
+var _ driver.Pinger = (*conn)(nil)
+var _ driver.SessionResetter = (*conn)(nil)
+var _ driver.Validator = (*conn)(nil)
+var _ driver.ExecerContext = (*conn)(nil)
+var _ driver.QueryerContext = (*conn)(nil)
+var _ driver.ConnPrepareContext = (*conn)(nil)
+var _ driver.ConnBeginTx = (*conn)(nil)
+</pre>
+		
+		<pre class="file" id="file2" style="display: none">package dbsql
+
+import (
+        "compress/zlib"
+        "context"
+        "database/sql/driver"
+        "fmt"
+        "net/http"
+        "net/url"
+
+        "github.com/apache/thrift/lib/go/thrift"
+        "github.com/databricks/databricks-sql-go/internal/cli_service"
+        "github.com/databricks/databricks-sql-go/internal/utils"
+)
+
+// TODO this is the thrift connector. We could have many implementations
+type connector struct {
+        cfg *config
+}
+
+func (c *connector) Connect(ctx context.Context) (driver.Conn, error) <span class="cov0" title="0">{
+
+        tclient, err := initThriftClient(c.cfg)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("databricks: error initializing thrift client. %w", err)
+        }</span>
+
+        <span class="cov0" title="0">req := cli_service.TOpenSessionReq{
+                ClientProtocol: c.cfg.Thrift.ProtocolVersion,
+                Configuration:  make(map[string]string),
+        }
+
+        session, err := tclient.OpenSession(ctx, &amp;req)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+
+        <span class="cov0" title="0">fmt.Printf("open session: %s\n", utils.Guid(session.SessionHandle.GetSessionId().GUID))
+        fmt.Printf("session config: %v\n", session.Configuration)
+        conn := &amp;conn{
+                cfg:     c.cfg,
+                client:  tclient,
+                session: session,
+        }
+        return conn, nil</span>
+}
+
+func (c *connector) Driver() driver.Driver <span class="cov0" title="0">{
+        return &amp;databricksDriver{}
+}</span>
+
+func buildEndpointURL(c *config) string <span class="cov0" title="0">{
+        var endpointUrl string
+        if c.Host == "localhost" </span><span class="cov0" title="0">{
+                endpointUrl = fmt.Sprintf("http://%s:%d", c.Host, c.Port)
+        }</span> else<span class="cov0" title="0"> {
+                endpointUrl = fmt.Sprintf("https://%s:%s@%s:%d%s", "token", url.QueryEscape(c.AccessToken), c.Host, c.Port, c.HTTPPath)
+
+        }</span>
+        <span class="cov0" title="0">return endpointUrl</span>
+}
+
+func initThriftClient(cfg *config) (*cli_service.TCLIServiceClient, error) <span class="cov0" title="0">{
+        endpoint := buildEndpointURL(cfg)
+        tcfg := &amp;thrift.TConfiguration{
+                TLSConfig: cfg.TLSConfig,
+        }
+
+        var protocolFactory thrift.TProtocolFactory
+        switch cfg.Thrift.Protocol </span>{
+        case "compact":<span class="cov0" title="0">
+                protocolFactory = thrift.NewTCompactProtocolFactoryConf(tcfg)</span>
+        case "simplejson":<span class="cov0" title="0">
+                protocolFactory = thrift.NewTSimpleJSONProtocolFactoryConf(tcfg)</span>
+        case "json":<span class="cov0" title="0">
+                protocolFactory = thrift.NewTJSONProtocolFactory()</span>
+        case "binary":<span class="cov0" title="0">
+                protocolFactory = thrift.NewTBinaryProtocolFactoryConf(tcfg)</span>
+        case "header":<span class="cov0" title="0">
+                protocolFactory = thrift.NewTHeaderProtocolFactoryConf(tcfg)</span>
+        default:<span class="cov0" title="0">
+                return nil, fmt.Errorf("invalid protocol specified %s", cfg.Thrift.Protocol)</span>
+        }
+        <span class="cov0" title="0">if cfg.Thrift.DebugClientProtocol </span><span class="cov0" title="0">{
+                protocolFactory = thrift.NewTDebugProtocolFactoryWithLogger(protocolFactory, "client:", thrift.StdLogger(nil))
+        }</span>
+
+        <span class="cov0" title="0">var tTrans thrift.TTransport
+        var err error
+
+        switch cfg.Thrift.Transport </span>{
+        case "http":<span class="cov0" title="0">
+                tr := &amp;http.Transport{
+                        TLSClientConfig: cfg.TLSConfig,
+                }
+                httpclient := &amp;http.Client{
+                        Transport: tr,
+                        // Timeout:   time.Duration(cfg.TimeoutSeconds * int(time.Second)), // Needed?
+                }
+                tTrans, err = thrift.NewTHttpClientWithOptions(endpoint, thrift.THttpClientOptions{Client: httpclient})
+                fmt.Println(endpoint)
+                httpTransport, ok := tTrans.(*thrift.THttpClient)
+                if ok </span><span class="cov0" title="0">{
+                        var userAgent string
+                        if cfg.UserAgentEntry != "" </span><span class="cov0" title="0">{
+                                userAgent = fmt.Sprintf("%s/%s", DriverName, DriverVersion)
+                        }</span> else<span class="cov0" title="0"> {
+                                userAgent = fmt.Sprintf("%s/%s (%s)", DriverName, DriverVersion, cfg.UserAgentEntry)
+                        }</span>
+                        <span class="cov0" title="0">httpTransport.SetHeader("User-Agent", userAgent)</span>
+                }
+        case "framed":<span class="cov0" title="0">
+                tTrans = thrift.NewTFramedTransportConf(tTrans, tcfg)</span>
+        case "buffered":<span class="cov0" title="0">
+                tTrans = thrift.NewTBufferedTransport(tTrans, 8192)</span>
+        case "zlib":<span class="cov0" title="0">
+                tTrans, err = thrift.NewTZlibTransport(tTrans, zlib.BestCompression)</span>
+        default:<span class="cov0" title="0">
+                return nil, fmt.Errorf("invalid transport specified `%s`", cfg.Thrift.Transport)</span>
+        }
+        <span class="cov0" title="0">if err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+        <span class="cov0" title="0">if err = tTrans.Open(); err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+        <span class="cov0" title="0">iprot := protocolFactory.GetProtocol(tTrans)
+        oprot := protocolFactory.GetProtocol(tTrans)
+        tclient := cli_service.NewTCLIServiceClient(thrift.NewTStandardClient(iprot, oprot))
+
+        return tclient, nil</span>
+}
+
+var _ driver.Connector = (*connector)(nil)
+</pre>
+		
+		<pre class="file" id="file3" style="display: none">package dbsql
+
+import (
+        "context"
+        "database/sql"
+        "database/sql/driver"
+)
+
+func init() <span class="cov8" title="1">{
+        sql.Register("databricks", &amp;databricksDriver{})
+}</span>
+
+const (
+        DriverName    = "godatabrickssqlconnector" //important. Do not change
+        DriverVersion = "0.9.0"
+)
+
+type databricksDriver struct{}
+
+func (d *databricksDriver) Open(uri string) (driver.Conn, error) <span class="cov0" title="0">{
+        cfg, err := parseURI(uri)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+        <span class="cov0" title="0">c := &amp;connector{
+                cfg: cfg,
+        }
+        return c.Connect(context.Background())</span>
+}
+
+func (d *databricksDriver) OpenConnector(uri string) (driver.Connector, error) <span class="cov0" title="0">{
+        cfg, err := parseURI(uri)
+        return &amp;connector{cfg}, err
+}</span>
+
+var _ driver.Driver = (*databricksDriver)(nil)
+var _ driver.DriverContext = (*databricksDriver)(nil)
+
+type connOption func(*config)
+
+func NewConnector(options ...connOption) (driver.Connector, error) <span class="cov0" title="0">{
+        // config with default options
+        cfg := newConfigWithDefaults()
+
+        for _, opt := range options </span><span class="cov0" title="0">{
+                opt(cfg)
+        }</span>
+        // validate config?
+
+        <span class="cov0" title="0">return &amp;connector{cfg}, nil</span>
+}
+
+func WithServerHostname(host string) connOption <span class="cov0" title="0">{
+        return func(c *config) </span><span class="cov0" title="0">{
+                c.Host = host
+        }</span>
+}
+
+func WithPort(port int) connOption <span class="cov0" title="0">{
+        return func(c *config) </span><span class="cov0" title="0">{
+                c.Port = port
+        }</span>
+}
+
+func WithAccessToken(token string) connOption <span class="cov0" title="0">{
+        return func(c *config) </span><span class="cov0" title="0">{
+                c.AccessToken = token
+        }</span>
+}
+
+func WithHTTPPath(path string) connOption <span class="cov0" title="0">{
+        return func(c *config) </span><span class="cov0" title="0">{
+                c.HTTPPath = path
+        }</span>
+}
+
+func WithMaxRows(n int) connOption <span class="cov0" title="0">{
+        return func(c *config) </span><span class="cov0" title="0">{
+                c.MaxRows = n
+        }</span>
+}
+
+// This will add a timeout for the server execution.
+// In seconds.
+func WithTimeout(n int) connOption <span class="cov0" title="0">{
+        return func(c *config) </span><span class="cov0" title="0">{
+                c.TimeoutSeconds = n
+        }</span>
+}
+</pre>
+		
+		<pre class="file" id="file4" style="display: none">package sentinel
+
+import (
+        "context"
+        "fmt"
+        "time"
+
+        "github.com/rs/zerolog/log"
+)
+
+const (
+        DEFAULT_TIMEOUT  = 0
+        DEFAULT_INTERVAL = 100 * time.Millisecond
+)
+
+type WatchStatus int
+
+const (
+        WatchSuccess WatchStatus = iota
+        WatchErr
+        WatchExecuting
+        WatchTimeout
+        WatchCanceled
+)
+
+func (s WatchStatus) String() string <span class="cov0" title="0">{
+        switch s </span>{
+        case WatchSuccess:<span class="cov0" title="0">
+                return "SUCCESS"</span>
+        case WatchErr:<span class="cov0" title="0">
+                return "ERROR"</span>
+        case WatchExecuting:<span class="cov0" title="0">
+                return "EXECUTING"</span>
+        case WatchCanceled:<span class="cov0" title="0">
+                return "CANCELED"</span>
+        case WatchTimeout:<span class="cov0" title="0">
+                return "TIMEOUT"</span>
+        }
+        <span class="cov0" title="0">return "&lt;UNSET&gt;"</span>
+}
+
+type Done func() bool
+
+type Sentinel struct {
+        StatusFn   func() (Done, error)
+        OnCancelFn func() (any, error)
+        OnDoneFn   func() (any, error)
+}
+
+// Wait takes care of checking the status of something on a given interval, up to a timeout.
+// If statusFn returns WaitExecuting, the check will continue until status changes.
+// Context cancelation is supported and in that case it will return WaitCanceled status.
+func (s Sentinel) Watch(ctx context.Context, interval, timeout time.Duration) (WatchStatus, any, error) <span class="cov7" title="9">{
+        if s.StatusFn == nil </span><span class="cov1" title="1">{
+                s.StatusFn = func() (Done, error) </span><span class="cov1" title="1">{ return func() bool </span><span class="cov1" title="1">{ return true }</span>, nil }
+        }
+        <span class="cov7" title="9">if timeout == 0 </span><span class="cov4" title="4">{
+                timeout = DEFAULT_TIMEOUT
+        }</span>
+        <span class="cov7" title="9">if interval == 0 </span><span class="cov5" title="5">{
+                interval = DEFAULT_INTERVAL
+        }</span>
+
+        <span class="cov7" title="9">var timeoutTimerCh &lt;-chan time.Time
+        if timeout != 0 </span><span class="cov5" title="5">{
+                timeoutTimer := time.NewTimer(timeout)
+                timeoutTimerCh = timeoutTimer.C
+                defer timeoutTimer.Stop()
+        }</span>
+
+        <span class="cov7" title="9">intervalTimer := time.NewTimer(interval)
+        defer intervalTimer.Stop()
+
+        resCh := make(chan any, 1)
+        errCh := make(chan error, 1)
+        processor := func() </span><span class="cov2" title="2">{
+                ret, err := s.OnDoneFn()
+                if err != nil </span><span class="cov0" title="0">{
+                        errCh &lt;- err
+                }</span> else<span class="cov2" title="2"> {
+                        resCh &lt;- ret
+                }</span>
+        }
+
+        <span class="cov7" title="9">for </span><span class="cov10" title="26">{
+                select </span>{
+                case &lt;-intervalTimer.C:<span class="cov9" title="19">
+                        done, err := s.StatusFn()
+                        log.Debug().Msg("status checked")
+                        if err != nil </span><span class="cov0" title="0">{
+                                return WatchErr, nil, err
+                        }</span>
+                        // resetting it here so statusFn is called again after interval time
+                        <span class="cov9" title="19">_ = intervalTimer.Reset(interval)
+                        if done() </span><span class="cov4" title="4">{
+                                intervalTimer.Stop()
+                                if s.OnDoneFn != nil </span><span class="cov2" title="2">{
+                                        go processor()
+                                }</span> else<span class="cov2" title="2"> {
+                                        return WatchSuccess, nil, nil
+                                }</span>
+                        }
+                case err := &lt;-errCh:<span class="cov0" title="0">
+                        return WatchErr, nil, err</span>
+                case res := &lt;-resCh:<span class="cov2" title="2">
+                        return WatchSuccess, res, nil</span>
+                case &lt;-ctx.Done():<span class="cov4" title="4">
+                        _ = intervalTimer.Stop()
+                        if s.OnCancelFn != nil </span><span class="cov1" title="1">{
+                                ret, err := s.OnCancelFn()
+                                if err == nil </span><span class="cov1" title="1">{
+                                        err = ctx.Err()
+                                }</span>
+                                <span class="cov1" title="1">return WatchCanceled, ret, err</span>
+                        }
+                        <span class="cov4" title="3">return WatchCanceled, nil, ctx.Err()</span>
+                case &lt;-timeoutTimerCh:<span class="cov1" title="1">
+                        _ = intervalTimer.Stop()
+                        log.Info().Msgf("wait timed out after %s", timeout.String())
+                        return WatchTimeout, nil, fmt.Errorf("sentinel timed out")</span>
+                }
+        }
+}
+</pre>
+		
+		<pre class="file" id="file5" style="display: none">package dbsql
+
+import (
+        "os"
+        "runtime"
+
+        "github.com/mattn/go-isatty"
+        "github.com/rs/zerolog"
+        "github.com/rs/zerolog/log"
+)
+
+// ConfigureGlobalLogger will configure zerolog globally. It will
+// enable pretty printing for interactive terminals and json for production.
+func ConfigureGlobalLogger() <span class="cov0" title="0">{
+        // for tty terminal enable pretty logs
+        if isatty.IsTerminal(os.Stdout.Fd()) &amp;&amp; runtime.GOOS != "windows" </span><span class="cov0" title="0">{
+                log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
+        }</span> else<span class="cov0" title="0"> {
+                // UNIX Time is faster and smaller than most timestamps
+                // If you set zerolog.TimeFieldFormat to an empty string,
+                // logs will write with UNIX time.
+                zerolog.TimeFieldFormat = ""
+        }</span>
+}
+</pre>
+		
+		<pre class="file" id="file6" style="display: none">package dbsql
+
+import "database/sql/driver"
+
+type dbsqlResult struct {
+        affectedRows int64
+        insertId     int64
+}
+
+var _ driver.Result = (*dbsqlResult)(nil)
+
+func (res *dbsqlResult) LastInsertId() (int64, error) <span class="cov0" title="0">{
+        return res.insertId, nil
+}</span>
+
+func (res *dbsqlResult) RowsAffected() (int64, error) <span class="cov0" title="0">{
+        return res.affectedRows, nil
+}</span>
+</pre>
+		
+		<pre class="file" id="file7" style="display: none">package dbsql
+
+import (
+        "context"
+        "database/sql"
+        "database/sql/driver"
+        "errors"
+        "io"
+        "reflect"
+        "strings"
+        "time"
+
+        "github.com/databricks/databricks-sql-go/internal/cli_service"
+)
+
+type rows struct {
+        client       *cli_service.TCLIServiceClient
+        opHandle     *cli_service.TOperationHandle
+        tableSchema  *tableSchema
+        pageSize     int64
+        fetchResults *cli_service.TFetchResultsResp
+        rowIndex     int
+}
+
+func (r *rows) Columns() []string <span class="cov0" title="0">{
+        schema, err := r.getTableSchema()
+        if err != nil </span><span class="cov0" title="0">{
+                return []string{}
+        }</span>
+
+        <span class="cov0" title="0">names := make([]string, len(schema.columns))
+        for i := range schema.columns </span><span class="cov0" title="0">{
+                names[i] = schema.columns[i].name
+        }</span>
+
+        <span class="cov0" title="0">return names</span>
+}
+
+func (r *rows) Close() error <span class="cov0" title="0">{
+        req := cli_service.TCloseOperationReq{
+                OperationHandle: r.opHandle,
+        }
+
+        resp, err := r.client.CloseOperation(context.Background(), &amp;req)
+        if err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+        <span class="cov0" title="0">if err := checkStatus(resp.GetStatus()); err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        <span class="cov0" title="0">return nil</span>
+}
+
+func (r *rows) Next(dest []driver.Value) error <span class="cov0" title="0">{
+        if r == nil </span><span class="cov0" title="0">{
+                return nil
+        }</span>
+
+        <span class="cov0" title="0">err := r.fetch()
+        if err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        <span class="cov0" title="0">schema, err := r.getTableSchema()
+        if err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        <span class="cov0" title="0">for i := range dest </span><span class="cov0" title="0">{
+                val, err := value(r.fetchResults.Results.Columns[i], schema.columns[i], r.rowIndex)
+
+                if err != nil </span><span class="cov0" title="0">{
+                        return err
+                }</span>
+
+                <span class="cov0" title="0">dest[i] = val</span>
+        }
+
+        <span class="cov0" title="0">r.rowIndex++
+
+        return nil</span>
+}
+
+func (r *rows) getTableSchema() (*tableSchema, error) <span class="cov0" title="0">{
+        if r.tableSchema == nil </span><span class="cov0" title="0">{
+
+                req := cli_service.TGetResultSetMetadataReq{
+                        OperationHandle: r.opHandle,
+                }
+
+                resp, err := r.client.GetResultSetMetadata(context.Background(), &amp;req)
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, err
+                }</span>
+
+                <span class="cov0" title="0">if err := checkStatus(resp.GetStatus()); err != nil </span><span class="cov0" title="0">{
+                        return nil, err
+                }</span>
+
+                <span class="cov0" title="0">schema := tableSchema{}
+
+                if resp.IsSetSchema() </span><span class="cov0" title="0">{
+                        tColumns := resp.Schema.GetColumns()
+                        schema.columns = make([]*colDesc, len(tColumns))
+                        for i, desc := range resp.Schema.Columns </span><span class="cov0" title="0">{
+                                entry := desc.TypeDesc.Types[0].PrimitiveEntry
+                                dbtype := strings.TrimSuffix(entry.Type.String(), "_TYPE")
+                                schema.columns[i] = &amp;colDesc{
+                                        name:             desc.ColumnName,
+                                        databaseTypeName: dbtype,
+                                        scanType:         typeOf(entry),
+                                }
+                        }</span>
+
+                }
+
+                <span class="cov0" title="0">r.tableSchema = &amp;schema</span>
+        }
+
+        <span class="cov0" title="0">return r.tableSchema, nil</span>
+}
+
+func (r *rows) fetch() error <span class="cov0" title="0">{
+        if r.fetchResults != nil </span><span class="cov0" title="0">{
+                l := length(r.fetchResults.Results)
+                if l == 0 &amp;&amp; !*r.fetchResults.HasMoreRows </span><span class="cov0" title="0">{
+                        return io.EOF
+                }</span> else<span class="cov0" title="0"> if r.rowIndex &lt; l </span><span class="cov0" title="0">{
+                        return nil
+                }</span>
+        }
+
+        <span class="cov0" title="0">r.rowIndex = 0
+        r.fetchResults = nil
+
+        req := cli_service.TFetchResultsReq{
+                OperationHandle: r.opHandle,
+                MaxRows:         r.pageSize,
+        }
+
+        fetchResult, err := r.client.FetchResults(context.Background(), &amp;req)
+        if err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        <span class="cov0" title="0">if err := checkStatus(fetchResult.GetStatus()); err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        <span class="cov0" title="0">if length(fetchResult.GetResults()) == 0 </span><span class="cov0" title="0">{
+                return io.EOF
+        }</span>
+
+        <span class="cov0" title="0">r.fetchResults = fetchResult
+
+        return nil</span>
+}
+
+type tableSchema struct {
+        columns []*colDesc
+}
+
+type colDesc struct {
+        name string
+
+        databaseTypeName string
+        scanType         reflect.Type
+
+        // columnTypeNullable  bool
+        // columnTypeLength    int64
+        // columnTypePrecision int64
+        // columnTypeScale     int64
+}
+
+func checkStatus(status *cli_service.TStatus) error <span class="cov0" title="0">{
+        if status.StatusCode == cli_service.TStatusCode_ERROR_STATUS </span><span class="cov0" title="0">{
+                return errors.New(status.GetErrorMessage())
+        }</span>
+
+        <span class="cov0" title="0">if status.StatusCode == cli_service.TStatusCode_INVALID_HANDLE_STATUS </span><span class="cov0" title="0">{
+                return errors.New("thrift: invalid handle")
+        }</span>
+
+        <span class="cov0" title="0">return nil</span>
+}
+
+var (
+        dataTypeNull     = reflect.TypeOf(nil)
+        dataTypeBoolean  = reflect.TypeOf(true)
+        dataTypeFloat32  = reflect.TypeOf(float32(0))
+        dataTypeFloat64  = reflect.TypeOf(float64(0))
+        dataTypeInt8     = reflect.TypeOf(int8(0))
+        dataTypeInt16    = reflect.TypeOf(int16(0))
+        dataTypeInt32    = reflect.TypeOf(int32(0))
+        dataTypeInt64    = reflect.TypeOf(int64(0))
+        dataTypeString   = reflect.TypeOf("")
+        dataTypeDateTime = reflect.TypeOf(time.Time{})
+        dataTypeRawBytes = reflect.TypeOf(sql.RawBytes{})
+        dataTypeUnknown  = reflect.TypeOf(new(interface{}))
+)
+
+func typeOf(entry *cli_service.TPrimitiveTypeEntry) reflect.Type <span class="cov0" title="0">{
+        switch entry.Type </span>{
+        case cli_service.TTypeId_BOOLEAN_TYPE:<span class="cov0" title="0">
+                return dataTypeBoolean</span>
+        case cli_service.TTypeId_TINYINT_TYPE:<span class="cov0" title="0">
+                return dataTypeInt8</span>
+        case cli_service.TTypeId_SMALLINT_TYPE:<span class="cov0" title="0">
+                return dataTypeInt16</span>
+        case cli_service.TTypeId_INT_TYPE:<span class="cov0" title="0">
+                return dataTypeInt32</span>
+        case cli_service.TTypeId_BIGINT_TYPE:<span class="cov0" title="0">
+                return dataTypeInt64</span>
+        case cli_service.TTypeId_FLOAT_TYPE:<span class="cov0" title="0">
+                return dataTypeFloat32</span>
+        case cli_service.TTypeId_DOUBLE_TYPE:<span class="cov0" title="0">
+                return dataTypeFloat64</span>
+        case cli_service.TTypeId_NULL_TYPE:<span class="cov0" title="0">
+                return dataTypeNull</span>
+        case cli_service.TTypeId_STRING_TYPE:<span class="cov0" title="0">
+                return dataTypeString</span>
+        case cli_service.TTypeId_CHAR_TYPE:<span class="cov0" title="0">
+                return dataTypeString</span>
+        case cli_service.TTypeId_VARCHAR_TYPE:<span class="cov0" title="0">
+                return dataTypeString</span>
+        case cli_service.TTypeId_DATE_TYPE, cli_service.TTypeId_TIMESTAMP_TYPE:<span class="cov0" title="0">
+                return dataTypeDateTime</span>
+        case cli_service.TTypeId_DECIMAL_TYPE, cli_service.TTypeId_BINARY_TYPE, cli_service.TTypeId_ARRAY_TYPE,
+                cli_service.TTypeId_STRUCT_TYPE, cli_service.TTypeId_MAP_TYPE, cli_service.TTypeId_UNION_TYPE:<span class="cov0" title="0">
+                return dataTypeRawBytes</span>
+        case cli_service.TTypeId_USER_DEFINED_TYPE:<span class="cov0" title="0">
+                return dataTypeUnknown</span>
+        default:<span class="cov0" title="0">
+                return dataTypeUnknown</span>
+        }
+}
+
+const (
+        // TimestampFormat is JDBC compliant timestamp format
+        TimestampFormat = "2006-01-02 15:04:05.999999999"
+)
+
+func value(tColumn *cli_service.TColumn, cd *colDesc, rowNum int) (val interface{}, err error) <span class="cov0" title="0">{
+
+        if tVal := tColumn.GetStringVal(); tVal != nil &amp;&amp; !isNull(tVal.Nulls, rowNum) </span><span class="cov0" title="0">{
+                val = tVal.Values[rowNum]
+                if cd.databaseTypeName == "TIMESTAMP" || cd.databaseTypeName == "DATETIME" </span><span class="cov0" title="0">{
+                        t, err := time.Parse(TimestampFormat, tColumn.StringVal.Values[rowNum])
+                        if err == nil </span><span class="cov0" title="0">{
+                                val = t
+                        }</span>
+                }
+        } else<span class="cov0" title="0"> if tVal := tColumn.GetByteVal(); tVal != nil &amp;&amp; !isNull(tVal.Nulls, rowNum) </span><span class="cov0" title="0">{
+                val = tVal.Values[rowNum]
+        }</span> else<span class="cov0" title="0"> if tVal := tColumn.GetI16Val(); tVal != nil &amp;&amp; !isNull(tVal.Nulls, rowNum) </span><span class="cov0" title="0">{
+                val = tVal.Values[rowNum]
+        }</span> else<span class="cov0" title="0"> if tVal := tColumn.GetI32Val(); tVal != nil &amp;&amp; !isNull(tVal.Nulls, rowNum) </span><span class="cov0" title="0">{
+                val = tVal.Values[rowNum]
+        }</span> else<span class="cov0" title="0"> if tVal := tColumn.GetI64Val(); tVal != nil &amp;&amp; !isNull(tVal.Nulls, rowNum) </span><span class="cov0" title="0">{
+                val = tVal.Values[rowNum]
+        }</span> else<span class="cov0" title="0"> if tVal := tColumn.GetBoolVal(); tVal != nil &amp;&amp; !isNull(tVal.Nulls, rowNum) </span><span class="cov0" title="0">{
+                val = tVal.Values[rowNum]
+        }</span> else<span class="cov0" title="0"> if tVal := tColumn.GetDoubleVal(); tVal != nil &amp;&amp; !isNull(tVal.Nulls, rowNum) </span><span class="cov0" title="0">{
+                val = tVal.Values[rowNum]
+        }</span>
+
+        <span class="cov0" title="0">return val, err</span>
+}
+
+func isNull(nulls []byte, position int) bool <span class="cov0" title="0">{
+        index := position / 8
+        if len(nulls) &gt; index </span><span class="cov0" title="0">{
+                b := nulls[index]
+                return (b &amp; (1 &lt;&lt; (uint)(position%8))) != 0
+        }</span>
+        <span class="cov0" title="0">return false</span>
+}
+
+func length(rs *cli_service.TRowSet) int <span class="cov0" title="0">{
+        if rs == nil </span><span class="cov0" title="0">{
+                return 0
+        }</span>
+        <span class="cov0" title="0">for _, col := range rs.Columns </span><span class="cov0" title="0">{
+                if col.BoolVal != nil </span><span class="cov0" title="0">{
+                        return len(col.BoolVal.Values)
+                }</span>
+                <span class="cov0" title="0">if col.ByteVal != nil </span><span class="cov0" title="0">{
+                        return len(col.ByteVal.Values)
+                }</span>
+                <span class="cov0" title="0">if col.I16Val != nil </span><span class="cov0" title="0">{
+                        return len(col.I16Val.Values)
+                }</span>
+                <span class="cov0" title="0">if col.I32Val != nil </span><span class="cov0" title="0">{
+                        return len(col.I32Val.Values)
+                }</span>
+                <span class="cov0" title="0">if col.I32Val != nil </span><span class="cov0" title="0">{
+                        return len(col.I32Val.Values)
+                }</span>
+                <span class="cov0" title="0">if col.I64Val != nil </span><span class="cov0" title="0">{
+                        return len(col.I64Val.Values)
+                }</span>
+                <span class="cov0" title="0">if col.StringVal != nil </span><span class="cov0" title="0">{
+                        return len(col.StringVal.Values)
+                }</span>
+                <span class="cov0" title="0">if col.DoubleVal != nil </span><span class="cov0" title="0">{
+                        return len(col.DoubleVal.Values)
+                }</span>
+        }
+        <span class="cov0" title="0">return 0</span>
+}
+</pre>
+		
+		<pre class="file" id="file8" style="display: none">package dbsql
+
+import (
+        "context"
+        "database/sql/driver"
+)
+
+type dbsqlStmt struct {
+}
+
+func (s *dbsqlStmt) Close() error <span class="cov0" title="0">{
+        return ErrNotImplemented
+}</span>
+
+func (s *dbsqlStmt) NumInput() int <span class="cov0" title="0">{
+        return 0
+}</span>
+
+// Deprecated: Use StmtExecContext instead.
+func (s *dbsqlStmt) Exec(args []driver.Value) (driver.Result, error) <span class="cov0" title="0">{
+        return nil, ErrNotImplemented
+}</span>
+
+// Deprecated: Use StmtQueryContext instead.
+func (s *dbsqlStmt) Query(args []driver.Value) (driver.Rows, error) <span class="cov0" title="0">{
+        return nil, ErrNotImplemented
+}</span>
+
+// ExecContext executes a query that doesn't return rows, such
+// as an INSERT or UPDATE.
+//
+// ExecContext must honor the context timeout and return when it is canceled.
+func (s *dbsqlStmt) ExecContext(ctx context.Context, args []driver.NamedValue) (driver.Result, error) <span class="cov0" title="0">{
+        return nil, ErrNotImplemented
+}</span>
+
+// QueryContext executes a query that may return rows, such as a
+// SELECT.
+//
+// QueryContext must honor the context timeout and return when it is canceled.
+func (s *dbsqlStmt) QueryContext(ctx context.Context, args []driver.NamedValue) (driver.Rows, error) <span class="cov0" title="0">{
+        return nil, ErrNotImplemented
+}</span>
+</pre>
+		
+		<pre class="file" id="file9" style="display: none">package dbsql
+
+import (
+        "context"
+        "fmt"
+        "net/http"
+        "time"
+
+        "github.com/apache/thrift/lib/go/thrift"
+        "github.com/databricks/databricks-sql-go/internal/cli_service"
+)
+
+func initThriftTestServer(cfg *config, handler cli_service.TCLIService) *http.Server <span class="cov0" title="0">{
+
+        endpoint := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
+        tcfg := &amp;thrift.TConfiguration{
+                TLSConfig: cfg.TLSConfig,
+        }
+
+        var protocolFactory thrift.TProtocolFactory
+        switch cfg.Thrift.Protocol </span>{
+        case "compact":<span class="cov0" title="0">
+                protocolFactory = thrift.NewTCompactProtocolFactoryConf(tcfg)</span>
+        case "simplejson":<span class="cov0" title="0">
+                protocolFactory = thrift.NewTSimpleJSONProtocolFactoryConf(tcfg)</span>
+        case "json":<span class="cov0" title="0">
+                protocolFactory = thrift.NewTJSONProtocolFactory()</span>
+        case "binary":<span class="cov0" title="0">
+                protocolFactory = thrift.NewTBinaryProtocolFactoryConf(tcfg)</span>
+        case "header":<span class="cov0" title="0">
+                protocolFactory = thrift.NewTHeaderProtocolFactoryConf(tcfg)</span>
+        default:<span class="cov0" title="0">
+                panic(fmt.Errorf("invalid protocol specified %s", cfg.Thrift.Protocol))</span>
+        }
+        <span class="cov0" title="0">if cfg.Thrift.DebugClientProtocol </span><span class="cov0" title="0">{
+                protocolFactory = thrift.NewTDebugProtocolFactoryWithLogger(protocolFactory, "client:", thrift.StdLogger(nil))
+        }</span>
+
+        <span class="cov0" title="0">processor := cli_service.NewTCLIServiceProcessor(handler)
+
+        http.HandleFunc("/", thrift.NewThriftHandlerFunc(processor, protocolFactory, protocolFactory))
+
+        srv := &amp;http.Server{
+                Addr:              endpoint,
+                ReadHeaderTimeout: 1 * time.Minute,
+        }
+        go func() </span><span class="cov0" title="0">{
+                // always returns error. ErrServerClosed on graceful close
+                if err := srv.ListenAndServe(); err != http.ErrServerClosed </span><span class="cov0" title="0">{
+                        // unexpected error. port in use?
+                        panic(fmt.Sprintf("ListenAndServe(): %v", err))</span>
+                }
+        }()
+        <span class="cov0" title="0">return srv</span>
+}
+
+type serverHandler struct {
+        // this will force the interface implementation
+        cli_service.TCLIService
+        openSession        func(ctx context.Context, req *cli_service.TOpenSessionReq) (*cli_service.TOpenSessionResp, error)
+        executeStatement   func(ctx context.Context, req *cli_service.TExecuteStatementReq) (*cli_service.TExecuteStatementResp, error)
+        fetchResults       func(ctx context.Context, req *cli_service.TFetchResultsReq) (_r *cli_service.TFetchResultsResp, _err error)
+        getOperationStatus func(ctx context.Context, req *cli_service.TGetOperationStatusReq) (*cli_service.TGetOperationStatusResp, error)
+        cancelOperation    func(ctx context.Context, req *cli_service.TCancelOperationReq) (*cli_service.TCancelOperationResp, error)
+}
+
+func (h *serverHandler) OpenSession(ctx context.Context, req *cli_service.TOpenSessionReq) (*cli_service.TOpenSessionResp, error) <span class="cov0" title="0">{
+        if h.openSession != nil </span><span class="cov0" title="0">{
+                return h.openSession(ctx, req)
+        }</span>
+        <span class="cov0" title="0">return &amp;cli_service.TOpenSessionResp{
+                Status: &amp;cli_service.TStatus{
+                        StatusCode: cli_service.TStatusCode_SUCCESS_STATUS,
+                },
+                SessionHandle: &amp;cli_service.TSessionHandle{
+                        SessionId: &amp;cli_service.THandleIdentifier{
+                                GUID:   []byte("1"),
+                                Secret: []byte("a"),
+                        },
+                },
+        }, nil</span>
+}
+
+func (h *serverHandler) ExecuteStatement(ctx context.Context, req *cli_service.TExecuteStatementReq) (*cli_service.TExecuteStatementResp, error) <span class="cov0" title="0">{
+        if h.executeStatement != nil </span><span class="cov0" title="0">{
+                return h.executeStatement(ctx, req)
+        }</span>
+        <span class="cov0" title="0">return &amp;cli_service.TExecuteStatementResp{
+                Status: &amp;cli_service.TStatus{
+                        StatusCode: cli_service.TStatusCode_SUCCESS_STATUS,
+                },
+                OperationHandle: &amp;cli_service.TOperationHandle{
+                        OperationId: &amp;cli_service.THandleIdentifier{
+                                GUID:   []byte("2"),
+                                Secret: []byte("b"),
+                        },
+                },
+        }, nil</span>
+}
+
+func (h *serverHandler) FetchResults(ctx context.Context, req *cli_service.TFetchResultsReq) (*cli_service.TFetchResultsResp, error) <span class="cov0" title="0">{
+        if h.fetchResults != nil </span><span class="cov0" title="0">{
+                return h.fetchResults(ctx, req)
+        }</span>
+        <span class="cov0" title="0">return &amp;cli_service.TFetchResultsResp{
+                Status: &amp;cli_service.TStatus{
+                        StatusCode: cli_service.TStatusCode_SUCCESS_STATUS,
+                },
+        }, nil</span>
+}
+
+func (h *serverHandler) GetOperationStatus(ctx context.Context, req *cli_service.TGetOperationStatusReq) (*cli_service.TGetOperationStatusResp, error) <span class="cov0" title="0">{
+        if h.getOperationStatus != nil </span><span class="cov0" title="0">{
+                return h.getOperationStatus(ctx, req)
+        }</span>
+        <span class="cov0" title="0">return &amp;cli_service.TGetOperationStatusResp{
+                Status: &amp;cli_service.TStatus{
+                        StatusCode: cli_service.TStatusCode_SUCCESS_STATUS,
+                },
+        }, nil</span>
+}
+
+func (h *serverHandler) CancelOperation(ctx context.Context, req *cli_service.TCancelOperationReq) (*cli_service.TCancelOperationResp, error) <span class="cov0" title="0">{
+        if h.cancelOperation != nil </span><span class="cov0" title="0">{
+                return h.cancelOperation(ctx, req)
+        }</span>
+        <span class="cov0" title="0">return &amp;cli_service.TCancelOperationResp{
+                Status: &amp;cli_service.TStatus{
+                        StatusCode: cli_service.TStatusCode_SUCCESS_STATUS,
+                },
+        }, nil</span>
+}
+</pre>
+		
+		</div>
+	</body>
+	<script>
+	(function() {
+		var files = document.getElementById('files');
+		var visible;
+		files.addEventListener('change', onChange, false);
+		function select(part) {
+			if (visible)
+				visible.style.display = 'none';
+			visible = document.getElementById(part);
+			if (!visible)
+				return;
+			files.value = part;
+			visible.style.display = 'block';
+			location.hash = part;
+		}
+		function onChange() {
+			select(files.value);
+			window.scrollTo(0, 0);
+		}
+		if (location.hash != "") {
+			select(location.hash.substr(1));
+		}
+		if (!visible) {
+			select("file0");
+		}
+	})();
+	</script>
+</html>

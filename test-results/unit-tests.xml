@@ -1,26 +1,36 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuites tests="10" failures="0" errors="1" time="0.394032">
-	<testsuite tests="0" failures="0" time="0.000000" name="github.com/databricks/databricks-sql-go/cli_service" timestamp="2022-11-03T10:04:55-07:00">
+<testsuites tests="13" failures="0" errors="0" time="0.439371">
+	<testsuite tests="3" failures="0" time="0.000000" name="github.com/databricks/databricks-sql-go" timestamp="2022-11-03T11:55:14-07:00">
+		<properties>
+			<property name="go.version" value="go1.19.3 darwin/arm64"></property>
+		</properties>
+		<testcase classname="github.com/databricks/databricks-sql-go" name="TestCancelOperation" time="0.000000">
+			<skipped message="=== RUN   TestCancelOperation&#xA;    driver_e2e_test.go:21: not ready&#xA;--- SKIP: TestCancelOperation (0.00s)&#xA;"></skipped>
+		</testcase>
+		<testcase classname="github.com/databricks/databricks-sql-go" name="TestParseConfig/test_1" time="0.000000"></testcase>
+		<testcase classname="github.com/databricks/databricks-sql-go" name="TestParseConfig" time="0.000000"></testcase>
+	</testsuite>
+	<testsuite tests="0" failures="0" time="0.000000" name="github.com/databricks/databricks-sql-go/examples/queryrow" timestamp="2022-11-03T11:55:14-07:00">
 		<properties>
 			<property name="go.version" value="go1.19.3 darwin/arm64"></property>
 		</properties>
 	</testsuite>
-	<testsuite tests="0" failures="0" time="0.000000" name="github.com/databricks/databricks-sql-go/examples/queryrow" timestamp="2022-11-03T10:04:55-07:00">
+	<testsuite tests="0" failures="0" time="0.000000" name="github.com/databricks/databricks-sql-go/examples/queryrows" timestamp="2022-11-03T11:55:14-07:00">
 		<properties>
 			<property name="go.version" value="go1.19.3 darwin/arm64"></property>
 		</properties>
 	</testsuite>
-	<testsuite tests="0" failures="0" time="0.000000" name="github.com/databricks/databricks-sql-go/examples/queryrows" timestamp="2022-11-03T10:04:55-07:00">
+	<testsuite tests="0" failures="0" time="0.000000" name="github.com/databricks/databricks-sql-go/examples/timeout" timestamp="2022-11-03T11:55:14-07:00">
 		<properties>
 			<property name="go.version" value="go1.19.3 darwin/arm64"></property>
 		</properties>
 	</testsuite>
-	<testsuite tests="0" failures="0" time="0.000000" name="github.com/databricks/databricks-sql-go/examples/timeout" timestamp="2022-11-03T10:04:55-07:00">
+	<testsuite tests="0" failures="0" time="0.000000" name="github.com/databricks/databricks-sql-go/internal/cli_service" timestamp="2022-11-03T11:55:14-07:00">
 		<properties>
 			<property name="go.version" value="go1.19.3 darwin/arm64"></property>
 		</properties>
 	</testsuite>
-	<testsuite tests="10" failures="0" time="0.001000" name="github.com/databricks/databricks-sql-go/internal/utils" timestamp="2022-11-03T10:04:55-07:00">
+	<testsuite tests="10" failures="0" time="0.000000" name="github.com/databricks/databricks-sql-go/internal/utils" timestamp="2022-11-03T11:55:14-07:00">
 		<properties>
 			<property name="go.version" value="go1.19.3 darwin/arm64"></property>
 		</properties>

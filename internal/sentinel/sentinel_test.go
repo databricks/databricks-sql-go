@@ -1,4 +1,4 @@
-package utils
+package sentinel
 
 import (
 	"context"
@@ -95,9 +95,10 @@ func TestWatch(t *testing.T) {
 		s := Sentinel{
 			StatusFn: statusFn,
 		}
-		status, res, err := s.Watch(ctx, 0, 15*time.Second)
+		status, res, err := s.Watch(ctx, 10*time.Millisecond, 15*time.Second)
 		assert.Equal(t, WatchCanceled, status)
 		assert.Nil(t, res)
+		assert.Greater(t, statusFnCalls, 1)
 		assert.Error(t, err)
 	})
 	t.Run("it should cancel with canceled context", func(t *testing.T) {
@@ -134,7 +135,7 @@ func TestWatch(t *testing.T) {
 		}
 		s := Sentinel{
 			StatusFn: statusFn,
-			CancelFn: func() (any, error) {
+			OnCancelFn: func() (any, error) {
 				cancelFnCalls++
 				return nil, nil
 			},
@@ -156,11 +157,11 @@ func TestWatch(t *testing.T) {
 					return true
 				}, nil
 			},
-			CancelFn: func() (any, error) {
+			OnCancelFn: func() (any, error) {
 				cancelFnCalls++
 				return nil, nil
 			},
-			ProcessFn: func() (any, error) {
+			OnDoneFn: func() (any, error) {
 				return "done", nil
 			},
 		}
@@ -176,7 +177,7 @@ func TestWatch(t *testing.T) {
 		cancelFnCalls := 0
 
 		s := Sentinel{
-			ProcessFn: func() (any, error) {
+			OnDoneFn: func() (any, error) {
 				time.Sleep(50 * time.Millisecond)
 				return "done", nil
 			},

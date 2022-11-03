@@ -44,10 +44,6 @@ bin/gotestsum: go.mod go.sum
 .PHONY: tools
 tools: bin/golangci-lint bin/gotestsum  ## Build the development tools
 
-.PHONY: gen
-gen:  ## Generate code for GraphQL API
-	$(GO) generate
-
 .PHONY: fmt
 fmt:  ## Format the go code.
 	gofmt -w -s .

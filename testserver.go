@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/apache/thrift/lib/go/thrift"
-	"github.com/databricks/databricks-sql-go/cli_service"
+	"github.com/databricks/databricks-sql-go/internal/cli_service"
 )
 
 func initThriftTestServer(cfg *config, handler cli_service.TCLIService) *http.Server {

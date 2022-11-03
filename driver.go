@@ -50,37 +50,31 @@ func NewConnector(options ...connOption) (driver.Connector, error) {
 	return &connector{cfg}, nil
 }
 
-func WithServerHostname(host string) func(*config) {
+func WithServerHostname(host string) connOption {
 	return func(c *config) {
 		c.Host = host
 	}
 }
 
-func WithPort(port int) func(*config) {
+func WithPort(port int) connOption {
 	return func(c *config) {
 		c.Port = port
 	}
 }
 
-func WithProtocol(protocol string) func(*config) {
-	return func(c *config) {
-		c.Protocol = protocol
-	}
-}
-
-func WithAccessToken(token string) func(*config) {
+func WithAccessToken(token string) connOption {
 	return func(c *config) {
 		c.AccessToken = token
 	}
 }
 
-func WithHTTPPath(path string) func(*config) {
+func WithHTTPPath(path string) connOption {
 	return func(c *config) {
 		c.HTTPPath = path
 	}
 }
 
-func WithMaxRows(n int) func(*config) {
+func WithMaxRows(n int) connOption {
 	return func(c *config) {
 		c.MaxRows = n
 	}
@@ -88,7 +82,7 @@ func WithMaxRows(n int) func(*config) {
 
 // This will add a timeout for the server execution.
 // In seconds.
-func WithTimeout(n int) func(*config) {
+func WithTimeout(n int) connOption {
 	return func(c *config) {
 		c.TimeoutSeconds = n
 	}

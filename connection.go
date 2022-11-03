@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/databricks/databricks-sql-go/cli_service"
-	"github.com/databricks/databricks-sql-go/internal/utils"
+	"github.com/databricks/databricks-sql-go/internal/cli_service"
+	"github.com/databricks/databricks-sql-go/internal/sentinel"
 )
 
 type conn struct {
@@ -19,6 +19,7 @@ type conn struct {
 func (c *conn) Prepare(query string) (driver.Stmt, error) {
 	return nil, ErrNotImplemented
 }
+
 func (c *conn) PrepareContext(ctx context.Context, query string) (driver.Stmt, error) {
 	return &dbsqlStmt{}, ErrNotImplemented
 }
@@ -30,6 +31,7 @@ func (c *conn) Close() error {
 func (c *conn) Begin() (driver.Tx, error) {
 	return nil, ErrNotImplemented
 }
+
 func (c *conn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, error) {
 	return nil, ErrNotImplemented
 }
@@ -68,8 +70,8 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 	var resultSet *cli_service.TFetchResultsResp
 
 	// at any point in time that the context is done we must cancel and return
-	querySentinel := utils.Sentinel{
-		ProcessFn: func() (any, error) {
+	querySentinel := sentinel.Sentinel{
+		OnDoneFn: func() (any, error) {
 			req := cli_service.TExecuteStatementReq{
 				SessionHandle: c.session.SessionHandle,
 				Statement:     query,
@@ -104,19 +106,17 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 
 			// if the query took too long, we'll watch the operation until it completes
 			// at any point in time that the context is done we must cancel and return
-			pollSentinel := utils.Sentinel{
-				ProcessFn: func() (any, error) {
-					return nil, err
-				},
-				StatusFn: func() (utils.Done, error) {
+			pollSentinel := sentinel.Sentinel{
+				StatusFn: func() (sentinel.Done, error) {
 					resp, err := c.client.GetOperationStatus(ctx, &cli_service.TGetOperationStatusReq{
 						OperationHandle: opHandle,
 					})
 					return func() bool {
-						return resp.GetOperationState() == cli_service.TOperationState_FINISHED_STATE
+						// which other states?
+						return resp.GetOperationState() != cli_service.TOperationState_RUNNING_STATE
 					}, err
 				},
-				CancelFn: func() (any, error) {
+				OnCancelFn: func() (any, error) {
 					ret, err := c.client.CancelOperation(context.Background(), &cli_service.TCancelOperationReq{
 						OperationHandle: opHandle,
 					})
@@ -128,6 +128,9 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 				return nil, err
 			}
 
+		} else {
+			// TODO
+			panic("operation in weird state")
 		}
 
 	} else {
@@ -143,6 +146,7 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 	return &rows, nil
 }
 
+var _ driver.Conn = (*conn)(nil)
 var _ driver.Pinger = (*conn)(nil)
 var _ driver.SessionResetter = (*conn)(nil)
 var _ driver.Validator = (*conn)(nil)
