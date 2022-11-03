@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites tests="10" failures="0" errors="1" time="0.394032">
+	<testsuite tests="0" failures="0" time="0.000000" name="github.com/databricks/databricks-sql-go/cli_service" timestamp="2022-11-03T10:04:55-07:00">
+		<properties>
+			<property name="go.version" value="go1.19.3 darwin/arm64"></property>
+		</properties>
+	</testsuite>
+	<testsuite tests="0" failures="0" time="0.000000" name="github.com/databricks/databricks-sql-go/examples/queryrow" timestamp="2022-11-03T10:04:55-07:00">
+		<properties>
+			<property name="go.version" value="go1.19.3 darwin/arm64"></property>
+		</properties>
+	</testsuite>
+	<testsuite tests="0" failures="0" time="0.000000" name="github.com/databricks/databricks-sql-go/examples/queryrows" timestamp="2022-11-03T10:04:55-07:00">
+		<properties>
+			<property name="go.version" value="go1.19.3 darwin/arm64"></property>
+		</properties>
+	</testsuite>
+	<testsuite tests="0" failures="0" time="0.000000" name="github.com/databricks/databricks-sql-go/examples/timeout" timestamp="2022-11-03T10:04:55-07:00">
+		<properties>
+			<property name="go.version" value="go1.19.3 darwin/arm64"></property>
+		</properties>
+	</testsuite>
+	<testsuite tests="10" failures="0" time="0.001000" name="github.com/databricks/databricks-sql-go/internal/utils" timestamp="2022-11-03T10:04:55-07:00">
+		<properties>
+			<property name="go.version" value="go1.19.3 darwin/arm64"></property>
+		</properties>
+		<testcase classname="github.com/databricks/databricks-sql-go/internal/utils" name="TestWatch/it_should_return_immediatly" time="0.100000"></testcase>
+		<testcase classname="github.com/databricks/databricks-sql-go/internal/utils" name="TestWatch/it_should_deal_with_long_statusFn" time="1.050000"></testcase>
+		<testcase classname="github.com/databricks/databricks-sql-go/internal/utils" name="TestWatch/it_should_timeout" time="0.500000"></testcase>
+		<testcase classname="github.com/databricks/databricks-sql-go/internal/utils" name="TestWatch/it_should_cancel_with_context_timeout" time="0.100000"></testcase>
+		<testcase classname="github.com/databricks/databricks-sql-go/internal/utils" name="TestWatch/it_should_cancel_with_context_cancelation" time="0.100000"></testcase>
+		<testcase classname="github.com/databricks/databricks-sql-go/internal/utils" name="TestWatch/it_should_cancel_with_canceled_context" time="0.000000"></testcase>
+		<testcase classname="github.com/databricks/databricks-sql-go/internal/utils" name="TestWatch/it_should_call_cancelFn_upon_cancelation" time="0.100000"></testcase>
+		<testcase classname="github.com/databricks/databricks-sql-go/internal/utils" name="TestWatch/it_should_call_processFn_upon_Done" time="0.100000"></testcase>
+		<testcase classname="github.com/databricks/databricks-sql-go/internal/utils" name="TestWatch/it_should_call_processFn_upon_Done_even_when_no_statusFn" time="0.150000"></testcase>
+		<testcase classname="github.com/databricks/databricks-sql-go/internal/utils" name="TestWatch" time="2.210000"></testcase>
+	</testsuite>
+</testsuites>

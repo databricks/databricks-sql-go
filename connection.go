@@ -4,120 +4,149 @@ import (
 	"context"
 	"database/sql/driver"
 	"fmt"
-	"log"
 	"time"
 
-	"github.com/apache/thrift/lib/go/thrift"
-	"github.com/databricks/databricks-sql-go/hive"
+	"github.com/databricks/databricks-sql-go/cli_service"
+	"github.com/databricks/databricks-sql-go/internal/utils"
 )
 
-// Connection
-type Conn struct {
-	t       thrift.TTransport
-	session *hive.Session
-	client  *hive.Client
-	log     *log.Logger
+type conn struct {
+	cfg     *config
+	client  *cli_service.TCLIServiceClient
+	session *cli_service.TOpenSessionResp
 }
 
-func (c *Conn) Ping(ctx context.Context) error {
-	session, err := c.OpenSession(ctx)
+func (c *conn) Prepare(query string) (driver.Stmt, error) {
+	return nil, ErrNotImplemented
+}
+func (c *conn) PrepareContext(ctx context.Context, query string) (driver.Stmt, error) {
+	return &dbsqlStmt{}, ErrNotImplemented
+}
+
+func (c *conn) Close() error {
+	return ErrNotImplemented
+}
+
+func (c *conn) Begin() (driver.Tx, error) {
+	return nil, ErrNotImplemented
+}
+func (c *conn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, error) {
+	return nil, ErrNotImplemented
+}
+
+func (c *conn) Ping(ctx context.Context) error {
+	return ErrNotImplemented
+}
+
+func (c *conn) ResetSession(ctx context.Context) error {
+	return ErrNotImplemented
+}
+
+func (c *conn) IsValid() bool {
+	return true
+}
+
+func (c *conn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
+	req := cli_service.TExecuteStatementReq{
+		SessionHandle: c.session.SessionHandle,
+		Statement:     query,
+		QueryTimeout:  int64(c.cfg.TimeoutSeconds),
+	}
+	resp, err := c.client.ExecuteStatement(ctx, &req)
 	if err != nil {
-		return err
+		return nil, err
+	} else {
+		fmt.Println(resp)
 	}
 
-	if err := session.Ping(ctx); err != nil {
-		return err
+	return nil, ErrNotImplemented
+}
+
+func (c *conn) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
+	// first we try to get the results synchronously.
+
+	var resultSet *cli_service.TFetchResultsResp
+
+	// at any point in time that the context is done we must cancel and return
+	querySentinel := utils.Sentinel{
+		ProcessFn: func() (any, error) {
+			req := cli_service.TExecuteStatementReq{
+				SessionHandle: c.session.SessionHandle,
+				Statement:     query,
+				RunAsync:      true,
+				QueryTimeout:  int64(c.cfg.TimeoutSeconds),
+				// this is specific for databricks. It shortcuts server roundtrips
+				GetDirectResults: &cli_service.TSparkGetDirectResults{
+					MaxRows: int64(c.cfg.MaxRows),
+				},
+				// CanReadArrowResult_: &t,
+				// CanDecompressLZ4Result_: &f,
+				// CanDownloadResult_: &t,
+			}
+			resp, err := c.client.ExecuteStatement(ctx, &req)
+			return resp, err
+		},
 	}
 
-	return nil
-}
+	_, res, err := querySentinel.Watch(ctx, 0, 0)
 
-// CheckNamedValue is called before passing arguments to the driver
-// and is called in place of any ColumnConverter. CheckNamedValue must do type
-// validation and conversion as appropriate for the driver.
-func (c *Conn) CheckNamedValue(val *driver.NamedValue) error {
-	t, ok := val.Value.(time.Time)
-	if ok {
-		val.Value = t.Format(hive.TimestampFormat)
-		return nil
-	}
-	return driver.ErrSkip
-}
-
-// Prepare returns prepared statement
-func (c *Conn) Prepare(query string) (driver.Stmt, error) {
-	return c.PrepareContext(context.Background(), query)
-}
-
-// PrepareContext returns prepared statement
-func (c *Conn) PrepareContext(ctx context.Context, query string) (driver.Stmt, error) {
-	return &Stmt{
-		conn: c,
-		stmt: template(query),
-	}, nil
-}
-
-// QueryContext executes a query that may return rows
-func (c *Conn) QueryContext(ctx context.Context, q string, args []driver.NamedValue) (driver.Rows, error) {
-	session, err := c.OpenSession(ctx)
 	if err != nil {
 		return nil, err
 	}
+	exStmtResp := res.(*cli_service.TExecuteStatementResp)
+	// hold on to the operation handle
+	opHandle := exStmtResp.OperationHandle
 
-	tmpl := template(q)
-	stmt, err := statement(tmpl, args)
-	if err != nil {
-		return nil, err
-	}
-	return query(ctx, session, stmt)
-}
+	if exStmtResp.DirectResults != nil {
+		opStatus := exStmtResp.DirectResults.GetOperationStatus()
+		resultSet = exStmtResp.DirectResults.ResultSet
+		if opStatus.GetOperationState() == cli_service.TOperationState_RUNNING_STATE {
 
-// ExecContext executes a query that doesn't return rows
-func (c *Conn) ExecContext(ctx context.Context, q string, args []driver.NamedValue) (driver.Result, error) {
-	session, err := c.OpenSession(ctx)
-	if err != nil {
-		return nil, err
-	}
+			// if the query took too long, we'll watch the operation until it completes
+			// at any point in time that the context is done we must cancel and return
+			pollSentinel := utils.Sentinel{
+				ProcessFn: func() (any, error) {
+					return nil, err
+				},
+				StatusFn: func() (utils.Done, error) {
+					resp, err := c.client.GetOperationStatus(ctx, &cli_service.TGetOperationStatusReq{
+						OperationHandle: opHandle,
+					})
+					return func() bool {
+						return resp.GetOperationState() == cli_service.TOperationState_FINISHED_STATE
+					}, err
+				},
+				CancelFn: func() (any, error) {
+					ret, err := c.client.CancelOperation(context.Background(), &cli_service.TCancelOperationReq{
+						OperationHandle: opHandle,
+					})
+					return ret, err
+				},
+			}
+			_, _, err := pollSentinel.Watch(ctx, 100*time.Millisecond, 0)
+			if err != nil {
+				return nil, err
+			}
 
-	tmpl := template(q)
-	stmt, err := statement(tmpl, args)
-	if err != nil {
-		return nil, err
-	}
-	return exec(ctx, session, stmt)
-}
-
-// Begin is not supported
-func (c *Conn) Begin() (driver.Tx, error) {
-	return nil, ErrNotSupported
-}
-
-// OpenSession ensure opened session
-func (c *Conn) OpenSession(ctx context.Context) (*hive.Session, error) {
-	if c.session == nil {
-		session, err := c.client.OpenSession(ctx)
-		if err != nil {
-			c.log.Printf("failed to open session: %v", err)
-			return nil, fmt.Errorf("%v: %v", driver.ErrBadConn, err)
 		}
-		c.session = session
+
+	} else {
+		// what happens here? do normal polling I guess
+		panic("direct result was nil")
 	}
-	return c.session, nil
+	rows := rows{
+		client:       c.client,
+		opHandle:     opHandle,
+		pageSize:     int64(c.cfg.MaxRows),
+		fetchResults: resultSet,
+	}
+	return &rows, nil
 }
 
-// ResetSession closes hive session
-func (c *Conn) ResetSession(ctx context.Context) error {
-	if c.session != nil {
-		if err := c.session.Close(ctx); err != nil {
-			return err
-		}
-		c.session = nil
-	}
-	return nil
-}
-
-// Close connection
-func (c *Conn) Close() error {
-	c.log.Printf("close connection")
-	return c.t.Close()
-}
+var _ driver.Pinger = (*conn)(nil)
+var _ driver.SessionResetter = (*conn)(nil)
+var _ driver.Validator = (*conn)(nil)
+var _ driver.ExecerContext = (*conn)(nil)
+var _ driver.QueryerContext = (*conn)(nil)
+var _ driver.ConnPrepareContext = (*conn)(nil)
+var _ driver.ConnBeginTx = (*conn)(nil)
