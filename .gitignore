@@ -9,6 +9,7 @@
 
 # Test binary, built with `go test -c`
 *.test
+test-results/
 
 # Output of the go coverage tool, specifically when used with LiteIDE
 *.out
@@ -45,3 +46,21 @@ Icon
 Network Trash Folder
 Temporary Items
 .apdisk
+
+
+.env
+
+# Output of the production build
+bin/
+
+
+# Dependency directories
+vendor/
+
+*.log
+*.bak
+_tmp*
+
+.vscode/
+__debug_bin
+.DS_Store
