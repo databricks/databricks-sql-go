@@ -48,20 +48,22 @@ You can set HTTP Timeout value by appending a `timeout` query parameter (in mill
 databricks://:[your token]@[Workspace hostname][Endpoint HTTP Path]?timeout=1000&maxRows=1000
 ```
 
-## Testing
+## Develop
 
+### Lint
+We use `golangci-lint` as the lint tool. If you use vs code, just add the following settings:
+``` json
+{
+    "go.lintTool": "golangci-lint",
+    "go.lintFlags": [
+        "--fast"
+    ]
+}
+```
 ### Unit Tests
 
 ```bash
 go test
-```
-
-### e2e Tests
-
-To run tests against a SQL warehouse, you need to pass a DSN environment variable first:
-
-```
-$ DATABRICKS_DSN="databricks://:dapi-secret-token@example.cloud.databricks.com/sql/1.0/endpoints/12345a1b2c3d456f" go test
 ```
 
 ## Issues
@@ -74,4 +76,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md)
 
 ## License
 
-[Apache 2.0](https://github.com/databricks/databricks-sql-nodejs/blob/master/LICENSE)
+[Apache 2.0](https://github.com/databricks/databricks-sql-go/blob/main/LICENSE)
