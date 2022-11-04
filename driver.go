@@ -4,21 +4,18 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+
+	"github.com/databricks/databricks-sql-go/internal/config"
 )
 
 func init() {
 	sql.Register("databricks", &databricksDriver{})
 }
 
-const (
-	DriverName    = "godatabrickssqlconnector" //important. Do not change
-	DriverVersion = "0.9.0"
-)
-
 type databricksDriver struct{}
 
 func (d *databricksDriver) Open(uri string) (driver.Conn, error) {
-	cfg, err := parseURI(uri)
+	cfg, err := config.ParseURI(uri)
 	if err != nil {
 		return nil, err
 	}
@@ -29,18 +26,18 @@ func (d *databricksDriver) Open(uri string) (driver.Conn, error) {
 }
 
 func (d *databricksDriver) OpenConnector(uri string) (driver.Connector, error) {
-	cfg, err := parseURI(uri)
+	cfg, err := config.ParseURI(uri)
 	return &connector{cfg}, err
 }
 
 var _ driver.Driver = (*databricksDriver)(nil)
 var _ driver.DriverContext = (*databricksDriver)(nil)
 
-type connOption func(*config)
+type connOption func(*config.Config)
 
 func NewConnector(options ...connOption) (driver.Connector, error) {
 	// config with default options
-	cfg := newConfigWithDefaults()
+	cfg := config.NewConfigWithDefaults()
 
 	for _, opt := range options {
 		opt(cfg)
@@ -51,31 +48,31 @@ func NewConnector(options ...connOption) (driver.Connector, error) {
 }
 
 func WithServerHostname(host string) connOption {
-	return func(c *config) {
+	return func(c *config.Config) {
 		c.Host = host
 	}
 }
 
 func WithPort(port int) connOption {
-	return func(c *config) {
+	return func(c *config.Config) {
 		c.Port = port
 	}
 }
 
 func WithAccessToken(token string) connOption {
-	return func(c *config) {
+	return func(c *config.Config) {
 		c.AccessToken = token
 	}
 }
 
 func WithHTTPPath(path string) connOption {
-	return func(c *config) {
+	return func(c *config.Config) {
 		c.HTTPPath = path
 	}
 }
 
 func WithMaxRows(n int) connOption {
-	return func(c *config) {
+	return func(c *config.Config) {
 		if n != 0 {
 			c.MaxRows = n
 		}
@@ -85,7 +82,7 @@ func WithMaxRows(n int) connOption {
 // This will add a timeout for the server execution.
 // In seconds.
 func WithTimeout(n int) connOption {
-	return func(c *config) {
+	return func(c *config.Config) {
 		c.TimeoutSeconds = n
 	}
 }

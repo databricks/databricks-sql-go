@@ -43,7 +43,15 @@ func main() {
 	// defer cancel()
 	ctx := context.Background()
 	rows, err1 := db.QueryContext(ctx, `select cut from default.diamonds`)
-
+	if err1 != nil {
+		if err1 == sql.ErrNoRows {
+			fmt.Println("not found")
+			return
+		} else {
+			fmt.Println(err1.Error())
+			return
+		}
+	}
 	var res string
 	for rows.Next() {
 		err := rows.Scan(&res)
@@ -53,14 +61,6 @@ func main() {
 			return
 		}
 		fmt.Println(res)
-	}
-	if err1 != nil {
-		if err1 == sql.ErrNoRows {
-			fmt.Println("not found")
-			return
-		} else {
-			fmt.Printf("db down: %v\n", err1)
-		}
 	}
 
 }

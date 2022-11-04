@@ -8,9 +8,10 @@ import (
 
 	"github.com/apache/thrift/lib/go/thrift"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
+	"github.com/databricks/databricks-sql-go/internal/config"
 )
 
-func initThriftTestServer(cfg *config, handler cli_service.TCLIService) *http.Server {
+func initThriftTestServer(cfg *config.Config, handler cli_service.TCLIService) *http.Server {
 
 	endpoint := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
 	tcfg := &thrift.TConfiguration{

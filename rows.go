@@ -11,10 +11,11 @@ import (
 	"time"
 
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
+	"github.com/databricks/databricks-sql-go/internal/client"
 )
 
 type rows struct {
-	client               *cli_service.TCLIServiceClient
+	client               *client.ThriftServiceClient
 	opHandle             *cli_service.TOperationHandle
 	tableSchema          *tableSchema
 	pageSize             int64

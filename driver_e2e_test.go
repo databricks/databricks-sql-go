@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
+	"github.com/databricks/databricks-sql-go/internal/config"
 )
 
 // a few important test cases
@@ -18,10 +19,10 @@ import (
 // 4.
 
 func TestCancelOperation(t *testing.T) {
-	t.Skip("not ready")
+	// t.Skip("not ready")
 	t.Run("context timeout and cancel success", func(t *testing.T) {
 
-		cfg := newConfigWithDefaults()
+		cfg := config.NewConfigWithDefaults()
 		cfg.Host = "localhost"
 		cfg.Port = 8083
 		cfg.RunAsync = true

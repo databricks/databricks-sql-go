@@ -9,12 +9,14 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
+	"github.com/databricks/databricks-sql-go/internal/client"
+	"github.com/databricks/databricks-sql-go/internal/config"
 	"github.com/databricks/databricks-sql-go/internal/sentinel"
 )
 
 type conn struct {
-	cfg     *config
-	client  *cli_service.TCLIServiceClient
+	cfg     *config.Config
+	client  *client.ThriftServiceClient
 	session *cli_service.TOpenSessionResp
 }
 
@@ -99,6 +101,11 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 			log.Info().Msgf("bad state: %s", opStatus.GetOperationState())
 			log.Info().Msg(opStatus.GetDiagnosticInfo())
 			log.Info().Msg(opStatus.GetErrorMessage())
+			// log.Debug().Msg(fmt.Sprint(c.transport.response.StatusCode))
+			// log.Debug().Msg(c.transport.response.Header.Get("X-Databricks-Org-Id"))
+			// log.Debug().Msg(c.transport.response.Header.Get("x-databricks-error-or-redirect-message"))
+			// log.Debug().Msg(c.transport.response.Header.Get("x-thriftserver-error-message"))
+			// log.Debug().Msg(c.transport.response.Header.Get("x-databricks-reason-phrase"))
 			return nil, fmt.Errorf(opStatus.GetErrorMessage())
 		// live states
 		case cli_service.TOperationState_INITIALIZED_STATE, cli_service.TOperationState_PENDING_STATE, cli_service.TOperationState_RUNNING_STATE:
