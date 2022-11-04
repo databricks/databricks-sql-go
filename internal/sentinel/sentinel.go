@@ -42,17 +42,17 @@ func (s WatchStatus) String() string {
 type Done func() bool
 
 type Sentinel struct {
-	StatusFn   func() (Done, error)
-	OnCancelFn func() (any, error)
-	OnDoneFn   func() (any, error)
+	StatusFn   func() (doneFn Done, statusResp any, err error)
+	OnCancelFn func() (onCancelFnResp any, err error)
+	OnDoneFn   func(statusResp any) (onDoneFnResp any, err error)
 }
 
 // Wait takes care of checking the status of something on a given interval, up to a timeout.
-// If statusFn returns WaitExecuting, the check will continue until status changes.
+// The StatusFn check will continue until given Done function returns true or statusFn returns an error.
 // Context cancelation is supported and in that case it will return WaitCanceled status.
 func (s Sentinel) Watch(ctx context.Context, interval, timeout time.Duration) (WatchStatus, any, error) {
 	if s.StatusFn == nil {
-		s.StatusFn = func() (Done, error) { return func() bool { return true }, nil }
+		s.StatusFn = func() (Done, any, error) { return func() bool { return true }, nil, nil }
 	}
 	if timeout == 0 {
 		timeout = DEFAULT_TIMEOUT
@@ -73,8 +73,8 @@ func (s Sentinel) Watch(ctx context.Context, interval, timeout time.Duration) (W
 
 	resCh := make(chan any, 1)
 	errCh := make(chan error, 1)
-	processor := func() {
-		ret, err := s.OnDoneFn()
+	processor := func(statusResp any) {
+		ret, err := s.OnDoneFn(statusResp)
 		if err != nil {
 			errCh <- err
 		} else {
@@ -85,19 +85,19 @@ func (s Sentinel) Watch(ctx context.Context, interval, timeout time.Duration) (W
 	for {
 		select {
 		case <-intervalTimer.C:
-			done, err := s.StatusFn()
+			done, statusResp, err := s.StatusFn()
 			log.Debug().Msg("status checked")
 			if err != nil {
-				return WatchErr, nil, err
+				return WatchErr, statusResp, err
 			}
 			// resetting it here so statusFn is called again after interval time
 			_ = intervalTimer.Reset(interval)
 			if done() {
 				intervalTimer.Stop()
 				if s.OnDoneFn != nil {
-					go processor()
+					go processor(statusResp)
 				} else {
-					return WatchSuccess, nil, nil
+					return WatchSuccess, statusResp, nil
 				}
 			}
 		case err := <-errCh:
