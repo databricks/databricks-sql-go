@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/rs/zerolog/log"
+
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/sentinel"
 )
@@ -66,9 +68,6 @@ func (c *conn) ExecContext(ctx context.Context, query string, args []driver.Name
 
 func (c *conn) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
 	// first we try to get the results synchronously.
-
-	var resultSet *cli_service.TFetchResultsResp
-
 	// at any point in time that the context is done we must cancel and return
 	exStmtResp, err := c.executeStatement(ctx, query, args)
 
@@ -80,47 +79,95 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 
 	if exStmtResp.DirectResults != nil {
 		opStatus := exStmtResp.DirectResults.GetOperationStatus()
-		resultSet = exStmtResp.DirectResults.ResultSet
-		if opStatus.GetOperationState() == cli_service.TOperationState_RUNNING_STATE {
 
-			// if the query took too long, we'll watch the operation until it completes
-			// at any point in time that the context is done we must cancel and return
-
+		switch opStatus.GetOperationState() {
+		// terminal states
+		// good
+		case cli_service.TOperationState_FINISHED_STATE:
+			// return results
+			rows := rows{
+				client:               c.client,
+				opHandle:             opHandle,
+				pageSize:             int64(c.cfg.MaxRows),
+				fetchResults:         exStmtResp.DirectResults.ResultSet,
+				fetchResultsMetadata: exStmtResp.DirectResults.ResultSetMetadata,
+			}
+			return &rows, nil
+		// bad
+		case cli_service.TOperationState_CANCELED_STATE, cli_service.TOperationState_CLOSED_STATE, cli_service.TOperationState_ERROR_STATE, cli_service.TOperationState_TIMEDOUT_STATE:
+			// do we need to close the operation in these cases?
+			log.Info().Msgf("bad state: %s", opStatus.GetOperationState())
+			log.Info().Msg(opStatus.GetDiagnosticInfo())
+			log.Info().Msg(opStatus.GetErrorMessage())
+			return nil, fmt.Errorf(opStatus.GetErrorMessage())
+		// live states
+		case cli_service.TOperationState_INITIALIZED_STATE, cli_service.TOperationState_PENDING_STATE, cli_service.TOperationState_RUNNING_STATE:
 			statusResp, err := c.pollOperation(ctx, opHandle)
 			if err != nil {
 				return nil, err
 			}
 			switch statusResp.GetOperationState() {
+			// terminal states
+			// good
 			case cli_service.TOperationState_FINISHED_STATE:
-			// do we have results?
-			case cli_service.TOperationState_CANCELED_STATE:
-			case cli_service.TOperationState_CLOSED_STATE:
-			case cli_service.TOperationState_ERROR_STATE:
-			case cli_service.TOperationState_INITIALIZED_STATE:
-			case cli_service.TOperationState_PENDING_STATE:
-			case cli_service.TOperationState_TIMEDOUT_STATE:
-			case cli_service.TOperationState_RUNNING_STATE:
-			case cli_service.TOperationState_UKNOWN_STATE:
+				// return handle to fetch results later
+				rows := rows{
+					client:   c.client,
+					opHandle: opHandle,
+					pageSize: int64(c.cfg.MaxRows),
+				}
+				return &rows, nil
+			// bad
+			case cli_service.TOperationState_CANCELED_STATE, cli_service.TOperationState_CLOSED_STATE, cli_service.TOperationState_ERROR_STATE, cli_service.TOperationState_TIMEDOUT_STATE:
+				log.Info().Msgf("bad state: %s", statusResp.GetOperationState())
+				log.Info().Msg(statusResp.GetDiagnosticInfo())
+				log.Info().Msg(statusResp.GetErrorMessage())
+				return nil, fmt.Errorf(statusResp.GetErrorMessage())
+				// live states
 			default:
-				return nil, fmt.Errorf("unknown operation state")
+				log.Info().Msgf("bad state: %s", statusResp.GetOperationState())
+				log.Info().Msg(statusResp.GetDiagnosticInfo())
+				log.Info().Msg(statusResp.GetErrorMessage())
+				return nil, fmt.Errorf("invalid operation state. This should not have happened")
 			}
-
-		} else {
-			// TODO
-			panic("operation in weird state")
+		// weird states
+		default:
+			log.Info().Msgf("bad state: %s", opStatus.GetOperationState())
+			log.Info().Msg(opStatus.GetDiagnosticInfo())
+			log.Info().Msg(opStatus.GetErrorMessage())
+			return nil, fmt.Errorf("invalid operation state. This should not have happened")
 		}
 
 	} else {
-		// what happens here? do normal polling I guess
-		panic("direct result was nil")
+		statusResp, err := c.pollOperation(ctx, opHandle)
+		if err != nil {
+			return nil, err
+		}
+		switch statusResp.GetOperationState() {
+		// terminal states
+		// good
+		case cli_service.TOperationState_FINISHED_STATE:
+			// return handle to fetch results later
+			rows := rows{
+				client:   c.client,
+				opHandle: opHandle,
+				pageSize: int64(c.cfg.MaxRows),
+			}
+			return &rows, nil
+		// bad
+		case cli_service.TOperationState_CANCELED_STATE, cli_service.TOperationState_CLOSED_STATE, cli_service.TOperationState_ERROR_STATE, cli_service.TOperationState_TIMEDOUT_STATE:
+			log.Info().Msgf("bad state: %s", statusResp.GetOperationState())
+			log.Info().Msg(statusResp.GetDiagnosticInfo())
+			log.Info().Msg(statusResp.GetErrorMessage())
+			return nil, fmt.Errorf(statusResp.GetErrorMessage())
+			// live states
+		default:
+			log.Info().Msgf("bad state: %s", statusResp.GetOperationState())
+			log.Info().Msg(statusResp.GetDiagnosticInfo())
+			log.Info().Msg(statusResp.GetErrorMessage())
+			return nil, fmt.Errorf("invalid operation state. This should not have happened")
+		}
 	}
-	rows := rows{
-		client:       c.client,
-		opHandle:     opHandle,
-		pageSize:     int64(c.cfg.MaxRows),
-		fetchResults: resultSet,
-	}
-	return &rows, nil
 }
 
 func (c *conn) executeStatement(ctx context.Context, query string, args []driver.NamedValue) (*cli_service.TExecuteStatementResp, error) {
@@ -161,7 +208,12 @@ func (c *conn) pollOperation(ctx context.Context, opHandle *cli_service.TOperati
 			})
 			return func() bool {
 				// which other states?
-				return statusResp.GetOperationState() != cli_service.TOperationState_RUNNING_STATE
+				switch statusResp.GetOperationState() {
+				case cli_service.TOperationState_INITIALIZED_STATE, cli_service.TOperationState_PENDING_STATE, cli_service.TOperationState_RUNNING_STATE:
+					return false
+				default:
+					return true
+				}
 			}, statusResp, err
 		},
 		OnCancelFn: func() (any, error) {
