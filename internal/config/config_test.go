@@ -1,4 +1,4 @@
-package dbsql
+package config
 
 import (
 	"reflect"
@@ -12,19 +12,19 @@ func TestParseConfig(t *testing.T) {
 	tests := []struct {
 		name    string
 		args    args
-		want    *config
+		want    *Config
 		wantErr bool
 	}{
 		{
 			name:    "test 1",
 			args:    args{uri: "databricks://token:supersecret@example.cloud.databricks.com/sql/1.0/endpoints/12346a5b5b0e123a?timeout=100"},
-			want:    &config{Host: "example.cloud.databricks.com"},
+			want:    &Config{Host: "example.cloud.databricks.com"},
 			wantErr: true,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := parseURI(tt.args.uri)
+			got, err := ParseURI(tt.args.uri)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("ParseConfig() error = %v, wantErr %v", err, tt.wantErr)
 				return

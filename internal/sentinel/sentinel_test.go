@@ -11,29 +11,29 @@ import (
 func TestWatch(t *testing.T) {
 	t.Run("it should return immediatly", func(t *testing.T) {
 		statusFnCalls := 0
-		var statusFn = func() (Done, error) {
+		var statusFn = func() (Done, any, error) {
 			return func() bool {
 				statusFnCalls++
 				return true
-			}, nil
+			}, "completed", nil
 		}
 		s := Sentinel{
 			StatusFn: statusFn,
 		}
 		status, res, err := s.Watch(context.Background(), 0, 0)
 		assert.Equal(t, WatchSuccess, status)
-		assert.Nil(t, res)
+		assert.Equal(t, "completed", res)
 		assert.Equal(t, statusFnCalls, 1)
 		assert.NoError(t, err)
 	})
 	t.Run("it should deal with long statusFn", func(t *testing.T) {
 		statusFnCalls := 0
-		var statusFn = func() (Done, error) {
+		var statusFn = func() (Done, any, error) {
 			return func() bool {
 				statusFnCalls++
 				time.Sleep(1 * time.Second)
 				return true
-			}, nil
+			}, nil, nil
 		}
 		s := Sentinel{
 			StatusFn: statusFn,
@@ -46,11 +46,11 @@ func TestWatch(t *testing.T) {
 	})
 	t.Run("it should timeout", func(t *testing.T) {
 		statusFnCalls := 0
-		var statusFn = func() (Done, error) {
+		var statusFn = func() (Done, any, error) {
 			return func() bool {
 				statusFnCalls++
 				return false
-			}, nil
+			}, nil, nil
 		}
 		s := Sentinel{
 			StatusFn: statusFn,
@@ -65,11 +65,11 @@ func TestWatch(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 		defer cancel()
 		statusFnCalls := 0
-		var statusFn = func() (Done, error) {
+		var statusFn = func() (Done, any, error) {
 			return func() bool {
 				statusFnCalls++
 				return false
-			}, nil
+			}, nil, nil
 		}
 		s := Sentinel{
 			StatusFn: statusFn,
@@ -86,11 +86,11 @@ func TestWatch(t *testing.T) {
 			cancel()
 		}()
 		statusFnCalls := 0
-		var statusFn = func() (Done, error) {
+		var statusFn = func() (Done, any, error) {
 			return func() bool {
 				statusFnCalls++
 				return false
-			}, nil
+			}, nil, nil
 		}
 		s := Sentinel{
 			StatusFn: statusFn,
@@ -105,11 +105,11 @@ func TestWatch(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 		statusFnCalls := 0
-		var statusFn = func() (Done, error) {
+		var statusFn = func() (Done, any, error) {
 			return func() bool {
 				statusFnCalls++
 				return false
-			}, nil
+			}, nil, nil
 		}
 		s := Sentinel{
 			StatusFn: statusFn,
@@ -127,11 +127,11 @@ func TestWatch(t *testing.T) {
 		}()
 		statusFnCalls := 0
 		cancelFnCalls := 0
-		var statusFn = func() (Done, error) {
+		var statusFn = func() (Done, any, error) {
 			return func() bool {
 				statusFnCalls++
 				return false
-			}, nil
+			}, nil, nil
 		}
 		s := Sentinel{
 			StatusFn: statusFn,
@@ -151,18 +151,18 @@ func TestWatch(t *testing.T) {
 		cancelFnCalls := 0
 
 		s := Sentinel{
-			StatusFn: func() (Done, error) {
+			StatusFn: func() (Done, any, error) {
 				return func() bool {
 					statusFnCalls++
 					return true
-				}, nil
+				}, "completed", nil
 			},
 			OnCancelFn: func() (any, error) {
 				cancelFnCalls++
 				return nil, nil
 			},
-			OnDoneFn: func() (any, error) {
-				return "done", nil
+			OnDoneFn: func(statusResp any) (any, error) {
+				return statusResp, nil
 			},
 		}
 		status, res, err := s.Watch(context.Background(), 0, 0)
@@ -170,14 +170,14 @@ func TestWatch(t *testing.T) {
 		assert.Equal(t, WatchSuccess, status)
 		assert.Equal(t, cancelFnCalls, 0)
 		assert.Equal(t, statusFnCalls, 1)
-		assert.Equal(t, "done", res)
+		assert.Equal(t, "completed", res)
 		assert.NoError(t, err)
 	})
 	t.Run("it should call processFn upon Done even when no statusFn", func(t *testing.T) {
 		cancelFnCalls := 0
 
 		s := Sentinel{
-			OnDoneFn: func() (any, error) {
+			OnDoneFn: func(statusResp any) (any, error) {
 				time.Sleep(50 * time.Millisecond)
 				return "done", nil
 			},

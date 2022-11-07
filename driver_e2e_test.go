@@ -3,94 +3,196 @@ package dbsql
 import (
 	"context"
 	"database/sql"
-	"fmt"
+	"net/url"
+	"strconv"
 	"testing"
-	"time"
 
-	"github.com/databricks/databricks-sql-go/internal/cli_service"
+	ts "github.com/databricks/databricks-sql-go/internal/cli_service"
+	"github.com/databricks/databricks-sql-go/internal/config"
+	"github.com/stretchr/testify/assert"
 )
 
-// a few important test cases
+func TestQueryContextDirectResultsSuccess(t *testing.T) {
+	cfg := config.WithDefaults()
+	// set up server
 
-// 1. query canceled in context
-// 2. query timeout from server
-// 3. http client timeout?
-// 4.
-
-func TestCancelOperation(t *testing.T) {
-	t.Skip("not ready")
-	t.Run("context timeout and cancel success", func(t *testing.T) {
-
-		cfg := newConfigWithDefaults()
-		cfg.Host = "localhost"
-		cfg.Port = 8083
-		cfg.RunAsync = true
-		// set up server
-
-		var executeStatement = func(ctx context.Context, req *cli_service.TExecuteStatementReq) (*cli_service.TExecuteStatementResp, error) {
-			time.Sleep(time.Second)
-			return &cli_service.TExecuteStatementResp{
-				Status: &cli_service.TStatus{
-					StatusCode: cli_service.TStatusCode_SUCCESS_STATUS,
+	var executeStatement = func(ctx context.Context, req *ts.TExecuteStatementReq) (*ts.TExecuteStatementResp, error) {
+		return &ts.TExecuteStatementResp{
+			Status: &ts.TStatus{
+				StatusCode: ts.TStatusCode_SUCCESS_STATUS,
+			},
+			OperationHandle: &ts.TOperationHandle{
+				OperationId: &ts.THandleIdentifier{
+					GUID:   []byte("2"),
+					Secret: []byte("b"),
 				},
-				OperationHandle: &cli_service.TOperationHandle{
-					OperationId: &cli_service.THandleIdentifier{
-						GUID:   []byte("2"),
-						Secret: []byte("b"),
+			},
+			DirectResults: &ts.TSparkDirectResults{
+				OperationStatus: &ts.TGetOperationStatusResp{
+					Status: &ts.TStatus{
+						StatusCode: ts.TStatusCode_SUCCESS_STATUS,
+					},
+					OperationState: ts.TOperationStatePtr(ts.TOperationState_FINISHED_STATE),
+				},
+				ResultSetMetadata: &ts.TGetResultSetMetadataResp{
+					Status: &ts.TStatus{
+						StatusCode: ts.TStatusCode_SUCCESS_STATUS,
 					},
 				},
-				DirectResults: &cli_service.TSparkDirectResults{
-					OperationStatus: &cli_service.TGetOperationStatusResp{
-						Status: &cli_service.TStatus{
-							StatusCode: cli_service.TStatusCode_SUCCESS_STATUS,
-						},
+				ResultSet: &ts.TFetchResultsResp{
+					Status: &ts.TStatus{
+						StatusCode: ts.TStatusCode_SUCCESS_STATUS,
 					},
 				},
-			}, nil
-		}
+			},
+		}, nil
+	}
 
-		var cancelOperation = func(ctx context.Context, req *cli_service.TCancelOperationReq) (*cli_service.TCancelOperationResp, error) {
-			// isOperationCanceled = true
-			return &cli_service.TCancelOperationResp{
-				Status: &cli_service.TStatus{
-					StatusCode: cli_service.TStatusCode_SUCCESS_STATUS,
-				},
-			}, nil
-		}
+	cancelOperationCalled := false
+	var cancelOperation = func(ctx context.Context, req *ts.TCancelOperationReq) (*ts.TCancelOperationResp, error) {
+		cancelOperationCalled = true
+		return &ts.TCancelOperationResp{
+			Status: &ts.TStatus{
+				StatusCode: ts.TStatusCode_SUCCESS_STATUS,
+			},
+		}, nil
+	}
+	getOperationStatusCalled := false
+	var getOperationStatus = func(ctx context.Context, req *ts.TGetOperationStatusReq) (*ts.TGetOperationStatusResp, error) {
+		getOperationStatusCalled = true
+		return &ts.TGetOperationStatusResp{
+			Status: &ts.TStatus{
+				StatusCode: ts.TStatusCode_STILL_EXECUTING_STATUS,
+			},
+		}, nil
+	}
 
-		var getOperationStatus = func(ctx context.Context, req *cli_service.TGetOperationStatusReq) (*cli_service.TGetOperationStatusResp, error) {
-			return &cli_service.TGetOperationStatusResp{
-				Status: &cli_service.TStatus{
-					StatusCode: cli_service.TStatusCode_STILL_EXECUTING_STATUS,
-				},
-			}, nil
-		}
-
-		srv := initThriftTestServer(cfg, &serverHandler{
-			executeStatement:   executeStatement,
-			getOperationStatus: getOperationStatus,
-			cancelOperation:    cancelOperation,
-		})
-
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Hour)
-		defer cancel()
-		defer func() {
-			if err := srv.Shutdown(ctx); err != nil {
-				fmt.Println(err)
-			}
-		}()
-
-		connector := &connector{cfg}
-
-		db := sql.OpenDB(connector)
-
-		db.SetConnMaxLifetime(0)
-		db.SetMaxIdleConns(5)
-		db.SetMaxOpenConns(5)
-
-		var res int
-		err1 := db.QueryRowContext(ctx, `select 2 * 3 as res;`).Scan(&res)
-
-		fmt.Println(err1)
+	ts := initThriftTestServer(cfg, &serverHandler{
+		executeStatement:   executeStatement,
+		getOperationStatus: getOperationStatus,
+		cancelOperation:    cancelOperation,
 	})
+
+	defer ts.Close()
+
+	r, err := url.Parse(ts.URL)
+	assert.NoError(t, err)
+	cfg.Host = "localhost"
+	port, err := strconv.Atoi(r.Port())
+	assert.NoError(t, err)
+	cfg.Port = port
+
+	connector := &connector{cfg}
+
+	db := sql.OpenDB(connector)
+
+	rows, err := db.QueryContext(context.Background(), `select * from dummy`)
+	assert.NoError(t, err)
+	assert.NotNil(t, rows)
+	assert.False(t, cancelOperationCalled)
+	assert.False(t, getOperationStatusCalled)
+	// TODO
+	// columns, err1 := rows.Columns()
+	// assert.NoError(t, err1)
+	// assert.Equal(t, columns, []string{"col1", "col2"})
+	// for rows.Next() {
+
+	// }
+
+	// rows.Close()
+}
+
+func TestQueryContextDirectResultsError(t *testing.T) {
+	cfg := config.WithDefaults()
+	// set up server
+
+	var executeStatement = func(ctx context.Context, req *ts.TExecuteStatementReq) (*ts.TExecuteStatementResp, error) {
+		return &ts.TExecuteStatementResp{
+			Status: &ts.TStatus{
+				StatusCode: ts.TStatusCode_SUCCESS_STATUS,
+			},
+			OperationHandle: &ts.TOperationHandle{
+				OperationId: &ts.THandleIdentifier{
+					GUID:   []byte("2"),
+					Secret: []byte("b"),
+				},
+			},
+			DirectResults: &ts.TSparkDirectResults{
+				OperationStatus: &ts.TGetOperationStatusResp{
+					Status: &ts.TStatus{
+						StatusCode: ts.TStatusCode_SUCCESS_STATUS,
+					},
+					OperationState: ts.TOperationStatePtr(ts.TOperationState_ERROR_STATE),
+					ErrorMessage:   strPtr("not valid"),
+				},
+				ResultSetMetadata: &ts.TGetResultSetMetadataResp{
+					Status: &ts.TStatus{
+						StatusCode: ts.TStatusCode_SUCCESS_STATUS,
+					},
+				},
+				ResultSet: &ts.TFetchResultsResp{
+					Status: &ts.TStatus{
+						StatusCode: ts.TStatusCode_SUCCESS_STATUS,
+					},
+				},
+			},
+		}, nil
+	}
+
+	cancelOperationCalled := false
+	var cancelOperation = func(ctx context.Context, req *ts.TCancelOperationReq) (*ts.TCancelOperationResp, error) {
+		cancelOperationCalled = true
+		return &ts.TCancelOperationResp{
+			Status: &ts.TStatus{
+				StatusCode: ts.TStatusCode_SUCCESS_STATUS,
+			},
+		}, nil
+	}
+	getOperationStatusCalled := false
+	var getOperationStatus = func(ctx context.Context, req *ts.TGetOperationStatusReq) (*ts.TGetOperationStatusResp, error) {
+		getOperationStatusCalled = true
+		return &ts.TGetOperationStatusResp{
+			Status: &ts.TStatus{
+				StatusCode: ts.TStatusCode_STILL_EXECUTING_STATUS,
+			},
+		}, nil
+	}
+
+	ts := initThriftTestServer(cfg, &serverHandler{
+		executeStatement:   executeStatement,
+		getOperationStatus: getOperationStatus,
+		cancelOperation:    cancelOperation,
+	})
+
+	defer ts.Close()
+
+	r, err := url.Parse(ts.URL)
+	assert.NoError(t, err)
+	cfg.Host = "localhost"
+	port, err := strconv.Atoi(r.Port())
+	assert.NoError(t, err)
+	cfg.Port = port
+
+	connector := &connector{cfg}
+
+	db := sql.OpenDB(connector)
+
+	rows, err := db.QueryContext(context.Background(), `select * from dummy`)
+	assert.ErrorContains(t, err, "not valid")
+	assert.Nil(t, rows)
+	assert.False(t, cancelOperationCalled)
+	assert.False(t, getOperationStatusCalled)
+	// TODO
+	// columns, err1 := rows.Columns()
+	// assert.NoError(t, err1)
+	// assert.Equal(t, columns, []string{"col1", "col2"})
+	// for rows.Next() {
+
+	// }
+
+	// rows.Close()
+}
+
+func strPtr(s string) *string {
+	return &s
 }

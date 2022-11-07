@@ -11,15 +11,17 @@ import (
 	"time"
 
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
+	"github.com/databricks/databricks-sql-go/internal/client"
 )
 
 type rows struct {
-	client       *cli_service.TCLIServiceClient
-	opHandle     *cli_service.TOperationHandle
-	tableSchema  *tableSchema
-	pageSize     int64
-	fetchResults *cli_service.TFetchResultsResp
-	rowIndex     int
+	client               *client.ThriftServiceClient
+	opHandle             *cli_service.TOperationHandle
+	tableSchema          *tableSchema
+	pageSize             int64
+	fetchResults         *cli_service.TFetchResultsResp
+	fetchResultsMetadata *cli_service.TGetResultSetMetadataResp
+	rowIndex             int
 }
 
 func (r *rows) Columns() []string {
