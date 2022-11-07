@@ -4,22 +4,20 @@ import (
 	"crypto/tls"
 	"fmt"
 	"net/url"
-	"time"
 
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 )
 
 type Config struct {
-	Host           string // from databricks UI
-	Port           int    // from databricks UI
-	Catalog        string //??
-	Database       string
-	AccessToken    string      // from databricks UI
-	TLSConfig      *tls.Config // nil disables TLS. Is it needed?
-	ConnectTimeout time.Duration
-	Protocol       string // defaults to https. From databricks UI
-	HTTPPath       string // from databricks UI
-	Authenticator  string //TODO for oauth
+	Host          string // from databricks UI
+	Port          int    // from databricks UI
+	Catalog       string //??
+	Database      string
+	AccessToken   string      // from databricks UI
+	TLSConfig     *tls.Config // nil disables TLS. Is it needed?
+	Protocol      string      // defaults to https. From databricks UI
+	HTTPPath      string      // from databricks UI
+	Authenticator string      //TODO for oauth
 
 	RunAsync       bool // TODO
 	MaxRows        int  // TODO
@@ -38,12 +36,13 @@ type ThriftConfig struct {
 	DebugClientProtocol bool
 }
 
-func NewConfigWithDefaults() *Config {
+func WithDefaults() *Config {
 	return &Config{
 		Port:     443,
 		MaxRows:  10000,
 		Database: "default",
 		Protocol: "https",
+		RunAsync: true,
 		Thrift: &ThriftConfig{
 			Protocol:        "binary",
 			Transport:       "http",
@@ -84,7 +83,6 @@ func (c *Config) DeepCopy() *Config {
 		Database:       c.Database,
 		AccessToken:    c.AccessToken,
 		TLSConfig:      c.TLSConfig.Clone(),
-		ConnectTimeout: c.ConnectTimeout,
 		Protocol:       c.Protocol,
 		HTTPPath:       c.HTTPPath,
 		Authenticator:  c.Authenticator,
@@ -98,5 +96,7 @@ func (c *Config) DeepCopy() *Config {
 			ProtocolVersion:     c.Thrift.ProtocolVersion,
 			DebugClientProtocol: c.Thrift.DebugClientProtocol,
 		},
+		DriverName:    c.DriverName,
+		DriverVersion: c.DriverVersion,
 	}
 }

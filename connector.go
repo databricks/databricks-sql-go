@@ -48,3 +48,57 @@ func (c *connector) Driver() driver.Driver {
 }
 
 var _ driver.Connector = (*connector)(nil)
+
+type connOption func(*config.Config)
+
+func NewConnector(options ...connOption) (driver.Connector, error) {
+	// config with default options
+	cfg := config.WithDefaults()
+
+	for _, opt := range options {
+		opt(cfg)
+	}
+	// validate config?
+
+	return &connector{cfg}, nil
+}
+
+func WithServerHostname(host string) connOption {
+	return func(c *config.Config) {
+		c.Host = host
+	}
+}
+
+func WithPort(port int) connOption {
+	return func(c *config.Config) {
+		c.Port = port
+	}
+}
+
+func WithAccessToken(token string) connOption {
+	return func(c *config.Config) {
+		c.AccessToken = token
+	}
+}
+
+func WithHTTPPath(path string) connOption {
+	return func(c *config.Config) {
+		c.HTTPPath = path
+	}
+}
+
+func WithMaxRows(n int) connOption {
+	return func(c *config.Config) {
+		if n != 0 {
+			c.MaxRows = n
+		}
+	}
+}
+
+// This will add a timeout for the server execution.
+// In seconds.
+func WithTimeout(n int) connOption {
+	return func(c *config.Config) {
+		c.TimeoutSeconds = n
+	}
+}

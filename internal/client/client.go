@@ -20,6 +20,12 @@ func (tsc *ThriftServiceClient) FetchResults(ctx context.Context, req *cli_servi
 	return tsc.TCLIServiceClient.FetchResults(ctx, req)
 }
 
+// log.Debug().Msg(fmt.Sprint(c.transport.response.StatusCode))
+// log.Debug().Msg(c.transport.response.Header.Get("X-Databricks-Org-Id"))
+// log.Debug().Msg(c.transport.response.Header.Get("x-databricks-error-or-redirect-message"))
+// log.Debug().Msg(c.transport.response.Header.Get("x-thriftserver-error-message"))
+// log.Debug().Msg(c.transport.response.Header.Get("x-databricks-reason-phrase"))
+
 // This is a wrapper of the http transport so we can have access to response code and headers
 // It is important to know the code and headers to know if we need to retry or not
 type Transport struct {

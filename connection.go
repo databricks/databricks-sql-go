@@ -99,13 +99,8 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 		case cli_service.TOperationState_CANCELED_STATE, cli_service.TOperationState_CLOSED_STATE, cli_service.TOperationState_ERROR_STATE, cli_service.TOperationState_TIMEDOUT_STATE:
 			// do we need to close the operation in these cases?
 			log.Info().Msgf("bad state: %s", opStatus.GetOperationState())
-			log.Info().Msg(opStatus.GetDiagnosticInfo())
 			log.Info().Msg(opStatus.GetErrorMessage())
-			// log.Debug().Msg(fmt.Sprint(c.transport.response.StatusCode))
-			// log.Debug().Msg(c.transport.response.Header.Get("X-Databricks-Org-Id"))
-			// log.Debug().Msg(c.transport.response.Header.Get("x-databricks-error-or-redirect-message"))
-			// log.Debug().Msg(c.transport.response.Header.Get("x-thriftserver-error-message"))
-			// log.Debug().Msg(c.transport.response.Header.Get("x-databricks-reason-phrase"))
+
 			return nil, fmt.Errorf(opStatus.GetErrorMessage())
 		// live states
 		case cli_service.TOperationState_INITIALIZED_STATE, cli_service.TOperationState_PENDING_STATE, cli_service.TOperationState_RUNNING_STATE:
@@ -127,20 +122,17 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 			// bad
 			case cli_service.TOperationState_CANCELED_STATE, cli_service.TOperationState_CLOSED_STATE, cli_service.TOperationState_ERROR_STATE, cli_service.TOperationState_TIMEDOUT_STATE:
 				log.Info().Msgf("bad state: %s", statusResp.GetOperationState())
-				log.Info().Msg(statusResp.GetDiagnosticInfo())
 				log.Info().Msg(statusResp.GetErrorMessage())
 				return nil, fmt.Errorf(statusResp.GetErrorMessage())
 				// live states
 			default:
 				log.Info().Msgf("bad state: %s", statusResp.GetOperationState())
-				log.Info().Msg(statusResp.GetDiagnosticInfo())
 				log.Info().Msg(statusResp.GetErrorMessage())
 				return nil, fmt.Errorf("invalid operation state. This should not have happened")
 			}
 		// weird states
 		default:
 			log.Info().Msgf("bad state: %s", opStatus.GetOperationState())
-			log.Info().Msg(opStatus.GetDiagnosticInfo())
 			log.Info().Msg(opStatus.GetErrorMessage())
 			return nil, fmt.Errorf("invalid operation state. This should not have happened")
 		}
@@ -164,13 +156,11 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 		// bad
 		case cli_service.TOperationState_CANCELED_STATE, cli_service.TOperationState_CLOSED_STATE, cli_service.TOperationState_ERROR_STATE, cli_service.TOperationState_TIMEDOUT_STATE:
 			log.Info().Msgf("bad state: %s", statusResp.GetOperationState())
-			log.Info().Msg(statusResp.GetDiagnosticInfo())
 			log.Info().Msg(statusResp.GetErrorMessage())
 			return nil, fmt.Errorf(statusResp.GetErrorMessage())
 			// live states
 		default:
 			log.Info().Msgf("bad state: %s", statusResp.GetOperationState())
-			log.Info().Msg(statusResp.GetDiagnosticInfo())
 			log.Info().Msg(statusResp.GetErrorMessage())
 			return nil, fmt.Errorf("invalid operation state. This should not have happened")
 		}
@@ -183,7 +173,7 @@ func (c *conn) executeStatement(ctx context.Context, query string, args []driver
 			req := cli_service.TExecuteStatementReq{
 				SessionHandle: c.session.SessionHandle,
 				Statement:     query,
-				RunAsync:      true,
+				RunAsync:      c.cfg.RunAsync,
 				QueryTimeout:  int64(c.cfg.TimeoutSeconds),
 				// this is specific for databricks. It shortcuts server roundtrips
 				GetDirectResults: &cli_service.TSparkGetDirectResults{
@@ -198,7 +188,13 @@ func (c *conn) executeStatement(ctx context.Context, query string, args []driver
 		},
 	}
 	_, res, err := sentinel.Watch(ctx, 0, 0)
-	exStmtResp := res.(*cli_service.TExecuteStatementResp)
+	if err != nil {
+		return nil, err
+	}
+	exStmtResp, ok := res.(*cli_service.TExecuteStatementResp)
+	if !ok {
+		return nil, fmt.Errorf("databricks: invalid execute statement response")
+	}
 	return exStmtResp, err
 }
 
