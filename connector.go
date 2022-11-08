@@ -25,15 +25,15 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 	t := true
 	var catalogName ts.TIdentifier
 	var schemaName ts.TIdentifier
-	if c.cfg.Catalog != nil {
-		catalogName = ts.TIdentifier(*c.cfg.Catalog)
+	if c.cfg.Catalog != "" {
+		catalogName = ts.TIdentifier(c.cfg.Catalog)
 	}
-	if c.cfg.Schema != nil {
-		schemaName = ts.TIdentifier(*c.cfg.Schema)
+	if c.cfg.Schema != "" {
+		schemaName = ts.TIdentifier(c.cfg.Schema)
 	}
 
 	req := ts.TOpenSessionReq{
-		ClientProtocol: c.cfg.Thrift.ProtocolVersion,
+		ClientProtocol: c.cfg.ThriftProtocolVersion,
 		Configuration:  make(map[string]string),
 		InitialNamespace: &ts.TNamespace{
 			CatalogName: &catalogName,
@@ -119,11 +119,14 @@ func WithTimeout(n int) connOption {
 
 func WithInitialNamespace(catalog, schema string) connOption {
 	return func(c *config.Config) {
-		if catalog != "" {
-			c.Catalog = &catalog
-		}
-		if schema != "" {
-			c.Schema = &schema
-		}
+		c.Catalog = catalog
+		c.Schema = schema
 	}
+}
+
+func WithUserAgentEntry(entry string) connOption {
+	return func(c *config.Config) {
+		c.UserAgentEntry = entry
+	}
+
 }

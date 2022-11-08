@@ -56,7 +56,7 @@ func InitThriftClient(cfg *config.Config) (*ThriftServiceClient, error) {
 	}
 
 	var protocolFactory thrift.TProtocolFactory
-	switch cfg.Thrift.Protocol {
+	switch cfg.ThriftProtocol {
 	case "compact":
 		protocolFactory = thrift.NewTCompactProtocolFactoryConf(tcfg)
 	case "simplejson":
@@ -68,9 +68,9 @@ func InitThriftClient(cfg *config.Config) (*ThriftServiceClient, error) {
 	case "header":
 		protocolFactory = thrift.NewTHeaderProtocolFactoryConf(tcfg)
 	default:
-		return nil, fmt.Errorf("invalid protocol specified %s", cfg.Thrift.Protocol)
+		return nil, fmt.Errorf("invalid protocol specified %s", cfg.ThriftProtocol)
 	}
-	if cfg.Thrift.DebugClientProtocol {
+	if cfg.ThriftDebugClientProtocol {
 		protocolFactory = thrift.NewTDebugProtocolFactoryWithLogger(protocolFactory, "client:", thrift.StdLogger(nil))
 	}
 
@@ -78,7 +78,7 @@ func InitThriftClient(cfg *config.Config) (*ThriftServiceClient, error) {
 	var tr *Transport
 	var err error
 
-	switch cfg.Thrift.Transport {
+	switch cfg.ThriftTransport {
 	case "http":
 		tr = &Transport{
 			Transport: &http.Transport{
@@ -106,7 +106,7 @@ func InitThriftClient(cfg *config.Config) (*ThriftServiceClient, error) {
 	case "zlib":
 		tTrans, err = thrift.NewTZlibTransport(tTrans, zlib.BestCompression)
 	default:
-		return nil, fmt.Errorf("invalid transport specified `%s`", cfg.Thrift.Transport)
+		return nil, fmt.Errorf("invalid transport specified `%s`", cfg.ThriftTransport)
 	}
 	if err != nil {
 		return nil, err

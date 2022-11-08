@@ -29,7 +29,7 @@ func initThriftTestServer(cfg *config.Config, handler ts.TCLIService) *httptest.
 	}
 
 	var protocolFactory thrift.TProtocolFactory
-	switch cfg.Thrift.Protocol {
+	switch cfg.ThriftProtocol {
 	case "compact":
 		protocolFactory = thrift.NewTCompactProtocolFactoryConf(tcfg)
 	case "simplejson":
@@ -41,9 +41,9 @@ func initThriftTestServer(cfg *config.Config, handler ts.TCLIService) *httptest.
 	case "header":
 		protocolFactory = thrift.NewTHeaderProtocolFactoryConf(tcfg)
 	default:
-		panic(fmt.Errorf("invalid protocol specified %s", cfg.Thrift.Protocol))
+		panic(fmt.Errorf("invalid protocol specified %s", cfg.ThriftProtocol))
 	}
-	if cfg.Thrift.DebugClientProtocol {
+	if cfg.ThriftDebugClientProtocol {
 		protocolFactory = thrift.NewTDebugProtocolFactoryWithLogger(protocolFactory, "client:", thrift.StdLogger(nil))
 	}
 

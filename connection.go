@@ -46,7 +46,7 @@ func (c *conn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, e
 }
 
 func (c *conn) Ping(ctx context.Context) error {
-	_, err := c.executeStatement(ctx, "select 1", nil)
+	_, err := c.QueryContext(ctx, "select 1", nil)
 	if err != nil {
 		log.Err(err).Msg("ping error")
 		return driver.ErrBadConn
@@ -199,7 +199,7 @@ func (c *conn) executeStatement(ctx context.Context, query string, args []driver
 			return resp, err
 		},
 	}
-	_, res, err := sentinel.Watch(ctx, 0, 0)
+	_, res, err := sentinel.Watch(ctx, c.cfg.PollInterval, 0)
 	if err != nil {
 		return nil, err
 	}
