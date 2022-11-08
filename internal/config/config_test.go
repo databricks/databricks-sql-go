@@ -7,7 +7,7 @@ import (
 
 func TestParseConfig(t *testing.T) {
 	type args struct {
-		dns string
+		dsn string
 	}
 	tests := []struct {
 		name    string
@@ -18,7 +18,7 @@ func TestParseConfig(t *testing.T) {
 	}{
 		{
 			name: "base case",
-			args: args{dns: "token:supersecret@example.cloud.databricks.com:443/sql/1.0/endpoints/12346a5b5b0e123a"},
+			args: args{dsn: "token:supersecret@example.cloud.databricks.com:443/sql/1.0/endpoints/12346a5b5b0e123a"},
 			wantCfg: UserConfig{
 				Protocol:    "https",
 				Host:        "example.cloud.databricks.com",
@@ -31,7 +31,7 @@ func TestParseConfig(t *testing.T) {
 		},
 		{
 			name: "with https scheme",
-			args: args{dns: "https://token:supersecret@example.cloud.databricks.com:443/sql/1.0/endpoints/12346a5b5b0e123a"},
+			args: args{dsn: "https://token:supersecret@example.cloud.databricks.com:443/sql/1.0/endpoints/12346a5b5b0e123a"},
 			wantCfg: UserConfig{
 				Protocol:    "https",
 				Host:        "example.cloud.databricks.com",
@@ -44,7 +44,7 @@ func TestParseConfig(t *testing.T) {
 		},
 		{
 			name: "with http scheme",
-			args: args{dns: "http://localhost:8080/sql/1.0/endpoints/12346a5b5b0e123a"},
+			args: args{dsn: "http://localhost:8080/sql/1.0/endpoints/12346a5b5b0e123a"},
 			wantCfg: UserConfig{
 				Protocol: "http",
 				Host:     "localhost",
@@ -56,7 +56,7 @@ func TestParseConfig(t *testing.T) {
 		},
 		{
 			name: "with localhost",
-			args: args{dns: "http://localhost:8080"},
+			args: args{dsn: "http://localhost:8080"},
 			wantCfg: UserConfig{
 				Protocol: "http",
 				Host:     "localhost",
@@ -67,7 +67,7 @@ func TestParseConfig(t *testing.T) {
 		},
 		{
 			name: "with query params",
-			args: args{dns: "token:supersecret@example.cloud.databricks.com:8000/sql/1.0/endpoints/12346a5b5b0e123a?timeout=100&maxRows=1000"},
+			args: args{dsn: "token:supersecret@example.cloud.databricks.com:8000/sql/1.0/endpoints/12346a5b5b0e123a?timeout=100&maxRows=1000"},
 			wantCfg: UserConfig{
 				Protocol:       "https",
 				Host:           "example.cloud.databricks.com",
@@ -82,7 +82,7 @@ func TestParseConfig(t *testing.T) {
 		},
 		{
 			name: "with query params case insensitive",
-			args: args{dns: "token:supersecret@example.cloud.databricks.com:8000/sql/1.0/endpoints/12346a5b5b0e123a?timeout=100&maxrows=1000"},
+			args: args{dsn: "token:supersecret@example.cloud.databricks.com:8000/sql/1.0/endpoints/12346a5b5b0e123a?timeout=100&maxrows=1000"},
 			wantCfg: UserConfig{
 				Protocol:       "https",
 				Host:           "example.cloud.databricks.com",
@@ -96,7 +96,7 @@ func TestParseConfig(t *testing.T) {
 		},
 		{
 			name: "bare",
-			args: args{dns: "example.cloud.databricks.com:8000/sql/1.0/endpoints/12346a5b5b0e123a"},
+			args: args{dsn: "example.cloud.databricks.com:8000/sql/1.0/endpoints/12346a5b5b0e123a"},
 			wantCfg: UserConfig{
 				Protocol: "https",
 				Host:     "example.cloud.databricks.com",
@@ -108,7 +108,7 @@ func TestParseConfig(t *testing.T) {
 		},
 		{
 			name: "with catalog",
-			args: args{dns: "token:supersecret@example.cloud.databricks.com:8000/sql/1.0/endpoints/12346a5b5b0e123b?catalog=default"},
+			args: args{dsn: "token:supersecret@example.cloud.databricks.com:8000/sql/1.0/endpoints/12346a5b5b0e123b?catalog=default"},
 			wantCfg: UserConfig{
 				Protocol:    "https",
 				Host:        "example.cloud.databricks.com",
@@ -121,7 +121,7 @@ func TestParseConfig(t *testing.T) {
 		},
 		{
 			name: "with schema",
-			args: args{dns: "token:supersecret2@example.cloud.databricks.com:8000/sql/1.0/endpoints/12346a5b5b0e123a?schema=system"},
+			args: args{dsn: "token:supersecret2@example.cloud.databricks.com:8000/sql/1.0/endpoints/12346a5b5b0e123a?schema=system"},
 			wantCfg: UserConfig{
 				Protocol:    "https",
 				Host:        "example.cloud.databricks.com",
@@ -134,7 +134,7 @@ func TestParseConfig(t *testing.T) {
 		},
 		{
 			name: "with everything",
-			args: args{dns: "token:supersecret2@example.cloud.databricks.com:8000/sql/1.0/endpoints/12346a5b5b0e123a?catalog=default&schema=system&timeout=100&maxRows=1000"},
+			args: args{dsn: "token:supersecret2@example.cloud.databricks.com:8000/sql/1.0/endpoints/12346a5b5b0e123a?catalog=default&schema=system&timeout=100&maxRows=1000"},
 			wantCfg: UserConfig{
 				Protocol:       "https",
 				Host:           "example.cloud.databricks.com",
@@ -149,7 +149,7 @@ func TestParseConfig(t *testing.T) {
 		},
 		{
 			name: "missing http path",
-			args: args{dns: "token:supersecret@example.cloud.databricks.com:443"},
+			args: args{dsn: "token:supersecret@example.cloud.databricks.com:443"},
 			wantCfg: UserConfig{
 				Protocol:    "https",
 				Host:        "example.cloud.databricks.com",
@@ -161,7 +161,7 @@ func TestParseConfig(t *testing.T) {
 		},
 		{
 			name: "missing http path",
-			args: args{dns: "token:supersecret2@example.cloud.databricks.com:443?catalog=default&schema=system&timeout=100&maxRows=1000"},
+			args: args{dsn: "token:supersecret2@example.cloud.databricks.com:443?catalog=default&schema=system&timeout=100&maxRows=1000"},
 			wantCfg: UserConfig{
 				Protocol:       "https",
 				Host:           "example.cloud.databricks.com",
@@ -175,32 +175,32 @@ func TestParseConfig(t *testing.T) {
 		},
 		{
 			name:    "with wrong port",
-			args:    args{dns: "token:supersecret2@example.cloud.databricks.com:foo/sql/1.0/endpoints/12346a5b5b0e123a?catalog=default&schema=system&timeout=100&maxRows=1000"},
+			args:    args{dsn: "token:supersecret2@example.cloud.databricks.com:foo/sql/1.0/endpoints/12346a5b5b0e123a?catalog=default&schema=system&timeout=100&maxRows=1000"},
 			wantCfg: UserConfig{},
 			wantErr: true,
 		},
 		{
 			name:    "missing port",
-			args:    args{dns: "token:supersecret2@example.cloud.databricks.com?catalog=default&schema=system&timeout=100&maxRows=1000"},
+			args:    args{dsn: "token:supersecret2@example.cloud.databricks.com?catalog=default&schema=system&timeout=100&maxRows=1000"},
 			wantCfg: UserConfig{},
 			wantErr: true,
 		},
 		{
 			name:    "with wrong username",
-			args:    args{dns: "jim:supersecret2@example.cloud.databricks.com:443/sql/1.0/endpoints/12346a5b5b0e123a?catalog=default&schema=system&timeout=100&maxRows=1000"},
+			args:    args{dsn: "jim:supersecret2@example.cloud.databricks.com:443/sql/1.0/endpoints/12346a5b5b0e123a?catalog=default&schema=system&timeout=100&maxRows=1000"},
 			wantCfg: UserConfig{},
 			wantErr: true,
 		},
 		{
 			name:    "with token but no secret",
-			args:    args{dns: "token@example.cloud.databricks.com:443/sql/1.0/endpoints/12346a5b5b0e123a?catalog=default&schema=system&timeout=100&maxRows=1000"},
+			args:    args{dsn: "token@example.cloud.databricks.com:443/sql/1.0/endpoints/12346a5b5b0e123a?catalog=default&schema=system&timeout=100&maxRows=1000"},
 			wantCfg: UserConfig{},
 			wantErr: true,
 		},
 
 		{
 			name: "missing host",
-			args: args{dns: "token:supersecret2@:443?catalog=default&schema=system&timeout=100&maxRows=1000"},
+			args: args{dsn: "token:supersecret2@:443?catalog=default&schema=system&timeout=100&maxRows=1000"},
 			wantCfg: UserConfig{
 				Port:           443,
 				Protocol:       "https",
@@ -214,7 +214,7 @@ func TestParseConfig(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := ParseDNS(tt.args.dns)
+			got, err := ParseDSN(tt.args.dsn)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("ParseConfig() error = %v, wantErr %v", err, tt.wantErr)
 				return

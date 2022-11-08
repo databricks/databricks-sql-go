@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"strconv"
 	"testing"
+	"time"
 
 	ts "github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/config"
@@ -100,6 +101,85 @@ func TestQueryContextDirectResultsSuccess(t *testing.T) {
 	// }
 
 	// rows.Close()
+}
+
+func TestQueryContextTimeouts(t *testing.T) {
+	cfg := config.WithDefaults()
+	// set up server
+
+	var executeStatement = func(ctx context.Context, req *ts.TExecuteStatementReq) (*ts.TExecuteStatementResp, error) {
+		return &ts.TExecuteStatementResp{
+			Status: &ts.TStatus{
+				StatusCode: ts.TStatusCode_SUCCESS_STATUS,
+			},
+			OperationHandle: &ts.TOperationHandle{
+				OperationId: &ts.THandleIdentifier{
+					GUID:   []byte("2"),
+					Secret: []byte("b"),
+				},
+			},
+			DirectResults: &ts.TSparkDirectResults{
+				OperationStatus: &ts.TGetOperationStatusResp{
+					Status: &ts.TStatus{
+						StatusCode: ts.TStatusCode_STILL_EXECUTING_STATUS,
+					},
+					OperationState: ts.TOperationStatePtr(ts.TOperationState_PENDING_STATE),
+				},
+				ResultSetMetadata: nil,
+				ResultSet:         nil,
+			},
+		}, nil
+	}
+
+	cancelOperationCalled := false
+	var cancelOperation = func(ctx context.Context, req *ts.TCancelOperationReq) (*ts.TCancelOperationResp, error) {
+		cancelOperationCalled = true
+		return &ts.TCancelOperationResp{
+			Status: &ts.TStatus{
+				StatusCode: ts.TStatusCode_SUCCESS_STATUS,
+			},
+		}, nil
+	}
+	getOperationStatusCalled := false
+	var getOperationStatus = func(ctx context.Context, req *ts.TGetOperationStatusReq) (*ts.TGetOperationStatusResp, error) {
+		// this is very important. If the context gets canceled while getting the operation we should still call cancel
+		time.Sleep(200 * time.Millisecond)
+		getOperationStatusCalled = true
+		return &ts.TGetOperationStatusResp{
+			Status: &ts.TStatus{
+				StatusCode: ts.TStatusCode_STILL_EXECUTING_STATUS,
+			},
+		}, nil
+	}
+
+	ts := initThriftTestServer(cfg, &serverHandler{
+		executeStatement:   executeStatement,
+		getOperationStatus: getOperationStatus,
+		cancelOperation:    cancelOperation,
+	})
+
+	defer ts.Close()
+
+	r, err := url.Parse(ts.URL)
+	assert.NoError(t, err)
+	cfg.Host = "localhost"
+	port, err := strconv.Atoi(r.Port())
+	assert.NoError(t, err)
+	cfg.Port = port
+	cfg.PollInterval = 200 * time.Millisecond
+
+	connector := &connector{cfg}
+
+	db := sql.OpenDB(connector)
+
+	ctx, cancel1 := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel1()
+	rows, err := db.QueryContext(ctx, `select * from dummy`)
+	assert.ErrorIs(t, err, context.DeadlineExceeded)
+	assert.Nil(t, rows)
+	assert.True(t, cancelOperationCalled)
+	assert.True(t, getOperationStatusCalled)
+
 }
 
 func TestQueryContextDirectResultsError(t *testing.T) {

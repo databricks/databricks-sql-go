@@ -14,9 +14,9 @@ func init() {
 
 type databricksDriver struct{}
 
-func (d *databricksDriver) Open(dns string) (driver.Conn, error) {
+func (d *databricksDriver) Open(dsn string) (driver.Conn, error) {
 	cfg := config.WithDefaults()
-	userCfg, err := config.ParseDNS(dns)
+	userCfg, err := config.ParseDSN(dsn)
 	if err != nil {
 		return nil, err
 	}
@@ -27,9 +27,9 @@ func (d *databricksDriver) Open(dns string) (driver.Conn, error) {
 	return c.Connect(context.Background())
 }
 
-func (d *databricksDriver) OpenConnector(dns string) (driver.Connector, error) {
+func (d *databricksDriver) OpenConnector(dsn string) (driver.Connector, error) {
 	cfg := config.WithDefaults()
-	ucfg, err := config.ParseDNS(dns)
+	ucfg, err := config.ParseDSN(dsn)
 	if err != nil {
 		return nil, err
 	}

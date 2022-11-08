@@ -112,12 +112,12 @@ func WithDefaults() *Config {
 
 }
 
-func ParseDNS(dns string) (UserConfig, error) {
-	fullDNS := dns
-	if !strings.HasPrefix(dns, "https://") && !strings.HasPrefix(dns, "http://") {
-		fullDNS = "https://" + dns
+func ParseDSN(dsn string) (UserConfig, error) {
+	fullDSN := dsn
+	if !strings.HasPrefix(dsn, "https://") && !strings.HasPrefix(dsn, "http://") {
+		fullDSN = "https://" + dsn
 	}
-	parsedURL, err := url.Parse(fullDNS)
+	parsedURL, err := url.Parse(fullDSN)
 	if err != nil {
 		return UserConfig{}, err
 	}

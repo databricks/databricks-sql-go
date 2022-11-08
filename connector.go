@@ -23,21 +23,21 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 		return nil, fmt.Errorf("databricks: error initializing thrift client. %w", err)
 	}
 	t := true
-	var catalogName ts.TIdentifier
-	var schemaName ts.TIdentifier
+	var catalogName *ts.TIdentifier
+	var schemaName *ts.TIdentifier
 	if c.cfg.Catalog != "" {
-		catalogName = ts.TIdentifier(c.cfg.Catalog)
+		catalogName = ts.TIdentifierPtr(ts.TIdentifier(c.cfg.Catalog))
 	}
 	if c.cfg.Schema != "" {
-		schemaName = ts.TIdentifier(c.cfg.Schema)
+		schemaName = ts.TIdentifierPtr(ts.TIdentifier(c.cfg.Schema))
 	}
 
 	req := ts.TOpenSessionReq{
 		ClientProtocol: c.cfg.ThriftProtocolVersion,
 		Configuration:  make(map[string]string),
 		InitialNamespace: &ts.TNamespace{
-			CatalogName: &catalogName,
-			SchemaName:  &schemaName,
+			CatalogName: catalogName,
+			SchemaName:  schemaName,
 		},
 		CanUseMultipleCatalogs: &t,
 	}

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"net/url"
 
 	"github.com/apache/thrift/lib/go/thrift"
 	ts "github.com/databricks/databricks-sql-go/internal/cli_service"
@@ -50,7 +49,7 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 }
 
 func InitThriftClient(cfg *config.Config) (*ThriftServiceClient, error) {
-	endpoint := buildEndpointURL(cfg)
+	endpoint := cfg.ToEndpointURL()
 	tcfg := &thrift.TConfiguration{
 		TLSConfig: cfg.TLSConfig,
 	}
@@ -119,17 +118,6 @@ func InitThriftClient(cfg *config.Config) (*ThriftServiceClient, error) {
 	tclient := ts.NewTCLIServiceClient(thrift.NewTStandardClient(iprot, oprot))
 	tsClient := &ThriftServiceClient{tclient}
 	return tsClient, nil
-}
-
-func buildEndpointURL(c *config.Config) string {
-	var endpointUrl string
-	if c.Host == "localhost" {
-		endpointUrl = fmt.Sprintf("http://%s:%d", c.Host, c.Port)
-	} else {
-		endpointUrl = fmt.Sprintf("https://%s:%s@%s:%d%s", "token", url.QueryEscape(c.AccessToken), c.Host, c.Port, c.HTTPPath)
-
-	}
-	return endpointUrl
 }
 
 // RPCResponse respresents thrift rpc response

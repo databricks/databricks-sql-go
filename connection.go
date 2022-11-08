@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql/driver"
 	"fmt"
-	"time"
 
 	"github.com/rs/zerolog/log"
 
@@ -34,7 +33,6 @@ func (c *conn) Close() error {
 	})
 
 	return err
-
 }
 
 func (c *conn) Begin() (driver.Tx, error) {
@@ -218,7 +216,7 @@ func (c *conn) pollOperation(ctx context.Context, opHandle *ts.TOperationHandle)
 		},
 		StatusFn: func() (sentinel.Done, any, error) {
 			var err error
-			statusResp, err = c.client.GetOperationStatus(ctx, &ts.TGetOperationStatusReq{
+			statusResp, err = c.client.GetOperationStatus(context.Background(), &ts.TGetOperationStatusReq{
 				OperationHandle: opHandle,
 			})
 			return func() bool {
@@ -238,7 +236,10 @@ func (c *conn) pollOperation(ctx context.Context, opHandle *ts.TOperationHandle)
 			return ret, err
 		},
 	}
-	_, resp, err := pollSentinel.Watch(ctx, 100*time.Millisecond, 0)
+	_, resp, err := pollSentinel.Watch(ctx, c.cfg.PollInterval, 0)
+	if err != nil {
+		return nil, err
+	}
 	statusResp, ok := resp.(*ts.TGetOperationStatusResp)
 	if !ok {
 		return nil, fmt.Errorf("could not read operation status")
