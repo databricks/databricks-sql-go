@@ -5,10 +5,10 @@ import (
 	"database/sql/driver"
 	"fmt"
 
-	"github.com/databricks/databricks-sql-go/internal/cli_service"
+	utils "github.com/databricks/databricks-sql-go/internal"
+	ts "github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/client"
 	"github.com/databricks/databricks-sql-go/internal/config"
-	"github.com/databricks/databricks-sql-go/internal/utils"
 )
 
 // TODO this is the thrift connector. We could have many implementations
@@ -22,10 +22,24 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 	if err != nil {
 		return nil, fmt.Errorf("databricks: error initializing thrift client. %w", err)
 	}
+	t := true
+	var catalogName ts.TIdentifier
+	var schemaName ts.TIdentifier
+	if c.cfg.Catalog != nil {
+		catalogName = ts.TIdentifier(*c.cfg.Catalog)
+	}
+	if c.cfg.Schema != nil {
+		schemaName = ts.TIdentifier(*c.cfg.Schema)
+	}
 
-	req := cli_service.TOpenSessionReq{
+	req := ts.TOpenSessionReq{
 		ClientProtocol: c.cfg.Thrift.ProtocolVersion,
 		Configuration:  make(map[string]string),
+		InitialNamespace: &ts.TNamespace{
+			CatalogName: &catalogName,
+			SchemaName:  &schemaName,
+		},
+		CanUseMultipleCatalogs: &t,
 	}
 
 	session, err := tclient.OpenSession(ctx, &req)
@@ -100,5 +114,16 @@ func WithMaxRows(n int) connOption {
 func WithTimeout(n int) connOption {
 	return func(c *config.Config) {
 		c.TimeoutSeconds = n
+	}
+}
+
+func WithInitialNamespace(catalog, schema string) connOption {
+	return func(c *config.Config) {
+		if catalog != "" {
+			c.Catalog = &catalog
+		}
+		if schema != "" {
+			c.Schema = &schema
+		}
 	}
 }

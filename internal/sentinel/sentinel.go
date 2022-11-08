@@ -86,7 +86,7 @@ func (s Sentinel) Watch(ctx context.Context, interval, timeout time.Duration) (W
 		select {
 		case <-intervalTimer.C:
 			done, statusResp, err := s.StatusFn()
-			log.Debug().Msg("status checked")
+			log.Debug().Msg("databricks: status checked")
 			if err != nil {
 				return WatchErr, statusResp, err
 			}

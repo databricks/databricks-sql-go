@@ -192,7 +192,6 @@ func TestQueryContextDirectResultsError(t *testing.T) {
 
 	// rows.Close()
 }
-
 func strPtr(s string) *string {
 	return &s
 }
