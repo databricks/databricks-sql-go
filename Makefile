@@ -1,5 +1,5 @@
-BINARY         = vulcan
-PACKAGE        = github.com/datajoydev/$(BINARY)
+BINARY         = databricks-sql-go
+PACKAGE        = github.com/databricks/$(BINARY)
 VER_PREFIX     = $(PACKAGE)/version
 PRODUCTION     ?= false
 DATE           = $(shell date "+%Y-%m-%d")
