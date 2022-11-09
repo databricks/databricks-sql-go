@@ -42,6 +42,10 @@ func main() {
 	// ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	// defer cancel()
 	ctx := context.Background()
+	if err := db.Ping(); err != nil {
+		fmt.Println(err)
+	}
+
 	rows, err1 := db.QueryContext(ctx, `select cut from default.diamonds`)
 	if err1 != nil {
 		if err1 == sql.ErrNoRows {

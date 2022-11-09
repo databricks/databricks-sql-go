@@ -3,21 +3,31 @@ package client
 import (
 	"compress/zlib"
 	"context"
+	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 
 	"github.com/apache/thrift/lib/go/thrift"
-	"github.com/databricks/databricks-sql-go/internal/cli_service"
+	ts "github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/config"
 )
 
 type ThriftServiceClient struct {
-	*cli_service.TCLIServiceClient
+	*ts.TCLIServiceClient
 }
 
-func (tsc *ThriftServiceClient) FetchResults(ctx context.Context, req *cli_service.TFetchResultsReq) (_r *cli_service.TFetchResultsResp, _err error) {
+func (tsc *ThriftServiceClient) FetchResults(ctx context.Context, req *ts.TFetchResultsReq) (*ts.TFetchResultsResp, error) {
 	return tsc.TCLIServiceClient.FetchResults(ctx, req)
+}
+
+func (tsc *ThriftServiceClient) ExecuteStatement(ctx context.Context, req *ts.TExecuteStatementReq) (*ts.TExecuteStatementResp, error) {
+	resp, err := tsc.TCLIServiceClient.ExecuteStatement(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return resp, CheckStatus(resp)
 }
 
 // log.Debug().Msg(fmt.Sprint(c.transport.response.StatusCode))
@@ -106,7 +116,7 @@ func InitThriftClient(cfg *config.Config) (*ThriftServiceClient, error) {
 	}
 	iprot := protocolFactory.GetProtocol(tTrans)
 	oprot := protocolFactory.GetProtocol(tTrans)
-	tclient := cli_service.NewTCLIServiceClient(thrift.NewTStandardClient(iprot, oprot))
+	tclient := ts.NewTCLIServiceClient(thrift.NewTStandardClient(iprot, oprot))
 	tsClient := &ThriftServiceClient{tclient}
 	return tsClient, nil
 }
@@ -120,4 +130,28 @@ func buildEndpointURL(c *config.Config) string {
 
 	}
 	return endpointUrl
+}
+
+// RPCResponse respresents thrift rpc response
+type RPCResponse interface {
+	GetStatus() *ts.TStatus
+}
+
+func CheckStatus(resp interface{}) error {
+	rpcresp, ok := resp.(RPCResponse)
+	if ok {
+		status := rpcresp.GetStatus()
+		if status.StatusCode == ts.TStatusCode_ERROR_STATUS {
+			return errors.New(status.GetErrorMessage())
+		}
+		if status.StatusCode == ts.TStatusCode_INVALID_HANDLE_STATUS {
+			return errors.New("thrift: invalid handle")
+		}
+
+		// SUCCESS, SUCCESS_WITH_INFO, STILL_EXECUTING are ok
+		return nil
+	}
+
+	log.Printf("response: %v", resp)
+	return errors.New("thrift: invalid response")
 }

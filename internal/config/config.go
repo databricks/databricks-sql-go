@@ -11,8 +11,8 @@ import (
 type Config struct {
 	Host          string // from databricks UI
 	Port          int    // from databricks UI
-	Catalog       string //??
-	Database      string
+	Catalog       *string
+	Schema        *string
 	AccessToken   string      // from databricks UI
 	TLSConfig     *tls.Config // nil disables TLS. Is it needed?
 	Protocol      string      // defaults to https. From databricks UI
@@ -36,11 +36,15 @@ type ThriftConfig struct {
 	DebugClientProtocol bool
 }
 
+func strPtr(s string) *string {
+	return &s
+}
+
 func WithDefaults() *Config {
 	return &Config{
 		Port:     443,
 		MaxRows:  10000,
-		Database: "default",
+		Catalog:  strPtr("default"),
 		Protocol: "https",
 		RunAsync: true,
 		Thrift: &ThriftConfig{
@@ -80,7 +84,7 @@ func (c *Config) DeepCopy() *Config {
 		Host:           c.Host,
 		Port:           c.Port,
 		Catalog:        c.Catalog,
-		Database:       c.Database,
+		Schema:         c.Schema,
 		AccessToken:    c.AccessToken,
 		TLSConfig:      c.TLSConfig.Clone(),
 		Protocol:       c.Protocol,
