@@ -10,11 +10,12 @@ import (
 
 	"github.com/apache/thrift/lib/go/thrift"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
+	ts "github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/config"
 )
 
 type ThriftServiceClient struct {
-	*cli_service.TCLIServiceClient
+	*ts.TCLIServiceClient
 }
 
 func (tsc *ThriftServiceClient) FetchResults(ctx context.Context, req *cli_service.TFetchResultsReq) (*cli_service.TFetchResultsResp, error) {
@@ -115,7 +116,7 @@ func InitThriftClient(cfg *config.Config) (*ThriftServiceClient, error) {
 	}
 	iprot := protocolFactory.GetProtocol(tTrans)
 	oprot := protocolFactory.GetProtocol(tTrans)
-	tclient := cli_service.NewTCLIServiceClient(thrift.NewTStandardClient(iprot, oprot))
+	tclient := ts.NewTCLIServiceClient(thrift.NewTStandardClient(iprot, oprot))
 	tsClient := &ThriftServiceClient{tclient}
 	return tsClient, nil
 }

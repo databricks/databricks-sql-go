@@ -182,7 +182,7 @@ func ParseDSN(dsn string) (UserConfig, error) {
 	}
 	if len(params) > 0 {
 		sessionParams := make(map[string]string)
-		for k, _ := range params {
+		for k := range params {
 			sessionParams[k] = params.Get(k)
 		}
 		ucfg.SessionParams = sessionParams
