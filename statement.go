@@ -5,39 +5,45 @@ import (
 	"database/sql/driver"
 )
 
-type dbsqlStmt struct {
+type stmt struct {
+	conn  *conn
+	query string
 }
 
-func (s *dbsqlStmt) Close() error {
-	return ErrNotImplemented
+// Close closes the statement.
+func (s *stmt) Close() error {
+	// no-op
+	return nil
 }
 
-func (s *dbsqlStmt) NumInput() int {
-	return 0
+func (s *stmt) NumInput() int {
+	return -1
 }
 
 // Deprecated: Use StmtExecContext instead.
-func (s *dbsqlStmt) Exec(args []driver.Value) (driver.Result, error) {
+func (s *stmt) Exec(args []driver.Value) (driver.Result, error) {
 	return nil, ErrNotImplemented
 }
 
 // Deprecated: Use StmtQueryContext instead.
-func (s *dbsqlStmt) Query(args []driver.Value) (driver.Rows, error) {
+func (s *stmt) Query(args []driver.Value) (driver.Rows, error) {
 	return nil, ErrNotImplemented
 }
 
 // ExecContext executes a query that doesn't return rows, such
 // as an INSERT or UPDATE.
 //
-// ExecContext must honor the context timeout and return when it is canceled.
-func (s *dbsqlStmt) ExecContext(ctx context.Context, args []driver.NamedValue) (driver.Result, error) {
-	return nil, ErrNotImplemented
+// ExecContext honors the context timeout and return when it is canceled.
+func (s *stmt) ExecContext(ctx context.Context, args []driver.NamedValue) (driver.Result, error) {
+	return s.conn.ExecContext(ctx, s.query, args)
 }
 
 // QueryContext executes a query that may return rows, such as a
 // SELECT.
 //
-// QueryContext must honor the context timeout and return when it is canceled.
-func (s *dbsqlStmt) QueryContext(ctx context.Context, args []driver.NamedValue) (driver.Rows, error) {
-	return nil, ErrNotImplemented
+// QueryContext honors the context timeout and return when it is canceled.
+func (s *stmt) QueryContext(ctx context.Context, args []driver.NamedValue) (driver.Rows, error) {
+	return s.conn.QueryContext(ctx, s.query, args)
 }
+
+var _ driver.Stmt = (*stmt)(nil)

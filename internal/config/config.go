@@ -20,6 +20,7 @@ type Config struct {
 
 	RunAsync                  bool // TODO
 	PollInterval              time.Duration
+	DefaultTimeout            time.Duration
 	CanUseMultipleCatalogs    bool
 	DriverName                string
 	DriverVersion             string
@@ -44,11 +45,12 @@ func (c *Config) DeepCopy() *Config {
 	}
 
 	return &Config{
-		UserConfig:    c.UserConfig.DeepCopy(),
-		TLSConfig:     c.TLSConfig.Clone(),
-		Authenticator: c.Authenticator,
-		RunAsync:      c.RunAsync,
-		PollInterval:  c.PollInterval,
+		UserConfig:     c.UserConfig.DeepCopy(),
+		TLSConfig:      c.TLSConfig.Clone(),
+		Authenticator:  c.Authenticator,
+		RunAsync:       c.RunAsync,
+		PollInterval:   c.PollInterval,
+		DefaultTimeout: c.DefaultTimeout,
 
 		CanUseMultipleCatalogs:    c.CanUseMultipleCatalogs,
 		ThriftProtocol:            c.ThriftProtocol,
@@ -62,17 +64,17 @@ func (c *Config) DeepCopy() *Config {
 
 // UserConfig is the set of configurations exposed to users
 type UserConfig struct {
-	Protocol       string
-	Host           string // from databricks UI
-	Port           int    // from databricks UI
-	HTTPPath       string // from databricks UI
-	Catalog        string
-	Schema         string
-	AccessToken    string // from databricks UI
-	MaxRows        int    // TODO
-	TimeoutSeconds int    // There are several timeouts that can be possibly configurable
-	UserAgentEntry string
-	SessionParams  map[string]string
+	Protocol            string
+	Host                string // from databricks UI
+	Port                int    // from databricks UI
+	HTTPPath            string // from databricks UI
+	Catalog             string
+	Schema              string
+	AccessToken         string // from databricks UI
+	MaxRows             int    // TODO
+	QueryTimeoutSeconds int    // There are several timeouts that can be possibly configurable
+	UserAgentEntry      string
+	SessionParams       map[string]string
 }
 
 func (ucfg UserConfig) DeepCopy() UserConfig {
@@ -81,17 +83,17 @@ func (ucfg UserConfig) DeepCopy() UserConfig {
 		sessionParams[k] = v
 	}
 	return UserConfig{
-		Protocol:       ucfg.Protocol,
-		Host:           ucfg.Host,
-		Port:           ucfg.Port,
-		HTTPPath:       ucfg.HTTPPath,
-		Catalog:        ucfg.Catalog,
-		Schema:         ucfg.Schema,
-		AccessToken:    ucfg.AccessToken,
-		MaxRows:        ucfg.MaxRows,
-		TimeoutSeconds: ucfg.TimeoutSeconds,
-		UserAgentEntry: ucfg.UserAgentEntry,
-		SessionParams:  sessionParams,
+		Protocol:            ucfg.Protocol,
+		Host:                ucfg.Host,
+		Port:                ucfg.Port,
+		HTTPPath:            ucfg.HTTPPath,
+		Catalog:             ucfg.Catalog,
+		Schema:              ucfg.Schema,
+		AccessToken:         ucfg.AccessToken,
+		MaxRows:             ucfg.MaxRows,
+		QueryTimeoutSeconds: ucfg.QueryTimeoutSeconds,
+		UserAgentEntry:      ucfg.UserAgentEntry,
+		SessionParams:       sessionParams,
 	}
 }
 
@@ -112,6 +114,7 @@ func WithDefaults() *Config {
 		RunAsync:               true,
 		CanUseMultipleCatalogs: true,
 		PollInterval:           200 * time.Millisecond,
+		DefaultTimeout:         60 * time.Second,
 		ThriftProtocol:         "binary",
 		ThriftTransport:        "http",
 		ThriftProtocolVersion:  cli_service.TProtocolVersion_SPARK_CLI_SERVICE_PROTOCOL_V6,
@@ -169,7 +172,7 @@ func ParseDSN(dsn string) (UserConfig, error) {
 		if err != nil {
 			return UserConfig{}, err
 		}
-		ucfg.TimeoutSeconds = timeout
+		ucfg.QueryTimeoutSeconds = timeout
 	}
 	params.Del("timeout")
 	if params.Has("catalog") {
