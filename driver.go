@@ -6,12 +6,11 @@ import (
 	"database/sql/driver"
 
 	"github.com/databricks/databricks-sql-go/internal/config"
-	"github.com/databricks/databricks-sql-go/utils"
+	"github.com/databricks/databricks-sql-go/logger"
 	"github.com/rs/zerolog"
 )
 
 func init() {
-	utils.ConfigureLogger()
 	sql.Register("databricks", &databricksDriver{})
 }
 
@@ -44,5 +43,5 @@ var _ driver.Driver = (*databricksDriver)(nil)
 var _ driver.DriverContext = (*databricksDriver)(nil)
 
 func GetLogger() zerolog.Logger {
-	return utils.Logger
+	return logger.Log
 }

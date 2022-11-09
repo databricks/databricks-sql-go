@@ -10,6 +10,7 @@ import (
 	"github.com/databricks/databricks-sql-go/internal/client"
 	"github.com/databricks/databricks-sql-go/internal/config"
 	"github.com/databricks/databricks-sql-go/internal/sentinel"
+	"github.com/databricks/databricks-sql-go/logger"
 	"github.com/rs/zerolog/log"
 )
 
@@ -68,7 +69,7 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 		if err != nil {
 			return nil, err
 		}
-		log.Info().Msgf("session parameters: %s", setStmt)
+		logger.Log.Info().Msgf("session parameters: %s", setStmt)
 	}
 
 	return conn, nil

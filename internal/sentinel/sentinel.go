@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/databricks/databricks-sql-go/utils"
+	"github.com/databricks/databricks-sql-go/logger"
 )
 
 const (
@@ -115,7 +115,7 @@ func (s Sentinel) Watch(ctx context.Context, interval, timeout time.Duration) (W
 			return WatchCanceled, nil, ctx.Err()
 		case <-timeoutTimerCh:
 			_ = intervalTimer.Stop()
-			utils.Logger.Info().Msgf("wait timed out after %s", timeout.String())
+			logger.Log.Info().Msgf("wait timed out after %s", timeout.String())
 			return WatchTimeout, nil, fmt.Errorf("sentinel timed out")
 		}
 	}

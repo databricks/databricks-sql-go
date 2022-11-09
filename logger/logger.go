@@ -1,6 +1,7 @@
-package utils
+package logger
 
 import (
+	"io"
 	"os"
 	"runtime"
 
@@ -8,18 +9,27 @@ import (
 	"github.com/rs/zerolog"
 )
 
-var Logger = zerolog.New(os.Stderr).With().Timestamp().Logger()
+var Log = zerolog.New(os.Stderr).With().Timestamp().Logger()
 
-// ConfigureGlobalLogger will configure zerolog globally. It will
 // enable pretty printing for interactive terminals and json for production.
-func ConfigureLogger() {
+func init() {
 	// for tty terminal enable pretty logs
 	if isatty.IsTerminal(os.Stdout.Fd()) && runtime.GOOS != "windows" {
-		Logger = Logger.Output(zerolog.ConsoleWriter{Out: os.Stderr})
+		Log = Log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
 	} else {
 		// UNIX Time is faster and smaller than most timestamps
 		// If you set zerolog.TimeFieldFormat to an empty string,
 		// logs will write with UNIX time.
 		zerolog.TimeFieldFormat = ""
 	}
+	// by default only log error
+	SetLogLevel(zerolog.WarnLevel)
+}
+
+func SetLogLevel(l zerolog.Level) {
+	Log = Log.Level(l)
+}
+
+func SetLogOutput(w io.Writer) {
+	Log = Log.Output(w)
 }
