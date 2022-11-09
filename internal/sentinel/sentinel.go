@@ -115,7 +115,7 @@ func (s Sentinel) Watch(ctx context.Context, interval, timeout time.Duration) (W
 			return WatchCanceled, nil, ctx.Err()
 		case <-timeoutTimerCh:
 			_ = intervalTimer.Stop()
-			logger.Log.Info().Msgf("wait timed out after %s", timeout.String())
+			logger.Info().Msgf("wait timed out after %s", timeout.String())
 			return WatchTimeout, nil, fmt.Errorf("sentinel timed out")
 		}
 	}

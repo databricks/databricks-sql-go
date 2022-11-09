@@ -9,27 +9,83 @@ import (
 	"github.com/rs/zerolog"
 )
 
-var Log = zerolog.New(os.Stderr).With().Timestamp().Logger()
+var Logger = zerolog.New(os.Stderr).With().Timestamp().Logger()
 
 // enable pretty printing for interactive terminals and json for production.
 func init() {
 	// for tty terminal enable pretty logs
 	if isatty.IsTerminal(os.Stdout.Fd()) && runtime.GOOS != "windows" {
-		Log = Log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
+		Logger = Logger.Output(zerolog.ConsoleWriter{Out: os.Stderr})
 	} else {
 		// UNIX Time is faster and smaller than most timestamps
 		// If you set zerolog.TimeFieldFormat to an empty string,
 		// logs will write with UNIX time.
 		zerolog.TimeFieldFormat = ""
 	}
-	// by default only log error
-	SetLogLevel(zerolog.WarnLevel)
+	// by default only log warns or above
+	loglvl := zerolog.WarnLevel
+	if lvst := os.Getenv("DATABRICKS_LOG_LEVEL"); lvst != "" {
+		if lv, err := zerolog.ParseLevel(lvst); err != nil {
+			Logger.Error().Msgf("log level %s not recognized", lvst)
+		} else {
+			loglvl = lv
+		}
+	}
+	Logger = Logger.Level(loglvl)
+	Logger.Info().Msgf("setting log level to %s", loglvl)
 }
 
-func SetLogLevel(l zerolog.Level) {
-	Log = Log.Level(l)
+// Sets log level
+// Available levels are: "trace" "debug" "info" "warn" "error" "fatal" "panic"
+func SetLogLevel(l string) error {
+	if lv, err := zerolog.ParseLevel(l); err != nil {
+		return err
+	} else {
+		Logger = Logger.Level(lv)
+		return nil
+	}
 }
 
 func SetLogOutput(w io.Writer) {
-	Log = Log.Output(w)
+	Logger = Logger.Output(w)
+}
+
+// You must call Msg on the returned event in order to send the event.
+func Trace() *zerolog.Event {
+	return Logger.Info()
+}
+
+// You must call Msg on the returned event in order to send the event.
+func Debug() *zerolog.Event {
+	return Logger.Debug()
+}
+
+// You must call Msg on the returned event in order to send the event.
+func Info() *zerolog.Event {
+	return Logger.Info()
+}
+
+// You must call Msg on the returned event in order to send the event.
+func Warn() *zerolog.Event {
+	return Logger.Warn()
+}
+
+// You must call Msg on the returned event in order to send the event.
+func Error() *zerolog.Event {
+	return Logger.Error()
+}
+
+// You must call Msg on the returned event in order to send the event.
+func Err(err error) *zerolog.Event {
+	return Logger.Err(err)
+}
+
+// You must call Msg on the returned event in order to send the event.
+func Fatal() *zerolog.Event {
+	return Logger.Fatal()
+}
+
+// You must call Msg on the returned event in order to send the event.
+func Panic() *zerolog.Event {
+	return Logger.Panic()
 }
