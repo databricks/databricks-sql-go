@@ -4,11 +4,11 @@ import (
 	"context"
 	"database/sql/driver"
 	"fmt"
+	"time"
 
 	"github.com/rs/zerolog/log"
 
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
-	ts "github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/client"
 	"github.com/databricks/databricks-sql-go/internal/config"
 	"github.com/databricks/databricks-sql-go/internal/sentinel"
@@ -17,31 +17,44 @@ import (
 type conn struct {
 	cfg     *config.Config
 	client  *client.ThriftServiceClient
-	session *ts.TOpenSessionResp
+	session *cli_service.TOpenSessionResp
 }
 
+// The driver does not really implements prepared statements.
+// Statement ExecContext is the same as connection ExecContext
+// Statement QueryContext is the same as connection QueryContext
 func (c *conn) Prepare(query string) (driver.Stmt, error) {
-	return nil, ErrNotImplemented
+	return &stmt{conn: c, query: query}, nil
 }
 
+// The driver does not really implements prepared statements.
+// Statement ExecContext is the same as connection ExecContext
+// Statement QueryContext is the same as connection QueryContext
 func (c *conn) PrepareContext(ctx context.Context, query string) (driver.Stmt, error) {
-	return &dbsqlStmt{}, ErrNotImplemented
+	return &stmt{conn: c, query: query}, nil
 }
 
 func (c *conn) Close() error {
-	_, err := c.client.CloseSession(context.Background(), &cli_service.TCloseSessionReq{
-		SessionHandle: c.session.SessionHandle,
-	})
+	sentinel := sentinel.Sentinel{
+		OnDoneFn: func(statusResp any) (any, error) {
+			return c.client.CloseSession(context.Background(), &cli_service.TCloseSessionReq{
+				SessionHandle: c.session.SessionHandle,
+			})
+		},
+	}
+	_, _, err := sentinel.Watch(context.Background(), c.cfg.PollInterval, 15*time.Second)
 
 	return err
 }
 
+// Not supported in Databricks
 func (c *conn) Begin() (driver.Tx, error) {
-	return nil, ErrNotImplemented
+	return nil, fmt.Errorf("databricks: transactions are not supported")
 }
 
+// Not supported in Databricks
 func (c *conn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, error) {
-	return nil, ErrNotImplemented
+	return nil, fmt.Errorf("databricks: transactions are not supported")
 }
 
 func (c *conn) Ping(ctx context.Context) error {
@@ -63,7 +76,14 @@ func (c *conn) IsValid() bool {
 	return c.session.GetStatus().StatusCode == cli_service.TStatusCode_SUCCESS_STATUS
 }
 
+// ExecContext executes a query that doesn't return rows, such
+// as an INSERT or UPDATE.
+//
+// ExecContext honors the context timeout and return when it is canceled.
 func (c *conn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
+	if len(args) > 0 {
+		return nil, fmt.Errorf("databricks: query parameters are not supported")
+	}
 	_, opStatusResp, err := c.runQuery(ctx, query, args)
 
 	if err != nil {
@@ -74,7 +94,14 @@ func (c *conn) ExecContext(ctx context.Context, query string, args []driver.Name
 	return &res, nil
 }
 
+// QueryContext executes a query that may return rows, such as a
+// SELECT.
+//
+// QueryContext honors the context timeout and return when it is canceled.
 func (c *conn) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
+	if len(args) > 0 {
+		return nil, fmt.Errorf("databricks: query parameters are not supported")
+	}
 	// first we try to get the results synchronously.
 	// at any point in time that the context is done we must cancel and return
 	exStmtResp, _, err := c.runQuery(ctx, query, args)
@@ -118,18 +145,18 @@ func (c *conn) runQuery(ctx context.Context, query string, args []driver.NamedVa
 		switch opStatus.GetOperationState() {
 		// terminal states
 		// good
-		case ts.TOperationState_FINISHED_STATE:
+		case cli_service.TOperationState_FINISHED_STATE:
 			// return results
 			return exStmtResp, opStatus, nil
 		// bad
-		case ts.TOperationState_CANCELED_STATE, ts.TOperationState_CLOSED_STATE, ts.TOperationState_ERROR_STATE, ts.TOperationState_TIMEDOUT_STATE:
+		case cli_service.TOperationState_CANCELED_STATE, cli_service.TOperationState_CLOSED_STATE, cli_service.TOperationState_ERROR_STATE, cli_service.TOperationState_TIMEDOUT_STATE:
 			// do we need to close the operation in these cases?
 			log.Debug().Msgf("bad state: %s", opStatus.GetOperationState())
 			log.Error().Msg(opStatus.GetErrorMessage())
 
 			return exStmtResp, opStatus, fmt.Errorf(opStatus.GetDisplayMessage())
 		// live states
-		case ts.TOperationState_INITIALIZED_STATE, ts.TOperationState_PENDING_STATE, ts.TOperationState_RUNNING_STATE:
+		case cli_service.TOperationState_INITIALIZED_STATE, cli_service.TOperationState_PENDING_STATE, cli_service.TOperationState_RUNNING_STATE:
 			statusResp, err := c.pollOperation(ctx, opHandle)
 			if err != nil {
 				return nil, statusResp, err
@@ -137,7 +164,7 @@ func (c *conn) runQuery(ctx context.Context, query string, args []driver.NamedVa
 			switch statusResp.GetOperationState() {
 			// terminal states
 			// good
-			case ts.TOperationState_FINISHED_STATE:
+			case cli_service.TOperationState_FINISHED_STATE:
 				// return handle to fetch results later
 				return exStmtResp, opStatus, nil
 			// bad
@@ -166,7 +193,7 @@ func (c *conn) runQuery(ctx context.Context, query string, args []driver.NamedVa
 		switch statusResp.GetOperationState() {
 		// terminal states
 		// good
-		case ts.TOperationState_FINISHED_STATE:
+		case cli_service.TOperationState_FINISHED_STATE:
 			// return handle to fetch results later
 			return exStmtResp, statusResp, nil
 		// bad
@@ -183,16 +210,16 @@ func (c *conn) runQuery(ctx context.Context, query string, args []driver.NamedVa
 	}
 }
 
-func (c *conn) executeStatement(ctx context.Context, query string, args []driver.NamedValue) (*ts.TExecuteStatementResp, error) {
+func (c *conn) executeStatement(ctx context.Context, query string, args []driver.NamedValue) (*cli_service.TExecuteStatementResp, error) {
 	sentinel := sentinel.Sentinel{
 		OnDoneFn: func(statusResp any) (any, error) {
-			req := ts.TExecuteStatementReq{
+			req := cli_service.TExecuteStatementReq{
 				SessionHandle: c.session.SessionHandle,
 				Statement:     query,
 				RunAsync:      c.cfg.RunAsync,
 				QueryTimeout:  int64(c.cfg.TimeoutSeconds),
 				// this is specific for databricks. It shortcuts server roundtrips
-				GetDirectResults: &ts.TSparkGetDirectResults{
+				GetDirectResults: &cli_service.TSparkGetDirectResults{
 					MaxRows: int64(c.cfg.MaxRows),
 				},
 				// CanReadArrowResult_: &t,
@@ -207,15 +234,15 @@ func (c *conn) executeStatement(ctx context.Context, query string, args []driver
 	if err != nil {
 		return nil, err
 	}
-	exStmtResp, ok := res.(*ts.TExecuteStatementResp)
+	exStmtResp, ok := res.(*cli_service.TExecuteStatementResp)
 	if !ok {
 		return nil, fmt.Errorf("databricks: invalid execute statement response")
 	}
 	return exStmtResp, err
 }
 
-func (c *conn) pollOperation(ctx context.Context, opHandle *ts.TOperationHandle) (*ts.TGetOperationStatusResp, error) {
-	var statusResp *ts.TGetOperationStatusResp
+func (c *conn) pollOperation(ctx context.Context, opHandle *cli_service.TOperationHandle) (*cli_service.TGetOperationStatusResp, error) {
+	var statusResp *cli_service.TGetOperationStatusResp
 	pollSentinel := sentinel.Sentinel{
 		OnDoneFn: func(statusResp any) (any, error) {
 			return statusResp, nil
@@ -229,7 +256,7 @@ func (c *conn) pollOperation(ctx context.Context, opHandle *ts.TOperationHandle)
 			return func() bool {
 				// which other states?
 				switch statusResp.GetOperationState() {
-				case ts.TOperationState_INITIALIZED_STATE, ts.TOperationState_PENDING_STATE, ts.TOperationState_RUNNING_STATE:
+				case cli_service.TOperationState_INITIALIZED_STATE, cli_service.TOperationState_PENDING_STATE, cli_service.TOperationState_RUNNING_STATE:
 					return false
 				default:
 					log.Debug().Msg("databricks: polling done")
@@ -239,7 +266,7 @@ func (c *conn) pollOperation(ctx context.Context, opHandle *ts.TOperationHandle)
 		},
 		OnCancelFn: func() (any, error) {
 			log.Debug().Msgf("databricks: canceling operation %s", opHandle.OperationId)
-			ret, err := c.client.CancelOperation(context.Background(), &ts.TCancelOperationReq{
+			ret, err := c.client.CancelOperation(context.Background(), &cli_service.TCancelOperationReq{
 				OperationHandle: opHandle,
 			})
 			return ret, err
