@@ -5,32 +5,29 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"os"
+	"strconv"
 
 	dbsql "github.com/databricks/databricks-sql-go"
 	"github.com/joho/godotenv"
-	"github.com/kelseyhightower/envconfig"
 )
-
-type spec struct {
-	Host        string `envconfig:"HOST"`
-	Port        int    `default:"443" envconfig:"PORT"`
-	HTTPPath    string `envconfig:"HTTPPATH"`
-	AccessToken string `envconfig:"ACCESSTOKEN"`
-}
 
 func main() {
 	// Opening a driver typically will not attempt to connect to the database.
-	godotenv.Load()
-	var s spec
-	err := envconfig.Process("dbsql", &s)
+	err := godotenv.Load()
+
+	if err != nil {
+		log.Fatal(err.Error())
+	}
+	port, err := strconv.Atoi(os.Getenv("DATABRICKS_PORT"))
 	if err != nil {
 		log.Fatal(err.Error())
 	}
 	connector, err := dbsql.NewConnector(
-		dbsql.WithServerHostname(s.Host),
-		dbsql.WithPort(s.Port),
-		dbsql.WithHTTPPath(s.HTTPPath),
-		dbsql.WithAccessToken(s.AccessToken),
+		dbsql.WithServerHostname(os.Getenv("DATABRICKS_HOST")),
+		dbsql.WithPort(port),
+		dbsql.WithHTTPPath(os.Getenv("DATABRICKS_HTTPPATH")),
+		dbsql.WithAccessToken(os.Getenv("DATABRICKS_ACCESSTOKEN")),
 	)
 	if err != nil {
 		// This will not be a connection error, but a DSN parse error or
@@ -38,7 +35,7 @@ func main() {
 		log.Fatal(err)
 	}
 	db := sql.OpenDB(connector)
-
+	defer db.Close()
 	// ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	// defer cancel()
 	ctx := context.Background()
@@ -50,7 +47,7 @@ func main() {
 			fmt.Println("not found")
 			return
 		} else {
-			fmt.Printf("db down: %v\n", err1)
+			fmt.Printf("err: %v\n", err1)
 		}
 	}
 	fmt.Println(res)

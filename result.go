@@ -2,17 +2,17 @@ package dbsql
 
 import "database/sql/driver"
 
-type dbsqlResult struct {
-	affectedRows int64
-	insertId     int64
+type result struct {
+	AffectedRows int64
+	InsertId     int64
 }
 
-var _ driver.Result = (*dbsqlResult)(nil)
+var _ driver.Result = (*result)(nil)
 
-func (res *dbsqlResult) LastInsertId() (int64, error) {
-	return res.insertId, nil
+func (res *result) LastInsertId() (int64, error) {
+	return res.InsertId, nil
 }
 
-func (res *dbsqlResult) RowsAffected() (int64, error) {
-	return res.affectedRows, nil
+func (res *result) RowsAffected() (int64, error) {
+	return res.AffectedRows, nil
 }

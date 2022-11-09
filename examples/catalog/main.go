@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"time"
 
 	dbsql "github.com/databricks/databricks-sql-go"
 	"github.com/joho/godotenv"
@@ -15,7 +16,6 @@ import (
 func main() {
 	// Opening a driver typically will not attempt to connect to the database.
 	err := godotenv.Load()
-
 	if err != nil {
 		log.Fatal(err.Error())
 	}
@@ -28,6 +28,7 @@ func main() {
 		dbsql.WithPort(port),
 		dbsql.WithHTTPPath(os.Getenv("DATABRICKS_HTTPPATH")),
 		dbsql.WithAccessToken(os.Getenv("DATABRICKS_ACCESSTOKEN")),
+		dbsql.WithInitialNamespace("quickstart_catalog1", "quickstart_schema1"),
 	)
 	if err != nil {
 		// This will not be a connection error, but a DSN parse error or
@@ -37,14 +38,13 @@ func main() {
 	db := sql.OpenDB(connector)
 	defer db.Close()
 
-	// ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	// defer cancel()
-	ctx := context.Background()
-	if err := db.Ping(); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := db.PingContext(ctx); err != nil {
 		fmt.Println(err)
 	}
 
-	rows, err1 := db.QueryContext(ctx, `select cut from default.diamonds`)
+	rows, err1 := db.QueryContext(context.Background(), `select * from quickstart_table1`)
 	if err1 != nil {
 		if err1 == sql.ErrNoRows {
 			fmt.Println("not found")
