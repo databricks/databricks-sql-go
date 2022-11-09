@@ -1,4 +1,4 @@
-package dbsql
+package utils
 
 import (
 	"os"
@@ -6,15 +6,16 @@ import (
 
 	"github.com/mattn/go-isatty"
 	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/log"
 )
+
+var Logger = zerolog.New(os.Stderr).With().Timestamp().Logger()
 
 // ConfigureGlobalLogger will configure zerolog globally. It will
 // enable pretty printing for interactive terminals and json for production.
-func ConfigureGlobalLogger() {
+func ConfigureLogger() {
 	// for tty terminal enable pretty logs
 	if isatty.IsTerminal(os.Stdout.Fd()) && runtime.GOOS != "windows" {
-		log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
+		Logger = Logger.Output(zerolog.ConsoleWriter{Out: os.Stderr})
 	} else {
 		// UNIX Time is faster and smaller than most timestamps
 		// If you set zerolog.TimeFieldFormat to an empty string,

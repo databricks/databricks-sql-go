@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/rs/zerolog/log"
+	"github.com/databricks/databricks-sql-go/utils"
 )
 
 const (
@@ -115,7 +115,7 @@ func (s Sentinel) Watch(ctx context.Context, interval, timeout time.Duration) (W
 			return WatchCanceled, nil, ctx.Err()
 		case <-timeoutTimerCh:
 			_ = intervalTimer.Stop()
-			log.Info().Msgf("wait timed out after %s", timeout.String())
+			utils.Logger.Info().Msgf("wait timed out after %s", timeout.String())
 			return WatchTimeout, nil, fmt.Errorf("sentinel timed out")
 		}
 	}

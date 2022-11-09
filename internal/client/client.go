@@ -5,17 +5,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"net/http"
 
 	"github.com/apache/thrift/lib/go/thrift"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
-	ts "github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/config"
 )
 
 type ThriftServiceClient struct {
-	*ts.TCLIServiceClient
+	*cli_service.TCLIServiceClient
 }
 
 func (tsc *ThriftServiceClient) FetchResults(ctx context.Context, req *cli_service.TFetchResultsReq) (*cli_service.TFetchResultsResp, error) {
@@ -116,7 +114,7 @@ func InitThriftClient(cfg *config.Config) (*ThriftServiceClient, error) {
 	}
 	iprot := protocolFactory.GetProtocol(tTrans)
 	oprot := protocolFactory.GetProtocol(tTrans)
-	tclient := ts.NewTCLIServiceClient(thrift.NewTStandardClient(iprot, oprot))
+	tclient := cli_service.NewTCLIServiceClient(thrift.NewTStandardClient(iprot, oprot))
 	tsClient := &ThriftServiceClient{tclient}
 	return tsClient, nil
 }
@@ -141,6 +139,5 @@ func CheckStatus(resp interface{}) error {
 		return nil
 	}
 
-	log.Printf("response: %v", resp)
 	return errors.New("thrift: invalid response")
 }
