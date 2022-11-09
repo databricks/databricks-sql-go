@@ -9,6 +9,7 @@ import (
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/client"
 	"github.com/databricks/databricks-sql-go/internal/config"
+	"github.com/databricks/databricks-sql-go/internal/sentinel"
 	"github.com/rs/zerolog/log"
 )
 
@@ -31,19 +32,28 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 		schemaName = cli_service.TIdentifierPtr(cli_service.TIdentifier(c.cfg.Schema))
 	}
 
-	req := cli_service.TOpenSessionReq{
-		ClientProtocol: c.cfg.ThriftProtocolVersion,
-		Configuration:  make(map[string]string),
-		InitialNamespace: &cli_service.TNamespace{
-			CatalogName: catalogName,
-			SchemaName:  schemaName,
+	// we need to ensure that open session will eventually end
+	sentinel := sentinel.Sentinel{
+		OnDoneFn: func(statusResp any) (any, error) {
+			return tclient.OpenSession(ctx, &cli_service.TOpenSessionReq{
+				ClientProtocol: c.cfg.ThriftProtocolVersion,
+				Configuration:  make(map[string]string),
+				InitialNamespace: &cli_service.TNamespace{
+					CatalogName: catalogName,
+					SchemaName:  schemaName,
+				},
+				CanUseMultipleCatalogs: &c.cfg.CanUseMultipleCatalogs,
+			})
 		},
-		CanUseMultipleCatalogs: &c.cfg.CanUseMultipleCatalogs,
 	}
-
-	session, err := tclient.OpenSession(ctx, &req)
+	// default timeout in here in addition to potential context timeout
+	_, res, err := sentinel.Watch(ctx, c.cfg.PollInterval, c.cfg.DefaultTimeout)
 	if err != nil {
 		return nil, err
+	}
+	session, ok := res.(*cli_service.TOpenSessionResp)
+	if !ok {
+		return nil, fmt.Errorf("databricks: invalid open session response")
 	}
 	log.Info().Msgf("open session: %s\n", utils.Guid(session.SessionHandle.GetSessionId().GUID))
 
@@ -120,7 +130,7 @@ func WithMaxRows(n int) connOption {
 // In seconds.
 func WithTimeout(n int) connOption {
 	return func(c *config.Config) {
-		c.TimeoutSeconds = n
+		c.QueryTimeoutSeconds = n
 	}
 }
 

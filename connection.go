@@ -217,7 +217,7 @@ func (c *conn) executeStatement(ctx context.Context, query string, args []driver
 				SessionHandle: c.session.SessionHandle,
 				Statement:     query,
 				RunAsync:      c.cfg.RunAsync,
-				QueryTimeout:  int64(c.cfg.TimeoutSeconds),
+				QueryTimeout:  int64(c.cfg.QueryTimeoutSeconds),
 				// this is specific for databricks. It shortcuts server roundtrips
 				GetDirectResults: &cli_service.TSparkGetDirectResults{
 					MaxRows: int64(c.cfg.MaxRows),
