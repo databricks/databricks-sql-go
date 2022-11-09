@@ -85,19 +85,24 @@ func (r *rows) Next(dest []driver.Value) error {
 }
 
 func (r *rows) getTableSchema() (*tableSchema, error) {
+
 	if r.tableSchema == nil {
+		var resp *cli_service.TGetResultSetMetadataResp
 
-		req := cli_service.TGetResultSetMetadataReq{
-			OperationHandle: r.opHandle,
-		}
+		if r.fetchResultsMetadata != nil {
+			resp = r.fetchResultsMetadata
+		} else {
+			req := cli_service.TGetResultSetMetadataReq{
+				OperationHandle: r.opHandle,
+			}
+			resp, err := r.client.GetResultSetMetadata(context.Background(), &req)
+			if err != nil {
+				return nil, err
+			}
 
-		resp, err := r.client.GetResultSetMetadata(context.Background(), &req)
-		if err != nil {
-			return nil, err
-		}
-
-		if err := checkStatus(resp.GetStatus()); err != nil {
-			return nil, err
+			if err := checkStatus(resp.GetStatus()); err != nil {
+				return nil, err
+			}
 		}
 
 		schema := tableSchema{}

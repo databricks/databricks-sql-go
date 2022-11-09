@@ -9,19 +9,19 @@ import (
 	"net/http"
 
 	"github.com/apache/thrift/lib/go/thrift"
-	ts "github.com/databricks/databricks-sql-go/internal/cli_service"
+	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/config"
 )
 
 type ThriftServiceClient struct {
-	*ts.TCLIServiceClient
+	*cli_service.TCLIServiceClient
 }
 
-func (tsc *ThriftServiceClient) FetchResults(ctx context.Context, req *ts.TFetchResultsReq) (*ts.TFetchResultsResp, error) {
+func (tsc *ThriftServiceClient) FetchResults(ctx context.Context, req *cli_service.TFetchResultsReq) (*cli_service.TFetchResultsResp, error) {
 	return tsc.TCLIServiceClient.FetchResults(ctx, req)
 }
 
-func (tsc *ThriftServiceClient) ExecuteStatement(ctx context.Context, req *ts.TExecuteStatementReq) (*ts.TExecuteStatementResp, error) {
+func (tsc *ThriftServiceClient) ExecuteStatement(ctx context.Context, req *cli_service.TExecuteStatementReq) (*cli_service.TExecuteStatementResp, error) {
 	resp, err := tsc.TCLIServiceClient.ExecuteStatement(ctx, req)
 	if err != nil {
 		return nil, err
@@ -115,24 +115,24 @@ func InitThriftClient(cfg *config.Config) (*ThriftServiceClient, error) {
 	}
 	iprot := protocolFactory.GetProtocol(tTrans)
 	oprot := protocolFactory.GetProtocol(tTrans)
-	tclient := ts.NewTCLIServiceClient(thrift.NewTStandardClient(iprot, oprot))
+	tclient := cli_service.NewTCLIServiceClient(thrift.NewTStandardClient(iprot, oprot))
 	tsClient := &ThriftServiceClient{tclient}
 	return tsClient, nil
 }
 
 // RPCResponse respresents thrift rpc response
 type RPCResponse interface {
-	GetStatus() *ts.TStatus
+	GetStatus() *cli_service.TStatus
 }
 
 func CheckStatus(resp interface{}) error {
 	rpcresp, ok := resp.(RPCResponse)
 	if ok {
 		status := rpcresp.GetStatus()
-		if status.StatusCode == ts.TStatusCode_ERROR_STATUS {
+		if status.StatusCode == cli_service.TStatusCode_ERROR_STATUS {
 			return errors.New(status.GetErrorMessage())
 		}
-		if status.StatusCode == ts.TStatusCode_INVALID_HANDLE_STATUS {
+		if status.StatusCode == cli_service.TStatusCode_INVALID_HANDLE_STATUS {
 			return errors.New("thrift: invalid handle")
 		}
 

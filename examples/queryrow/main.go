@@ -35,7 +35,7 @@ func main() {
 		log.Fatal(err)
 	}
 	db := sql.OpenDB(connector)
-
+	defer db.Close()
 	// ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	// defer cancel()
 	ctx := context.Background()

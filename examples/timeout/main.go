@@ -26,6 +26,8 @@ func main() {
 		// another initialization error.
 		log.Fatal(err)
 	}
+	defer db.Close()
+
 	ctx1, cancel1 := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel1()
 	var res int

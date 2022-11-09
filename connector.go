@@ -6,12 +6,12 @@ import (
 	"fmt"
 
 	utils "github.com/databricks/databricks-sql-go/internal"
-	ts "github.com/databricks/databricks-sql-go/internal/cli_service"
+	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/client"
 	"github.com/databricks/databricks-sql-go/internal/config"
+	"github.com/rs/zerolog/log"
 )
 
-// TODO this is the thrift connector. We could have many implementations
 type connector struct {
 	cfg *config.Config
 }
@@ -22,38 +22,45 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 	if err != nil {
 		return nil, fmt.Errorf("databricks: error initializing thrift client. %w", err)
 	}
-	t := true
-	var catalogName *ts.TIdentifier
-	var schemaName *ts.TIdentifier
+	var catalogName *cli_service.TIdentifier
+	var schemaName *cli_service.TIdentifier
 	if c.cfg.Catalog != "" {
-		catalogName = ts.TIdentifierPtr(ts.TIdentifier(c.cfg.Catalog))
+		catalogName = cli_service.TIdentifierPtr(cli_service.TIdentifier(c.cfg.Catalog))
 	}
 	if c.cfg.Schema != "" {
-		schemaName = ts.TIdentifierPtr(ts.TIdentifier(c.cfg.Schema))
+		schemaName = cli_service.TIdentifierPtr(cli_service.TIdentifier(c.cfg.Schema))
 	}
 
-	req := ts.TOpenSessionReq{
+	req := cli_service.TOpenSessionReq{
 		ClientProtocol: c.cfg.ThriftProtocolVersion,
 		Configuration:  make(map[string]string),
-		InitialNamespace: &ts.TNamespace{
+		InitialNamespace: &cli_service.TNamespace{
 			CatalogName: catalogName,
 			SchemaName:  schemaName,
 		},
-		CanUseMultipleCatalogs: &t,
+		CanUseMultipleCatalogs: &c.cfg.CanUseMultipleCatalogs,
 	}
 
 	session, err := tclient.OpenSession(ctx, &req)
 	if err != nil {
 		return nil, err
 	}
+	log.Info().Msgf("open session: %s\n", utils.Guid(session.SessionHandle.GetSessionId().GUID))
 
-	fmt.Printf("open session: %s\n", utils.Guid(session.SessionHandle.GetSessionId().GUID))
-	fmt.Printf("session config: %v\n", session.Configuration)
 	conn := &conn{
 		cfg:     c.cfg,
 		client:  tclient,
 		session: session,
 	}
+	for k, v := range c.cfg.SessionParams {
+		setStmt := fmt.Sprintf("SET `%s` = `%s`;", k, v)
+		_, err := conn.ExecContext(ctx, setStmt, []driver.NamedValue{})
+		if err != nil {
+			return nil, err
+		}
+		log.Info().Msgf("session parameters: %s", setStmt)
+	}
+
 	return conn, nil
 }
 
@@ -129,4 +136,12 @@ func WithUserAgentEntry(entry string) connOption {
 		c.UserAgentEntry = entry
 	}
 
+}
+
+// Sessions params will be set upon opening the session
+// If using connection pool, session params can avoid successive calls of "SET ..."
+func WithSessionParams(params map[string]string) connOption {
+	return func(c *config.Config) {
+		c.SessionParams = params
+	}
 }

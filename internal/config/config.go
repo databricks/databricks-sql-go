@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
-	"github.com/rs/zerolog/log"
 )
 
 // Driver Configurations
@@ -21,6 +20,7 @@ type Config struct {
 
 	RunAsync                  bool // TODO
 	PollInterval              time.Duration
+	CanUseMultipleCatalogs    bool
 	DriverName                string
 	DriverVersion             string
 	ThriftProtocol            string
@@ -50,6 +50,7 @@ func (c *Config) DeepCopy() *Config {
 		RunAsync:      c.RunAsync,
 		PollInterval:  c.PollInterval,
 
+		CanUseMultipleCatalogs:    c.CanUseMultipleCatalogs,
 		ThriftProtocol:            c.ThriftProtocol,
 		ThriftTransport:           c.ThriftTransport,
 		ThriftProtocolVersion:     c.ThriftProtocolVersion,
@@ -71,9 +72,14 @@ type UserConfig struct {
 	MaxRows        int    // TODO
 	TimeoutSeconds int    // There are several timeouts that can be possibly configurable
 	UserAgentEntry string
+	SessionParams  map[string]string
 }
 
 func (ucfg UserConfig) DeepCopy() UserConfig {
+	sessionParams := make(map[string]string)
+	for k, v := range ucfg.SessionParams {
+		sessionParams[k] = v
+	}
 	return UserConfig{
 		Protocol:       ucfg.Protocol,
 		Host:           ucfg.Host,
@@ -85,6 +91,7 @@ func (ucfg UserConfig) DeepCopy() UserConfig {
 		MaxRows:        ucfg.MaxRows,
 		TimeoutSeconds: ucfg.TimeoutSeconds,
 		UserAgentEntry: ucfg.UserAgentEntry,
+		SessionParams:  sessionParams,
 	}
 }
 
@@ -95,19 +102,21 @@ func (ucfg UserConfig) FillDefaults() UserConfig {
 	if ucfg.Protocol == "" {
 		ucfg.Protocol = "https"
 	}
+	ucfg.SessionParams = make(map[string]string)
 	return ucfg
 }
 
 func WithDefaults() *Config {
 	return &Config{
-		UserConfig:            UserConfig{}.FillDefaults(),
-		RunAsync:              true,
-		PollInterval:          200 * time.Millisecond,
-		ThriftProtocol:        "binary",
-		ThriftTransport:       "http",
-		ThriftProtocolVersion: cli_service.TProtocolVersion_SPARK_CLI_SERVICE_PROTOCOL_V6,
-		DriverName:            "godatabrickssqlconnector", //important. Do not change
-		DriverVersion:         "0.9.0",
+		UserConfig:             UserConfig{}.FillDefaults(),
+		RunAsync:               true,
+		CanUseMultipleCatalogs: true,
+		PollInterval:           200 * time.Millisecond,
+		ThriftProtocol:         "binary",
+		ThriftTransport:        "http",
+		ThriftProtocolVersion:  cli_service.TProtocolVersion_SPARK_CLI_SERVICE_PROTOCOL_V6,
+		DriverName:             "godatabrickssqlconnector", //important. Do not change
+		DriverVersion:          "0.9.0",
 	}
 
 }
@@ -152,10 +161,7 @@ func ParseDSN(dsn string) (UserConfig, error) {
 		}
 		ucfg.MaxRows = maxRows
 	}
-	maxrowsStr := params.Get("maxrows")
-	if maxrowsStr != "" {
-		log.Info().Msg("databricks: please use maxRows instead of maxrows")
-	}
+	params.Del("maxRows")
 
 	timeoutStr := params.Get("timeout")
 	if timeoutStr != "" {
@@ -164,6 +170,23 @@ func ParseDSN(dsn string) (UserConfig, error) {
 			return UserConfig{}, err
 		}
 		ucfg.TimeoutSeconds = timeout
+	}
+	params.Del("timeout")
+	if params.Has("catalog") {
+		ucfg.Catalog = params.Get("catalog")
+		params.Del("catalog")
+	}
+	if params.Has("schema") {
+		ucfg.Schema = params.Get("schema")
+		params.Del("schema")
+	}
+	if len(params) > 0 {
+		sessionParams := make(map[string]string)
+		for k, _ := range params {
+			sessionParams[k] = params.Get(k)
+		}
+		ucfg.SessionParams = sessionParams
+
 	}
 
 	return ucfg, nil

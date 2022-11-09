@@ -5,7 +5,6 @@ go 1.19
 require (
 	github.com/apache/thrift v0.17.0
 	github.com/joho/godotenv v1.4.0
-	github.com/kelseyhightower/envconfig v1.4.0
 	github.com/mattn/go-isatty v0.0.16
 	github.com/stretchr/testify v1.8.1
 	gotest.tools/gotestsum v1.8.2
