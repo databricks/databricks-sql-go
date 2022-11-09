@@ -40,6 +40,29 @@ func main() {
 	defer db.Close()
 	db.SetMaxOpenConns(1)
 
+	// ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	// defer cancel()
+	ctx := context.Background()
+	resa := &time.Time{}
+	resb := &time.Time{}
+	resc := &time.Time{}
+	if qerr := db.QueryRowContext(ctx, `select now()`).Scan(resa); qerr != nil {
+		fmt.Printf("err: %v\n", qerr)
+	} else {
+		fmt.Println(resa)
+	}
+	if qerr := db.QueryRowContext(ctx, `select now()`).Scan(resb); qerr != nil {
+		fmt.Printf("err: %v\n", qerr)
+	} else {
+		fmt.Println(resb)
+	}
+	if qerr := db.QueryRowContext(ctx, `select now()`).Scan(resc); qerr != nil {
+		fmt.Printf("err: %v\n", qerr)
+
+	} else {
+		fmt.Println(resc)
+	}
+
 	connector1, err1 := dbsql.NewConnector(
 		dbsql.WithServerHostname(os.Getenv("DATABRICKS_HOST")),
 		dbsql.WithPort(port),
@@ -55,30 +78,18 @@ func main() {
 	db1 := sql.OpenDB(connector1)
 	defer db1.Close()
 
-	// ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	// defer cancel()
-	ctx := context.Background()
-	res := &time.Time{}
-	qerr := db.QueryRowContext(ctx, `select now()`).Scan(res)
-
-	if qerr != nil {
-		if qerr == sql.ErrNoRows {
-			fmt.Println("not found")
-			return
-		} else {
-			fmt.Printf("err: %v\n", qerr)
-		}
-	}
-	fmt.Println(res)
 	res1 := &time.Time{}
-	qerr1 := db1.QueryRowContext(ctx, `select now()`).Scan(res1)
-	if qerr1 != nil {
-		if qerr1 == sql.ErrNoRows {
-			fmt.Println("not found")
-			return
-		} else {
-			fmt.Printf("err: %v\n", qerr1)
-		}
+	res2 := &time.Time{}
+	if qerr := db1.QueryRowContext(ctx, `select now()`).Scan(res1); qerr != nil {
+		fmt.Printf("err: %v\n", qerr)
+
+	} else {
+		fmt.Println(res1)
 	}
-	fmt.Println(res1)
+	if qerr := db1.QueryRowContext(ctx, `select now()`).Scan(res2); qerr != nil {
+		fmt.Printf("err: %v\n", qerr)
+
+	} else {
+		fmt.Println(res2)
+	}
 }

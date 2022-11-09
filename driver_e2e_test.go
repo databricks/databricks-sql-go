@@ -78,6 +78,7 @@ func TestQueryContextDirectResultsSuccess(t *testing.T) {
 
 	r, err := url.Parse(ts.URL)
 	assert.NoError(t, err)
+	cfg.Protocol = "http"
 	cfg.Host = "localhost"
 	port, err := strconv.Atoi(r.Port())
 	assert.NoError(t, err)
@@ -162,6 +163,7 @@ func TestQueryContextTimeouts(t *testing.T) {
 
 	r, err := url.Parse(ts.URL)
 	assert.NoError(t, err)
+	cfg.Protocol = "http"
 	cfg.Host = "localhost"
 	port, err := strconv.Atoi(r.Port())
 	assert.NoError(t, err)
@@ -203,7 +205,8 @@ func TestQueryContextDirectResultsError(t *testing.T) {
 						StatusCode: cli_service.TStatusCode_SUCCESS_STATUS,
 					},
 					OperationState: cli_service.TOperationStatePtr(cli_service.TOperationState_ERROR_STATE),
-					ErrorMessage:   strPtr("not valid"),
+					ErrorMessage:   strPtr("error message"),
+					DisplayMessage: strPtr("display message"),
 				},
 				ResultSetMetadata: &cli_service.TGetResultSetMetadataResp{
 					Status: &cli_service.TStatus{
@@ -248,6 +251,7 @@ func TestQueryContextDirectResultsError(t *testing.T) {
 
 	r, err := url.Parse(ts.URL)
 	assert.NoError(t, err)
+	cfg.Protocol = "http"
 	cfg.Host = "localhost"
 	port, err := strconv.Atoi(r.Port())
 	assert.NoError(t, err)
@@ -258,7 +262,7 @@ func TestQueryContextDirectResultsError(t *testing.T) {
 	db := sql.OpenDB(connector)
 
 	rows, err := db.QueryContext(context.Background(), `select * from dummy`)
-	assert.ErrorContains(t, err, "not valid")
+	assert.ErrorContains(t, err, "display message")
 	assert.Nil(t, rows)
 	assert.False(t, cancelOperationCalled)
 	assert.False(t, getOperationStatusCalled)

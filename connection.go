@@ -222,6 +222,7 @@ func (c *conn) pollOperation(ctx context.Context, opHandle *ts.TOperationHandle)
 		},
 		StatusFn: func() (sentinel.Done, any, error) {
 			var err error
+			log.Debug().Msg("databricks: polling status")
 			statusResp, err = c.client.GetOperationStatus(context.Background(), &cli_service.TGetOperationStatusReq{
 				OperationHandle: opHandle,
 			})
@@ -231,11 +232,13 @@ func (c *conn) pollOperation(ctx context.Context, opHandle *ts.TOperationHandle)
 				case ts.TOperationState_INITIALIZED_STATE, ts.TOperationState_PENDING_STATE, ts.TOperationState_RUNNING_STATE:
 					return false
 				default:
+					log.Debug().Msg("databricks: polling done")
 					return true
 				}
 			}, statusResp, err
 		},
 		OnCancelFn: func() (any, error) {
+			log.Debug().Msgf("databricks: canceling operation %s", opHandle.OperationId)
 			ret, err := c.client.CancelOperation(context.Background(), &ts.TCancelOperationReq{
 				OperationHandle: opHandle,
 			})

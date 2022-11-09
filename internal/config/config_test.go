@@ -149,6 +149,7 @@ func TestParseConfig(t *testing.T) {
 				MaxRows:        1000,
 				Catalog:        "default",
 				Schema:         "system",
+				SessionParams:  map[string]string{"ANSI_MODE": "true"},
 			},
 			wantURL: "https://token:supersecret2@example.cloud.databricks.com:8000/sql/1.0/endpoints/12346a5b5b0e123a",
 			wantErr: false,
