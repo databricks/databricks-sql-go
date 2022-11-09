@@ -139,7 +139,7 @@ func (h *serverHandler) CancelOperation(ctx context.Context, req *ts.TCancelOper
 }
 
 func (h *serverHandler) GetResultSetMetadata(ctx context.Context, req *ts.TGetResultSetMetadataReq) (*ts.TGetResultSetMetadataResp, error) {
-	if h.getResultSetMetadata == nil {
+	if h.getResultSetMetadata != nil {
 		return h.getResultSetMetadata(ctx, req)
 	}
 	return &ts.TGetResultSetMetadataResp{
