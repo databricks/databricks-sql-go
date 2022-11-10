@@ -10,16 +10,21 @@ import (
 	"time"
 
 	dbsql "github.com/databricks/databricks-sql-go"
+	dbsqllog "github.com/databricks/databricks-sql-go/logger"
 	"github.com/joho/godotenv"
 )
 
 func main() {
 	// Opening a driver typically will not attempt to connect to the database.
 	err := godotenv.Load()
-
 	if err != nil {
 		log.Fatal(err.Error())
 	}
+
+	if err := dbsqllog.SetLogLevel("info"); err != nil {
+		log.Println(err)
+	}
+
 	port, err := strconv.Atoi(os.Getenv("DATABRICKS_PORT"))
 	if err != nil {
 		log.Fatal(err.Error())

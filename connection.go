@@ -6,12 +6,11 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/rs/zerolog/log"
-
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/client"
 	"github.com/databricks/databricks-sql-go/internal/config"
 	"github.com/databricks/databricks-sql-go/internal/sentinel"
+	"github.com/databricks/databricks-sql-go/logger"
 )
 
 type conn struct {
@@ -60,7 +59,7 @@ func (c *conn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, e
 func (c *conn) Ping(ctx context.Context) error {
 	_, err := c.QueryContext(ctx, "select 1", nil)
 	if err != nil {
-		log.Err(err).Msg("ping error")
+		logger.Err(err).Msg("ping error")
 		return driver.ErrBadConn
 	}
 	return nil
@@ -151,8 +150,8 @@ func (c *conn) runQuery(ctx context.Context, query string, args []driver.NamedVa
 		// bad
 		case cli_service.TOperationState_CANCELED_STATE, cli_service.TOperationState_CLOSED_STATE, cli_service.TOperationState_ERROR_STATE, cli_service.TOperationState_TIMEDOUT_STATE:
 			// do we need to close the operation in these cases?
-			log.Debug().Msgf("bad state: %s", opStatus.GetOperationState())
-			log.Error().Msg(opStatus.GetErrorMessage())
+			logger.Error().Msg(opStatus.GetErrorMessage())
+			logger.Debug().Msgf("bad state: %s", opStatus.GetOperationState())
 
 			return exStmtResp, opStatus, fmt.Errorf(opStatus.GetDisplayMessage())
 		// live states
@@ -169,19 +168,19 @@ func (c *conn) runQuery(ctx context.Context, query string, args []driver.NamedVa
 				return exStmtResp, opStatus, nil
 			// bad
 			case cli_service.TOperationState_CANCELED_STATE, cli_service.TOperationState_CLOSED_STATE, cli_service.TOperationState_ERROR_STATE, cli_service.TOperationState_TIMEDOUT_STATE:
-				log.Debug().Msgf("bad state: %s", statusResp.GetOperationState())
-				log.Error().Msg(statusResp.GetErrorMessage())
+				logger.Debug().Msgf("bad state: %s", statusResp.GetOperationState())
+				logger.Error().Msg(statusResp.GetErrorMessage())
 				return exStmtResp, opStatus, fmt.Errorf(statusResp.GetDisplayMessage())
 				// live states
 			default:
-				log.Debug().Msgf("bad state: %s", statusResp.GetOperationState())
-				log.Error().Msg(statusResp.GetErrorMessage())
+				logger.Debug().Msgf("bad state: %s", statusResp.GetOperationState())
+				logger.Error().Msg(statusResp.GetErrorMessage())
 				return exStmtResp, opStatus, fmt.Errorf("invalid operation state. This should not have happened")
 			}
 		// weird states
 		default:
-			log.Debug().Msgf("bad state: %s", opStatus.GetOperationState())
-			log.Error().Msg(opStatus.GetErrorMessage())
+			logger.Debug().Msgf("bad state: %s", opStatus.GetOperationState())
+			logger.Error().Msg(opStatus.GetErrorMessage())
 			return exStmtResp, opStatus, fmt.Errorf("invalid operation state. This should not have happened")
 		}
 
@@ -198,13 +197,13 @@ func (c *conn) runQuery(ctx context.Context, query string, args []driver.NamedVa
 			return exStmtResp, statusResp, nil
 		// bad
 		case cli_service.TOperationState_CANCELED_STATE, cli_service.TOperationState_CLOSED_STATE, cli_service.TOperationState_ERROR_STATE, cli_service.TOperationState_TIMEDOUT_STATE:
-			log.Debug().Msgf("bad state: %s", statusResp.GetOperationState())
-			log.Error().Msg(statusResp.GetErrorMessage())
+			logger.Debug().Msgf("bad state: %s", statusResp.GetOperationState())
+			logger.Error().Msg(statusResp.GetErrorMessage())
 			return exStmtResp, statusResp, fmt.Errorf(statusResp.GetDisplayMessage())
 			// live states
 		default:
-			log.Debug().Msgf("bad state: %s", statusResp.GetOperationState())
-			log.Error().Msg(statusResp.GetErrorMessage())
+			logger.Debug().Msgf("bad state: %s", statusResp.GetOperationState())
+			logger.Error().Msg(statusResp.GetErrorMessage())
 			return exStmtResp, statusResp, fmt.Errorf("invalid operation state. This should not have happened")
 		}
 	}
@@ -249,7 +248,7 @@ func (c *conn) pollOperation(ctx context.Context, opHandle *cli_service.TOperati
 		},
 		StatusFn: func() (sentinel.Done, any, error) {
 			var err error
-			log.Debug().Msg("databricks: polling status")
+			logger.Debug().Msg("databricks: polling status")
 			statusResp, err = c.client.GetOperationStatus(context.Background(), &cli_service.TGetOperationStatusReq{
 				OperationHandle: opHandle,
 			})
@@ -259,13 +258,13 @@ func (c *conn) pollOperation(ctx context.Context, opHandle *cli_service.TOperati
 				case cli_service.TOperationState_INITIALIZED_STATE, cli_service.TOperationState_PENDING_STATE, cli_service.TOperationState_RUNNING_STATE:
 					return false
 				default:
-					log.Debug().Msg("databricks: polling done")
+					logger.Debug().Msg("databricks: polling done")
 					return true
 				}
 			}, statusResp, err
 		},
 		OnCancelFn: func() (any, error) {
-			log.Debug().Msgf("databricks: canceling operation %s", opHandle.OperationId)
+			logger.Debug().Msgf("databricks: canceling operation %s", opHandle.OperationId)
 			ret, err := c.client.CancelOperation(context.Background(), &cli_service.TCancelOperationReq{
 				OperationHandle: opHandle,
 			})

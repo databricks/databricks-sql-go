@@ -10,7 +10,7 @@ import (
 	"github.com/databricks/databricks-sql-go/internal/client"
 	"github.com/databricks/databricks-sql-go/internal/config"
 	"github.com/databricks/databricks-sql-go/internal/sentinel"
-	"github.com/rs/zerolog/log"
+	"github.com/databricks/databricks-sql-go/logger"
 )
 
 type connector struct {
@@ -55,7 +55,7 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 	if !ok {
 		return nil, fmt.Errorf("databricks: invalid open session response")
 	}
-	log.Info().Msgf("open session: %s\n", utils.Guid(session.SessionHandle.GetSessionId().GUID))
+	logger.Info().Msgf("open session: %s\n", utils.Guid(session.SessionHandle.GetSessionId().GUID))
 
 	conn := &conn{
 		cfg:     c.cfg,
@@ -68,7 +68,7 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 		if err != nil {
 			return nil, err
 		}
-		log.Info().Msgf("session parameters: %s", setStmt)
+		logger.Info().Msgf("session parameters: %s", setStmt)
 	}
 
 	return conn, nil
