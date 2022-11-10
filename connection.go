@@ -265,7 +265,7 @@ func (c *conn) pollOperation(ctx context.Context, opHandle *cli_service.TOperati
 		},
 		OnCancelFn: func() (any, error) {
 			logger.Debug().Msgf("databricks: canceling operation %s", opHandle.OperationId)
-			ret, err := c.client.CancelOperation(context.Background(), &ts.TCancelOperationReq{
+			ret, err := c.client.CancelOperation(context.Background(), &cli_service.TCancelOperationReq{
 				OperationHandle: opHandle,
 			})
 			return ret, err
