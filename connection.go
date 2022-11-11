@@ -115,6 +115,7 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 		client:   c.client,
 		opHandle: opHandle,
 		pageSize: int64(c.cfg.MaxRows),
+		location: c.cfg.Location,
 	}
 
 	if exStmtResp.DirectResults != nil {
