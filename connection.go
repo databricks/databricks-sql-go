@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
-	"github.com/databricks/databricks-sql-go/internal/client"
 	"github.com/databricks/databricks-sql-go/internal/config"
 	"github.com/databricks/databricks-sql-go/internal/sentinel"
 	"github.com/databricks/databricks-sql-go/logger"
@@ -15,7 +14,7 @@ import (
 
 type conn struct {
 	cfg     *config.Config
-	client  *client.ThriftServiceClient
+	client  cli_service.TCLIService
 	session *cli_service.TOpenSessionResp
 }
 
