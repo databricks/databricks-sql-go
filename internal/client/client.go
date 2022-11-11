@@ -14,6 +14,15 @@ import (
 
 type ThriftServiceClient struct {
 	*cli_service.TCLIServiceClient
+	transport *Transport
+}
+
+func (tsc *ThriftServiceClient) OpenSession(ctx context.Context, req *cli_service.TOpenSessionReq) (*cli_service.TOpenSessionResp, error) {
+	resp, err := tsc.TCLIServiceClient.OpenSession(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return resp, CheckStatus(resp)
 }
 
 func (tsc *ThriftServiceClient) FetchResults(ctx context.Context, req *cli_service.TFetchResultsReq) (*cli_service.TFetchResultsResp, error) {
@@ -89,10 +98,8 @@ func InitThriftClient(cfg *config.Config) (*ThriftServiceClient, error) {
 		}
 		tTrans, err = thrift.NewTHttpClientWithOptions(endpoint, thrift.THttpClientOptions{Client: httpclient})
 		httpTransport := tTrans.(*thrift.THttpClient)
-		var userAgent string
+		userAgent := fmt.Sprintf("%s/%s", cfg.DriverName, cfg.DriverVersion)
 		if cfg.UserAgentEntry != "" {
-			userAgent = fmt.Sprintf("%s/%s", cfg.DriverName, cfg.DriverVersion)
-		} else {
 			userAgent = fmt.Sprintf("%s/%s (%s)", cfg.DriverName, cfg.DriverVersion, cfg.UserAgentEntry)
 		}
 		httpTransport.SetHeader("User-Agent", userAgent)
@@ -115,7 +122,7 @@ func InitThriftClient(cfg *config.Config) (*ThriftServiceClient, error) {
 	iprot := protocolFactory.GetProtocol(tTrans)
 	oprot := protocolFactory.GetProtocol(tTrans)
 	tclient := cli_service.NewTCLIServiceClient(thrift.NewTStandardClient(iprot, oprot))
-	tsClient := &ThriftServiceClient{tclient}
+	tsClient := &ThriftServiceClient{tclient, tr}
 	return tsClient, nil
 }
 
