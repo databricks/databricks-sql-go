@@ -4,7 +4,11 @@ import (
 	"context"
 	"database/sql/driver"
 	"errors"
+	"io"
+	"math"
+	"reflect"
 	"testing"
+	"time"
 
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 
@@ -15,26 +19,26 @@ func TestRowsNextRowInPage(t *testing.T) {
 	var rowSet *rows
 
 	// nil rows instance
-	inPage := rowSet.nextRowInPage()
+	inPage := rowSet.isNextRowInPage()
 	assert.False(t, inPage, "nil rows instance should return false")
 
 	// default rows instance
 	rowSet = &rows{}
-	inPage = rowSet.nextRowInPage()
+	inPage = rowSet.isNextRowInPage()
 	assert.False(t, inPage, "default rows instance should return false")
 
 	fetchResults := &cli_service.TFetchResultsResp{}
 
 	// fetchResults has no TRowSet
 	rowSet.fetchResults = fetchResults
-	inPage = rowSet.nextRowInPage()
+	inPage = rowSet.isNextRowInPage()
 	assert.False(t, inPage, "fetch results with no TRowSet should return false")
 
 	tRowSet := &cli_service.TRowSet{}
 
 	// default TRowSet
 	fetchResults.Results = tRowSet
-	inPage = rowSet.nextRowInPage()
+	inPage = rowSet.isNextRowInPage()
 	assert.False(t, inPage, "fetch results with default TRowSet should return false")
 
 	// Set up a result page starting with row 10 and containing 5 rows
@@ -44,36 +48,36 @@ func TestRowsNextRowInPage(t *testing.T) {
 
 	// next row number is prior to result page
 	rowSet.nextRowNumber = 0
-	inPage = rowSet.nextRowInPage()
+	inPage = rowSet.isNextRowInPage()
 	assert.False(t, inPage, "next row before current page should return false")
 
 	rowSet.nextRowNumber = 9
-	inPage = rowSet.nextRowInPage()
+	inPage = rowSet.isNextRowInPage()
 	assert.False(t, inPage, "next row before current page should return false")
 
 	// next row number is first row in page
 	rowSet.nextRowNumber = 10
-	inPage = rowSet.nextRowInPage()
+	inPage = rowSet.isNextRowInPage()
 	assert.True(t, inPage, "next row is first row in page should return true")
 
 	// next row is last row in page
 	rowSet.nextRowNumber = 14
-	inPage = rowSet.nextRowInPage()
+	inPage = rowSet.isNextRowInPage()
 	assert.True(t, inPage, "next row is first row in page should return true")
 
 	// next row is in page
 	rowSet.nextRowNumber = 12
-	inPage = rowSet.nextRowInPage()
+	inPage = rowSet.isNextRowInPage()
 	assert.True(t, inPage, "next row is in page should return true")
 
 	// next row immediately follows current page
 	rowSet.nextRowNumber = 15
-	inPage = rowSet.nextRowInPage()
+	inPage = rowSet.isNextRowInPage()
 	assert.False(t, inPage, "next row immediately after current page should return false")
 
 	// next row after current page
 	rowSet.nextRowNumber = 100
-	inPage = rowSet.nextRowInPage()
+	inPage = rowSet.isNextRowInPage()
 	assert.False(t, inPage, "next row after current page should return false")
 }
 
@@ -175,13 +179,14 @@ func TestRowsFetchResultPageErrors(t *testing.T) {
 	var rowSet *rows
 
 	err := rowSet.fetchResultPage()
-	assert.Nil(t, err, "nil rows instance should return nil")
+	assert.EqualError(t, err, errRowsNilRows.Error())
 
 	rowSet = &rows{
 		nextRowNumber: -1,
+		client:        &cli_service.TCLIServiceClient{},
 	}
 	err = rowSet.fetchResultPage()
-	assert.EqualError(t, err, "unable to fetch row page prior to start of results", "negative row number should return error")
+	assert.EqualError(t, err, errRowsFetchPriorToStart.Error(), "negative row number should return error")
 
 	rowSet.fetchResults = &cli_service.TFetchResultsResp{}
 
@@ -200,7 +205,7 @@ func TestRowsFetchResultPageErrors(t *testing.T) {
 
 	//
 	err = rowSet.fetchResultPage()
-	assert.EqualError(t, err, "EOF", "row number past end of result set should return EOF")
+	assert.EqualError(t, err, io.EOF.Error(), "row number past end of result set should return EOF")
 }
 
 func TestGetResultMetadataNoDirectResults(t *testing.T) {
@@ -306,7 +311,7 @@ func TestRowsFetchResultPageNoDirectResults(t *testing.T) {
 	// going forward and then return EOF
 	rowSet.nextRowNumber = 15
 	err = rowSet.fetchResultPage()
-	errMsg := "EOF"
+	errMsg := io.EOF.Error()
 	rowTestPagingResult{
 		getMetadataCount:  0,
 		fetchResultsCount: 5,
@@ -320,7 +325,7 @@ func TestRowsFetchResultPageNoDirectResults(t *testing.T) {
 	// going forward and then return EOF
 	rowSet.nextRowNumber = -1
 	err = rowSet.fetchResultPage()
-	errMsg = "unable to fetch row page prior to start of results"
+	errMsg = errRowsFetchPriorToStart.Error()
 	rowTestPagingResult{
 		getMetadataCount:  0,
 		fetchResultsCount: 7,
@@ -405,7 +410,7 @@ func TestRowsFetchResultPageWithDirectResults(t *testing.T) {
 	// going forward and then return EOF
 	rowSet.nextRowNumber = 15
 	err = rowSet.fetchResultPage()
-	errMsg := "EOF"
+	errMsg := io.EOF.Error()
 	rowTestPagingResult{
 		getMetadataCount:  0,
 		fetchResultsCount: 5,
@@ -419,7 +424,7 @@ func TestRowsFetchResultPageWithDirectResults(t *testing.T) {
 	// going forward and then return EOF
 	rowSet.nextRowNumber = -1
 	err = rowSet.fetchResultPage()
-	errMsg = "unable to fetch row page prior to start of results"
+	errMsg = errRowsFetchPriorToStart.Error()
 	rowTestPagingResult{
 		getMetadataCount:  0,
 		fetchResultsCount: 7,
@@ -451,8 +456,15 @@ var rowTestColNames []string = []string{
 	"float_col",
 	"double_col",
 	"string_col",
-	"char_col",
-	"varchar_col",
+	"timestamp_col",
+	"binary_col",
+	"array_col",
+	"map_col",
+	"struct_col",
+	"decimal_col",
+	"date_col",
+	"interval_ym_col",
+	"interval_dt_col",
 }
 
 func TestColumnsWithDirectResults(t *testing.T) {
@@ -479,7 +491,7 @@ func TestColumnsWithDirectResults(t *testing.T) {
 	rowSet.client = client
 	colNames := rowSet.Columns()
 	assert.NotNil(t, colNames)
-	assert.Equal(t, 10, len(colNames))
+	assert.Equal(t, 17, len(colNames))
 	assert.Equal(t, rowTestColNames, colNames)
 }
 
@@ -496,21 +508,45 @@ func TestColumnsNoDirectResults(t *testing.T) {
 	rowSet.client = client
 	colNames = rowSet.Columns()
 	assert.NotNil(t, colNames)
-	assert.Equal(t, 10, len(colNames))
+	assert.Equal(t, 17, len(colNames))
 }
 
 func TestNextNoDirectResults(t *testing.T) {
 	var getMetadataCount, fetchResultsCount int
 
-	rowSet := &rows{}
+	var rowSet *rows
+	err := rowSet.Next(nil)
+	assert.EqualError(t, err, errRowsNilRows.Error())
+
+	rowSet = &rows{}
 	client := getRowsTestSimpleClient(&getMetadataCount, &fetchResultsCount)
 	rowSet.client = client
 
 	colNames := rowSet.Columns()
 	row := make([]driver.Value, len(colNames))
 
-	err := rowSet.Next(row)
-	row0 := []driver.Value{true, int8(0), int16(0), int32(0), int64(0), float64(0), float64(0), "s0", "s0", "s0"}
+	err = rowSet.Next(row)
+	timestamp, _ := time.Parse(TimestampFormat, "2021-07-01 05:43:28")
+	date, _ := time.Parse(DateFormat, "2021-07-01")
+	row0 := []driver.Value{
+		true,
+		driver.Value(nil),
+		int16(0),
+		int32(0),
+		int64(0),
+		float64(0),
+		float64(0),
+		"s0",
+		timestamp,
+		[]uint8{uint8(1), uint8(2), uint8(3)},
+		"[1, 2, 3]",
+		"{\"key1\": 1}",
+		"{\"string_field\": \"string_val\", \"array_field\": [1, 2]}",
+		"1.1",
+		date,
+		"100-0",
+		"-8 08:13:50.300000000",
+	}
 	assert.Nil(t, err)
 	assert.Equal(t, row0, row)
 	assert.Equal(t, int64(1), rowSet.nextRowNumber)
@@ -544,13 +580,171 @@ func TestNextWithDirectResults(t *testing.T) {
 	row := make([]driver.Value, len(colNames))
 
 	err := rowSet.Next(row)
-	row0 := []driver.Value{true, int8(0), int16(0), int32(0), int64(0), float64(0), float64(0), "s0", "s0", "s0"}
+
+	timestamp, _ := time.Parse(TimestampFormat, "2021-07-01 05:43:28")
+	date, _ := time.Parse(DateFormat, "2021-07-01")
+	row0 := []driver.Value{
+		true,
+		driver.Value(nil),
+		int16(0),
+		int32(0),
+		int64(0),
+		float64(0),
+		float64(0),
+		"s0",
+		timestamp,
+		[]uint8{uint8(1), uint8(2), uint8(3)},
+		"[1, 2, 3]",
+		"{\"key1\": 1}",
+		"{\"string_field\": \"string_val\", \"array_field\": [1, 2]}",
+		"1.1",
+		date,
+		"100-0",
+		"-8 08:13:50.300000000",
+	}
 	assert.Nil(t, err)
 	assert.Equal(t, row0, row)
 	assert.Equal(t, int64(1), rowSet.nextRowNumber)
 	assert.Equal(t, int64(1), rowSet.nextRowIndex)
 	assert.Equal(t, 1, getMetadataCount)
 	assert.Equal(t, 1, fetchResultsCount)
+}
+
+func TestGetScanType(t *testing.T) {
+	var getMetadataCount, fetchResultsCount int
+
+	var rowSet *rows
+	cd, err := rowSet.getColumnMetadataByIndex(0)
+	assert.Nil(t, cd)
+	assert.EqualError(t, err, errRowsNilRows.Error())
+
+	rowSet = &rows{}
+	cd, err = rowSet.getColumnMetadataByIndex(0)
+	assert.Nil(t, cd)
+	assert.EqualError(t, err, errRowsNoClient.Error())
+
+	client := getRowsTestSimpleClient(&getMetadataCount, &fetchResultsCount)
+	rowSet.client = client
+
+	resp, err := rowSet.getResultMetadata()
+	assert.Nil(t, err)
+
+	cols := resp.Schema.Columns
+	expectedScanTypes := []reflect.Type{
+		scanTypeBoolean,
+		scanTypeInt8,
+		scanTypeInt16,
+		scanTypeInt32,
+		scanTypeInt64,
+		scanTypeFloat32,
+		scanTypeFloat64,
+		scanTypeString,
+		scanTypeDateTime,
+		scanTypeRawBytes,
+		scanTypeRawBytes,
+		scanTypeRawBytes,
+		scanTypeRawBytes,
+		scanTypeRawBytes,
+		scanTypeDateTime,
+		scanTypeString,
+		scanTypeString,
+	}
+
+	assert.Equal(t, len(expectedScanTypes), len(cols))
+
+	scanTypes := make([]reflect.Type, len(cols))
+	for i := range cols {
+		scanTypes[i] = rowSet.ColumnTypeScanType(i)
+	}
+
+	assert.Equal(t, expectedScanTypes, scanTypes)
+}
+
+func TestLengthTRowSet(t *testing.T) {
+	rowSet := &cli_service.TRowSet{}
+	assert.Equal(t, int64(0), getNRows(rowSet))
+
+	rowSet.Columns = make([]*cli_service.TColumn, 1)
+
+	bc := make([]bool, 3)
+	rowSet.Columns[0] = &cli_service.TColumn{BoolVal: &cli_service.TBoolColumn{Values: bc}}
+	assert.Equal(t, int64(len(bc)), getNRows(rowSet))
+
+	by := make([]int8, 5)
+	rowSet.Columns[0] = &cli_service.TColumn{ByteVal: &cli_service.TByteColumn{Values: by}}
+	assert.Equal(t, int64(len(by)), getNRows(rowSet))
+
+	i16 := make([]int16, 7)
+	rowSet.Columns[0] = &cli_service.TColumn{I16Val: &cli_service.TI16Column{Values: i16}}
+	assert.Equal(t, int64(len(i16)), getNRows(rowSet))
+
+	i32 := make([]int32, 11)
+	rowSet.Columns[0] = &cli_service.TColumn{I32Val: &cli_service.TI32Column{Values: i32}}
+	assert.Equal(t, int64(len(i32)), getNRows(rowSet))
+
+	i64 := make([]int64, 13)
+	rowSet.Columns[0] = &cli_service.TColumn{I64Val: &cli_service.TI64Column{Values: i64}}
+	assert.Equal(t, int64(len(i64)), getNRows(rowSet))
+
+	str := make([]string, 17)
+	rowSet.Columns[0] = &cli_service.TColumn{StringVal: &cli_service.TStringColumn{Values: str}}
+	assert.Equal(t, int64(len(str)), getNRows(rowSet))
+
+	dbl := make([]float64, 19)
+	rowSet.Columns[0] = &cli_service.TColumn{DoubleVal: &cli_service.TDoubleColumn{Values: dbl}}
+	assert.Equal(t, int64(len(dbl)), getNRows(rowSet))
+
+	bin := make([][]byte, 23)
+	rowSet.Columns[0] = &cli_service.TColumn{BinaryVal: &cli_service.TBinaryColumn{Values: bin}}
+	assert.Equal(t, int64(len(bin)), getNRows(rowSet))
+}
+
+func TestColumnTypeNullable(t *testing.T) {
+	var getMetadataCount, fetchResultsCount int
+
+	rowSet := &rows{}
+	client := getRowsTestSimpleClient(&getMetadataCount, &fetchResultsCount)
+	rowSet.client = client
+
+	colNames := rowSet.Columns()
+	for i := range colNames {
+		nullable, ok := rowSet.ColumnTypeNullable(i)
+		assert.False(t, nullable)
+		assert.False(t, ok)
+	}
+}
+
+func TestColumnTypeLength(t *testing.T) {
+	var getMetadataCount, fetchResultsCount int
+
+	var rowSet *rows
+	l, b := rowSet.ColumnTypeLength(0)
+	assert.Zero(t, l)
+	assert.False(t, b)
+
+	rowSet = &rows{}
+	client := getRowsTestSimpleClient(&getMetadataCount, &fetchResultsCount)
+	rowSet.client = client
+
+	colNames := rowSet.Columns()
+	for i := range colNames {
+		length, ok := rowSet.ColumnTypeLength(i)
+
+		cm, _ := rowSet.getColumnMetadataByIndex(i)
+		switch getDBTypeID(cm) {
+		case cli_service.TTypeId_STRING_TYPE,
+			cli_service.TTypeId_VARCHAR_TYPE,
+			cli_service.TTypeId_BINARY_TYPE,
+			cli_service.TTypeId_ARRAY_TYPE,
+			cli_service.TTypeId_MAP_TYPE,
+			cli_service.TTypeId_STRUCT_TYPE:
+			assert.Equal(t, int64(math.MaxInt64), length)
+			assert.True(t, ok)
+		default:
+			assert.Equal(t, int64(0), length)
+			assert.False(t, ok)
+		}
+	}
 }
 
 type rowTestPagingResult struct {
@@ -731,6 +925,8 @@ func (c *rowTestClient) RenewDelegationToken(ctx context.Context, req *cli_servi
 
 // Build a simple test client
 func getRowsTestSimpleClient(getMetadataCount, fetchResultsCount *int) cli_service.TCLIService {
+	// Metadata for the different types is based on the results returned when querying a table with
+	// all the different types which was created in a test shard.
 	metadata := &cli_service.TGetResultSetMetadataResp{
 		Status: &cli_service.TStatus{
 			StatusCode: cli_service.TStatusCode_SUCCESS_STATUS,
@@ -834,24 +1030,108 @@ func getRowsTestSimpleClient(getMetadataCount, fetchResultsCount *int) cli_servi
 					},
 				},
 				{
-					ColumnName: "char_col",
+					ColumnName: "timestamp_col",
 					TypeDesc: &cli_service.TTypeDesc{
 						Types: []*cli_service.TTypeEntry{
 							{
 								PrimitiveEntry: &cli_service.TPrimitiveTypeEntry{
-									Type: cli_service.TTypeId_CHAR_TYPE,
+									Type: cli_service.TTypeId_TIMESTAMP_TYPE,
 								},
 							},
 						},
 					},
 				},
 				{
-					ColumnName: "varchar_col",
+					ColumnName: "binary_col",
 					TypeDesc: &cli_service.TTypeDesc{
 						Types: []*cli_service.TTypeEntry{
 							{
 								PrimitiveEntry: &cli_service.TPrimitiveTypeEntry{
-									Type: cli_service.TTypeId_VARCHAR_TYPE,
+									Type: cli_service.TTypeId_BINARY_TYPE,
+								},
+							},
+						},
+					},
+				},
+				{
+					ColumnName: "array_col",
+					TypeDesc: &cli_service.TTypeDesc{
+						Types: []*cli_service.TTypeEntry{
+							{
+								PrimitiveEntry: &cli_service.TPrimitiveTypeEntry{
+									Type: cli_service.TTypeId_ARRAY_TYPE,
+								},
+							},
+						},
+					},
+				},
+				{
+					ColumnName: "map_col",
+					TypeDesc: &cli_service.TTypeDesc{
+						Types: []*cli_service.TTypeEntry{
+							{
+								PrimitiveEntry: &cli_service.TPrimitiveTypeEntry{
+									Type: cli_service.TTypeId_MAP_TYPE,
+								},
+							},
+						},
+					},
+				},
+				{
+					ColumnName: "struct_col",
+					TypeDesc: &cli_service.TTypeDesc{
+						Types: []*cli_service.TTypeEntry{
+							{
+								PrimitiveEntry: &cli_service.TPrimitiveTypeEntry{
+									Type: cli_service.TTypeId_STRUCT_TYPE,
+								},
+							},
+						},
+					},
+				},
+				{
+					ColumnName: "decimal_col",
+					TypeDesc: &cli_service.TTypeDesc{
+						Types: []*cli_service.TTypeEntry{
+							{
+								PrimitiveEntry: &cli_service.TPrimitiveTypeEntry{
+									Type: cli_service.TTypeId_DECIMAL_TYPE,
+								},
+							},
+						},
+					},
+				},
+				{
+					ColumnName: "date_col",
+					TypeDesc: &cli_service.TTypeDesc{
+						Types: []*cli_service.TTypeEntry{
+							{
+								PrimitiveEntry: &cli_service.TPrimitiveTypeEntry{
+									Type: cli_service.TTypeId_DATE_TYPE,
+								},
+							},
+						},
+					},
+				},
+				{
+					ColumnName: "interval_ym_col",
+					TypeDesc: &cli_service.TTypeDesc{
+						Types: []*cli_service.TTypeEntry{
+							{
+								PrimitiveEntry: &cli_service.TPrimitiveTypeEntry{
+									Type: cli_service.TTypeId_INTERVAL_YEAR_MONTH_TYPE,
+								},
+							},
+						},
+					},
+				},
+				{
+					ColumnName: "interval_dt_col",
+					TypeDesc: &cli_service.TTypeDesc{
+						Types: []*cli_service.TTypeEntry{
+							{
+								PrimitiveEntry: &cli_service.TPrimitiveTypeEntry{
+									Type: cli_service.TTypeId_INTERVAL_DAY_TIME_TYPE,
 								},
 							},
 						},
@@ -877,16 +1157,40 @@ func getRowsTestSimpleClient(getMetadataCount, fetchResultsCount *int) cli_servi
 			Results: &cli_service.TRowSet{
 				StartRowOffset: 0,
 				Columns: []*cli_service.TColumn{
+					// bool_col
 					{BoolVal: &cli_service.TBoolColumn{Values: []bool{true, false, true, false, true}}},
-					{ByteVal: &cli_service.TByteColumn{Values: []int8{0, 1, 2, 3, 4}}},
+					// tinyInt_com
+					{ByteVal: &cli_service.TByteColumn{Values: []int8{0, 1, 2, 3, 4}, Nulls: []byte{1}}},
+					// smallInt_col
 					{I16Val: &cli_service.TI16Column{Values: []int16{0, 1, 2, 3, 4}}},
+					// int_col
 					{I32Val: &cli_service.TI32Column{Values: []int32{0, 1, 2, 3, 4}}},
+					//bigInt_col
 					{I64Val: &cli_service.TI64Column{Values: []int64{0, 1, 2, 3, 4}}},
+					// float_col
 					{DoubleVal: &cli_service.TDoubleColumn{Values: []float64{0, 1.1, 2.2, 3.3, 4.4}}},
+					// double_col
 					{DoubleVal: &cli_service.TDoubleColumn{Values: []float64{0, 1.1, 2.2, 3.3, 4.4}}},
+					// string_col
 					{StringVal: &cli_service.TStringColumn{Values: []string{"s0", "s1", "s2", "s3", "s4"}}},
-					{StringVal: &cli_service.TStringColumn{Values: []string{"s0", "s1", "s2", "s3", "s4"}}},
-					{StringVal: &cli_service.TStringColumn{Values: []string{"s0", "s1", "s2", "s3", "s4"}}},
+					// timestamp_col
+					{StringVal: &cli_service.TStringColumn{Values: []string{"2021-07-01 05:43:28", "2021-07-01 05:43:28", "2021-07-01 05:43:28", "2021-07-01 05:43:28", "2021-07-01 05:43:28"}}},
+					// binary_col
+					{BinaryVal: &cli_service.TBinaryColumn{Values: [][]byte{{1, 2, 3}, {1, 2, 3}, {1, 2, 3}, {1, 2, 3}, {1, 2, 3}}}},
+					// array_col
+					{StringVal: &cli_service.TStringColumn{Values: []string{"[1, 2, 3]", "[1, 2, 3]", "[1, 2, 3]", "[1, 2, 3]", "[1, 2, 3]"}}},
+					// map_col
+					{StringVal: &cli_service.TStringColumn{Values: []string{"{\"key1\": 1}", "{\"key1\": 1}", "{\"key1\": 1}", "{\"key1\": 1}", "{\"key1\": 1}"}}},
+					// struct_col
+					{StringVal: &cli_service.TStringColumn{Values: []string{"{\"string_field\": \"string_val\", \"array_field\": [1, 2]}", "{\"string_field\": \"string_val\", \"array_field\": [1, 2]}", "{\"string_field\": \"string_val\", \"array_field\": [1, 2]}", "{\"string_field\": \"string_val\", \"array_field\": [1, 2]}", "{\"string_field\": \"string_val\", \"array_field\": [1, 2]}"}}},
+					// decimal_col
+					{StringVal: &cli_service.TStringColumn{Values: []string{"1.1", "2.2", "3.3", "4.4", "5.5"}}},
+					// date_col
+					{StringVal: &cli_service.TStringColumn{Values: []string{"2021-07-01", "2021-07-01", "2021-07-01", "2021-07-01", "2021-07-01"}}},
+					// interval_ym_col
+					{StringVal: &cli_service.TStringColumn{Values: []string{"100-0", "100-0", "100-0", "100-0", "100-0"}}},
+					// interval_dt_col
+					{StringVal: &cli_service.TStringColumn{Values: []string{"-8 08:13:50.300000000", "-8 08:13:50.300000000", "-8 08:13:50.300000000", "-8 08:13:50.300000000", "-8 08:13:50.300000000"}}},
 				},
 			},
 		},
@@ -898,16 +1202,40 @@ func getRowsTestSimpleClient(getMetadataCount, fetchResultsCount *int) cli_servi
 			Results: &cli_service.TRowSet{
 				StartRowOffset: 5,
 				Columns: []*cli_service.TColumn{
+					// bool_col
 					{BoolVal: &cli_service.TBoolColumn{Values: []bool{true, false, true, false, true}}},
-					{ByteVal: &cli_service.TByteColumn{Values: []int8{5, 6, 7, 8, 9}}},
-					{I16Val: &cli_service.TI16Column{Values: []int16{5, 6, 7, 8, 9}}},
+					// tinyInt_com
+					{ByteVal: &cli_service.TByteColumn{Values: []int8{0, 1, 2, 3, 4}}},
+					// smallInt_col
+					{I16Val: &cli_service.TI16Column{Values: []int16{0, 1, 2, 3, 4}}},
+					// int_col
 					{I32Val: &cli_service.TI32Column{Values: []int32{5, 6, 7, 8, 9}}},
-					{I64Val: &cli_service.TI64Column{Values: []int64{5, 6, 7, 8, 9}}},
+					//bigInt_col
+					{I64Val: &cli_service.TI64Column{Values: []int64{0, 1, 2, 3, 4}}},
+					// float_col
 					{DoubleVal: &cli_service.TDoubleColumn{Values: []float64{0, 1.1, 2.2, 3.3, 4.4}}},
+					// double_col
 					{DoubleVal: &cli_service.TDoubleColumn{Values: []float64{0, 1.1, 2.2, 3.3, 4.4}}},
-					{StringVal: &cli_service.TStringColumn{Values: []string{"s5", "s6", "s7", "s8", "s9"}}},
-					{StringVal: &cli_service.TStringColumn{Values: []string{"s5", "s6", "s7", "s8", "s9"}}},
-					{StringVal: &cli_service.TStringColumn{Values: []string{"s5", "s6", "s7", "s8", "s9"}}},
+					// string_col
+					{StringVal: &cli_service.TStringColumn{Values: []string{"s0", "s1", "s2", "s3", "s4"}}},
+					// timestamp_col
+					{StringVal: &cli_service.TStringColumn{Values: []string{"2021-07-01 05:43:28", "2021-07-01 05:43:28", "2021-07-01 05:43:28", "2021-07-01 05:43:28", "2021-07-01 05:43:28"}}},
+					// binary_col
+					{BinaryVal: &cli_service.TBinaryColumn{Values: [][]byte{{1, 2, 3}, {1, 2, 3}, {1, 2, 3}, {1, 2, 3}, {1, 2, 3}}}},
+					// array_col
+					{StringVal: &cli_service.TStringColumn{Values: []string{"[1, 2, 3]", "[1, 2, 3]", "[1, 2, 3]", "[1, 2, 3]", "[1, 2, 3]"}}},
+					// map_col
+					{StringVal: &cli_service.TStringColumn{Values: []string{"{\"key1\": 1}", "{\"key1\": 1}", "{\"key1\": 1}", "{\"key1\": 1}", "{\"key1\": 1}"}}},
+					// struct_col
+					{StringVal: &cli_service.TStringColumn{Values: []string{"{\"string_field\": \"string_val\", \"array_field\": [1, 2]}", "{\"string_field\": \"string_val\", \"array_field\": [1, 2]}", "{\"string_field\": \"string_val\", \"array_field\": [1, 2]}", "{\"string_field\": \"string_val\", \"array_field\": [1, 2]}", "{\"string_field\": \"string_val\", \"array_field\": [1, 2]}"}}},
+					// decimal_col
+					{StringVal: &cli_service.TStringColumn{Values: []string{"1.1", "2.2", "3.3", "4.4", "5.5"}}},
+					// date_col
+					{StringVal: &cli_service.TStringColumn{Values: []string{"2021-07-01", "2021-07-01", "2021-07-01", "2021-07-01", "2021-07-01"}}},
+					// interval_ym_col
+					{StringVal: &cli_service.TStringColumn{Values: []string{"100-0", "100-0", "100-0", "100-0", "100-0"}}},
+					// interval_dt_col
+					{StringVal: &cli_service.TStringColumn{Values: []string{"-8 08:13:50.300000000", "-8 08:13:50.300000000", "-8 08:13:50.300000000", "-8 08:13:50.300000000", "-8 08:13:50.300000000"}}},
 				},
 			},
 		},
@@ -919,16 +1247,40 @@ func getRowsTestSimpleClient(getMetadataCount, fetchResultsCount *int) cli_servi
 			Results: &cli_service.TRowSet{
 				StartRowOffset: 10,
 				Columns: []*cli_service.TColumn{
+					// bool_col
 					{BoolVal: &cli_service.TBoolColumn{Values: []bool{true, false, true, false, true}}},
-					{ByteVal: &cli_service.TByteColumn{Values: []int8{10, 11, 12, 13, 14}}},
-					{I16Val: &cli_service.TI16Column{Values: []int16{10, 11, 12, 13, 14}}},
+					// tinyInt_com
+					{ByteVal: &cli_service.TByteColumn{Values: []int8{0, 1, 2, 3, 4}}},
+					// smallInt_col
+					{I16Val: &cli_service.TI16Column{Values: []int16{0, 1, 2, 3, 4}}},
+					// int_col
 					{I32Val: &cli_service.TI32Column{Values: []int32{10, 11, 12, 13, 14}}},
-					{I64Val: &cli_service.TI64Column{Values: []int64{10, 11, 12, 13, 14}}},
+					//bigInt_col
+					{I64Val: &cli_service.TI64Column{Values: []int64{0, 1, 2, 3, 4}}},
+					// float_col
+					{DoubleVal: &cli_service.TDoubleColumn{Values: []float64{0, 1.1, 2.2, 3.3, 4.4}, Nulls: []byte{1}}},
+					// double_col
 					{DoubleVal: &cli_service.TDoubleColumn{Values: []float64{0, 1.1, 2.2, 3.3, 4.4}}},
-					{DoubleVal: &cli_service.TDoubleColumn{Values: []float64{0, 1.1, 2.2, 3.3, 4.4}}},
-					{StringVal: &cli_service.TStringColumn{Values: []string{"s10", "s11", "s12", "s13", "s14"}}},
-					{StringVal: &cli_service.TStringColumn{Values: []string{"s10", "s11", "s12", "s13", "s14"}}},
-					{StringVal: &cli_service.TStringColumn{Values: []string{"s10", "s11", "s12", "s13", "s14"}}},
+					// string_col
+					{StringVal: &cli_service.TStringColumn{Values: []string{"s0", "s1", "s2", "s3", "s4"}}},
+					// timestamp_col
+					{StringVal: &cli_service.TStringColumn{Values: []string{"2021-07-01 05:43:28", "2021-07-01 05:43:28", "2021-07-01 05:43:28", "2021-07-01 05:43:28", "2021-07-01 05:43:28"}}},
+					// binary_col
+					{BinaryVal: &cli_service.TBinaryColumn{Values: [][]byte{{1, 2, 3}, {1, 2, 3}, {1, 2, 3}, {1, 2, 3}, {1, 2, 3}}}},
+					// array_col
+					{StringVal: &cli_service.TStringColumn{Values: []string{"[1, 2, 3]", "[1, 2, 3]", "[1, 2, 3]", "[1, 2, 3]", "[1, 2, 3]"}}},
+					// map_col
+					{StringVal: &cli_service.TStringColumn{Values: []string{"{\"key1\": 1}", "{\"key1\": 1}", "{\"key1\": 1}", "{\"key1\": 1}", "{\"key1\": 1}"}}},
+					// struct_col
+					{StringVal: &cli_service.TStringColumn{Values: []string{"{\"string_field\": \"string_val\", \"array_field\": [1, 2]}", "{\"string_field\": \"string_val\", \"array_field\": [1, 2]}", "{\"string_field\": \"string_val\", \"array_field\": [1, 2]}", "{\"string_field\": \"string_val\", \"array_field\": [1, 2]}", "{\"string_field\": \"string_val\", \"array_field\": [1, 2]}"}}},
+					// decimal_col
+					{StringVal: &cli_service.TStringColumn{Values: []string{"1.1", "2.2", "3.3", "4.4", "5.5"}}},
+					// date_col
+					{StringVal: &cli_service.TStringColumn{Values: []string{"2021-07-01", "2021-07-01", "2021-07-01", "2021-07-01", "2021-07-01"}}},
+					// interval_ym_col
+					{StringVal: &cli_service.TStringColumn{Values: []string{"100-0", "100-0", "100-0", "100-0", "100-0"}}},
+					// interval_dt_col
+					{StringVal: &cli_service.TStringColumn{Values: []string{"-8 08:13:50.300000000", "-8 08:13:50.300000000", "-8 08:13:50.300000000", "-8 08:13:50.300000000", "-8 08:13:50.300000000"}}},
 				},
 			},
 		},
