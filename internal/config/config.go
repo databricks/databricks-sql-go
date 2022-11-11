@@ -15,7 +15,7 @@ import (
 // Only UserConfig are currently exposed to users
 type Config struct {
 	UserConfig
-	TLSConfig     *tls.Config // nil disables TLS. Is it needed?
+	TLSConfig     *tls.Config // nil disables TLS
 	Authenticator string      //TODO for oauth
 
 	RunAsync                  bool // TODO
@@ -120,6 +120,7 @@ func WithDefaults() *Config {
 		ThriftProtocolVersion:  cli_service.TProtocolVersion_SPARK_CLI_SERVICE_PROTOCOL_V6,
 		DriverName:             "godatabrickssqlconnector", //important. Do not change
 		DriverVersion:          "0.9.0",
+		TLSConfig:              &tls.Config{MinVersion: tls.VersionTLS12},
 	}
 
 }
