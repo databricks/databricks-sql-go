@@ -44,7 +44,7 @@ func main() {
 		fmt.Println(err)
 	}
 
-	rows, err1 := db.QueryContext(ctx, `select cut from default.diamonds`)
+	rows, err1 := db.QueryContext(ctx, `select * from default.intervals`)
 	if err1 != nil {
 		if err1 == sql.ErrNoRows {
 			fmt.Println("not found")
@@ -54,15 +54,36 @@ func main() {
 			return
 		}
 	}
-	var res string
+
+	colNames, _ := rows.Columns()
+	for i := range colNames {
+		fmt.Printf("%d: %s\n", i, colNames[i])
+	}
+
+	// var bigInt int64
+	// var binary sql.RawBytes
+	// var boolVal bool
+	// var dateVal time.Time
+	// var decimal sql.RawBytes
+	// var doubleVal float64
+	// var floatVal float32
+	// var intVal int32
+	// var smallInt int16
+	// var stringVal string
+	// var timeVal time.Time
+	// var tinyInt int8
+
+	// var array_val, map_val, struct_val sql.RawBytes
+
+	var res1, res2 string
 	for rows.Next() {
-		err := rows.Scan(&res)
+		err := rows.Scan(&res1, &res2)
 		if err != nil {
 			fmt.Println(err)
 			rows.Close()
 			return
 		}
-		fmt.Println(res)
+		// fmt.Printf("%v, %v\n", res1, res2)
 	}
 
 }
