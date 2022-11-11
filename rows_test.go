@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
+	"github.com/databricks/databricks-sql-go/internal/client"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -576,159 +577,6 @@ func (rt rowTestPagingResult) validatePaging(t *testing.T, rowSet *rows, err err
 	}
 }
 
-type rowTestClient struct {
-	fOpenSession           func(ctx context.Context, req *cli_service.TOpenSessionReq) (_r *cli_service.TOpenSessionResp, _err error)
-	fCloseSession          func(ctx context.Context, req *cli_service.TCloseSessionReq) (_r *cli_service.TCloseSessionResp, _err error)
-	fGetInfo               func(ctx context.Context, req *cli_service.TGetInfoReq) (_r *cli_service.TGetInfoResp, _err error)
-	fExecuteStatement      func(ctx context.Context, req *cli_service.TExecuteStatementReq) (_r *cli_service.TExecuteStatementResp, _err error)
-	fGetTypeInfo           func(ctx context.Context, req *cli_service.TGetTypeInfoReq) (_r *cli_service.TGetTypeInfoResp, _err error)
-	fGetCatalogs           func(ctx context.Context, req *cli_service.TGetCatalogsReq) (_r *cli_service.TGetCatalogsResp, _err error)
-	fGetSchemas            func(ctx context.Context, req *cli_service.TGetSchemasReq) (_r *cli_service.TGetSchemasResp, _err error)
-	fGetTables             func(ctx context.Context, req *cli_service.TGetTablesReq) (_r *cli_service.TGetTablesResp, _err error)
-	fGetTableTypes         func(ctx context.Context, req *cli_service.TGetTableTypesReq) (_r *cli_service.TGetTableTypesResp, _err error)
-	fGetColumns            func(ctx context.Context, req *cli_service.TGetColumnsReq) (_r *cli_service.TGetColumnsResp, _err error)
-	fGetFunctions          func(ctx context.Context, req *cli_service.TGetFunctionsReq) (_r *cli_service.TGetFunctionsResp, _err error)
-	fGetPrimaryKeys        func(ctx context.Context, req *cli_service.TGetPrimaryKeysReq) (_r *cli_service.TGetPrimaryKeysResp, _err error)
-	fGetCrossReference     func(ctx context.Context, req *cli_service.TGetCrossReferenceReq) (_r *cli_service.TGetCrossReferenceResp, _err error)
-	fGetOperationStatus    func(ctx context.Context, req *cli_service.TGetOperationStatusReq) (_r *cli_service.TGetOperationStatusResp, _err error)
-	fCancelOperation       func(ctx context.Context, req *cli_service.TCancelOperationReq) (_r *cli_service.TCancelOperationResp, _err error)
-	fCloseOperation        func(ctx context.Context, req *cli_service.TCloseOperationReq) (_r *cli_service.TCloseOperationResp, _err error)
-	fGetResultSetMetadata  func(ctx context.Context, req *cli_service.TGetResultSetMetadataReq) (_r *cli_service.TGetResultSetMetadataResp, _err error)
-	fFetchResults          func(ctx context.Context, req *cli_service.TFetchResultsReq) (_r *cli_service.TFetchResultsResp, _err error)
-	fGetDelegationToken    func(ctx context.Context, req *cli_service.TGetDelegationTokenReq) (_r *cli_service.TGetDelegationTokenResp, _err error)
-	fCancelDelegationToken func(ctx context.Context, req *cli_service.TCancelDelegationTokenReq) (_r *cli_service.TCancelDelegationTokenResp, _err error)
-	fRenewDelegationToken  func(ctx context.Context, req *cli_service.TRenewDelegationTokenReq) (_r *cli_service.TRenewDelegationTokenResp, _err error)
-}
-
-var _ cli_service.TCLIService = (*rowTestClient)(nil)
-
-func (c *rowTestClient) OpenSession(ctx context.Context, req *cli_service.TOpenSessionReq) (_r *cli_service.TOpenSessionResp, _err error) {
-	if c.fOpenSession != nil {
-		return c.fOpenSession(ctx, req)
-	}
-	return nil, ErrNotImplemented
-}
-func (c *rowTestClient) CloseSession(ctx context.Context, req *cli_service.TCloseSessionReq) (_r *cli_service.TCloseSessionResp, _err error) {
-	if c.fCloseSession != nil {
-		return c.fCloseSession(ctx, req)
-	}
-	return nil, ErrNotImplemented
-}
-func (c *rowTestClient) GetInfo(ctx context.Context, req *cli_service.TGetInfoReq) (_r *cli_service.TGetInfoResp, _err error) {
-	if c.fGetInfo != nil {
-		return c.fGetInfo(ctx, req)
-	}
-	return nil, ErrNotImplemented
-}
-func (c *rowTestClient) ExecuteStatement(ctx context.Context, req *cli_service.TExecuteStatementReq) (_r *cli_service.TExecuteStatementResp, _err error) {
-	if c.fExecuteStatement != nil {
-		return c.fExecuteStatement(ctx, req)
-	}
-	return nil, ErrNotImplemented
-}
-func (c *rowTestClient) GetTypeInfo(ctx context.Context, req *cli_service.TGetTypeInfoReq) (_r *cli_service.TGetTypeInfoResp, _err error) {
-	if c.fGetTypeInfo != nil {
-		return c.fGetTypeInfo(ctx, req)
-	}
-	return nil, ErrNotImplemented
-}
-func (c *rowTestClient) GetCatalogs(ctx context.Context, req *cli_service.TGetCatalogsReq) (_r *cli_service.TGetCatalogsResp, _err error) {
-	if c.fGetCatalogs != nil {
-		return c.fGetCatalogs(ctx, req)
-	}
-	return nil, ErrNotImplemented
-}
-func (c *rowTestClient) GetSchemas(ctx context.Context, req *cli_service.TGetSchemasReq) (_r *cli_service.TGetSchemasResp, _err error) {
-	if c.fGetSchemas != nil {
-		return c.fGetSchemas(ctx, req)
-	}
-	return nil, ErrNotImplemented
-}
-func (c *rowTestClient) GetTables(ctx context.Context, req *cli_service.TGetTablesReq) (_r *cli_service.TGetTablesResp, _err error) {
-	if c.fGetTables != nil {
-		return c.fGetTables(ctx, req)
-	}
-	return nil, ErrNotImplemented
-}
-func (c *rowTestClient) GetTableTypes(ctx context.Context, req *cli_service.TGetTableTypesReq) (_r *cli_service.TGetTableTypesResp, _err error) {
-	if c.fGetTableTypes != nil {
-		return c.fGetTableTypes(ctx, req)
-	}
-	return nil, ErrNotImplemented
-}
-func (c *rowTestClient) GetColumns(ctx context.Context, req *cli_service.TGetColumnsReq) (_r *cli_service.TGetColumnsResp, _err error) {
-	if c.fGetColumns != nil {
-		return c.fGetColumns(ctx, req)
-	}
-	return nil, ErrNotImplemented
-}
-func (c *rowTestClient) GetFunctions(ctx context.Context, req *cli_service.TGetFunctionsReq) (_r *cli_service.TGetFunctionsResp, _err error) {
-	if c.fGetFunctions != nil {
-		return c.fGetFunctions(ctx, req)
-	}
-	return nil, ErrNotImplemented
-}
-func (c *rowTestClient) GetPrimaryKeys(ctx context.Context, req *cli_service.TGetPrimaryKeysReq) (_r *cli_service.TGetPrimaryKeysResp, _err error) {
-	if c.fGetPrimaryKeys != nil {
-		return c.fGetPrimaryKeys(ctx, req)
-	}
-	return nil, ErrNotImplemented
-}
-func (c *rowTestClient) GetCrossReference(ctx context.Context, req *cli_service.TGetCrossReferenceReq) (_r *cli_service.TGetCrossReferenceResp, _err error) {
-	if c.fGetCrossReference != nil {
-		return c.fGetCrossReference(ctx, req)
-	}
-	return nil, ErrNotImplemented
-}
-func (c *rowTestClient) GetOperationStatus(ctx context.Context, req *cli_service.TGetOperationStatusReq) (_r *cli_service.TGetOperationStatusResp, _err error) {
-	if c.fGetOperationStatus != nil {
-		return c.fGetOperationStatus(ctx, req)
-	}
-	return nil, ErrNotImplemented
-}
-func (c *rowTestClient) CancelOperation(ctx context.Context, req *cli_service.TCancelOperationReq) (_r *cli_service.TCancelOperationResp, _err error) {
-	if c.fCancelOperation != nil {
-		return c.fCancelOperation(ctx, req)
-	}
-	return nil, ErrNotImplemented
-}
-func (c *rowTestClient) CloseOperation(ctx context.Context, req *cli_service.TCloseOperationReq) (_r *cli_service.TCloseOperationResp, _err error) {
-	if c.fCloseOperation != nil {
-		return c.fCloseOperation(ctx, req)
-	}
-	return nil, ErrNotImplemented
-}
-func (c *rowTestClient) GetResultSetMetadata(ctx context.Context, req *cli_service.TGetResultSetMetadataReq) (_r *cli_service.TGetResultSetMetadataResp, _err error) {
-	if c.fGetResultSetMetadata != nil {
-		return c.fGetResultSetMetadata(ctx, req)
-	}
-	return nil, ErrNotImplemented
-}
-func (c *rowTestClient) FetchResults(ctx context.Context, req *cli_service.TFetchResultsReq) (_r *cli_service.TFetchResultsResp, _err error) {
-	if c.fFetchResults != nil {
-		return c.fFetchResults(ctx, req)
-	}
-	return nil, ErrNotImplemented
-}
-func (c *rowTestClient) GetDelegationToken(ctx context.Context, req *cli_service.TGetDelegationTokenReq) (_r *cli_service.TGetDelegationTokenResp, _err error) {
-	if c.fGetDelegationToken != nil {
-		return c.fGetDelegationToken(ctx, req)
-	}
-	return nil, ErrNotImplemented
-}
-func (c *rowTestClient) CancelDelegationToken(ctx context.Context, req *cli_service.TCancelDelegationTokenReq) (_r *cli_service.TCancelDelegationTokenResp, _err error) {
-	if c.fCancelDelegationToken != nil {
-		return c.fCancelDelegationToken(ctx, req)
-	}
-	return nil, ErrNotImplemented
-}
-func (c *rowTestClient) RenewDelegationToken(ctx context.Context, req *cli_service.TRenewDelegationTokenReq) (_r *cli_service.TRenewDelegationTokenResp, _err error) {
-	if c.fRenewDelegationToken != nil {
-		return c.fRenewDelegationToken(ctx, req)
-	}
-	return nil, ErrNotImplemented
-}
-
 // Build a simple test client
 func getRowsTestSimpleClient(getMetadataCount, fetchResultsCount *int) cli_service.TCLIService {
 	metadata := &cli_service.TGetResultSetMetadataResp{
@@ -955,9 +803,9 @@ func getRowsTestSimpleClient(getMetadataCount, fetchResultsCount *int) cli_servi
 		return pages[pageIndex], nil
 	}
 
-	client := &rowTestClient{
-		fGetResultSetMetadata: getMetadata,
-		fFetchResults:         fetchResults,
+	client := &client.TestClient{
+		FnGetResultSetMetadata: getMetadata,
+		FnFetchResults:         fetchResults,
 	}
 
 	return client
