@@ -2,182 +2,41 @@ package dbsql
 
 import (
 	"context"
-	"crypto/tls"
+	"database/sql"
 	"database/sql/driver"
-	"errors"
-	"fmt"
-	"log"
-	"net"
-	"net/http"
-	"net/url"
-	"strconv"
-	"strings"
-	"time"
 
-	"github.com/apache/thrift/lib/go/thrift"
-	"github.com/databricks/databricks-sql-go/hive"
+	"github.com/databricks/databricks-sql-go/internal/config"
+	_ "github.com/databricks/databricks-sql-go/logger"
 )
 
-var (
-	// ErrNotSupported means this operation is not supported by the driver
-	ErrNotSupported = errors.New("databricks: not supported")
-)
+func init() {
+	sql.Register("databricks", &databricksDriver{})
+}
 
-type Driver struct{}
+type databricksDriver struct{}
 
-// Open creates new connection to Databricks SQL
-func (d *Driver) Open(uri string) (driver.Conn, error) {
-	opts, err := parseURI(uri)
+func (d *databricksDriver) Open(dsn string) (driver.Conn, error) {
+	cfg := config.WithDefaults()
+	userCfg, err := config.ParseDSN(dsn)
 	if err != nil {
 		return nil, err
 	}
+	cfg.UserConfig = userCfg
+	c := &connector{
+		cfg: cfg,
+	}
+	return c.Connect(context.Background())
+}
 
-	log.Printf("opts: %v", opts)
-
-	conn, err := connect(opts)
+func (d *databricksDriver) OpenConnector(dsn string) (driver.Connector, error) {
+	cfg := config.WithDefaults()
+	ucfg, err := config.ParseDSN(dsn)
 	if err != nil {
 		return nil, err
 	}
-	return conn, nil
+	cfg.UserConfig = ucfg
+	return &connector{cfg}, nil
 }
 
-func parseURI(uri string) (*Options, error) {
-	u, err := url.Parse(uri)
-	if err != nil {
-		return nil, err
-	}
-
-	if u.Scheme != "databricks" {
-		return nil, fmt.Errorf("scheme %s not recognized", u.Scheme)
-	}
-
-	opts := DefaultOptions
-
-	if u.User != nil {
-		token, ok := u.User.Password()
-		if ok {
-			opts.Token = token
-		}
-	} else {
-		return nil, fmt.Errorf("Token is required.")
-	}
-
-	if !strings.Contains(u.Host, ":") {
-		u.Host = fmt.Sprintf("%s:%s", u.Host, DefaultOptions.Port)
-	}
-
-	host, port, err := net.SplitHostPort(u.Host)
-	if err != nil {
-		return nil, err
-	}
-
-	opts.Host = host
-	opts.Port = port
-	opts.HTTPPath = u.Path
-
-	if u.Path == "" {
-		return nil, fmt.Errorf("HTTP Path is required.")
-	}
-
-	query := u.Query()
-
-	maxRows, ok := query["maxRows"]
-
-	if ok {
-		opts.MaxRows, err = strconv.ParseInt(maxRows[0], 10, 64)
-
-		if err != nil {
-			return nil, fmt.Errorf("maxRows value wrongly formatted: %w", err)
-		}
-	}
-
-	timeout, ok := query["timeout"]
-
-	if ok {
-		opts.Timeout, err = strconv.Atoi(timeout[0])
-
-		if err != nil {
-			return nil, fmt.Errorf("timeout value wrongly formatted: %w", err)
-		}
-	}
-
-	userAgentEntry, ok := query["userAgentEntry"]
-
-	if ok {
-		opts.UserAgentEntry = userAgentEntry[0]
-	}
-
-	return &opts, nil
-}
-
-// OpenConnector parses name and return connector with fixed options
-func (d *Driver) OpenConnector(name string) (driver.Connector, error) {
-
-	opts, err := parseURI(name)
-	if err != nil {
-		return nil, err
-	}
-
-	return &connector{opts: opts}, nil
-}
-
-type connector struct {
-	d    *Driver
-	opts *Options
-}
-
-// NewConnector creates connector with specified options
-func NewConnector(opts *Options) driver.Connector {
-	return &connector{opts: opts}
-}
-
-func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
-	return connect(c.opts)
-}
-
-func (c *connector) Driver() driver.Driver {
-	return c.d
-}
-
-func connect(opts *Options) (*Conn, error) {
-	var socket thrift.TTransport
-	var err error
-	var transport thrift.TTransport
-	logger := log.New(opts.LogOut, "databricks: ", log.LstdFlags)
-	timeout := time.Duration(opts.Timeout * int(time.Millisecond))
-	httpClient := &http.Client{
-		Timeout: timeout,
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{},
-		},
-	}
-
-	if err != nil {
-		return nil, err
-	}
-
-	httpOptions := thrift.THttpClientOptions{Client: httpClient}
-	endpointUrl := fmt.Sprintf("https://%s:%s@%s:%s"+opts.HTTPPath, "token", url.QueryEscape(opts.Token), opts.Host, opts.Port)
-	transport, err = thrift.NewTHttpClientTransportFactoryWithOptions(endpointUrl, httpOptions).GetTransport(socket)
-	if err != nil {
-		return nil, err
-	}
-
-	httpTransport, ok := transport.(*thrift.THttpClient)
-	if ok {
-		var userAgent string
-		if opts.UserAgentEntry != "" {
-			userAgent = fmt.Sprintf("%s/%s", DriverName, DriverVersion)
-		} else {
-			userAgent = fmt.Sprintf("%s/%s (%s)", DriverName, DriverVersion, opts.UserAgentEntry)
-		}
-		httpTransport.SetHeader("User-Agent", userAgent)
-	}
-
-	protocolFactory := thrift.NewTBinaryProtocolFactoryDefault()
-	tclient := thrift.NewTStandardClient(protocolFactory.GetProtocol(transport), protocolFactory.GetProtocol(transport))
-
-	client := hive.NewClient(tclient, logger, &hive.Options{MaxRows: opts.MaxRows})
-
-	return &Conn{client: client, t: transport, log: logger}, nil
-}
+var _ driver.Driver = (*databricksDriver)(nil)
+var _ driver.DriverContext = (*databricksDriver)(nil)
