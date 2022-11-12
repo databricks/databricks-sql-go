@@ -553,6 +553,214 @@ func TestConn_runQuery(t *testing.T) {
 		assert.NotNil(t, exStmtResp)
 		assert.NotNil(t, opStatusResp)
 	})
+
+	t.Run("runQuery should return resp when query is finished with DirectResults", func(t *testing.T) {
+		var executeStatementCount, getOperationStatusCount int
+		executeStatement := func(ctx context.Context, req *cli_service.TExecuteStatementReq) (r *cli_service.TExecuteStatementResp, err error) {
+			executeStatementCount++
+			executeStatementResp := &cli_service.TExecuteStatementResp{
+				Status: &cli_service.TStatus{
+					StatusCode: cli_service.TStatusCode_SUCCESS_STATUS,
+				},
+				OperationHandle: &cli_service.TOperationHandle{
+					OperationId: &cli_service.THandleIdentifier{
+						GUID:   []byte("2"),
+						Secret: []byte("b"),
+					},
+				},
+				DirectResults: &cli_service.TSparkDirectResults{
+					OperationStatus: &cli_service.TGetOperationStatusResp{
+						Status: &cli_service.TStatus{
+							StatusCode: cli_service.TStatusCode_SUCCESS_STATUS,
+						},
+						OperationState: cli_service.TOperationStatePtr(cli_service.TOperationState_FINISHED_STATE),
+					},
+				},
+			}
+			return executeStatementResp, nil
+		}
+
+		getOperationStatus := func(ctx context.Context, req *cli_service.TGetOperationStatusReq) (r *cli_service.TGetOperationStatusResp, err error) {
+			getOperationStatusCount++
+			getOperationStatusResp := &cli_service.TGetOperationStatusResp{
+				OperationState: cli_service.TOperationStatePtr(cli_service.TOperationState_FINISHED_STATE),
+			}
+			return getOperationStatusResp, nil
+		}
+
+		testClient := &client.TestClient{
+			FnExecuteStatement:   executeStatement,
+			FnGetOperationStatus: getOperationStatus,
+		}
+		testConn := &conn{
+			session: getTestSession(),
+			client:  testClient,
+			cfg:     config.WithDefaults(),
+		}
+		exStmtResp, opStatusResp, err := testConn.runQuery(context.Background(), "select 1", []driver.NamedValue{})
+
+		assert.NoError(t, err)
+		assert.Equal(t, 1, executeStatementCount)
+		assert.Equal(t, 0, getOperationStatusCount) // GetOperationStatus should not be called, already provided in DirectResults
+		assert.NotNil(t, exStmtResp)
+		assert.NotNil(t, opStatusResp)
+	})
+
+	t.Run("runQuery should return resp and err when query is cancelled with DirectResults", func(t *testing.T) {
+		var executeStatementCount, getOperationStatusCount int
+		executeStatement := func(ctx context.Context, req *cli_service.TExecuteStatementReq) (r *cli_service.TExecuteStatementResp, err error) {
+			executeStatementCount++
+			executeStatementResp := &cli_service.TExecuteStatementResp{
+				Status: &cli_service.TStatus{
+					StatusCode: cli_service.TStatusCode_SUCCESS_STATUS,
+				},
+				OperationHandle: &cli_service.TOperationHandle{
+					OperationId: &cli_service.THandleIdentifier{
+						GUID:   []byte("2"),
+						Secret: []byte("b"),
+					},
+				},
+				DirectResults: &cli_service.TSparkDirectResults{
+					OperationStatus: &cli_service.TGetOperationStatusResp{
+						Status: &cli_service.TStatus{
+							StatusCode: cli_service.TStatusCode_SUCCESS_STATUS,
+						},
+						OperationState: cli_service.TOperationStatePtr(cli_service.TOperationState_CANCELED_STATE),
+					},
+				},
+			}
+			return executeStatementResp, nil
+		}
+
+		getOperationStatus := func(ctx context.Context, req *cli_service.TGetOperationStatusReq) (r *cli_service.TGetOperationStatusResp, err error) {
+			getOperationStatusCount++
+			getOperationStatusResp := &cli_service.TGetOperationStatusResp{
+				OperationState: cli_service.TOperationStatePtr(cli_service.TOperationState_FINISHED_STATE),
+			}
+			return getOperationStatusResp, nil
+		}
+
+		testClient := &client.TestClient{
+			FnExecuteStatement:   executeStatement,
+			FnGetOperationStatus: getOperationStatus,
+		}
+		testConn := &conn{
+			session: getTestSession(),
+			client:  testClient,
+			cfg:     config.WithDefaults(),
+		}
+		exStmtResp, opStatusResp, err := testConn.runQuery(context.Background(), "select 1", []driver.NamedValue{})
+
+		assert.Error(t, err)
+		assert.Equal(t, 1, executeStatementCount)
+		assert.Equal(t, 0, getOperationStatusCount) // GetOperationStatus should not be called, already provided in DirectResults
+		assert.NotNil(t, exStmtResp)
+		assert.NotNil(t, opStatusResp)
+	})
+
+	t.Run("runQuery should return resp when query is finished but DirectResults still live", func(t *testing.T) {
+		var executeStatementCount, getOperationStatusCount int
+		executeStatement := func(ctx context.Context, req *cli_service.TExecuteStatementReq) (r *cli_service.TExecuteStatementResp, err error) {
+			executeStatementCount++
+			executeStatementResp := &cli_service.TExecuteStatementResp{
+				Status: &cli_service.TStatus{
+					StatusCode: cli_service.TStatusCode_SUCCESS_STATUS,
+				},
+				OperationHandle: &cli_service.TOperationHandle{
+					OperationId: &cli_service.THandleIdentifier{
+						GUID:   []byte("2"),
+						Secret: []byte("b"),
+					},
+				},
+				DirectResults: &cli_service.TSparkDirectResults{
+					OperationStatus: &cli_service.TGetOperationStatusResp{
+						Status: &cli_service.TStatus{
+							StatusCode: cli_service.TStatusCode_SUCCESS_STATUS,
+						},
+						OperationState: cli_service.TOperationStatePtr(cli_service.TOperationState_INITIALIZED_STATE),
+					},
+				},
+			}
+			return executeStatementResp, nil
+		}
+
+		getOperationStatus := func(ctx context.Context, req *cli_service.TGetOperationStatusReq) (r *cli_service.TGetOperationStatusResp, err error) {
+			getOperationStatusCount++
+			getOperationStatusResp := &cli_service.TGetOperationStatusResp{
+				OperationState: cli_service.TOperationStatePtr(cli_service.TOperationState_FINISHED_STATE),
+			}
+			return getOperationStatusResp, nil
+		}
+
+		testClient := &client.TestClient{
+			FnExecuteStatement:   executeStatement,
+			FnGetOperationStatus: getOperationStatus,
+		}
+		testConn := &conn{
+			session: getTestSession(),
+			client:  testClient,
+			cfg:     config.WithDefaults(),
+		}
+		exStmtResp, opStatusResp, err := testConn.runQuery(context.Background(), "select 1", []driver.NamedValue{})
+
+		assert.NoError(t, err)
+		assert.Equal(t, 1, executeStatementCount)
+		assert.Equal(t, 1, getOperationStatusCount)
+		assert.NotNil(t, exStmtResp)
+		assert.NotNil(t, opStatusResp)
+	})
+
+	t.Run("runQuery should return resp and err when query is cancelled after DirectResults still live", func(t *testing.T) {
+		var executeStatementCount, getOperationStatusCount int
+		executeStatement := func(ctx context.Context, req *cli_service.TExecuteStatementReq) (r *cli_service.TExecuteStatementResp, err error) {
+			executeStatementCount++
+			executeStatementResp := &cli_service.TExecuteStatementResp{
+				Status: &cli_service.TStatus{
+					StatusCode: cli_service.TStatusCode_SUCCESS_STATUS,
+				},
+				OperationHandle: &cli_service.TOperationHandle{
+					OperationId: &cli_service.THandleIdentifier{
+						GUID:   []byte("2"),
+						Secret: []byte("b"),
+					},
+				},
+				DirectResults: &cli_service.TSparkDirectResults{
+					OperationStatus: &cli_service.TGetOperationStatusResp{
+						Status: &cli_service.TStatus{
+							StatusCode: cli_service.TStatusCode_SUCCESS_STATUS,
+						},
+						OperationState: cli_service.TOperationStatePtr(cli_service.TOperationState_INITIALIZED_STATE),
+					},
+				},
+			}
+			return executeStatementResp, nil
+		}
+
+		getOperationStatus := func(ctx context.Context, req *cli_service.TGetOperationStatusReq) (r *cli_service.TGetOperationStatusResp, err error) {
+			getOperationStatusCount++
+			getOperationStatusResp := &cli_service.TGetOperationStatusResp{
+				OperationState: cli_service.TOperationStatePtr(cli_service.TOperationState_CANCELED_STATE),
+			}
+			return getOperationStatusResp, nil
+		}
+
+		testClient := &client.TestClient{
+			FnExecuteStatement:   executeStatement,
+			FnGetOperationStatus: getOperationStatus,
+		}
+		testConn := &conn{
+			session: getTestSession(),
+			client:  testClient,
+			cfg:     config.WithDefaults(),
+		}
+		exStmtResp, opStatusResp, err := testConn.runQuery(context.Background(), "select 1", []driver.NamedValue{})
+
+		assert.Error(t, err)
+		assert.Equal(t, 1, executeStatementCount)
+		assert.Equal(t, 1, getOperationStatusCount)
+		assert.NotNil(t, exStmtResp)
+		assert.NotNil(t, opStatusResp)
+	})
 }
 
 func TestConn_ExecContext(t *testing.T) {
@@ -649,6 +857,102 @@ func TestConn_ExecContext(t *testing.T) {
 		assert.NotNil(t, res)
 		rowsAffected, _ := res.RowsAffected()
 		assert.Equal(t, int64(10), rowsAffected)
+		assert.Equal(t, 1, executeStatementCount)
+	})
+}
+
+func TestConn_QueryContext(t *testing.T) {
+	t.Run("QueryContext currently does not support query parameters", func(t *testing.T) {
+		var executeStatementCount int
+
+		testClient := &client.TestClient{}
+		testConn := &conn{
+			session: getTestSession(),
+			client:  testClient,
+			cfg:     config.WithDefaults(),
+		}
+		res, err := testConn.ExecContext(context.Background(), "select 1", []driver.NamedValue{
+			driver.NamedValue{Value: 1, Name: "name"},
+		})
+
+		assert.Error(t, err)
+		assert.Nil(t, res)
+		assert.Equal(t, 0, executeStatementCount)
+	})
+
+	t.Run("QueryContext returns err when client.ExecuteStatement fails", func(t *testing.T) {
+		var executeStatementCount int
+		executeStatement := func(ctx context.Context, req *cli_service.TExecuteStatementReq) (r *cli_service.TExecuteStatementResp, err error) {
+			executeStatementCount++
+			executeStatementResp := &cli_service.TExecuteStatementResp{
+				Status: &cli_service.TStatus{
+					StatusCode: cli_service.TStatusCode_ERROR_STATUS,
+				},
+				OperationHandle: &cli_service.TOperationHandle{
+					OperationId: &cli_service.THandleIdentifier{
+						GUID:   []byte("2"),
+						Secret: []byte("b"),
+					},
+				},
+			}
+			return executeStatementResp, fmt.Errorf("error")
+		}
+
+		testClient := &client.TestClient{
+			FnExecuteStatement: executeStatement,
+		}
+		testConn := &conn{
+			session: getTestSession(),
+			client:  testClient,
+			cfg:     config.WithDefaults(),
+		}
+		res, err := testConn.ExecContext(context.Background(), "select 1", []driver.NamedValue{})
+
+		assert.Error(t, err)
+		assert.Nil(t, res)
+		assert.Equal(t, 1, executeStatementCount)
+	})
+
+	t.Run("QueryContext returns rows object upon successful query", func(t *testing.T) {
+		var executeStatementCount, getOperationStatusCount int
+		executeStatement := func(ctx context.Context, req *cli_service.TExecuteStatementReq) (r *cli_service.TExecuteStatementResp, err error) {
+			executeStatementCount++
+			executeStatementResp := &cli_service.TExecuteStatementResp{
+				Status: &cli_service.TStatus{
+					StatusCode: cli_service.TStatusCode_SUCCESS_STATUS,
+				},
+				OperationHandle: &cli_service.TOperationHandle{
+					OperationId: &cli_service.THandleIdentifier{
+						GUID:   []byte("2"),
+						Secret: []byte("b"),
+					},
+				},
+			}
+			return executeStatementResp, nil
+		}
+
+		getOperationStatus := func(ctx context.Context, req *cli_service.TGetOperationStatusReq) (r *cli_service.TGetOperationStatusResp, err error) {
+			getOperationStatusCount++
+			getOperationStatusResp := &cli_service.TGetOperationStatusResp{
+				OperationState:  cli_service.TOperationStatePtr(cli_service.TOperationState_FINISHED_STATE),
+				NumModifiedRows: thrift.Int64Ptr(10),
+			}
+			return getOperationStatusResp, nil
+		}
+
+		testClient := &client.TestClient{
+			FnExecuteStatement:   executeStatement,
+			FnGetOperationStatus: getOperationStatus,
+		}
+		testConn := &conn{
+			session: getTestSession(),
+			client:  testClient,
+			cfg:     config.WithDefaults(),
+		}
+		rows, err := testConn.QueryContext(context.Background(), "select 1", []driver.NamedValue{})
+
+		assert.NoError(t, err)
+		assert.NotNil(t, rows)
 		assert.Equal(t, 1, executeStatementCount)
 	})
 }
