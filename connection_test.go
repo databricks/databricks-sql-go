@@ -298,7 +298,8 @@ func TestConn_pollOperation(t *testing.T) {
 			client:  testClient,
 			cfg:     config.WithDefaults(),
 		}
-		ctx, _ := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		defer cancel()
 		res, err := testConn.pollOperation(ctx, &cli_service.TOperationHandle{
 			OperationId: &cli_service.THandleIdentifier{
 				GUID:   []byte("2"),
@@ -340,7 +341,8 @@ func TestConn_pollOperation(t *testing.T) {
 			client:  testClient,
 			cfg:     config.WithDefaults(),
 		}
-		ctx, _ := context.WithTimeout(context.Background(), 250*time.Millisecond)
+		ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+		defer cancel()
 		res, err := testConn.pollOperation(ctx, &cli_service.TOperationHandle{
 			OperationId: &cli_service.THandleIdentifier{
 				GUID:   []byte("2"),
@@ -383,6 +385,7 @@ func TestConn_pollOperation(t *testing.T) {
 			cfg:     config.WithDefaults(),
 		}
 		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
 		go func() {
 			time.Sleep(250 * time.Millisecond)
 			cancel()
