@@ -777,7 +777,7 @@ func TestConn_ExecContext(t *testing.T) {
 			cfg:     config.WithDefaults(),
 		}
 		res, err := testConn.ExecContext(context.Background(), "select 1", []driver.NamedValue{
-			driver.NamedValue{Value: 1, Name: "name"},
+			{Value: 1, Name: "name"},
 		})
 
 		assert.Error(t, err)
@@ -875,7 +875,7 @@ func TestConn_QueryContext(t *testing.T) {
 			cfg:     config.WithDefaults(),
 		}
 		res, err := testConn.ExecContext(context.Background(), "select 1", []driver.NamedValue{
-			driver.NamedValue{Value: 1, Name: "name"},
+			{Value: 1, Name: "name"},
 		})
 
 		assert.Error(t, err)
