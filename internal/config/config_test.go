@@ -3,12 +3,14 @@ package config
 import (
 	"reflect"
 	"testing"
+	"time"
 )
 
 func TestParseConfig(t *testing.T) {
 	type args struct {
 		dsn string
 	}
+	tz, _ := time.LoadLocation("America/Vancouver")
 	tests := []struct {
 		name    string
 		args    args
@@ -82,7 +84,7 @@ func TestParseConfig(t *testing.T) {
 		},
 		{
 			name: "with query params and session params",
-			args: args{dsn: "token:supersecret@example.cloud.databricks.com:8000/sql/1.0/endpoints/12346a5b5b0e123a?timeout=100&maxRows=1000&timezone=PST"},
+			args: args{dsn: "token:supersecret@example.cloud.databricks.com:8000/sql/1.0/endpoints/12346a5b5b0e123a?timeout=100&maxRows=1000&timezone=America/Vancouver"},
 			wantCfg: UserConfig{
 				Protocol:            "https",
 				Host:                "example.cloud.databricks.com",
@@ -91,7 +93,8 @@ func TestParseConfig(t *testing.T) {
 				HTTPPath:            "/sql/1.0/endpoints/12346a5b5b0e123a",
 				QueryTimeoutSeconds: 100,
 				MaxRows:             1000,
-				SessionParams:       map[string]string{"timezone": "PST"},
+				Location:            tz,
+				SessionParams:       map[string]string{"timezone": "America/Vancouver"},
 			},
 			wantURL: "https://token:supersecret@example.cloud.databricks.com:8000/sql/1.0/endpoints/12346a5b5b0e123a",
 			wantErr: false,

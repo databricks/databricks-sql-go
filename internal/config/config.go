@@ -74,6 +74,7 @@ type UserConfig struct {
 	MaxRows             int    // TODO
 	QueryTimeoutSeconds int    // There are several timeouts that can be possibly configurable
 	UserAgentEntry      string
+	Location            *time.Location
 	SessionParams       map[string]string
 }
 
@@ -184,6 +185,10 @@ func ParseDSN(dsn string) (UserConfig, error) {
 		ucfg.Schema = params.Get("schema")
 		params.Del("schema")
 	}
+	if params.Has("timezone") {
+		tz := params.Get("timezone")
+		ucfg.Location, err = time.LoadLocation(tz)
+	}
 	if len(params) > 0 {
 		sessionParams := make(map[string]string)
 		for k := range params {
@@ -193,5 +198,5 @@ func ParseDSN(dsn string) (UserConfig, error) {
 
 	}
 
-	return ucfg, nil
+	return ucfg, err
 }
