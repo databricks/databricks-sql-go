@@ -3,6 +3,7 @@ package dbsql
 import (
 	"context"
 	"database/sql/driver"
+	"errors"
 )
 
 type stmt struct {
@@ -22,12 +23,12 @@ func (s *stmt) NumInput() int {
 
 // Deprecated: Use StmtExecContext instead.
 func (s *stmt) Exec(args []driver.Value) (driver.Result, error) {
-	return nil, ErrNotImplemented
+	return nil, errors.New(ErrNotImplemented)
 }
 
 // Deprecated: Use StmtQueryContext instead.
 func (s *stmt) Query(args []driver.Value) (driver.Rows, error) {
-	return nil, ErrNotImplemented
+	return nil, errors.New(ErrNotImplemented)
 }
 
 // ExecContext executes a query that doesn't return rows, such

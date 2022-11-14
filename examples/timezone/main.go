@@ -52,7 +52,7 @@ func main() {
 	resb := &time.Time{}
 	resc := &time.Time{}
 	if qerr := db.QueryRowContext(ctx, `select now()`).Scan(resa); qerr != nil {
-		fmt.Printf("err: %v\n", qerr)
+		fmt.Printf("err: %+v\n", qerr)
 	} else {
 		fmt.Println(resa)
 	}

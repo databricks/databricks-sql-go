@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
-	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -13,6 +12,7 @@ import (
 	"time"
 
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
+	"github.com/pkg/errors"
 )
 
 type rows struct {
@@ -32,10 +32,10 @@ var _ driver.RowsColumnTypeDatabaseTypeName = (*rows)(nil)
 var _ driver.RowsColumnTypeNullable = (*rows)(nil)
 var _ driver.RowsColumnTypeLength = (*rows)(nil)
 
-var errRowsFetchPriorToStart error = errors.New("unable to fetch row page prior to start of results")
-var errRowsNoSchemaAvailable error = errors.New("no schema in result set metadata response")
-var errRowsNoClient error = errors.New("instance of Rows missing client")
-var errRowsNilRows error = errors.New("nil Rows instance")
+var errRowsFetchPriorToStart = "unable to fetch row page prior to start of results"
+var errRowsNoSchemaAvailable = "no schema in result set metadata response"
+var errRowsNoClient = "instance of Rows missing client"
+var errRowsNilRows = "nil Rows instance"
 
 // Columns returns the names of the columns. The number of
 // columns of the result is inferred from the length of the
@@ -277,11 +277,11 @@ func getDBTypeID(column *cli_service.TColumnDesc) cli_service.TTypeId {
 // and that it has a client
 func isValidRows(r *rows) error {
 	if r == nil {
-		return errRowsNilRows
+		return errors.New(errRowsNilRows)
 	}
 
 	if r.client == nil {
-		return errRowsNoClient
+		return errors.New(errRowsNoClient)
 	}
 
 	return nil
@@ -299,12 +299,12 @@ func (r *rows) getColumnMetadataByIndex(index int) (*cli_service.TColumnDesc, er
 	}
 
 	if !resultMetadata.IsSetSchema() {
-		return nil, errRowsNoSchemaAvailable
+		return nil, errors.New(errRowsNoSchemaAvailable)
 	}
 
 	columns := resultMetadata.GetSchema().GetColumns()
 	if index < 0 || index >= len(columns) {
-		return nil, fmt.Errorf("invalid column index: %d", index)
+		return nil, errors.WithStack(fmt.Errorf("invalid column index: %d", index))
 	}
 
 	// tColumns := resultMetadata.Schema.GetColumns()
@@ -367,14 +367,14 @@ func (r *rows) fetchResultPage() error {
 		var direction cli_service.TFetchOrientation = r.getPageFetchDirection()
 		if direction == cli_service.TFetchOrientation_FETCH_PRIOR {
 			if r.getPageStartRowNum() == 0 {
-				return errRowsFetchPriorToStart
+				return errors.New(errRowsFetchPriorToStart)
 			}
 		} else if direction == cli_service.TFetchOrientation_FETCH_NEXT {
 			if r.fetchResults != nil && !r.fetchResults.GetHasMoreRows() {
 				return io.EOF
 			}
 		} else {
-			return fmt.Errorf("unhandled fetch result orientation: %s", direction)
+			return errors.WithStack(fmt.Errorf("unhandled fetch result orientation: %s", direction))
 		}
 
 		req := cli_service.TFetchResultsReq{

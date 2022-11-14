@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
+	"github.com/pkg/errors"
 )
 
 // Driver Configurations
@@ -114,7 +115,7 @@ func WithDefaults() *Config {
 		UserConfig:             UserConfig{}.FillDefaults(),
 		RunAsync:               true,
 		CanUseMultipleCatalogs: true,
-		PollInterval:           200 * time.Millisecond,
+		PollInterval:           1 * time.Second,
 		DefaultTimeout:         60 * time.Second,
 		ThriftProtocol:         "binary",
 		ThriftTransport:        "http",
@@ -133,14 +134,14 @@ func ParseDSN(dsn string) (UserConfig, error) {
 	}
 	parsedURL, err := url.Parse(fullDSN)
 	if err != nil {
-		return UserConfig{}, err
+		return UserConfig{}, errors.Wrap(err, "invalid DSN: invalid format")
 	}
 	ucfg := UserConfig{}
 	ucfg.Protocol = parsedURL.Scheme
 	ucfg.Host = parsedURL.Hostname()
 	port, err := strconv.Atoi(parsedURL.Port())
 	if err != nil {
-		return UserConfig{}, err
+		return UserConfig{}, errors.Wrap(err, "invalid DSN: invalid DSN port")
 	}
 	ucfg.Port = port
 	name := parsedURL.User.Username()
@@ -149,11 +150,11 @@ func ParseDSN(dsn string) (UserConfig, error) {
 		if ok {
 			ucfg.AccessToken = pass
 		} else {
-			return UserConfig{}, fmt.Errorf("token not set")
+			return UserConfig{}, errors.New("invalid DSN: token not set")
 		}
 	} else {
 		if name != "" {
-			return UserConfig{}, fmt.Errorf("basic auth not enabled")
+			return UserConfig{}, errors.New("invalid DSN: basic auth not enabled")
 		}
 	}
 	ucfg.HTTPPath = parsedURL.Path
@@ -162,7 +163,7 @@ func ParseDSN(dsn string) (UserConfig, error) {
 	if maxRowsStr != "" {
 		maxRows, err := strconv.Atoi(maxRowsStr)
 		if err != nil {
-			return UserConfig{}, err
+			return UserConfig{}, errors.Wrap(err, "invalid DSN: maxRows param is not an integer")
 		}
 		ucfg.MaxRows = maxRows
 	}
@@ -172,7 +173,7 @@ func ParseDSN(dsn string) (UserConfig, error) {
 	if timeoutStr != "" {
 		timeout, err := strconv.Atoi(timeoutStr)
 		if err != nil {
-			return UserConfig{}, err
+			return UserConfig{}, errors.Wrap(err, "invalid DSN: timeout param is not an integer")
 		}
 		ucfg.QueryTimeoutSeconds = timeout
 	}

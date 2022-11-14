@@ -3,6 +3,7 @@ package dbsql
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"net/url"
 	"strconv"
 	"testing"
@@ -176,8 +177,18 @@ func TestQueryContextTimeouts(t *testing.T) {
 
 	ctx, cancel1 := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel1()
+	_, errtx := db.Begin()
+	fmt.Printf("%+v", errtx)
+
 	rows, err := db.QueryContext(ctx, `select * from dummy`)
 	assert.ErrorIs(t, err, context.DeadlineExceeded)
+	_, ok := err.(stackTracer)
+	assert.True(t, ok)
+	_, ok1 := err.(causer)
+	assert.True(t, ok1)
+
+	fmt.Printf("%+v", err)
+
 	assert.Nil(t, rows)
 	assert.True(t, cancelOperationCalled)
 	assert.True(t, getOperationStatusCalled)

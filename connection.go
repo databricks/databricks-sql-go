@@ -3,13 +3,13 @@ package dbsql
 import (
 	"context"
 	"database/sql/driver"
-	"fmt"
 	"time"
 
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/config"
 	"github.com/databricks/databricks-sql-go/internal/sentinel"
 	"github.com/databricks/databricks-sql-go/logger"
+	"github.com/pkg/errors"
 )
 
 type conn struct {
@@ -43,19 +43,21 @@ func (c *conn) Close() error {
 
 // Not supported in Databricks
 func (c *conn) Begin() (driver.Tx, error) {
-	return nil, fmt.Errorf("databricks: transactions are not supported")
+	return nil, errors.New(ErrTransactionsNotSupported)
 }
 
 // Not supported in Databricks
 func (c *conn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, error) {
-	return nil, fmt.Errorf("databricks: transactions are not supported")
+	return nil, errors.New(ErrTransactionsNotSupported)
 }
 
 func (c *conn) Ping(ctx context.Context) error {
-	_, err := c.QueryContext(ctx, "select 1", nil)
+	ctx1, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	_, err := c.QueryContext(ctx1, "select 1", nil)
 	if err != nil {
 		logger.Err(err).Msg("ping error")
-		return driver.ErrBadConn
+		return errors.Wrap(err, "ping error")
 	}
 	return nil
 }
@@ -77,7 +79,7 @@ func (c *conn) IsValid() bool {
 // Statement ExecContext is the same as connection ExecContext
 func (c *conn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
 	if len(args) > 0 {
-		return nil, fmt.Errorf("databricks: query parameters are not supported")
+		return nil, errors.New(ErrParametersNotSupported)
 	}
 	_, opStatusResp, err := c.runQuery(ctx, query, args)
 
@@ -96,7 +98,7 @@ func (c *conn) ExecContext(ctx context.Context, query string, args []driver.Name
 // Statement QueryContext is the same as connection QueryContext
 func (c *conn) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
 	if len(args) > 0 {
-		return nil, fmt.Errorf("databricks: query parameters are not supported")
+		return nil, errors.New(ErrParametersNotSupported)
 	}
 	// first we try to get the results synchronously.
 	// at any point in time that the context is done we must cancel and return
@@ -151,7 +153,7 @@ func (c *conn) runQuery(ctx context.Context, query string, args []driver.NamedVa
 			logger.Error().Msg(opStatus.GetErrorMessage())
 			logger.Debug().Msgf("bad state: %s", opStatus.GetOperationState())
 
-			return exStmtResp, opStatus, fmt.Errorf(opStatus.GetDisplayMessage())
+			return exStmtResp, opStatus, errors.New(opStatus.GetDisplayMessage())
 		// live states
 		case cli_service.TOperationState_INITIALIZED_STATE, cli_service.TOperationState_PENDING_STATE, cli_service.TOperationState_RUNNING_STATE:
 			statusResp, err := c.pollOperation(ctx, opHandle)
@@ -168,18 +170,18 @@ func (c *conn) runQuery(ctx context.Context, query string, args []driver.NamedVa
 			case cli_service.TOperationState_CANCELED_STATE, cli_service.TOperationState_CLOSED_STATE, cli_service.TOperationState_ERROR_STATE, cli_service.TOperationState_TIMEDOUT_STATE:
 				logger.Debug().Msgf("bad state: %s", statusResp.GetOperationState())
 				logger.Error().Msg(statusResp.GetErrorMessage())
-				return exStmtResp, opStatus, fmt.Errorf(statusResp.GetDisplayMessage())
+				return exStmtResp, opStatus, errors.New(statusResp.GetDisplayMessage())
 				// live states
 			default:
 				logger.Debug().Msgf("bad state: %s", statusResp.GetOperationState())
 				logger.Error().Msg(statusResp.GetErrorMessage())
-				return exStmtResp, opStatus, fmt.Errorf("invalid operation state. This should not have happened")
+				return exStmtResp, opStatus, errors.New("invalid operation state. This should not have happened")
 			}
 		// weird states
 		default:
 			logger.Debug().Msgf("bad state: %s", opStatus.GetOperationState())
 			logger.Error().Msg(opStatus.GetErrorMessage())
-			return exStmtResp, opStatus, fmt.Errorf("invalid operation state. This should not have happened")
+			return exStmtResp, opStatus, errors.New("invalid operation state. This should not have happened")
 		}
 
 	} else {
@@ -197,12 +199,12 @@ func (c *conn) runQuery(ctx context.Context, query string, args []driver.NamedVa
 		case cli_service.TOperationState_CANCELED_STATE, cli_service.TOperationState_CLOSED_STATE, cli_service.TOperationState_ERROR_STATE, cli_service.TOperationState_TIMEDOUT_STATE:
 			logger.Debug().Msgf("bad state: %s", statusResp.GetOperationState())
 			logger.Error().Msg(statusResp.GetErrorMessage())
-			return exStmtResp, statusResp, fmt.Errorf(statusResp.GetDisplayMessage())
+			return exStmtResp, statusResp, errors.New(statusResp.GetDisplayMessage())
 			// live states
 		default:
 			logger.Debug().Msgf("bad state: %s", statusResp.GetOperationState())
 			logger.Error().Msg(statusResp.GetErrorMessage())
-			return exStmtResp, statusResp, fmt.Errorf("invalid operation state. This should not have happened")
+			return exStmtResp, statusResp, errors.New("invalid operation state. This should not have happened")
 		}
 	}
 }
@@ -233,7 +235,7 @@ func (c *conn) executeStatement(ctx context.Context, query string, args []driver
 	}
 	exStmtResp, ok := res.(*cli_service.TExecuteStatementResp)
 	if !ok {
-		return nil, fmt.Errorf("databricks: invalid execute statement response")
+		return exStmtResp, errors.New("databricks: invalid execute statement response")
 	}
 	return exStmtResp, err
 }
@@ -275,7 +277,7 @@ func (c *conn) pollOperation(ctx context.Context, opHandle *cli_service.TOperati
 	}
 	statusResp, ok := resp.(*cli_service.TGetOperationStatusResp)
 	if !ok {
-		return nil, fmt.Errorf("could not read operation status")
+		return nil, errors.New("could not read operation status")
 	}
 	return statusResp, err
 }

@@ -2,10 +2,11 @@ package sentinel
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/databricks/databricks-sql-go/logger"
+	"github.com/pkg/errors"
+	"github.com/rs/zerolog/log"
 )
 
 const (
@@ -42,9 +43,10 @@ func (s WatchStatus) String() string {
 type Done func() bool
 
 type Sentinel struct {
-	StatusFn   func() (doneFn Done, statusResp any, err error)
-	OnCancelFn func() (onCancelFnResp any, err error)
-	OnDoneFn   func(statusResp any) (onDoneFnResp any, err error)
+	StatusFn         func() (doneFn Done, statusResp any, err error)
+	OnCancelFn       func() (onCancelFnResp any, err error)
+	OnDoneFn         func(statusResp any) (onDoneFnResp any, err error)
+	onCancelFnCalled bool
 }
 
 // Wait takes care of checking the status of something on a given interval, up to a timeout.
@@ -81,6 +83,11 @@ func (s Sentinel) Watch(ctx context.Context, interval, timeout time.Duration) (W
 			resCh <- ret
 		}
 	}
+	canceler := func(ctx context.Context, reason string) {
+		ret, err := s.OnCancelFn()
+		log.Err(err).Msgf("cancel failed after %s", reason)
+		log.Debug().Msgf("cancel success. \n %s", ret)
+	}
 
 	for {
 		select {
@@ -105,18 +112,20 @@ func (s Sentinel) Watch(ctx context.Context, interval, timeout time.Duration) (W
 			return WatchSuccess, res, nil
 		case <-ctx.Done():
 			_ = intervalTimer.Stop()
-			if s.OnCancelFn != nil {
-				ret, err := s.OnCancelFn()
-				if err == nil {
-					err = ctx.Err()
-				}
-				return WatchCanceled, ret, err
+			if s.OnCancelFn != nil && !s.onCancelFnCalled {
+				s.onCancelFnCalled = true
+				go canceler(ctx, ctx.Err().Error())
 			}
-			return WatchCanceled, nil, ctx.Err()
+			return WatchCanceled, nil, errors.Wrap(ctx.Err(), "sentinel context done")
 		case <-timeoutTimerCh:
-			_ = intervalTimer.Stop()
 			logger.Info().Msgf("wait timed out after %s", timeout.String())
-			return WatchTimeout, nil, fmt.Errorf("sentinel timed out")
+			err := errors.New("sentinel timed out")
+			_ = intervalTimer.Stop()
+			if s.OnCancelFn != nil && !s.onCancelFnCalled {
+				s.onCancelFnCalled = true
+				go canceler(ctx, err.Error())
+			}
+			return WatchTimeout, nil, err
 		}
 	}
 }

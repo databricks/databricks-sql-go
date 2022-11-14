@@ -4,12 +4,13 @@ import (
 	"context"
 	"database/sql/driver"
 	"errors"
-	"github.com/databricks/databricks-sql-go/internal/client"
 	"io"
 	"math"
 	"reflect"
 	"testing"
 	"time"
+
+	"github.com/databricks/databricks-sql-go/internal/client"
 
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 

@@ -4,9 +4,11 @@ import (
 	"io"
 	"os"
 	"runtime"
+	"time"
 
 	"github.com/mattn/go-isatty"
 	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 )
 
 var Logger = zerolog.New(os.Stderr).With().Timestamp().Logger()
@@ -88,4 +90,16 @@ func Fatal() *zerolog.Event {
 // You must call Msg on the returned event in order to send the event.
 func Panic() *zerolog.Event {
 	return Logger.Panic()
+}
+
+func WithContext(connectionId string, correlationId string) zerolog.Logger {
+	return Logger.With().Str("connectionId", connectionId).Str("correlationId", correlationId).Logger()
+}
+
+func Track(msg string) (string, time.Time) {
+	return msg, time.Now()
+}
+
+func Duration(msg string, start time.Time) {
+	log.Debug().Msgf("%v elapsed time: %v", msg, time.Since(start))
 }

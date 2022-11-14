@@ -11,6 +11,7 @@ import (
 	"github.com/databricks/databricks-sql-go/internal/config"
 	"github.com/databricks/databricks-sql-go/internal/sentinel"
 	"github.com/databricks/databricks-sql-go/logger"
+	"github.com/pkg/errors"
 )
 
 type connector struct {
@@ -21,7 +22,7 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 
 	tclient, err := client.InitThriftClient(c.cfg)
 	if err != nil {
-		return nil, fmt.Errorf("databricks: error initializing thrift client. %w", err)
+		return nil, errors.Wrap(err, "databricks: error initializing thrift client")
 	}
 	var catalogName *cli_service.TIdentifier
 	var schemaName *cli_service.TIdentifier
@@ -53,7 +54,7 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 	}
 	session, ok := res.(*cli_service.TOpenSessionResp)
 	if !ok {
-		return nil, fmt.Errorf("databricks: invalid open session response")
+		return nil, errors.New("databricks: invalid open session response")
 	}
 	logger.Info().Msgf("open session: %s\n", utils.Guid(session.SessionHandle.GetSessionId().GUID))
 
