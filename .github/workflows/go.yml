@@ -61,9 +61,7 @@ jobs:
           go get -v -t -d ./...
 
       - name: Test
-        run:           
-          set -o pipefail && go test ./... -json | node .github/parse-tests.js >> $GITHUB_STEP_SUMMARY
-          echo $GITHUB_STEP_SUMMARY
+        run: make test
         env:
           CGO_ENABLED: 0
 
