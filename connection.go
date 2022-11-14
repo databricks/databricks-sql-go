@@ -18,16 +18,12 @@ type conn struct {
 	session *cli_service.TOpenSessionResp
 }
 
-// The driver does not really implements prepared statements.
-// Statement ExecContext is the same as connection ExecContext
-// Statement QueryContext is the same as connection QueryContext
+// The driver does not really implement prepared statements.
 func (c *conn) Prepare(query string) (driver.Stmt, error) {
 	return &stmt{conn: c, query: query}, nil
 }
 
-// The driver does not really implements prepared statements.
-// Statement ExecContext is the same as connection ExecContext
-// Statement QueryContext is the same as connection QueryContext
+// The driver does not really implement prepared statements.
 func (c *conn) PrepareContext(ctx context.Context, query string) (driver.Stmt, error) {
 	return &stmt{conn: c, query: query}, nil
 }
@@ -78,6 +74,7 @@ func (c *conn) IsValid() bool {
 // as an INSERT or UPDATE.
 //
 // ExecContext honors the context timeout and return when it is canceled.
+// Statement ExecContext is the same as connection ExecContext
 func (c *conn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
 	if len(args) > 0 {
 		return nil, fmt.Errorf("databricks: query parameters are not supported")
@@ -96,6 +93,7 @@ func (c *conn) ExecContext(ctx context.Context, query string, args []driver.Name
 // SELECT.
 //
 // QueryContext honors the context timeout and return when it is canceled.
+// Statement QueryContext is the same as connection QueryContext
 func (c *conn) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
 	if len(args) > 0 {
 		return nil, fmt.Errorf("databricks: query parameters are not supported")

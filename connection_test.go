@@ -874,7 +874,7 @@ func TestConn_QueryContext(t *testing.T) {
 			client:  testClient,
 			cfg:     config.WithDefaults(),
 		}
-		res, err := testConn.ExecContext(context.Background(), "select 1", []driver.NamedValue{
+		res, err := testConn.QueryContext(context.Background(), "select 1", []driver.NamedValue{
 			{Value: 1, Name: "name"},
 		})
 
@@ -909,7 +909,7 @@ func TestConn_QueryContext(t *testing.T) {
 			client:  testClient,
 			cfg:     config.WithDefaults(),
 		}
-		res, err := testConn.ExecContext(context.Background(), "select 1", []driver.NamedValue{})
+		res, err := testConn.QueryContext(context.Background(), "select 1", []driver.NamedValue{})
 
 		assert.Error(t, err)
 		assert.Nil(t, res)
@@ -957,6 +957,121 @@ func TestConn_QueryContext(t *testing.T) {
 		assert.NoError(t, err)
 		assert.NotNil(t, rows)
 		assert.Equal(t, 1, executeStatementCount)
+	})
+}
+
+func TestConn_Ping(t *testing.T) {
+	t.Run("ping returns ErrBadConn when executeStatement fails", func(t *testing.T) {
+		var executeStatementCount int
+		executeStatement := func(ctx context.Context, req *cli_service.TExecuteStatementReq) (r *cli_service.TExecuteStatementResp, err error) {
+			executeStatementCount++
+			executeStatementResp := &cli_service.TExecuteStatementResp{
+				Status: &cli_service.TStatus{
+					StatusCode: cli_service.TStatusCode_ERROR_STATUS,
+				},
+				OperationHandle: &cli_service.TOperationHandle{
+					OperationId: &cli_service.THandleIdentifier{
+						GUID:   []byte("2"),
+						Secret: []byte("b"),
+					},
+				},
+			}
+			return executeStatementResp, nil
+		}
+
+		testClient := &client.TestClient{
+			FnExecuteStatement: executeStatement,
+		}
+		testConn := &conn{
+			session: getTestSession(),
+			client:  testClient,
+			cfg:     config.WithDefaults(),
+		}
+		err := testConn.Ping(context.Background())
+
+		assert.Error(t, err)
+		assert.Equal(t, driver.ErrBadConn, err)
+		assert.Equal(t, 1, executeStatementCount)
+	})
+
+	t.Run("ping returns nil error when driver can establish connection", func(t *testing.T) {
+		var executeStatementCount int
+		executeStatement := func(ctx context.Context, req *cli_service.TExecuteStatementReq) (r *cli_service.TExecuteStatementResp, err error) {
+			executeStatementCount++
+			executeStatementResp := &cli_service.TExecuteStatementResp{
+				Status: &cli_service.TStatus{
+					StatusCode: cli_service.TStatusCode_SUCCESS_STATUS,
+				},
+				OperationHandle: &cli_service.TOperationHandle{
+					OperationId: &cli_service.THandleIdentifier{
+						GUID:   []byte("2"),
+						Secret: []byte("b"),
+					},
+				},
+			}
+			return executeStatementResp, nil
+		}
+
+		getOperationStatus := func(ctx context.Context, req *cli_service.TGetOperationStatusReq) (r *cli_service.TGetOperationStatusResp, err error) {
+			getOperationStatusResp := &cli_service.TGetOperationStatusResp{
+				OperationState:  cli_service.TOperationStatePtr(cli_service.TOperationState_FINISHED_STATE),
+				NumModifiedRows: thrift.Int64Ptr(10),
+			}
+			return getOperationStatusResp, nil
+		}
+
+		testClient := &client.TestClient{
+			FnExecuteStatement:   executeStatement,
+			FnGetOperationStatus: getOperationStatus,
+		}
+
+		testConn := &conn{
+			session: getTestSession(),
+			client:  testClient,
+			cfg:     config.WithDefaults(),
+		}
+		err := testConn.Ping(context.Background())
+
+		assert.Nil(t, err)
+		assert.Equal(t, 1, executeStatementCount)
+	})
+}
+
+func TestConn_Begin(t *testing.T) {
+	t.Run("Begin not supported", func(t *testing.T) {
+		testConn := &conn{
+			session: getTestSession(),
+			client:  &client.TestClient{},
+			cfg:     config.WithDefaults(),
+		}
+		res, err := testConn.Begin()
+		assert.Nil(t, res)
+		assert.Error(t, err)
+	})
+}
+
+func TestConn_BeginTx(t *testing.T) {
+	t.Run("BeginTx not supported", func(t *testing.T) {
+		testConn := &conn{
+			session: getTestSession(),
+			client:  &client.TestClient{},
+			cfg:     config.WithDefaults(),
+		}
+		res, err := testConn.BeginTx(context.Background(), driver.TxOptions{})
+		assert.Nil(t, res)
+		assert.Error(t, err)
+	})
+}
+
+func TestConn_ResetSession(t *testing.T) {
+	t.Run("ResetSession not currently supported", func(t *testing.T) {
+		testConn := &conn{
+			session: getTestSession(),
+			client:  &client.TestClient{},
+			cfg:     config.WithDefaults(),
+		}
+		res := testConn.ResetSession(context.Background())
+		assert.Nil(t, res)
 	})
 }
 
