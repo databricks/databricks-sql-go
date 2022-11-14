@@ -5,7 +5,7 @@
 
 ## Description
 
-This repo contains a Databricks SQL Driver for Go's [database/sql](https://golang.org/pkg/database/sql) package. It can be used to connect and query Databricks clusters and SQL Warehouses. This project is a fork of [go-impala](https://github.com/bippio/go-impala).
+This repo contains a Databricks SQL Driver for Go's [database/sql](https://golang.org/pkg/database/sql) package. It can be used to connect and query Databricks clusters and SQL Warehouses.
 
 **NOTE: This Driver is Beta.**
 
@@ -23,7 +23,7 @@ import (
 	_ "github.com/databricks/databricks-sql-go"
 )
 
-db, err := sql.Open("databricks", "databricks://:dapi********@********.databricks.com/sql/1.0/endpoints/********")
+db, err := sql.Open("databricks", "token:********@********.databricks.com/sql/1.0/endpoints/********")
 if err != nil {
 	panic(err)
 }
@@ -39,13 +39,13 @@ Additional usage examples are available [here](https://github.com/databricks/dat
 The DSN format is:
 
 ```
-databricks://:[your token]@[Workspace hostname][Endpoint HTTP Path]
+token:[your token]@[Workspace hostname][Endpoint HTTP Path]?param=value
 ```
 
-You can set HTTP Timeout value by appending a `timeout` query parameter (in milliseconds) and you can set max rows to retrieve per network request by setting the `maxRows` query parameter:
+You can set query timeout value by appending a `timeout` query parameter (in seconds) and you can set max rows to retrieve per network request by setting the `maxRows` query parameter:
 
 ```
-databricks://:[your token]@[Workspace hostname][Endpoint HTTP Path]?timeout=1000&maxRows=1000
+token:[your token]@[Workspace hostname][Endpoint HTTP Path]?timeout=1000&maxRows=1000
 ```
 
 ## Develop
