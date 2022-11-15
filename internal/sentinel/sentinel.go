@@ -84,9 +84,12 @@ func (s Sentinel) Watch(ctx context.Context, interval, timeout time.Duration) (W
 		}
 	}
 	canceler := func(ctx context.Context, reason string) {
-		ret, err := s.OnCancelFn()
-		log.Err(err).Msgf("cancel failed after %s", reason)
-		log.Debug().Msgf("cancel success. \n %s", ret)
+		_, err := s.OnCancelFn()
+		if err != nil {
+			log.Err(err).Msgf("cancel failed after %s", reason)
+			return
+		}
+		log.Debug().Msgf("cancel success")
 	}
 
 	for {

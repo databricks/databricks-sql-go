@@ -5,12 +5,12 @@ import (
 	"database/sql/driver"
 	"fmt"
 
-	utils "github.com/databricks/databricks-sql-go/internal"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/client"
 	"github.com/databricks/databricks-sql-go/internal/config"
 	"github.com/databricks/databricks-sql-go/internal/sentinel"
 	"github.com/databricks/databricks-sql-go/logger"
+	"github.com/databricks/databricks-sql-go/queryctx"
 	"github.com/pkg/errors"
 )
 
@@ -22,7 +22,7 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 
 	tclient, err := client.InitThriftClient(c.cfg)
 	if err != nil {
-		return nil, errors.Wrap(err, "databricks: error initializing thrift client")
+		return nil, wrapErr(err, "error initializing thrift client")
 	}
 	var catalogName *cli_service.TIdentifier
 	var schemaName *cli_service.TIdentifier
@@ -50,28 +50,31 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 	// default timeout in here in addition to potential context timeout
 	_, res, err := sentinel.Watch(ctx, c.cfg.PollInterval, c.cfg.DefaultTimeout)
 	if err != nil {
-		return nil, err
+		return nil, wrapErrf(err, "error connecting: host=%s port=%d, httpPath=%s", c.cfg.Host, c.cfg.Port, c.cfg.HTTPPath)
 	}
 	session, ok := res.(*cli_service.TOpenSessionResp)
 	if !ok {
 		return nil, errors.New("databricks: invalid open session response")
 	}
-	logger.Info().Msgf("open session: %s\n", utils.Guid(session.SessionHandle.GetSessionId().GUID))
 
 	conn := &conn{
+		id:      client.SprintByteId(session.SessionHandle.GetSessionId().GUID),
 		cfg:     c.cfg,
 		client:  tclient,
 		session: session,
 	}
+	log := logger.WithContext(conn.id, queryctx.CorrelationIdFromContext(ctx), "")
+
+	log.Info().Msgf("connect: host=%s port=%d httpPath=%s", c.cfg.Host, c.cfg.Port, c.cfg.HTTPPath)
+
 	for k, v := range c.cfg.SessionParams {
 		setStmt := fmt.Sprintf("SET `%s` = `%s`;", k, v)
 		_, err := conn.ExecContext(ctx, setStmt, []driver.NamedValue{})
 		if err != nil {
 			return nil, err
 		}
-		logger.Info().Msgf("session parameters: %s", setStmt)
+		log.Info().Msgf("set session parameter: param=%s value=%s", k, v)
 	}
-
 	return conn, nil
 }
 

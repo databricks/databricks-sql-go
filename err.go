@@ -12,13 +12,22 @@ type stackTracer interface {
 	StackTrace() errors.StackTrace
 }
 
-// adds a stack trace if not already present
-func WithStack(err error) error {
+// wraps an error and adds trace if not already present
+func wrapErr(err error, msg string) error {
 	if _, ok := err.(stackTracer); ok {
 		return err
 	}
 
-	return errors.WithStack(err)
+	return errors.Wrap(err, msg)
+}
+
+// adds a stack trace if not already present
+func wrapErrf(err error, format string, args ...interface{}) error {
+	if _, ok := err.(stackTracer); ok {
+		return err
+	}
+
+	return errors.Wrapf(err, format, args...)
 }
 
 type causer interface {

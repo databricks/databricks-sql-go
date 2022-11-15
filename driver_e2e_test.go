@@ -25,7 +25,7 @@ func TestQueryContextDirectResultsSuccess(t *testing.T) {
 			},
 			OperationHandle: &cli_service.TOperationHandle{
 				OperationId: &cli_service.THandleIdentifier{
-					GUID:   []byte("2"),
+					GUID:   []byte("123"),
 					Secret: []byte("b"),
 				},
 			},

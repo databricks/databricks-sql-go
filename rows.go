@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
-	"fmt"
 	"io"
 	"math"
 	"reflect"
@@ -12,11 +11,14 @@ import (
 	"time"
 
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
+	"github.com/databricks/databricks-sql-go/queryctx"
 	"github.com/pkg/errors"
 )
 
 type rows struct {
 	client               cli_service.TCLIService
+	connId               string
+	correlationId        string
 	opHandle             *cli_service.TOperationHandle
 	pageSize             int64
 	location             *time.Location
@@ -76,15 +78,13 @@ func (r *rows) Close() error {
 	req := cli_service.TCloseOperationReq{
 		OperationHandle: r.opHandle,
 	}
+	ctx := queryctx.NewContextWithConnId(context.Background(), r.connId)
+	ctx = queryctx.NewContextWithCorrelationId(ctx, r.correlationId)
 
-	resp, err := r.client.CloseOperation(context.Background(), &req)
-	if err != nil {
-		return err
+	_, err1 := r.client.CloseOperation(ctx, &req)
+	if err1 != nil {
+		return err1
 	}
-	if err := checkStatus(resp.GetStatus()); err != nil {
-		return err
-	}
-
 	return nil
 }
 
@@ -304,7 +304,7 @@ func (r *rows) getColumnMetadataByIndex(index int) (*cli_service.TColumnDesc, er
 
 	columns := resultMetadata.GetSchema().GetColumns()
 	if index < 0 || index >= len(columns) {
-		return nil, errors.WithStack(fmt.Errorf("invalid column index: %d", index))
+		return nil, errors.Errorf("invalid column index: %d", index)
 	}
 
 	// tColumns := resultMetadata.Schema.GetColumns()
@@ -337,13 +337,11 @@ func (r *rows) getResultMetadata() (*cli_service.TGetResultSetMetadataResp, erro
 		req := cli_service.TGetResultSetMetadataReq{
 			OperationHandle: r.opHandle,
 		}
+		ctx := queryctx.NewContextWithConnId(context.Background(), r.connId)
+		ctx = queryctx.NewContextWithCorrelationId(ctx, r.correlationId)
 
-		resp, err := r.client.GetResultSetMetadata(context.Background(), &req)
+		resp, err := r.client.GetResultSetMetadata(ctx, &req)
 		if err != nil {
-			return nil, err
-		}
-
-		if err := checkStatus(resp.GetStatus()); err != nil {
 			return nil, err
 		}
 
@@ -374,7 +372,7 @@ func (r *rows) fetchResultPage() error {
 				return io.EOF
 			}
 		} else {
-			return errors.WithStack(fmt.Errorf("unhandled fetch result orientation: %s", direction))
+			return errors.Errorf("unhandled fetch result orientation: %s", direction)
 		}
 
 		req := cli_service.TFetchResultsReq{
@@ -382,8 +380,10 @@ func (r *rows) fetchResultPage() error {
 			MaxRows:         r.pageSize,
 			Orientation:     direction,
 		}
+		ctx := queryctx.NewContextWithConnId(context.Background(), r.connId)
+		ctx = queryctx.NewContextWithCorrelationId(ctx, r.correlationId)
 
-		fetchResult, err := r.client.FetchResults(context.Background(), &req)
+		fetchResult, err := r.client.FetchResults(ctx, &req)
 		if err != nil {
 			return err
 		}
@@ -422,18 +422,6 @@ func (r *rows) getPageStartRowNum() int64 {
 	}
 
 	return r.fetchResults.GetResults().GetStartRowOffset()
-}
-
-func checkStatus(status *cli_service.TStatus) error {
-	if status.StatusCode == cli_service.TStatusCode_ERROR_STATUS {
-		return errors.New(status.GetErrorMessage())
-	}
-
-	if status.StatusCode == cli_service.TStatusCode_INVALID_HANDLE_STATUS {
-		return errors.New("thrift: invalid handle")
-	}
-
-	return nil
 }
 
 const (

@@ -6,13 +6,16 @@ import (
 	"time"
 
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
+	"github.com/databricks/databricks-sql-go/internal/client"
 	"github.com/databricks/databricks-sql-go/internal/config"
 	"github.com/databricks/databricks-sql-go/internal/sentinel"
 	"github.com/databricks/databricks-sql-go/logger"
+	"github.com/databricks/databricks-sql-go/queryctx"
 	"github.com/pkg/errors"
 )
 
 type conn struct {
+	id      string
 	cfg     *config.Config
 	client  cli_service.TCLIService
 	session *cli_service.TOpenSessionResp
@@ -29,16 +32,21 @@ func (c *conn) PrepareContext(ctx context.Context, query string) (driver.Stmt, e
 }
 
 func (c *conn) Close() error {
+	log := logger.WithContext(c.id, "", "")
+	ctx := queryctx.NewContextWithConnId(context.Background(), c.id)
 	sentinel := sentinel.Sentinel{
 		OnDoneFn: func(statusResp any) (any, error) {
-			return c.client.CloseSession(context.Background(), &cli_service.TCloseSessionReq{
+			return c.client.CloseSession(ctx, &cli_service.TCloseSessionReq{
 				SessionHandle: c.session.SessionHandle,
 			})
 		},
 	}
-	_, _, err := sentinel.Watch(context.Background(), c.cfg.PollInterval, 15*time.Second)
-
-	return err
+	_, _, err := sentinel.Watch(ctx, c.cfg.PollInterval, 15*time.Second)
+	if err != nil {
+		log.Err(err).Msg("databricks: failed to close connection")
+		return wrapErr(err, "failed to close connection")
+	}
+	return nil
 }
 
 // Not supported in Databricks
@@ -52,12 +60,14 @@ func (c *conn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, e
 }
 
 func (c *conn) Ping(ctx context.Context) error {
+	log := logger.WithContext(c.id, queryctx.CorrelationIdFromContext(ctx), "")
+	ctx = queryctx.NewContextWithConnId(ctx, c.id)
 	ctx1, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	_, err := c.QueryContext(ctx1, "select 1", nil)
 	if err != nil {
-		logger.Err(err).Msg("ping error")
-		return errors.Wrap(err, "ping error")
+		log.Err(err).Msg("databricks: failed to ping")
+		return wrapErr(err, "failed to ping")
 	}
 	return nil
 }
@@ -78,13 +88,17 @@ func (c *conn) IsValid() bool {
 // ExecContext honors the context timeout and return when it is canceled.
 // Statement ExecContext is the same as connection ExecContext
 func (c *conn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
+	log := logger.WithContext(c.id, queryctx.CorrelationIdFromContext(ctx), "")
+	defer log.Duration(logger.Track("ExecContext"))
+	ctx = queryctx.NewContextWithConnId(ctx, c.id)
 	if len(args) > 0 {
 		return nil, errors.New(ErrParametersNotSupported)
 	}
 	_, opStatusResp, err := c.runQuery(ctx, query, args)
 
 	if err != nil {
-		return nil, err
+		log.Err(err).Msgf("databricks: failed to execute query: query %s", query)
+		return nil, wrapErrf(err, "failed to execute query")
 	}
 	res := result{AffectedRows: opStatusResp.GetNumModifiedRows()}
 
@@ -97,6 +111,10 @@ func (c *conn) ExecContext(ctx context.Context, query string, args []driver.Name
 // QueryContext honors the context timeout and return when it is canceled.
 // Statement QueryContext is the same as connection QueryContext
 func (c *conn) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
+	corrId := queryctx.CorrelationIdFromContext(ctx)
+	log := logger.WithContext(c.id, corrId, "")
+	defer log.Duration(logger.Track("QueryContext"))
+	ctx = queryctx.NewContextWithConnId(ctx, c.id)
 	if len(args) > 0 {
 		return nil, errors.New(ErrParametersNotSupported)
 	}
@@ -105,16 +123,19 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 	exStmtResp, _, err := c.runQuery(ctx, query, args)
 
 	if err != nil {
-		return nil, err
+		log.Err(err).Msgf("databricks: failed to run query: query %s", query)
+		return nil, wrapErrf(err, "failed to run query")
 	}
 	// hold on to the operation handle
 	opHandle := exStmtResp.OperationHandle
 
 	rows := rows{
-		client:   c.client,
-		opHandle: opHandle,
-		pageSize: int64(c.cfg.MaxRows),
-		location: c.cfg.Location,
+		connId:        c.id,
+		correlationId: corrId,
+		client:        c.client,
+		opHandle:      opHandle,
+		pageSize:      int64(c.cfg.MaxRows),
+		location:      c.cfg.Location,
 	}
 
 	if exStmtResp.DirectResults != nil {
@@ -128,6 +149,7 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 }
 
 func (c *conn) runQuery(ctx context.Context, query string, args []driver.NamedValue) (*cli_service.TExecuteStatementResp, *cli_service.TGetOperationStatusResp, error) {
+	log := logger.WithContext(c.id, queryctx.CorrelationIdFromContext(ctx), "")
 	// first we try to get the results synchronously.
 	// at any point in time that the context is done we must cancel and return
 	exStmtResp, err := c.executeStatement(ctx, query, args)
@@ -137,6 +159,9 @@ func (c *conn) runQuery(ctx context.Context, query string, args []driver.NamedVa
 	}
 	// hold on to the operation handle
 	opHandle := exStmtResp.OperationHandle
+	if opHandle != nil && opHandle.OperationId != nil {
+		log = logger.WithContext(c.id, queryctx.CorrelationIdFromContext(ctx), client.SprintByteId(opHandle.OperationId.GUID))
+	}
 
 	if exStmtResp.DirectResults != nil {
 		opStatus := exStmtResp.DirectResults.GetOperationStatus()
@@ -150,9 +175,7 @@ func (c *conn) runQuery(ctx context.Context, query string, args []driver.NamedVa
 		// bad
 		case cli_service.TOperationState_CANCELED_STATE, cli_service.TOperationState_CLOSED_STATE, cli_service.TOperationState_ERROR_STATE, cli_service.TOperationState_TIMEDOUT_STATE:
 			// do we need to close the operation in these cases?
-			logger.Error().Msg(opStatus.GetErrorMessage())
-			logger.Debug().Msgf("bad state: %s", opStatus.GetOperationState())
-
+			logBadQueryState(log, opStatus)
 			return exStmtResp, opStatus, errors.New(opStatus.GetDisplayMessage())
 		// live states
 		case cli_service.TOperationState_INITIALIZED_STATE, cli_service.TOperationState_PENDING_STATE, cli_service.TOperationState_RUNNING_STATE:
@@ -168,19 +191,16 @@ func (c *conn) runQuery(ctx context.Context, query string, args []driver.NamedVa
 				return exStmtResp, opStatus, nil
 			// bad
 			case cli_service.TOperationState_CANCELED_STATE, cli_service.TOperationState_CLOSED_STATE, cli_service.TOperationState_ERROR_STATE, cli_service.TOperationState_TIMEDOUT_STATE:
-				logger.Debug().Msgf("bad state: %s", statusResp.GetOperationState())
-				logger.Error().Msg(statusResp.GetErrorMessage())
+				logBadQueryState(log, statusResp)
 				return exStmtResp, opStatus, errors.New(statusResp.GetDisplayMessage())
 				// live states
 			default:
-				logger.Debug().Msgf("bad state: %s", statusResp.GetOperationState())
-				logger.Error().Msg(statusResp.GetErrorMessage())
+				logBadQueryState(log, statusResp)
 				return exStmtResp, opStatus, errors.New("invalid operation state. This should not have happened")
 			}
 		// weird states
 		default:
-			logger.Debug().Msgf("bad state: %s", opStatus.GetOperationState())
-			logger.Error().Msg(opStatus.GetErrorMessage())
+			logBadQueryState(log, opStatus)
 			return exStmtResp, opStatus, errors.New("invalid operation state. This should not have happened")
 		}
 
@@ -197,16 +217,19 @@ func (c *conn) runQuery(ctx context.Context, query string, args []driver.NamedVa
 			return exStmtResp, statusResp, nil
 		// bad
 		case cli_service.TOperationState_CANCELED_STATE, cli_service.TOperationState_CLOSED_STATE, cli_service.TOperationState_ERROR_STATE, cli_service.TOperationState_TIMEDOUT_STATE:
-			logger.Debug().Msgf("bad state: %s", statusResp.GetOperationState())
-			logger.Error().Msg(statusResp.GetErrorMessage())
+			logBadQueryState(log, statusResp)
 			return exStmtResp, statusResp, errors.New(statusResp.GetDisplayMessage())
 			// live states
 		default:
-			logger.Debug().Msgf("bad state: %s", statusResp.GetOperationState())
-			logger.Error().Msg(statusResp.GetErrorMessage())
+			logBadQueryState(log, statusResp)
 			return exStmtResp, statusResp, errors.New("invalid operation state. This should not have happened")
 		}
 	}
+}
+
+func logBadQueryState(log *logger.DBSQLLogger, opStatus *cli_service.TGetOperationStatusResp) {
+	log.Error().Msgf("databricks: query state: %s", opStatus.GetOperationState())
+	log.Error().Msg(opStatus.GetErrorMessage())
 }
 
 func (c *conn) executeStatement(ctx context.Context, query string, args []driver.NamedValue) (*cli_service.TExecuteStatementResp, error) {
@@ -225,8 +248,9 @@ func (c *conn) executeStatement(ctx context.Context, query string, args []driver
 				// CanDecompressLZ4Result_: &f,
 				// CanDownloadResult_: &t,
 			}
+			ctx = queryctx.NewContextWithConnId(ctx, c.id)
 			resp, err := c.client.ExecuteStatement(ctx, &req)
-			return resp, err
+			return resp, wrapErr(err, "failed to execute statement")
 		},
 	}
 	_, res, err := sentinel.Watch(ctx, c.cfg.PollInterval, 0)
@@ -241,14 +265,16 @@ func (c *conn) executeStatement(ctx context.Context, query string, args []driver
 }
 
 func (c *conn) pollOperation(ctx context.Context, opHandle *cli_service.TOperationHandle) (*cli_service.TGetOperationStatusResp, error) {
+	log := logger.WithContext(c.id, queryctx.CorrelationIdFromContext(ctx), client.SprintByteId(opHandle.OperationId.GUID))
 	var statusResp *cli_service.TGetOperationStatusResp
+	ctx = queryctx.NewContextWithConnId(ctx, c.id)
 	pollSentinel := sentinel.Sentinel{
 		OnDoneFn: func(statusResp any) (any, error) {
 			return statusResp, nil
 		},
 		StatusFn: func() (sentinel.Done, any, error) {
 			var err error
-			logger.Debug().Msg("databricks: polling status")
+			log.Debug().Msg("databricks: polling status")
 			statusResp, err = c.client.GetOperationStatus(context.Background(), &cli_service.TGetOperationStatusReq{
 				OperationHandle: opHandle,
 			})
@@ -258,13 +284,13 @@ func (c *conn) pollOperation(ctx context.Context, opHandle *cli_service.TOperati
 				case cli_service.TOperationState_INITIALIZED_STATE, cli_service.TOperationState_PENDING_STATE, cli_service.TOperationState_RUNNING_STATE:
 					return false
 				default:
-					logger.Debug().Msg("databricks: polling done")
+					log.Debug().Msg("databricks: polling done")
 					return true
 				}
 			}, statusResp, err
 		},
 		OnCancelFn: func() (any, error) {
-			logger.Debug().Msgf("databricks: canceling operation %s", opHandle.OperationId)
+			log.Debug().Msgf("databricks: canceling query %s", opHandle.OperationId)
 			ret, err := c.client.CancelOperation(context.Background(), &cli_service.TCancelOperationReq{
 				OperationHandle: opHandle,
 			})
@@ -273,13 +299,13 @@ func (c *conn) pollOperation(ctx context.Context, opHandle *cli_service.TOperati
 	}
 	_, resp, err := pollSentinel.Watch(ctx, c.cfg.PollInterval, 0)
 	if err != nil {
-		return nil, err
+		return nil, wrapErr(err, "failed to poll query state")
 	}
 	statusResp, ok := resp.(*cli_service.TGetOperationStatusResp)
 	if !ok {
-		return nil, errors.New("could not read operation status")
+		return nil, errors.New("could not read query status")
 	}
-	return statusResp, err
+	return statusResp, nil
 }
 
 var _ driver.Conn = (*conn)(nil)
