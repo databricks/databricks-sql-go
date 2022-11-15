@@ -983,7 +983,7 @@ func TestConn_Ping(t *testing.T) {
 				},
 				OperationHandle: &cli_service.TOperationHandle{
 					OperationId: &cli_service.THandleIdentifier{
-						GUID:   []byte("2"),
+						GUID:   []byte{1, 2, 3, 4, 2, 23, 4, 2, 3, 2, 3, 4, 4, 223, 34, 54},
 						Secret: []byte("b"),
 					},
 				},
@@ -1016,7 +1016,7 @@ func TestConn_Ping(t *testing.T) {
 				},
 				OperationHandle: &cli_service.TOperationHandle{
 					OperationId: &cli_service.THandleIdentifier{
-						GUID:   []byte("2"),
+						GUID:   []byte{1, 2, 3, 4, 2, 23, 4, 2, 3, 2, 3, 4, 4, 223, 34, 54},
 						Secret: []byte("b"),
 					},
 				},

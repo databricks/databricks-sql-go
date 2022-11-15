@@ -67,7 +67,7 @@ func (c *conn) Ping(ctx context.Context) error {
 	_, err := c.QueryContext(ctx1, "select 1", nil)
 	if err != nil {
 		log.Err(err).Msg("databricks: failed to ping")
-		return wrapErr(err, "failed to ping")
+		return driver.ErrBadConn
 	}
 	return nil
 }
@@ -290,9 +290,14 @@ func (c *conn) pollOperation(ctx context.Context, opHandle *cli_service.TOperati
 			statusResp, err = c.client.GetOperationStatus(newCtx, &cli_service.TGetOperationStatusReq{
 				OperationHandle: opHandle,
 			})
-			log.Debug().Msgf("databricks: status %s", statusResp.GetOperationState().String())
+			if statusResp != nil && statusResp.OperationState != nil {
+				log.Debug().Msgf("databricks: status %s", statusResp.GetOperationState().String())
+			}
 			return func() bool {
 				// which other states?
+				if err != nil {
+					return true
+				}
 				switch statusResp.GetOperationState() {
 				case cli_service.TOperationState_INITIALIZED_STATE, cli_service.TOperationState_PENDING_STATE, cli_service.TOperationState_RUNNING_STATE:
 					return false
