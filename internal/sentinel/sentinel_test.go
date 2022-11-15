@@ -10,6 +10,7 @@ import (
 )
 
 func TestWatch(t *testing.T) {
+	t.Parallel()
 	t.Run("it should return immediatly", func(t *testing.T) {
 		statusFnCalls := 0
 		var statusFn = func() (Done, any, error) {

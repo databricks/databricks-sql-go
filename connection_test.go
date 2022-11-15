@@ -4,9 +4,10 @@ import (
 	"context"
 	"database/sql/driver"
 	"fmt"
-	"github.com/apache/thrift/lib/go/thrift"
 	"testing"
 	"time"
+
+	"github.com/apache/thrift/lib/go/thrift"
 
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/client"
@@ -15,6 +16,7 @@ import (
 )
 
 func TestConn_executeStatement(t *testing.T) {
+	t.Parallel()
 	t.Run("executeStatement should err when client.ExecuteStatement fails", func(t *testing.T) {
 		var executeStatementCount int
 		executeStatement := func(ctx context.Context, req *cli_service.TExecuteStatementReq) (r *cli_service.TExecuteStatementResp, err error) {
@@ -87,6 +89,7 @@ func TestConn_executeStatement(t *testing.T) {
 }
 
 func TestConn_pollOperation(t *testing.T) {
+	t.Parallel()
 	t.Run("pollOperation returns finished state response when query finishes", func(t *testing.T) {
 		var getOperationStatusCount int
 		getOperationStatus := func(ctx context.Context, req *cli_service.TGetOperationStatusReq) (r *cli_service.TGetOperationStatusResp, err error) {
@@ -306,6 +309,7 @@ func TestConn_pollOperation(t *testing.T) {
 				Secret: []byte("b"),
 			},
 		})
+		time.Sleep(50 * time.Millisecond)
 		assert.Error(t, err)
 		assert.Equal(t, 0, getOperationStatusCount)
 		assert.Equal(t, 1, cancelOperationCount)
@@ -336,10 +340,12 @@ func TestConn_pollOperation(t *testing.T) {
 			FnGetOperationStatus: getOperationStatus,
 			FnCancelOperation:    cancelOperation,
 		}
+		cfg := config.WithDefaults()
+		cfg.PollInterval = 100 * time.Millisecond
 		testConn := &conn{
 			session: getTestSession(),
 			client:  testClient,
-			cfg:     config.WithDefaults(),
+			cfg:     cfg,
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
 		defer cancel()
@@ -349,9 +355,10 @@ func TestConn_pollOperation(t *testing.T) {
 				Secret: []byte("b"),
 			},
 		})
+		time.Sleep(50 * time.Millisecond)
 		assert.Error(t, err)
-		assert.Equal(t, 1, getOperationStatusCount)
-		assert.GreaterOrEqual(t, 1, cancelOperationCount)
+		assert.GreaterOrEqual(t, getOperationStatusCount, 1)
+		assert.Equal(t, 1, cancelOperationCount)
 		assert.Nil(t, res)
 	})
 
@@ -379,15 +386,17 @@ func TestConn_pollOperation(t *testing.T) {
 			FnGetOperationStatus: getOperationStatus,
 			FnCancelOperation:    cancelOperation,
 		}
+		cfg := config.WithDefaults()
+		cfg.PollInterval = 100 * time.Millisecond
 		testConn := &conn{
 			session: getTestSession(),
 			client:  testClient,
-			cfg:     config.WithDefaults(),
+			cfg:     cfg,
 		}
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		go func() {
-			time.Sleep(250 * time.Millisecond)
+			time.Sleep(150 * time.Millisecond)
 			cancel()
 		}()
 		res, err := testConn.pollOperation(ctx, &cli_service.TOperationHandle{
@@ -397,13 +406,14 @@ func TestConn_pollOperation(t *testing.T) {
 			},
 		})
 		assert.Error(t, err)
-		assert.Equal(t, 1, getOperationStatusCount)
+		assert.GreaterOrEqual(t, getOperationStatusCount, 1)
 		assert.GreaterOrEqual(t, 1, cancelOperationCount)
 		assert.Nil(t, res)
 	})
 }
 
 func TestConn_runQuery(t *testing.T) {
+	t.Parallel()
 	t.Run("runQuery should err when client.ExecuteStatement fails", func(t *testing.T) {
 		var executeStatementCount int
 		executeStatement := func(ctx context.Context, req *cli_service.TExecuteStatementReq) (r *cli_service.TExecuteStatementResp, err error) {
@@ -767,6 +777,7 @@ func TestConn_runQuery(t *testing.T) {
 }
 
 func TestConn_ExecContext(t *testing.T) {
+	t.Parallel()
 	t.Run("ExecContext currently does not support query parameters", func(t *testing.T) {
 		var executeStatementCount int
 
@@ -865,6 +876,7 @@ func TestConn_ExecContext(t *testing.T) {
 }
 
 func TestConn_QueryContext(t *testing.T) {
+	t.Parallel()
 	t.Run("QueryContext currently does not support query parameters", func(t *testing.T) {
 		var executeStatementCount int
 
