@@ -94,7 +94,11 @@ func (c *conn) ExecContext(ctx context.Context, query string, args []driver.Name
 	if len(args) > 0 {
 		return nil, errors.New(ErrParametersNotSupported)
 	}
-	_, opStatusResp, err := c.runQuery(ctx, query, args)
+	exStmtResp, opStatusResp, err := c.runQuery(ctx, query, args)
+
+	if exStmtResp != nil && exStmtResp.OperationHandle != nil {
+		log = logger.WithContext(c.id, queryctx.CorrelationIdFromContext(ctx), client.SprintGuid(exStmtResp.OperationHandle.OperationId.GUID))
+	}
 
 	if err != nil {
 		log.Err(err).Msgf("databricks: failed to execute query: query %s", query)
@@ -113,7 +117,8 @@ func (c *conn) ExecContext(ctx context.Context, query string, args []driver.Name
 func (c *conn) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
 	corrId := queryctx.CorrelationIdFromContext(ctx)
 	log := logger.WithContext(c.id, corrId, "")
-	defer log.Duration(logger.Track("QueryContext"))
+	msg, start := log.Track("QueryContext")
+
 	ctx = queryctx.NewContextWithConnId(ctx, c.id)
 	if len(args) > 0 {
 		return nil, errors.New(ErrParametersNotSupported)
@@ -121,6 +126,11 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 	// first we try to get the results synchronously.
 	// at any point in time that the context is done we must cancel and return
 	exStmtResp, _, err := c.runQuery(ctx, query, args)
+
+	if exStmtResp != nil && exStmtResp.OperationHandle != nil {
+		log = logger.WithContext(c.id, queryctx.CorrelationIdFromContext(ctx), client.SprintGuid(exStmtResp.OperationHandle.OperationId.GUID))
+	}
+	defer log.Duration(msg, start)
 
 	if err != nil {
 		log.Err(err).Msgf("databricks: failed to run query: query %s", query)
@@ -155,12 +165,12 @@ func (c *conn) runQuery(ctx context.Context, query string, args []driver.NamedVa
 	exStmtResp, err := c.executeStatement(ctx, query, args)
 
 	if err != nil {
-		return nil, nil, err
+		return exStmtResp, nil, err
 	}
 	// hold on to the operation handle
 	opHandle := exStmtResp.OperationHandle
 	if opHandle != nil && opHandle.OperationId != nil {
-		log = logger.WithContext(c.id, queryctx.CorrelationIdFromContext(ctx), client.SprintByteId(opHandle.OperationId.GUID))
+		log = logger.WithContext(c.id, queryctx.CorrelationIdFromContext(ctx), client.SprintGuid(opHandle.OperationId.GUID))
 	}
 
 	if exStmtResp.DirectResults != nil {
@@ -181,7 +191,7 @@ func (c *conn) runQuery(ctx context.Context, query string, args []driver.NamedVa
 		case cli_service.TOperationState_INITIALIZED_STATE, cli_service.TOperationState_PENDING_STATE, cli_service.TOperationState_RUNNING_STATE:
 			statusResp, err := c.pollOperation(ctx, opHandle)
 			if err != nil {
-				return nil, statusResp, err
+				return exStmtResp, statusResp, err
 			}
 			switch statusResp.GetOperationState() {
 			// terminal states
@@ -265,9 +275,11 @@ func (c *conn) executeStatement(ctx context.Context, query string, args []driver
 }
 
 func (c *conn) pollOperation(ctx context.Context, opHandle *cli_service.TOperationHandle) (*cli_service.TGetOperationStatusResp, error) {
-	log := logger.WithContext(c.id, queryctx.CorrelationIdFromContext(ctx), client.SprintByteId(opHandle.OperationId.GUID))
+	corrId := queryctx.CorrelationIdFromContext(ctx)
+	log := logger.WithContext(c.id, corrId, client.SprintGuid(opHandle.OperationId.GUID))
 	var statusResp *cli_service.TGetOperationStatusResp
 	ctx = queryctx.NewContextWithConnId(ctx, c.id)
+	newCtx := queryctx.NewContextWithCorrelationId(queryctx.NewContextWithConnId(context.Background(), c.id), corrId)
 	pollSentinel := sentinel.Sentinel{
 		OnDoneFn: func(statusResp any) (any, error) {
 			return statusResp, nil
@@ -275,9 +287,10 @@ func (c *conn) pollOperation(ctx context.Context, opHandle *cli_service.TOperati
 		StatusFn: func() (sentinel.Done, any, error) {
 			var err error
 			log.Debug().Msg("databricks: polling status")
-			statusResp, err = c.client.GetOperationStatus(context.Background(), &cli_service.TGetOperationStatusReq{
+			statusResp, err = c.client.GetOperationStatus(newCtx, &cli_service.TGetOperationStatusReq{
 				OperationHandle: opHandle,
 			})
+			log.Debug().Msgf("databricks: status %s", statusResp.GetOperationState().String())
 			return func() bool {
 				// which other states?
 				switch statusResp.GetOperationState() {
@@ -290,8 +303,8 @@ func (c *conn) pollOperation(ctx context.Context, opHandle *cli_service.TOperati
 			}, statusResp, err
 		},
 		OnCancelFn: func() (any, error) {
-			log.Debug().Msgf("databricks: canceling query %s", opHandle.OperationId)
-			ret, err := c.client.CancelOperation(context.Background(), &cli_service.TCancelOperationReq{
+			log.Debug().Msg("databricks: canceling query")
+			ret, err := c.client.CancelOperation(newCtx, &cli_service.TCancelOperationReq{
 				OperationHandle: opHandle,
 			})
 			return ret, err

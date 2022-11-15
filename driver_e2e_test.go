@@ -25,7 +25,7 @@ func TestQueryContextDirectResultsSuccess(t *testing.T) {
 			},
 			OperationHandle: &cli_service.TOperationHandle{
 				OperationId: &cli_service.THandleIdentifier{
-					GUID:   []byte("123"),
+					GUID:   []byte{1, 2, 3, 4, 2, 23, 4, 2, 3, 1, 2, 3, 4, 4, 223, 34, 54},
 					Secret: []byte("b"),
 				},
 			},
@@ -104,7 +104,6 @@ func TestQueryContextDirectResultsSuccess(t *testing.T) {
 
 	// rows.Close()
 }
-
 func TestQueryContextTimeouts(t *testing.T) {
 	cfg := config.WithDefaults()
 	// set up server
@@ -116,7 +115,7 @@ func TestQueryContextTimeouts(t *testing.T) {
 			},
 			OperationHandle: &cli_service.TOperationHandle{
 				OperationId: &cli_service.THandleIdentifier{
-					GUID:   []byte("2"),
+					GUID:   []byte{1, 2, 3, 4, 2, 23, 4, 2, 3, 2, 3, 4, 4, 223, 34, 54},
 					Secret: []byte("b"),
 				},
 			},
@@ -204,7 +203,7 @@ func TestQueryContextDirectResultsError(t *testing.T) {
 			},
 			OperationHandle: &cli_service.TOperationHandle{
 				OperationId: &cli_service.THandleIdentifier{
-					GUID:   []byte("2"),
+					GUID:   []byte{1, 2, 3, 4, 2, 23, 4, 2, 31, 122, 3, 4, 4, 223, 34, 54},
 					Secret: []byte("b"),
 				},
 			},

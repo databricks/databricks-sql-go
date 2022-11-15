@@ -58,7 +58,7 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 	}
 
 	conn := &conn{
-		id:      client.SprintByteId(session.SessionHandle.GetSessionId().GUID),
+		id:      client.SprintGuid(session.SessionHandle.GetSessionId().GUID),
 		cfg:     c.cfg,
 		client:  tclient,
 		session: session,

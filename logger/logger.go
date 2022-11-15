@@ -67,7 +67,7 @@ func SetLogOutput(w io.Writer) {
 
 // You must call Msg on the returned event in order to send the event.
 func Trace() *zerolog.Event {
-	return Logger.Info()
+	return Logger.Trace()
 }
 
 // You must call Msg on the returned event in order to send the event.

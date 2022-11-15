@@ -109,7 +109,7 @@ func TestConn_pollOperation(t *testing.T) {
 		}
 		res, err := testConn.pollOperation(context.Background(), &cli_service.TOperationHandle{
 			OperationId: &cli_service.THandleIdentifier{
-				GUID:   []byte{1, 2, 3, 4, 2, 23, 4, 2, 3, 1, 2, 3, 4, 4, 223, 34, 54},
+				GUID:   []byte{1, 2, 3, 4, 2, 23, 4, 2, 3, 2, 3, 4, 4, 223, 34, 54},
 				Secret: []byte("b"),
 			},
 		})
@@ -139,7 +139,7 @@ func TestConn_pollOperation(t *testing.T) {
 		}
 		res, err := testConn.pollOperation(context.Background(), &cli_service.TOperationHandle{
 			OperationId: &cli_service.THandleIdentifier{
-				GUID:   []byte{1, 2, 3, 4, 2, 23, 4, 2, 3, 1, 2, 3, 4, 4, 223, 34, 54},
+				GUID:   []byte{1, 2, 3, 4, 2, 23, 4, 2, 3, 2, 3, 4, 4, 223, 34, 54},
 				Secret: []byte("b"),
 			},
 		})
@@ -169,7 +169,7 @@ func TestConn_pollOperation(t *testing.T) {
 		}
 		res, err := testConn.pollOperation(context.Background(), &cli_service.TOperationHandle{
 			OperationId: &cli_service.THandleIdentifier{
-				GUID:   []byte{1, 2, 3, 4, 2, 23, 4, 2, 3, 1, 2, 3, 4, 4, 223, 34, 54},
+				GUID:   []byte{1, 2, 3, 4, 2, 23, 4, 2, 3, 2, 3, 4, 4, 223, 34, 54},
 				Secret: []byte("b"),
 			},
 		})
@@ -199,7 +199,7 @@ func TestConn_pollOperation(t *testing.T) {
 		}
 		res, err := testConn.pollOperation(context.Background(), &cli_service.TOperationHandle{
 			OperationId: &cli_service.THandleIdentifier{
-				GUID:   []byte{1, 2, 3, 4, 2, 23, 4, 2, 3, 1, 2, 3, 4, 4, 223, 34, 54},
+				GUID:   []byte{1, 2, 3, 4, 2, 23, 4, 2, 3, 1, 2, 3, 4, 223, 34, 54},
 				Secret: []byte("b"),
 			},
 		})
@@ -229,7 +229,7 @@ func TestConn_pollOperation(t *testing.T) {
 		}
 		res, err := testConn.pollOperation(context.Background(), &cli_service.TOperationHandle{
 			OperationId: &cli_service.THandleIdentifier{
-				GUID:   []byte{1, 2, 3, 4, 2, 23, 4, 2, 3, 1, 2, 3, 4, 4, 223, 34, 54},
+				GUID:   []byte{1, 2, 3, 4, 2, 23, 4, 2, 3, 1, 2, 4, 4, 223, 34, 54},
 				Secret: []byte("b"),
 			},
 		})
@@ -261,7 +261,7 @@ func TestConn_pollOperation(t *testing.T) {
 		}
 		res, err := testConn.pollOperation(context.Background(), &cli_service.TOperationHandle{
 			OperationId: &cli_service.THandleIdentifier{
-				GUID:   []byte{1, 2, 3, 4, 2, 23, 4, 2, 3, 1, 2, 3, 4, 4, 223, 34, 54},
+				GUID:   []byte{1, 2, 3, 4, 2, 23, 4, 2, 3, 1, 3, 4, 4, 223, 34, 54},
 				Secret: []byte("b"),
 			},
 		})
@@ -305,7 +305,7 @@ func TestConn_pollOperation(t *testing.T) {
 		defer cancel()
 		res, err := testConn.pollOperation(ctx, &cli_service.TOperationHandle{
 			OperationId: &cli_service.THandleIdentifier{
-				GUID:   []byte{1, 2, 3, 4, 2, 23, 4, 2, 3, 1, 2, 3, 4, 4, 223, 34, 54},
+				GUID:   []byte{1, 2, 3, 4, 2, 23, 4, 2, 3, 1, 2, 4, 4, 223, 34, 54},
 				Secret: []byte("b"),
 			},
 		})
@@ -351,7 +351,7 @@ func TestConn_pollOperation(t *testing.T) {
 		defer cancel()
 		res, err := testConn.pollOperation(ctx, &cli_service.TOperationHandle{
 			OperationId: &cli_service.THandleIdentifier{
-				GUID:   []byte{1, 2, 3, 4, 2, 23, 4, 2, 3, 1, 2, 3, 4, 4, 223, 34, 54},
+				GUID:   []byte{1, 2, 3, 4, 2, 23, 4, 2, 3, 1, 2, 3, 4, 223, 34, 54},
 				Secret: []byte("b"),
 			},
 		})
@@ -401,7 +401,7 @@ func TestConn_pollOperation(t *testing.T) {
 		}()
 		res, err := testConn.pollOperation(ctx, &cli_service.TOperationHandle{
 			OperationId: &cli_service.THandleIdentifier{
-				GUID:   []byte{1, 2, 3, 4, 2, 23, 4, 2, 3, 1, 2, 3, 4, 4, 223, 34, 54},
+				GUID:   []byte{1, 2, 3, 4, 2, 23, 4, 2, 3, 1, 2, 4, 4, 223, 34, 54},
 				Secret: []byte("b"),
 			},
 		})
@@ -445,7 +445,7 @@ func TestConn_runQuery(t *testing.T) {
 				},
 				OperationHandle: &cli_service.TOperationHandle{
 					OperationId: &cli_service.THandleIdentifier{
-						GUID:   []byte{1, 2, 3, 4, 2, 23, 4, 2, 3, 1, 2, 3, 4, 4, 223, 34, 54},
+						GUID:   []byte{1, 2, 3, 4, 2, 23, 4, 2, 3, 1, 3, 4, 4, 223, 34, 54},
 						Secret: []byte("b"),
 					},
 				},
@@ -489,7 +489,7 @@ func TestConn_runQuery(t *testing.T) {
 				},
 				OperationHandle: &cli_service.TOperationHandle{
 					OperationId: &cli_service.THandleIdentifier{
-						GUID:   []byte{1, 2, 3, 4, 2, 23, 4, 2, 3, 1, 2, 3, 4, 4, 223, 34, 54},
+						GUID:   []byte{1, 2, 3, 4, 2, 23, 4, 2, 3, 1, 2, 4, 4, 223, 34, 54},
 						Secret: []byte("b"),
 					},
 				},
@@ -533,7 +533,7 @@ func TestConn_runQuery(t *testing.T) {
 				},
 				OperationHandle: &cli_service.TOperationHandle{
 					OperationId: &cli_service.THandleIdentifier{
-						GUID:   []byte{1, 2, 3, 4, 2, 23, 4, 2, 3, 1, 2, 3, 4, 4, 223, 34, 54},
+						GUID:   []byte{1, 2, 3, 4, 2, 23, 4, 2, 3, 2, 4, 4, 223, 34, 23, 54},
 						Secret: []byte("b"),
 					},
 				},
@@ -577,7 +577,7 @@ func TestConn_runQuery(t *testing.T) {
 				},
 				OperationHandle: &cli_service.TOperationHandle{
 					OperationId: &cli_service.THandleIdentifier{
-						GUID:   []byte{1, 2, 3, 4, 2, 23, 4, 2, 3, 1, 2, 3, 4, 4, 223, 34, 54},
+						GUID:   []byte{1, 2, 3, 4, 2, 23, 4, 2, 3, 2, 4, 4, 223, 34, 54, 87},
 						Secret: []byte("b"),
 					},
 				},
@@ -629,7 +629,7 @@ func TestConn_runQuery(t *testing.T) {
 				},
 				OperationHandle: &cli_service.TOperationHandle{
 					OperationId: &cli_service.THandleIdentifier{
-						GUID:   []byte{1, 2, 3, 4, 2, 23, 4, 2, 3, 1, 2, 3, 4, 4, 223, 34, 54},
+						GUID:   []byte{1, 2, 3, 4, 2, 23, 4, 2, 3, 2, 3, 4, 4, 223, 34, 54},
 						Secret: []byte("b"),
 					},
 				},
@@ -681,7 +681,7 @@ func TestConn_runQuery(t *testing.T) {
 				},
 				OperationHandle: &cli_service.TOperationHandle{
 					OperationId: &cli_service.THandleIdentifier{
-						GUID:   []byte{1, 2, 3, 4, 2, 23, 4, 2, 3, 1, 2, 3, 4, 4, 223, 34, 54},
+						GUID:   []byte{1, 2, 3, 4, 2, 23, 4, 2, 3, 2, 3, 4, 4, 223, 34, 54},
 						Secret: []byte("b"),
 					},
 				},
@@ -733,7 +733,7 @@ func TestConn_runQuery(t *testing.T) {
 				},
 				OperationHandle: &cli_service.TOperationHandle{
 					OperationId: &cli_service.THandleIdentifier{
-						GUID:   []byte{1, 2, 3, 4, 2, 23, 4, 2, 3, 1, 2, 3, 4, 4, 223, 34, 54},
+						GUID:   []byte{1, 2, 3, 4, 2, 23, 4, 2, 3, 2, 3, 4, 4, 223, 34, 54},
 						Secret: []byte("b"),
 					},
 				},
@@ -806,7 +806,7 @@ func TestConn_ExecContext(t *testing.T) {
 				},
 				OperationHandle: &cli_service.TOperationHandle{
 					OperationId: &cli_service.THandleIdentifier{
-						GUID:   []byte{1, 2, 3, 4, 2, 23, 4, 2, 3, 1, 2, 3, 4, 4, 223, 34, 54},
+						GUID:   []byte{1, 2, 3, 4, 2, 23, 4, 2, 3, 2, 3, 4, 4, 223, 34, 54},
 						Secret: []byte("b"),
 					},
 				},
@@ -839,7 +839,7 @@ func TestConn_ExecContext(t *testing.T) {
 				},
 				OperationHandle: &cli_service.TOperationHandle{
 					OperationId: &cli_service.THandleIdentifier{
-						GUID:   []byte{1, 2, 3, 4, 2, 23, 4, 2, 3, 1, 2, 3, 4, 4, 223, 34, 54},
+						GUID:   []byte{1, 2, 3, 4, 2, 23, 4, 2, 3, 2, 3, 4, 4, 223, 34, 54},
 						Secret: []byte("b"),
 					},
 				},
@@ -905,7 +905,7 @@ func TestConn_QueryContext(t *testing.T) {
 				},
 				OperationHandle: &cli_service.TOperationHandle{
 					OperationId: &cli_service.THandleIdentifier{
-						GUID:   []byte{1, 2, 3, 4, 2, 23, 4, 2, 3, 1, 2, 3, 4, 4, 223, 34, 54},
+						GUID:   []byte{1, 2, 3, 4, 2, 23, 4, 2, 3, 2, 3, 4, 4, 223, 34, 54},
 						Secret: []byte("b"),
 					},
 				},
@@ -938,7 +938,7 @@ func TestConn_QueryContext(t *testing.T) {
 				},
 				OperationHandle: &cli_service.TOperationHandle{
 					OperationId: &cli_service.THandleIdentifier{
-						GUID:   []byte{1, 2, 3, 4, 2, 23, 4, 2, 3, 1, 2, 3, 4, 4, 223, 34, 54},
+						GUID:   []byte{1, 2, 3, 4, 2, 23, 4, 2, 3, 2, 3, 4, 4, 223, 34, 54},
 						Secret: []byte("b"),
 					},
 				},
@@ -1090,7 +1090,7 @@ func TestConn_ResetSession(t *testing.T) {
 func getTestSession() *cli_service.TOpenSessionResp {
 	return &cli_service.TOpenSessionResp{SessionHandle: &cli_service.TSessionHandle{
 		SessionId: &cli_service.THandleIdentifier{
-			GUID: []byte{1, 2, 3, 4, 2, 23, 4, 2, 3, 1, 2, 3, 4, 4, 223, 34, 54},
+			GUID: []byte{1, 2, 3, 4, 2, 23, 4, 2, 3, 2, 3, 4, 4, 223, 34, 54},
 		},
 	}}
 }

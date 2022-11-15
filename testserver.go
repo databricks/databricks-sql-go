@@ -81,7 +81,7 @@ func (h *serverHandler) OpenSession(ctx context.Context, req *cli_service.TOpenS
 		},
 		SessionHandle: &cli_service.TSessionHandle{
 			SessionId: &cli_service.THandleIdentifier{
-				GUID:   []byte("1"),
+				GUID:   []byte{1, 2, 3, 4, 2, 23, 4, 2, 3, 2, 3, 4, 4, 223, 34, 54},
 				Secret: []byte("a"),
 			},
 		},
@@ -98,7 +98,7 @@ func (h *serverHandler) ExecuteStatement(ctx context.Context, req *cli_service.T
 		},
 		OperationHandle: &cli_service.TOperationHandle{
 			OperationId: &cli_service.THandleIdentifier{
-				GUID:   []byte("2"),
+				GUID:   []byte{1, 2, 3, 4, 2, 23, 4, 2, 3, 2, 3, 4, 4, 223, 34, 54},
 				Secret: []byte("b"),
 			},
 		},

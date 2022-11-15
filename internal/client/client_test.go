@@ -13,8 +13,8 @@ func TestSprintByteId(t *testing.T) {
 	}{
 		{
 			name: "valid case",
-			args: args{[]byte{1, 2, 3, 4, 2, 23, 4, 2, 3, 1, 2, 3, 4, 4, 223, 34, 54}},
-			want: "01020304-0217-0402-0301-02030404df22",
+			args: args{[]byte{1, 2, 3, 4, 2, 23, 4, 2, 3, 2, 3, 4, 4, 223, 34, 54}},
+			want: "01020304-0217-0402-0302-030404df2236",
 		},
 		{
 			name: "invalid case",
@@ -29,7 +29,7 @@ func TestSprintByteId(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := SprintByteId(tt.args.bts); got != tt.want {
+			if got := SprintGuid(tt.args.bts); got != tt.want {
 				t.Errorf("SprintByteId() = %v, want %v", got, tt.want)
 			}
 		})
