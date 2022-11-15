@@ -34,6 +34,7 @@ func (s *stmt) Query(args []driver.Value) (driver.Rows, error) {
 // as an INSERT or UPDATE.
 //
 // ExecContext honors the context timeout and return when it is canceled.
+// Statement ExecContext is the same as connection ExecContext
 func (s *stmt) ExecContext(ctx context.Context, args []driver.NamedValue) (driver.Result, error) {
 	return s.conn.ExecContext(ctx, s.query, args)
 }
@@ -42,6 +43,7 @@ func (s *stmt) ExecContext(ctx context.Context, args []driver.NamedValue) (drive
 // SELECT.
 //
 // QueryContext honors the context timeout and return when it is canceled.
+// Statement QueryContext is the same as connection QueryContext
 func (s *stmt) QueryContext(ctx context.Context, args []driver.NamedValue) (driver.Rows, error) {
 	return s.conn.QueryContext(ctx, s.query, args)
 }
