@@ -10,8 +10,8 @@ import (
 	"time"
 
 	dbsql "github.com/databricks/databricks-sql-go"
+	dbsqlctx "github.com/databricks/databricks-sql-go/driverctx"
 	dbsqllog "github.com/databricks/databricks-sql-go/logger"
-	dbsqlctx "github.com/databricks/databricks-sql-go/queryctx"
 	"github.com/joho/godotenv"
 )
 

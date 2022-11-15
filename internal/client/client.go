@@ -7,10 +7,10 @@ import (
 	"net/http"
 
 	"github.com/apache/thrift/lib/go/thrift"
+	"github.com/databricks/databricks-sql-go/driverctx"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/config"
 	"github.com/databricks/databricks-sql-go/logger"
-	"github.com/databricks/databricks-sql-go/queryctx"
 	"github.com/pkg/errors"
 )
 
@@ -25,13 +25,13 @@ func (tsc *ThriftServiceClient) OpenSession(ctx context.Context, req *cli_servic
 	if err != nil {
 		return nil, errors.Wrap(err, "open session request error")
 	}
-	log := logger.WithContext(SprintGuid(resp.SessionHandle.SessionId.GUID), queryctx.CorrelationIdFromContext(ctx), "")
+	log := logger.WithContext(SprintGuid(resp.SessionHandle.SessionId.GUID), driverctx.CorrelationIdFromContext(ctx), "")
 	defer log.Duration(msg, start)
 	return resp, CheckStatus(resp)
 }
 
 func (tsc *ThriftServiceClient) CloseSession(ctx context.Context, req *cli_service.TCloseSessionReq) (*cli_service.TCloseSessionResp, error) {
-	log := logger.WithContext(queryctx.ConnIdFromContext(ctx), queryctx.CorrelationIdFromContext(ctx), "")
+	log := logger.WithContext(driverctx.ConnIdFromContext(ctx), driverctx.CorrelationIdFromContext(ctx), "")
 	defer log.Duration(logger.Track("CloseSession"))
 	resp, err := tsc.TCLIServiceClient.CloseSession(ctx, req)
 	if err != nil {
@@ -41,7 +41,7 @@ func (tsc *ThriftServiceClient) CloseSession(ctx context.Context, req *cli_servi
 }
 
 func (tsc *ThriftServiceClient) FetchResults(ctx context.Context, req *cli_service.TFetchResultsReq) (*cli_service.TFetchResultsResp, error) {
-	log := logger.WithContext(queryctx.ConnIdFromContext(ctx), queryctx.CorrelationIdFromContext(ctx), SprintGuid(req.OperationHandle.OperationId.GUID))
+	log := logger.WithContext(driverctx.ConnIdFromContext(ctx), driverctx.CorrelationIdFromContext(ctx), SprintGuid(req.OperationHandle.OperationId.GUID))
 	defer log.Duration(logger.Track("FetchResults"))
 	resp, err := tsc.TCLIServiceClient.FetchResults(ctx, req)
 	if err != nil {
@@ -51,7 +51,7 @@ func (tsc *ThriftServiceClient) FetchResults(ctx context.Context, req *cli_servi
 }
 
 func (tsc *ThriftServiceClient) GetResultSetMetadata(ctx context.Context, req *cli_service.TGetResultSetMetadataReq) (*cli_service.TGetResultSetMetadataResp, error) {
-	log := logger.WithContext(queryctx.ConnIdFromContext(ctx), queryctx.CorrelationIdFromContext(ctx), SprintGuid(req.OperationHandle.OperationId.GUID))
+	log := logger.WithContext(driverctx.ConnIdFromContext(ctx), driverctx.CorrelationIdFromContext(ctx), SprintGuid(req.OperationHandle.OperationId.GUID))
 	defer log.Duration(logger.Track("GetResultSetMetadata"))
 	resp, err := tsc.TCLIServiceClient.GetResultSetMetadata(ctx, req)
 	if err != nil {
@@ -67,14 +67,14 @@ func (tsc *ThriftServiceClient) ExecuteStatement(ctx context.Context, req *cli_s
 		return resp, errors.Wrap(err, "execute statement request error")
 	}
 	if resp != nil && resp.OperationHandle != nil {
-		log := logger.WithContext(queryctx.ConnIdFromContext(ctx), queryctx.CorrelationIdFromContext(ctx), SprintGuid(resp.OperationHandle.OperationId.GUID))
+		log := logger.WithContext(driverctx.ConnIdFromContext(ctx), driverctx.CorrelationIdFromContext(ctx), SprintGuid(resp.OperationHandle.OperationId.GUID))
 		defer log.Duration(msg, start)
 	}
 	return resp, CheckStatus(resp)
 }
 
 func (tsc *ThriftServiceClient) GetOperationStatus(ctx context.Context, req *cli_service.TGetOperationStatusReq) (*cli_service.TGetOperationStatusResp, error) {
-	log := logger.WithContext(queryctx.ConnIdFromContext(ctx), queryctx.CorrelationIdFromContext(ctx), SprintGuid(req.OperationHandle.OperationId.GUID))
+	log := logger.WithContext(driverctx.ConnIdFromContext(ctx), driverctx.CorrelationIdFromContext(ctx), SprintGuid(req.OperationHandle.OperationId.GUID))
 	defer log.Duration(logger.Track("GetOperationStatus"))
 	resp, err := tsc.TCLIServiceClient.GetOperationStatus(ctx, req)
 	if err != nil {
@@ -84,7 +84,7 @@ func (tsc *ThriftServiceClient) GetOperationStatus(ctx context.Context, req *cli
 }
 
 func (tsc *ThriftServiceClient) CloseOperation(ctx context.Context, req *cli_service.TCloseOperationReq) (*cli_service.TCloseOperationResp, error) {
-	log := logger.WithContext(queryctx.ConnIdFromContext(ctx), queryctx.CorrelationIdFromContext(ctx), SprintGuid(req.OperationHandle.OperationId.GUID))
+	log := logger.WithContext(driverctx.ConnIdFromContext(ctx), driverctx.CorrelationIdFromContext(ctx), SprintGuid(req.OperationHandle.OperationId.GUID))
 	defer log.Duration(logger.Track("CloseOperation"))
 	resp, err := tsc.TCLIServiceClient.CloseOperation(ctx, req)
 	if err != nil {
@@ -94,7 +94,7 @@ func (tsc *ThriftServiceClient) CloseOperation(ctx context.Context, req *cli_ser
 }
 
 func (tsc *ThriftServiceClient) CancelOperation(ctx context.Context, req *cli_service.TCancelOperationReq) (*cli_service.TCancelOperationResp, error) {
-	log := logger.WithContext(queryctx.ConnIdFromContext(ctx), queryctx.CorrelationIdFromContext(ctx), SprintGuid(req.OperationHandle.OperationId.GUID))
+	log := logger.WithContext(driverctx.ConnIdFromContext(ctx), driverctx.CorrelationIdFromContext(ctx), SprintGuid(req.OperationHandle.OperationId.GUID))
 	defer log.Duration(logger.Track("CancelOperation"))
 	resp, err := tsc.TCLIServiceClient.CancelOperation(ctx, req)
 	if err != nil {

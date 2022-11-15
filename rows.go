@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/databricks/databricks-sql-go/driverctx"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
-	"github.com/databricks/databricks-sql-go/queryctx"
 	"github.com/pkg/errors"
 )
 
@@ -78,8 +78,7 @@ func (r *rows) Close() error {
 	req := cli_service.TCloseOperationReq{
 		OperationHandle: r.opHandle,
 	}
-	ctx := queryctx.NewContextWithConnId(context.Background(), r.connId)
-	ctx = queryctx.NewContextWithCorrelationId(ctx, r.correlationId)
+	ctx := driverctx.NewContextWithCorrelationId(driverctx.NewContextWithConnId(context.Background(), r.connId), r.correlationId)
 
 	_, err1 := r.client.CloseOperation(ctx, &req)
 	if err1 != nil {
@@ -337,8 +336,7 @@ func (r *rows) getResultMetadata() (*cli_service.TGetResultSetMetadataResp, erro
 		req := cli_service.TGetResultSetMetadataReq{
 			OperationHandle: r.opHandle,
 		}
-		ctx := queryctx.NewContextWithConnId(context.Background(), r.connId)
-		ctx = queryctx.NewContextWithCorrelationId(ctx, r.correlationId)
+		ctx := driverctx.NewContextWithCorrelationId(driverctx.NewContextWithConnId(context.Background(), r.connId), r.correlationId)
 
 		resp, err := r.client.GetResultSetMetadata(ctx, &req)
 		if err != nil {
@@ -380,8 +378,7 @@ func (r *rows) fetchResultPage() error {
 			MaxRows:         r.pageSize,
 			Orientation:     direction,
 		}
-		ctx := queryctx.NewContextWithConnId(context.Background(), r.connId)
-		ctx = queryctx.NewContextWithCorrelationId(ctx, r.correlationId)
+		ctx := driverctx.NewContextWithCorrelationId(driverctx.NewContextWithConnId(context.Background(), r.connId), r.correlationId)
 
 		fetchResult, err := r.client.FetchResults(ctx, &req)
 		if err != nil {

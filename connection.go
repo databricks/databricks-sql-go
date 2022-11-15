@@ -5,12 +5,12 @@ import (
 	"database/sql/driver"
 	"time"
 
+	"github.com/databricks/databricks-sql-go/driverctx"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/client"
 	"github.com/databricks/databricks-sql-go/internal/config"
 	"github.com/databricks/databricks-sql-go/internal/sentinel"
 	"github.com/databricks/databricks-sql-go/logger"
-	"github.com/databricks/databricks-sql-go/queryctx"
 	"github.com/pkg/errors"
 )
 
@@ -33,7 +33,7 @@ func (c *conn) PrepareContext(ctx context.Context, query string) (driver.Stmt, e
 
 func (c *conn) Close() error {
 	log := logger.WithContext(c.id, "", "")
-	ctx := queryctx.NewContextWithConnId(context.Background(), c.id)
+	ctx := driverctx.NewContextWithConnId(context.Background(), c.id)
 	sentinel := sentinel.Sentinel{
 		OnDoneFn: func(statusResp any) (any, error) {
 			return c.client.CloseSession(ctx, &cli_service.TCloseSessionReq{
@@ -60,8 +60,8 @@ func (c *conn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, e
 }
 
 func (c *conn) Ping(ctx context.Context) error {
-	log := logger.WithContext(c.id, queryctx.CorrelationIdFromContext(ctx), "")
-	ctx = queryctx.NewContextWithConnId(ctx, c.id)
+	log := logger.WithContext(c.id, driverctx.CorrelationIdFromContext(ctx), "")
+	ctx = driverctx.NewContextWithConnId(ctx, c.id)
 	ctx1, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	_, err := c.QueryContext(ctx1, "select 1", nil)
@@ -88,16 +88,16 @@ func (c *conn) IsValid() bool {
 // ExecContext honors the context timeout and return when it is canceled.
 // Statement ExecContext is the same as connection ExecContext
 func (c *conn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
-	log := logger.WithContext(c.id, queryctx.CorrelationIdFromContext(ctx), "")
+	log := logger.WithContext(c.id, driverctx.CorrelationIdFromContext(ctx), "")
 	defer log.Duration(logger.Track("ExecContext"))
-	ctx = queryctx.NewContextWithConnId(ctx, c.id)
+	ctx = driverctx.NewContextWithConnId(ctx, c.id)
 	if len(args) > 0 {
 		return nil, errors.New(ErrParametersNotSupported)
 	}
 	exStmtResp, opStatusResp, err := c.runQuery(ctx, query, args)
 
 	if exStmtResp != nil && exStmtResp.OperationHandle != nil {
-		log = logger.WithContext(c.id, queryctx.CorrelationIdFromContext(ctx), client.SprintGuid(exStmtResp.OperationHandle.OperationId.GUID))
+		log = logger.WithContext(c.id, driverctx.CorrelationIdFromContext(ctx), client.SprintGuid(exStmtResp.OperationHandle.OperationId.GUID))
 	}
 
 	if err != nil {
@@ -115,11 +115,11 @@ func (c *conn) ExecContext(ctx context.Context, query string, args []driver.Name
 // QueryContext honors the context timeout and return when it is canceled.
 // Statement QueryContext is the same as connection QueryContext
 func (c *conn) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
-	corrId := queryctx.CorrelationIdFromContext(ctx)
+	corrId := driverctx.CorrelationIdFromContext(ctx)
 	log := logger.WithContext(c.id, corrId, "")
 	msg, start := log.Track("QueryContext")
 
-	ctx = queryctx.NewContextWithConnId(ctx, c.id)
+	ctx = driverctx.NewContextWithConnId(ctx, c.id)
 	if len(args) > 0 {
 		return nil, errors.New(ErrParametersNotSupported)
 	}
@@ -128,7 +128,7 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 	exStmtResp, _, err := c.runQuery(ctx, query, args)
 
 	if exStmtResp != nil && exStmtResp.OperationHandle != nil {
-		log = logger.WithContext(c.id, queryctx.CorrelationIdFromContext(ctx), client.SprintGuid(exStmtResp.OperationHandle.OperationId.GUID))
+		log = logger.WithContext(c.id, driverctx.CorrelationIdFromContext(ctx), client.SprintGuid(exStmtResp.OperationHandle.OperationId.GUID))
 	}
 	defer log.Duration(msg, start)
 
@@ -159,7 +159,7 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 }
 
 func (c *conn) runQuery(ctx context.Context, query string, args []driver.NamedValue) (*cli_service.TExecuteStatementResp, *cli_service.TGetOperationStatusResp, error) {
-	log := logger.WithContext(c.id, queryctx.CorrelationIdFromContext(ctx), "")
+	log := logger.WithContext(c.id, driverctx.CorrelationIdFromContext(ctx), "")
 	// first we try to get the results synchronously.
 	// at any point in time that the context is done we must cancel and return
 	exStmtResp, err := c.executeStatement(ctx, query, args)
@@ -170,7 +170,7 @@ func (c *conn) runQuery(ctx context.Context, query string, args []driver.NamedVa
 	// hold on to the operation handle
 	opHandle := exStmtResp.OperationHandle
 	if opHandle != nil && opHandle.OperationId != nil {
-		log = logger.WithContext(c.id, queryctx.CorrelationIdFromContext(ctx), client.SprintGuid(opHandle.OperationId.GUID))
+		log = logger.WithContext(c.id, driverctx.CorrelationIdFromContext(ctx), client.SprintGuid(opHandle.OperationId.GUID))
 	}
 
 	if exStmtResp.DirectResults != nil {
@@ -258,7 +258,7 @@ func (c *conn) executeStatement(ctx context.Context, query string, args []driver
 				// CanDecompressLZ4Result_: &f,
 				// CanDownloadResult_: &t,
 			}
-			ctx = queryctx.NewContextWithConnId(ctx, c.id)
+			ctx = driverctx.NewContextWithConnId(ctx, c.id)
 			resp, err := c.client.ExecuteStatement(ctx, &req)
 			return resp, wrapErr(err, "failed to execute statement")
 		},
@@ -275,11 +275,11 @@ func (c *conn) executeStatement(ctx context.Context, query string, args []driver
 }
 
 func (c *conn) pollOperation(ctx context.Context, opHandle *cli_service.TOperationHandle) (*cli_service.TGetOperationStatusResp, error) {
-	corrId := queryctx.CorrelationIdFromContext(ctx)
+	corrId := driverctx.CorrelationIdFromContext(ctx)
 	log := logger.WithContext(c.id, corrId, client.SprintGuid(opHandle.OperationId.GUID))
 	var statusResp *cli_service.TGetOperationStatusResp
-	ctx = queryctx.NewContextWithConnId(ctx, c.id)
-	newCtx := queryctx.NewContextWithCorrelationId(queryctx.NewContextWithConnId(context.Background(), c.id), corrId)
+	ctx = driverctx.NewContextWithConnId(ctx, c.id)
+	newCtx := driverctx.NewContextWithCorrelationId(driverctx.NewContextWithConnId(context.Background(), c.id), corrId)
 	pollSentinel := sentinel.Sentinel{
 		OnDoneFn: func(statusResp any) (any, error) {
 			return statusResp, nil

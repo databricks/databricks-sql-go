@@ -5,12 +5,12 @@ import (
 	"database/sql/driver"
 	"fmt"
 
+	"github.com/databricks/databricks-sql-go/driverctx"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/client"
 	"github.com/databricks/databricks-sql-go/internal/config"
 	"github.com/databricks/databricks-sql-go/internal/sentinel"
 	"github.com/databricks/databricks-sql-go/logger"
-	"github.com/databricks/databricks-sql-go/queryctx"
 	"github.com/pkg/errors"
 )
 
@@ -63,7 +63,7 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 		client:  tclient,
 		session: session,
 	}
-	log := logger.WithContext(conn.id, queryctx.CorrelationIdFromContext(ctx), "")
+	log := logger.WithContext(conn.id, driverctx.CorrelationIdFromContext(ctx), "")
 
 	log.Info().Msgf("connect: host=%s port=%d httpPath=%s", c.cfg.Host, c.cfg.Port, c.cfg.HTTPPath)
 
