@@ -4,18 +4,33 @@ import (
 	"io"
 	"os"
 	"runtime"
+	"time"
 
 	"github.com/mattn/go-isatty"
 	"github.com/rs/zerolog"
 )
 
-var Logger = zerolog.New(os.Stderr).With().Timestamp().Logger()
+type DBSQLLogger struct {
+	zerolog.Logger
+}
+
+func (l *DBSQLLogger) Track(msg string) (string, time.Time) {
+	return msg, time.Now()
+}
+
+func (l *DBSQLLogger) Duration(msg string, start time.Time) {
+	l.Debug().Msgf("%v elapsed time: %v", msg, time.Since(start))
+}
+
+var Logger = &DBSQLLogger{
+	zerolog.New(os.Stderr).With().Timestamp().Logger(),
+}
 
 // enable pretty printing for interactive terminals and json for production.
 func init() {
 	// for tty terminal enable pretty logs
 	if isatty.IsTerminal(os.Stdout.Fd()) && runtime.GOOS != "windows" {
-		Logger = Logger.Output(zerolog.ConsoleWriter{Out: os.Stderr})
+		Logger = &DBSQLLogger{Logger.Output(zerolog.ConsoleWriter{Out: os.Stderr})}
 	} else {
 		// UNIX Time is faster and smaller than most timestamps
 		// If you set zerolog.TimeFieldFormat to an empty string,
@@ -31,7 +46,7 @@ func init() {
 			loglvl = lv
 		}
 	}
-	Logger = Logger.Level(loglvl)
+	Logger.Logger = Logger.Level(loglvl)
 	Logger.Info().Msgf("setting log level to %s", loglvl)
 }
 
@@ -41,18 +56,18 @@ func SetLogLevel(l string) error {
 	if lv, err := zerolog.ParseLevel(l); err != nil {
 		return err
 	} else {
-		Logger = Logger.Level(lv)
+		Logger.Logger = Logger.Level(lv)
 		return nil
 	}
 }
 
 func SetLogOutput(w io.Writer) {
-	Logger = Logger.Output(w)
+	Logger.Logger = Logger.Output(w)
 }
 
 // You must call Msg on the returned event in order to send the event.
 func Trace() *zerolog.Event {
-	return Logger.Info()
+	return Logger.Trace()
 }
 
 // You must call Msg on the returned event in order to send the event.
@@ -88,4 +103,16 @@ func Fatal() *zerolog.Event {
 // You must call Msg on the returned event in order to send the event.
 func Panic() *zerolog.Event {
 	return Logger.Panic()
+}
+
+func WithContext(connectionId string, correlationId string, queryId string) *DBSQLLogger {
+	return &DBSQLLogger{Logger.With().Str("connId", connectionId).Str("corrId", correlationId).Str("queryId", queryId).Logger()}
+}
+
+func Track(msg string) (string, time.Time) {
+	return msg, time.Now()
+}
+
+func Duration(msg string, start time.Time) {
+	Logger.Debug().Msgf("%v elapsed time: %v", msg, time.Since(start))
 }

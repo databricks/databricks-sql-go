@@ -3,6 +3,7 @@ package dbsql
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"net/url"
 	"strconv"
 	"testing"
@@ -24,7 +25,7 @@ func TestQueryContextDirectResultsSuccess(t *testing.T) {
 			},
 			OperationHandle: &cli_service.TOperationHandle{
 				OperationId: &cli_service.THandleIdentifier{
-					GUID:   []byte("2"),
+					GUID:   []byte{1, 2, 3, 4, 2, 23, 4, 2, 3, 1, 2, 3, 4, 4, 223, 34, 54},
 					Secret: []byte("b"),
 				},
 			},
@@ -103,7 +104,6 @@ func TestQueryContextDirectResultsSuccess(t *testing.T) {
 
 	// rows.Close()
 }
-
 func TestQueryContextTimeouts(t *testing.T) {
 	cfg := config.WithDefaults()
 	// set up server
@@ -115,7 +115,7 @@ func TestQueryContextTimeouts(t *testing.T) {
 			},
 			OperationHandle: &cli_service.TOperationHandle{
 				OperationId: &cli_service.THandleIdentifier{
-					GUID:   []byte("2"),
+					GUID:   []byte{1, 2, 3, 4, 2, 23, 4, 2, 3, 2, 3, 4, 4, 223, 34, 54},
 					Secret: []byte("b"),
 				},
 			},
@@ -176,8 +176,16 @@ func TestQueryContextTimeouts(t *testing.T) {
 
 	ctx, cancel1 := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel1()
+
 	rows, err := db.QueryContext(ctx, `select * from dummy`)
 	assert.ErrorIs(t, err, context.DeadlineExceeded)
+	_, ok := err.(stackTracer)
+	assert.True(t, ok)
+	_, ok1 := err.(causer)
+	assert.True(t, ok1)
+
+	fmt.Printf("%+v", err)
+	time.Sleep(40 * time.Millisecond)
 	assert.Nil(t, rows)
 	assert.True(t, cancelOperationCalled)
 	assert.True(t, getOperationStatusCalled)
@@ -195,7 +203,7 @@ func TestQueryContextDirectResultsError(t *testing.T) {
 			},
 			OperationHandle: &cli_service.TOperationHandle{
 				OperationId: &cli_service.THandleIdentifier{
-					GUID:   []byte("2"),
+					GUID:   []byte{1, 2, 3, 4, 2, 23, 4, 2, 31, 122, 3, 4, 4, 223, 34, 54},
 					Secret: []byte("b"),
 				},
 			},

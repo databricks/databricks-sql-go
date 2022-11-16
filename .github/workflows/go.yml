@@ -20,7 +20,7 @@ jobs:
         with:
           version: v1.48
   build-and-test:
-    name: Build
+    name: Test and Build
     strategy:
       matrix:
         go-version: [1.19.x]

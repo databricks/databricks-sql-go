@@ -4,12 +4,13 @@ import (
 	"context"
 	"database/sql/driver"
 	"errors"
-	"github.com/databricks/databricks-sql-go/internal/client"
 	"io"
 	"math"
 	"reflect"
 	"testing"
 	"time"
+
+	"github.com/databricks/databricks-sql-go/internal/client"
 
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 
@@ -17,6 +18,7 @@ import (
 )
 
 func TestRowsNextRowInPage(t *testing.T) {
+	t.Parallel()
 	var rowSet *rows
 
 	// nil rows instance
@@ -83,6 +85,7 @@ func TestRowsNextRowInPage(t *testing.T) {
 }
 
 func TestRowsGetPageFetchDirection(t *testing.T) {
+	t.Parallel()
 	var rowSet *rows
 
 	// nil rows instance
@@ -150,6 +153,7 @@ func TestRowsGetPageFetchDirection(t *testing.T) {
 }
 
 func TestRowsGetPageStartRowNum(t *testing.T) {
+	t.Parallel()
 	var noRows int64 = 0
 	var sevenRows int64 = 7
 
@@ -177,17 +181,18 @@ func TestRowsGetPageStartRowNum(t *testing.T) {
 }
 
 func TestRowsFetchResultPageErrors(t *testing.T) {
+	t.Parallel()
 	var rowSet *rows
 
 	err := rowSet.fetchResultPage()
-	assert.EqualError(t, err, errRowsNilRows.Error())
+	assert.EqualError(t, err, errRowsNilRows)
 
 	rowSet = &rows{
 		nextRowNumber: -1,
 		client:        &cli_service.TCLIServiceClient{},
 	}
 	err = rowSet.fetchResultPage()
-	assert.EqualError(t, err, errRowsFetchPriorToStart.Error(), "negative row number should return error")
+	assert.EqualError(t, err, errRowsFetchPriorToStart, "negative row number should return error")
 
 	rowSet.fetchResults = &cli_service.TFetchResultsResp{}
 
@@ -210,6 +215,7 @@ func TestRowsFetchResultPageErrors(t *testing.T) {
 }
 
 func TestGetResultMetadataNoDirectResults(t *testing.T) {
+	t.Parallel()
 	var getMetadataCount, fetchResultsCount int
 
 	client := getRowsTestSimpleClient(&getMetadataCount, &fetchResultsCount)
@@ -228,6 +234,7 @@ func TestGetResultMetadataNoDirectResults(t *testing.T) {
 }
 
 func TestGetResultMetadataWithDirectResults(t *testing.T) {
+	t.Parallel()
 	var getMetadataCount, fetchResultsCount int
 
 	client := getRowsTestSimpleClient(&getMetadataCount, &fetchResultsCount)
@@ -257,6 +264,7 @@ func TestGetResultMetadataWithDirectResults(t *testing.T) {
 }
 
 func TestRowsFetchResultPageNoDirectResults(t *testing.T) {
+	t.Parallel()
 
 	var getMetadataCount, fetchResultsCount int
 
@@ -326,7 +334,7 @@ func TestRowsFetchResultPageNoDirectResults(t *testing.T) {
 	// going forward and then return EOF
 	rowSet.nextRowNumber = -1
 	err = rowSet.fetchResultPage()
-	errMsg = errRowsFetchPriorToStart.Error()
+	errMsg = errRowsFetchPriorToStart
 	rowTestPagingResult{
 		getMetadataCount:  0,
 		fetchResultsCount: 7,
@@ -350,6 +358,7 @@ func TestRowsFetchResultPageNoDirectResults(t *testing.T) {
 }
 
 func TestRowsFetchResultPageWithDirectResults(t *testing.T) {
+	t.Parallel()
 
 	var getMetadataCount, fetchResultsCount int
 	var i64Zero int64
@@ -425,7 +434,7 @@ func TestRowsFetchResultPageWithDirectResults(t *testing.T) {
 	// going forward and then return EOF
 	rowSet.nextRowNumber = -1
 	err = rowSet.fetchResultPage()
-	errMsg = errRowsFetchPriorToStart.Error()
+	errMsg = errRowsFetchPriorToStart
 	rowTestPagingResult{
 		getMetadataCount:  0,
 		fetchResultsCount: 7,
@@ -517,7 +526,7 @@ func TestNextNoDirectResults(t *testing.T) {
 
 	var rowSet *rows
 	err := rowSet.Next(nil)
-	assert.EqualError(t, err, errRowsNilRows.Error())
+	assert.EqualError(t, err, errRowsNilRows)
 
 	rowSet = &rows{}
 	client := getRowsTestSimpleClient(&getMetadataCount, &fetchResultsCount)
@@ -617,12 +626,12 @@ func TestGetScanType(t *testing.T) {
 	var rowSet *rows
 	cd, err := rowSet.getColumnMetadataByIndex(0)
 	assert.Nil(t, cd)
-	assert.EqualError(t, err, errRowsNilRows.Error())
+	assert.EqualError(t, err, errRowsNilRows)
 
 	rowSet = &rows{}
 	cd, err = rowSet.getColumnMetadataByIndex(0)
 	assert.Nil(t, cd)
-	assert.EqualError(t, err, errRowsNoClient.Error())
+	assert.EqualError(t, err, errRowsNoClient)
 
 	client := getRowsTestSimpleClient(&getMetadataCount, &fetchResultsCount)
 	rowSet.client = client

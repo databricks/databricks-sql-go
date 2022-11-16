@@ -3,13 +3,15 @@ package client
 import (
 	"compress/zlib"
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 
 	"github.com/apache/thrift/lib/go/thrift"
+	"github.com/databricks/databricks-sql-go/driverctx"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/config"
+	"github.com/databricks/databricks-sql-go/logger"
+	"github.com/pkg/errors"
 )
 
 type ThriftServiceClient struct {
@@ -18,21 +20,85 @@ type ThriftServiceClient struct {
 }
 
 func (tsc *ThriftServiceClient) OpenSession(ctx context.Context, req *cli_service.TOpenSessionReq) (*cli_service.TOpenSessionResp, error) {
+	msg, start := logger.Track("OpenSession")
 	resp, err := tsc.TCLIServiceClient.OpenSession(ctx, req)
 	if err != nil {
-		return nil, err
+		return nil, errors.Wrap(err, "open session request error")
+	}
+	log := logger.WithContext(SprintGuid(resp.SessionHandle.SessionId.GUID), driverctx.CorrelationIdFromContext(ctx), "")
+	defer log.Duration(msg, start)
+	return resp, CheckStatus(resp)
+}
+
+func (tsc *ThriftServiceClient) CloseSession(ctx context.Context, req *cli_service.TCloseSessionReq) (*cli_service.TCloseSessionResp, error) {
+	log := logger.WithContext(driverctx.ConnIdFromContext(ctx), driverctx.CorrelationIdFromContext(ctx), "")
+	defer log.Duration(logger.Track("CloseSession"))
+	resp, err := tsc.TCLIServiceClient.CloseSession(ctx, req)
+	if err != nil {
+		return resp, errors.Wrap(err, "close session request error")
 	}
 	return resp, CheckStatus(resp)
 }
 
 func (tsc *ThriftServiceClient) FetchResults(ctx context.Context, req *cli_service.TFetchResultsReq) (*cli_service.TFetchResultsResp, error) {
-	return tsc.TCLIServiceClient.FetchResults(ctx, req)
+	log := logger.WithContext(driverctx.ConnIdFromContext(ctx), driverctx.CorrelationIdFromContext(ctx), SprintGuid(req.OperationHandle.OperationId.GUID))
+	defer log.Duration(logger.Track("FetchResults"))
+	resp, err := tsc.TCLIServiceClient.FetchResults(ctx, req)
+	if err != nil {
+		return resp, errors.Wrap(err, "fetch results request error")
+	}
+	return resp, CheckStatus(resp)
+}
+
+func (tsc *ThriftServiceClient) GetResultSetMetadata(ctx context.Context, req *cli_service.TGetResultSetMetadataReq) (*cli_service.TGetResultSetMetadataResp, error) {
+	log := logger.WithContext(driverctx.ConnIdFromContext(ctx), driverctx.CorrelationIdFromContext(ctx), SprintGuid(req.OperationHandle.OperationId.GUID))
+	defer log.Duration(logger.Track("GetResultSetMetadata"))
+	resp, err := tsc.TCLIServiceClient.GetResultSetMetadata(ctx, req)
+	if err != nil {
+		return resp, errors.Wrap(err, "get result set metadata request error")
+	}
+	return resp, CheckStatus(resp)
 }
 
 func (tsc *ThriftServiceClient) ExecuteStatement(ctx context.Context, req *cli_service.TExecuteStatementReq) (*cli_service.TExecuteStatementResp, error) {
+	msg, start := logger.Track("ExecuteStatement")
 	resp, err := tsc.TCLIServiceClient.ExecuteStatement(ctx, req)
 	if err != nil {
-		return nil, err
+		return resp, errors.Wrap(err, "execute statement request error")
+	}
+	if resp != nil && resp.OperationHandle != nil {
+		log := logger.WithContext(driverctx.ConnIdFromContext(ctx), driverctx.CorrelationIdFromContext(ctx), SprintGuid(resp.OperationHandle.OperationId.GUID))
+		defer log.Duration(msg, start)
+	}
+	return resp, CheckStatus(resp)
+}
+
+func (tsc *ThriftServiceClient) GetOperationStatus(ctx context.Context, req *cli_service.TGetOperationStatusReq) (*cli_service.TGetOperationStatusResp, error) {
+	log := logger.WithContext(driverctx.ConnIdFromContext(ctx), driverctx.CorrelationIdFromContext(ctx), SprintGuid(req.OperationHandle.OperationId.GUID))
+	defer log.Duration(logger.Track("GetOperationStatus"))
+	resp, err := tsc.TCLIServiceClient.GetOperationStatus(ctx, req)
+	if err != nil {
+		return resp, errors.Wrap(err, "get operation status request error")
+	}
+	return resp, CheckStatus(resp)
+}
+
+func (tsc *ThriftServiceClient) CloseOperation(ctx context.Context, req *cli_service.TCloseOperationReq) (*cli_service.TCloseOperationResp, error) {
+	log := logger.WithContext(driverctx.ConnIdFromContext(ctx), driverctx.CorrelationIdFromContext(ctx), SprintGuid(req.OperationHandle.OperationId.GUID))
+	defer log.Duration(logger.Track("CloseOperation"))
+	resp, err := tsc.TCLIServiceClient.CloseOperation(ctx, req)
+	if err != nil {
+		return resp, errors.Wrap(err, "close operation request error")
+	}
+	return resp, CheckStatus(resp)
+}
+
+func (tsc *ThriftServiceClient) CancelOperation(ctx context.Context, req *cli_service.TCancelOperationReq) (*cli_service.TCancelOperationResp, error) {
+	log := logger.WithContext(driverctx.ConnIdFromContext(ctx), driverctx.CorrelationIdFromContext(ctx), SprintGuid(req.OperationHandle.OperationId.GUID))
+	defer log.Duration(logger.Track("CancelOperation"))
+	resp, err := tsc.TCLIServiceClient.CancelOperation(ctx, req)
+	if err != nil {
+		return resp, errors.Wrap(err, "cancel operation request error")
 	}
 	return resp, CheckStatus(resp)
 }
@@ -75,7 +141,7 @@ func InitThriftClient(cfg *config.Config) (*ThriftServiceClient, error) {
 	case "header":
 		protocolFactory = thrift.NewTHeaderProtocolFactoryConf(tcfg)
 	default:
-		return nil, fmt.Errorf("invalid protocol specified %s", cfg.ThriftProtocol)
+		return nil, errors.Errorf("invalid protocol specified %s", cfg.ThriftProtocol)
 	}
 	if cfg.ThriftDebugClientProtocol {
 		protocolFactory = thrift.NewTDebugProtocolFactoryWithLogger(protocolFactory, "client:", thrift.StdLogger(nil))
@@ -111,13 +177,13 @@ func InitThriftClient(cfg *config.Config) (*ThriftServiceClient, error) {
 	case "zlib":
 		tTrans, err = thrift.NewTZlibTransport(tTrans, zlib.BestCompression)
 	default:
-		return nil, fmt.Errorf("invalid transport specified `%s`", cfg.ThriftTransport)
+		return nil, errors.Errorf("invalid transport specified `%s`", cfg.ThriftTransport)
 	}
 	if err != nil {
 		return nil, err
 	}
 	if err = tTrans.Open(); err != nil {
-		return nil, err
+		return nil, errors.Wrapf(err, "failed to open http transport for endpoint %s", endpoint)
 	}
 	iprot := protocolFactory.GetProtocol(tTrans)
 	oprot := protocolFactory.GetProtocol(tTrans)
@@ -126,13 +192,13 @@ func InitThriftClient(cfg *config.Config) (*ThriftServiceClient, error) {
 	return tsClient, nil
 }
 
-// RPCResponse respresents thrift rpc response
-type RPCResponse interface {
+// ThriftResponse respresents thrift rpc response
+type ThriftResponse interface {
 	GetStatus() *cli_service.TStatus
 }
 
 func CheckStatus(resp interface{}) error {
-	rpcresp, ok := resp.(RPCResponse)
+	rpcresp, ok := resp.(ThriftResponse)
 	if ok {
 		status := rpcresp.GetStatus()
 		if status.StatusCode == cli_service.TStatusCode_ERROR_STATUS {
@@ -147,4 +213,12 @@ func CheckStatus(resp interface{}) error {
 	}
 
 	return errors.New("thrift: invalid response")
+}
+
+func SprintGuid(bts []byte) string {
+	if len(bts) == 16 {
+		return fmt.Sprintf("%x-%x-%x-%x-%x", bts[0:4], bts[4:6], bts[6:8], bts[8:10], bts[10:16])
+	}
+	logger.Warn().Msgf("GUID not valid: %x", bts)
+	return fmt.Sprintf("%x", bts)
 }

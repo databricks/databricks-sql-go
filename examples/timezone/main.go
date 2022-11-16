@@ -10,6 +10,7 @@ import (
 	"time"
 
 	dbsql "github.com/databricks/databricks-sql-go"
+	dbsqlctx "github.com/databricks/databricks-sql-go/driverctx"
 	dbsqllog "github.com/databricks/databricks-sql-go/logger"
 	"github.com/joho/godotenv"
 )
@@ -21,7 +22,7 @@ func main() {
 		log.Fatal(err.Error())
 	}
 
-	if err := dbsqllog.SetLogLevel("info"); err != nil {
+	if err := dbsqllog.SetLogLevel("debug"); err != nil {
 		log.Println(err)
 	}
 
@@ -48,11 +49,13 @@ func main() {
 	// ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	// defer cancel()
 	ctx := context.Background()
+	ctx = dbsqlctx.NewContextWithCorrelationId(ctx, "afb")
 	resa := &time.Time{}
 	resb := &time.Time{}
 	resc := &time.Time{}
+
 	if qerr := db.QueryRowContext(ctx, `select now()`).Scan(resa); qerr != nil {
-		fmt.Printf("err: %v\n", qerr)
+		fmt.Printf("err: %+v\n", qerr)
 	} else {
 		fmt.Println(resa)
 	}

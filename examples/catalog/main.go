@@ -28,6 +28,7 @@ func main() {
 		dbsql.WithPort(port),
 		dbsql.WithHTTPPath(os.Getenv("DATABRICKS_HTTPPATH")),
 		dbsql.WithAccessToken(os.Getenv("DATABRICKS_ACCESSTOKEN")),
+		dbsql.WithTimeout(10),
 		dbsql.WithInitialNamespace("quickstart_catalog1", "quickstart_schema1"),
 	)
 	if err != nil {
@@ -42,6 +43,7 @@ func main() {
 	defer cancel()
 	if err := db.PingContext(ctx); err != nil {
 		fmt.Println(err)
+		return
 	}
 
 	rows, err1 := db.QueryContext(context.Background(), `select * from quickstart_table1`)

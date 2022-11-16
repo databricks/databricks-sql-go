@@ -4,19 +4,21 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
-	"errors"
-	"fmt"
 	"io"
 	"math"
 	"reflect"
 	"strings"
 	"time"
 
+	"github.com/databricks/databricks-sql-go/driverctx"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
+	"github.com/pkg/errors"
 )
 
 type rows struct {
 	client               cli_service.TCLIService
+	connId               string
+	correlationId        string
 	opHandle             *cli_service.TOperationHandle
 	pageSize             int64
 	location             *time.Location
@@ -32,10 +34,10 @@ var _ driver.RowsColumnTypeDatabaseTypeName = (*rows)(nil)
 var _ driver.RowsColumnTypeNullable = (*rows)(nil)
 var _ driver.RowsColumnTypeLength = (*rows)(nil)
 
-var errRowsFetchPriorToStart error = errors.New("unable to fetch row page prior to start of results")
-var errRowsNoSchemaAvailable error = errors.New("no schema in result set metadata response")
-var errRowsNoClient error = errors.New("instance of Rows missing client")
-var errRowsNilRows error = errors.New("nil Rows instance")
+var errRowsFetchPriorToStart = "unable to fetch row page prior to start of results"
+var errRowsNoSchemaAvailable = "no schema in result set metadata response"
+var errRowsNoClient = "instance of Rows missing client"
+var errRowsNilRows = "nil Rows instance"
 
 // Columns returns the names of the columns. The number of
 // columns of the result is inferred from the length of the
@@ -76,15 +78,12 @@ func (r *rows) Close() error {
 	req := cli_service.TCloseOperationReq{
 		OperationHandle: r.opHandle,
 	}
+	ctx := driverctx.NewContextWithCorrelationId(driverctx.NewContextWithConnId(context.Background(), r.connId), r.correlationId)
 
-	resp, err := r.client.CloseOperation(context.Background(), &req)
-	if err != nil {
-		return err
+	_, err1 := r.client.CloseOperation(ctx, &req)
+	if err1 != nil {
+		return err1
 	}
-	if err := checkStatus(resp.GetStatus()); err != nil {
-		return err
-	}
-
 	return nil
 }
 
@@ -277,11 +276,11 @@ func getDBTypeID(column *cli_service.TColumnDesc) cli_service.TTypeId {
 // and that it has a client
 func isValidRows(r *rows) error {
 	if r == nil {
-		return errRowsNilRows
+		return errors.New(errRowsNilRows)
 	}
 
 	if r.client == nil {
-		return errRowsNoClient
+		return errors.New(errRowsNoClient)
 	}
 
 	return nil
@@ -299,12 +298,12 @@ func (r *rows) getColumnMetadataByIndex(index int) (*cli_service.TColumnDesc, er
 	}
 
 	if !resultMetadata.IsSetSchema() {
-		return nil, errRowsNoSchemaAvailable
+		return nil, errors.New(errRowsNoSchemaAvailable)
 	}
 
 	columns := resultMetadata.GetSchema().GetColumns()
 	if index < 0 || index >= len(columns) {
-		return nil, fmt.Errorf("invalid column index: %d", index)
+		return nil, errors.Errorf("invalid column index: %d", index)
 	}
 
 	// tColumns := resultMetadata.Schema.GetColumns()
@@ -337,13 +336,10 @@ func (r *rows) getResultMetadata() (*cli_service.TGetResultSetMetadataResp, erro
 		req := cli_service.TGetResultSetMetadataReq{
 			OperationHandle: r.opHandle,
 		}
+		ctx := driverctx.NewContextWithCorrelationId(driverctx.NewContextWithConnId(context.Background(), r.connId), r.correlationId)
 
-		resp, err := r.client.GetResultSetMetadata(context.Background(), &req)
+		resp, err := r.client.GetResultSetMetadata(ctx, &req)
 		if err != nil {
-			return nil, err
-		}
-
-		if err := checkStatus(resp.GetStatus()); err != nil {
 			return nil, err
 		}
 
@@ -367,14 +363,14 @@ func (r *rows) fetchResultPage() error {
 		var direction cli_service.TFetchOrientation = r.getPageFetchDirection()
 		if direction == cli_service.TFetchOrientation_FETCH_PRIOR {
 			if r.getPageStartRowNum() == 0 {
-				return errRowsFetchPriorToStart
+				return errors.New(errRowsFetchPriorToStart)
 			}
 		} else if direction == cli_service.TFetchOrientation_FETCH_NEXT {
 			if r.fetchResults != nil && !r.fetchResults.GetHasMoreRows() {
 				return io.EOF
 			}
 		} else {
-			return fmt.Errorf("unhandled fetch result orientation: %s", direction)
+			return errors.Errorf("unhandled fetch result orientation: %s", direction)
 		}
 
 		req := cli_service.TFetchResultsReq{
@@ -382,8 +378,9 @@ func (r *rows) fetchResultPage() error {
 			MaxRows:         r.pageSize,
 			Orientation:     direction,
 		}
+		ctx := driverctx.NewContextWithCorrelationId(driverctx.NewContextWithConnId(context.Background(), r.connId), r.correlationId)
 
-		fetchResult, err := r.client.FetchResults(context.Background(), &req)
+		fetchResult, err := r.client.FetchResults(ctx, &req)
 		if err != nil {
 			return err
 		}
@@ -422,18 +419,6 @@ func (r *rows) getPageStartRowNum() int64 {
 	}
 
 	return r.fetchResults.GetResults().GetStartRowOffset()
-}
-
-func checkStatus(status *cli_service.TStatus) error {
-	if status.StatusCode == cli_service.TStatusCode_ERROR_STATUS {
-		return errors.New(status.GetErrorMessage())
-	}
-
-	if status.StatusCode == cli_service.TStatusCode_INVALID_HANDLE_STATUS {
-		return errors.New("thrift: invalid handle")
-	}
-
-	return nil
 }
 
 const (
