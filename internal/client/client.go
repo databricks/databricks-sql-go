@@ -160,7 +160,7 @@ func InitThriftClient(cfg *config.Config) (*ThriftServiceClient, error) {
 		}
 		httpclient := &http.Client{
 			Transport: tr,
-			// Timeout:   time.Duration(cfg.TimeoutSeconds * int(time.Second)), // Needed?
+			Timeout:   cfg.ClientTimeout,
 		}
 		tTrans, err = thrift.NewTHttpClientWithOptions(endpoint, thrift.THttpClientOptions{Client: httpclient})
 		httpTransport := tTrans.(*thrift.THttpClient)

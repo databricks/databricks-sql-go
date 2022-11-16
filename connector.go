@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql/driver"
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/databricks/databricks-sql-go/driverctx"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
@@ -48,7 +50,7 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 		},
 	}
 	// default timeout in here in addition to potential context timeout
-	_, res, err := sentinel.Watch(ctx, c.cfg.PollInterval, c.cfg.DefaultTimeout)
+	_, res, err := sentinel.Watch(ctx, c.cfg.PollInterval, c.cfg.ConnectTimeout)
 	if err != nil {
 		return nil, wrapErrf(err, "error connecting: host=%s port=%d, httpPath=%s", c.cfg.Host, c.cfg.Port, c.cfg.HTTPPath)
 	}
@@ -131,10 +133,10 @@ func WithMaxRows(n int) connOption {
 }
 
 // This will add a timeout for the server execution.
-// In seconds.
-func WithTimeout(n int) connOption {
+// Use time.Duration.
+func WithTimeout(n time.Duration) connOption {
 	return func(c *config.Config) {
-		c.QueryTimeoutSeconds = n
+		c.QueryTimeout = n
 	}
 }
 
@@ -156,6 +158,16 @@ func WithUserAgentEntry(entry string) connOption {
 // If using connection pool, session params can avoid successive calls of "SET ..."
 func WithSessionParams(params map[string]string) connOption {
 	return func(c *config.Config) {
+		for k, v := range params {
+			if strings.ToLower(k) == "timezone" {
+				if loc, err := time.LoadLocation(v); err != nil {
+					logger.Error().Msgf("timezone %s is not valid", v)
+				} else {
+					c.Location = loc
+				}
+
+			}
+		}
 		c.SessionParams = params
 	}
 }

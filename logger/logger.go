@@ -51,7 +51,7 @@ func init() {
 }
 
 // Sets log level
-// Available levels are: "trace" "debug" "info" "warn" "error" "fatal" "panic"
+// Available levels are: "trace" "debug" "info" "warn" "error" "fatal" "panic" or "disabled"
 func SetLogLevel(l string) error {
 	if lv, err := zerolog.ParseLevel(l); err != nil {
 		return err

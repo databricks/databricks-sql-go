@@ -12,6 +12,8 @@ import (
 
 	"github.com/databricks/databricks-sql-go/driverctx"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
+	"github.com/databricks/databricks-sql-go/internal/client"
+	"github.com/databricks/databricks-sql-go/logger"
 	"github.com/pkg/errors"
 )
 
@@ -351,6 +353,7 @@ func (r *rows) getResultMetadata() (*cli_service.TGetResultSetMetadataResp, erro
 }
 
 func (r *rows) fetchResultPage() error {
+	log := logger.WithContext(r.connId, r.correlationId, client.SprintGuid(r.opHandle.OperationId.GUID))
 	err := isValidRows(r)
 	if err != nil {
 		return err
@@ -379,7 +382,7 @@ func (r *rows) fetchResultPage() error {
 			Orientation:     direction,
 		}
 		ctx := driverctx.NewContextWithCorrelationId(driverctx.NewContextWithConnId(context.Background(), r.connId), r.correlationId)
-
+		log.Debug().Msgf("fetching next batch of %d rows", r.pageSize)
 		fetchResult, err := r.client.FetchResults(ctx, &req)
 		if err != nil {
 			return err
