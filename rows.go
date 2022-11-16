@@ -353,10 +353,15 @@ func (r *rows) getResultMetadata() (*cli_service.TGetResultSetMetadataResp, erro
 }
 
 func (r *rows) fetchResultPage() error {
-	log := logger.WithContext(r.connId, r.correlationId, client.SprintGuid(r.opHandle.OperationId.GUID))
 	err := isValidRows(r)
 	if err != nil {
 		return err
+	}
+	var log *logger.DBSQLLogger
+	if r.opHandle != nil {
+		log = logger.WithContext(r.connId, r.correlationId, client.SprintGuid(r.opHandle.OperationId.GUID))
+	} else {
+		log = logger.WithContext(r.connId, r.correlationId, "")
 	}
 
 	for !r.isNextRowInPage() {
