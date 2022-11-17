@@ -1,0 +1,107 @@
+{
+ "status": {
+  "statusCode": "SUCCESS_STATUS"
+ },
+ "operationHandle": {
+  "operationId": {
+   "guid": "Ae1mneTdHtuVEwbyITJzxw==",
+   "secret": "M41SnYJyRuuEgstBlGaDnQ=="
+  },
+  "operationType": "EXECUTE_STATEMENT",
+  "hasResultSet": true
+ },
+ "directResults": {
+  "operationStatus": {
+   "status": {
+    "statusCode": "SUCCESS_STATUS"
+   },
+   "operationState": "FINISHED_STATE"
+  },
+  "resultSetMetadata": {
+   "status": {
+    "statusCode": "SUCCESS_STATUS"
+   },
+   "schema": {
+    "columns": [
+     {
+      "columnName": "key",
+      "typeDesc": {
+       "types": [
+        {
+         "primitiveEntry": {
+          "type": "STRING_TYPE"
+         }
+        }
+       ]
+      },
+      "position": 1,
+      "comment": ""
+     },
+     {
+      "columnName": "value",
+      "typeDesc": {
+       "types": [
+        {
+         "primitiveEntry": {
+          "type": "STRING_TYPE"
+         }
+        }
+       ]
+      },
+      "position": 2,
+      "comment": ""
+     }
+    ]
+   },
+   "resultFormat": "COLUMN_BASED_SET",
+   "cacheLookupResult": "CACHE_INELIGIBLE",
+   "uncompressedBytes": 48,
+   "compressedBytes": 48
+  },
+  "resultSet": {
+   "status": {
+    "statusCode": "SUCCESS_STATUS"
+   },
+   "hasMoreRows": false,
+   "results": {
+    "startRowOffset": 0,
+    "rows": [],
+    "columns": [
+     {
+      "stringVal": {
+       "values": [
+        "ansi_mode"
+       ],
+       "nulls": "AA=="
+      }
+     },
+     {
+      "stringVal": {
+       "values": [
+        "true"
+       ],
+       "nulls": "AA=="
+      }
+     }
+    ]
+   }
+  },
+  "closeOperation": {
+   "status": {
+    "statusCode": "SUCCESS_STATUS"
+   }
+  }
+ },
+ "sessionConf": {
+  "confs": {
+   "ansi_mode": "true",
+   "enable_photon": "true",
+   "spark.databricks.sqlgateway.useCreateViewCommandWithResult": "false",
+   "timezone": "America/Sao_Paulo",
+   "use_cached_result": "true"
+  },
+  "currentDatabase": "default",
+  "currentCatalog": "hive_metastore",
+  "sessionCapabilities": {}
+ }
+}

@@ -102,6 +102,9 @@ func NewConnector(options ...connOption) (driver.Connector, error) {
 
 func WithServerHostname(host string) connOption {
 	return func(c *config.Config) {
+		if host == "localhost" {
+			c.Protocol = "http"
+		}
 		c.Host = host
 	}
 }

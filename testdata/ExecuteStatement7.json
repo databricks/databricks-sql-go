@@ -1,0 +1,391 @@
+{
+ "status": {
+  "statusCode": "SUCCESS_STATUS"
+ },
+ "operationHandle": {
+  "operationId": {
+   "guid": "Ae1mnelfHW693k5xwcSTrg==",
+   "secret": "M41SnYJyRuuEgstBlGaDnQ=="
+  },
+  "operationType": "EXECUTE_STATEMENT",
+  "hasResultSet": true
+ },
+ "directResults": {
+  "operationStatus": {
+   "status": {
+    "statusCode": "SUCCESS_STATUS"
+   },
+   "operationState": "FINISHED_STATE"
+  },
+  "resultSetMetadata": {
+   "status": {
+    "statusCode": "SUCCESS_STATUS"
+   },
+   "schema": {
+    "columns": [
+     {
+      "columnName": "_c0",
+      "typeDesc": {
+       "types": [
+        {
+         "primitiveEntry": {
+          "type": "INT_TYPE"
+         }
+        }
+       ]
+      },
+      "position": 1,
+      "comment": ""
+     },
+     {
+      "columnName": "carat",
+      "typeDesc": {
+       "types": [
+        {
+         "primitiveEntry": {
+          "type": "DOUBLE_TYPE"
+         }
+        }
+       ]
+      },
+      "position": 2,
+      "comment": ""
+     },
+     {
+      "columnName": "cut",
+      "typeDesc": {
+       "types": [
+        {
+         "primitiveEntry": {
+          "type": "STRING_TYPE"
+         }
+        }
+       ]
+      },
+      "position": 3,
+      "comment": ""
+     },
+     {
+      "columnName": "color",
+      "typeDesc": {
+       "types": [
+        {
+         "primitiveEntry": {
+          "type": "STRING_TYPE"
+         }
+        }
+       ]
+      },
+      "position": 4,
+      "comment": ""
+     },
+     {
+      "columnName": "clarity",
+      "typeDesc": {
+       "types": [
+        {
+         "primitiveEntry": {
+          "type": "STRING_TYPE"
+         }
+        }
+       ]
+      },
+      "position": 5,
+      "comment": ""
+     },
+     {
+      "columnName": "depth",
+      "typeDesc": {
+       "types": [
+        {
+         "primitiveEntry": {
+          "type": "DOUBLE_TYPE"
+         }
+        }
+       ]
+      },
+      "position": 6,
+      "comment": ""
+     },
+     {
+      "columnName": "table",
+      "typeDesc": {
+       "types": [
+        {
+         "primitiveEntry": {
+          "type": "DOUBLE_TYPE"
+         }
+        }
+       ]
+      },
+      "position": 7,
+      "comment": ""
+     },
+     {
+      "columnName": "price",
+      "typeDesc": {
+       "types": [
+        {
+         "primitiveEntry": {
+          "type": "INT_TYPE"
+         }
+        }
+       ]
+      },
+      "position": 8,
+      "comment": ""
+     },
+     {
+      "columnName": "x",
+      "typeDesc": {
+       "types": [
+        {
+         "primitiveEntry": {
+          "type": "DOUBLE_TYPE"
+         }
+        }
+       ]
+      },
+      "position": 9,
+      "comment": ""
+     },
+     {
+      "columnName": "y",
+      "typeDesc": {
+       "types": [
+        {
+         "primitiveEntry": {
+          "type": "DOUBLE_TYPE"
+         }
+        }
+       ]
+      },
+      "position": 10,
+      "comment": ""
+     },
+     {
+      "columnName": "z",
+      "typeDesc": {
+       "types": [
+        {
+         "primitiveEntry": {
+          "type": "DOUBLE_TYPE"
+         }
+        }
+       ]
+      },
+      "position": 11,
+      "comment": ""
+     }
+    ]
+   },
+   "resultFormat": "COLUMN_BASED_SET",
+   "cacheLookupResult": "CACHE_INELIGIBLE",
+   "uncompressedBytes": 1086,
+   "compressedBytes": 1086
+  },
+  "resultSet": {
+   "status": {
+    "statusCode": "SUCCESS_STATUS"
+   },
+   "hasMoreRows": true,
+   "results": {
+    "startRowOffset": 0,
+    "rows": [],
+    "columns": [
+     {
+      "i32Val": {
+       "values": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10
+       ],
+       "nulls": "AA=="
+      }
+     },
+     {
+      "doubleVal": {
+       "values": [
+        0.23,
+        0.21,
+        0.23,
+        0.29,
+        0.31,
+        0.24,
+        0.24,
+        0.26,
+        0.22,
+        0.23
+       ],
+       "nulls": "AA=="
+      }
+     },
+     {
+      "stringVal": {
+       "values": [
+        "Ideal",
+        "Premium",
+        "Good",
+        "Premium",
+        "Good",
+        "Very Good",
+        "Very Good",
+        "Very Good",
+        "Fair",
+        "Very Good"
+       ],
+       "nulls": "AA=="
+      }
+     },
+     {
+      "stringVal": {
+       "values": [
+        "E",
+        "E",
+        "E",
+        "I",
+        "J",
+        "J",
+        "I",
+        "H",
+        "E",
+        "H"
+       ],
+       "nulls": "AA=="
+      }
+     },
+     {
+      "stringVal": {
+       "values": [
+        "SI2",
+        "SI1",
+        "VS1",
+        "VS2",
+        "SI2",
+        "VVS2",
+        "VVS1",
+        "SI1",
+        "VS2",
+        "VS1"
+       ],
+       "nulls": "AA=="
+      }
+     },
+     {
+      "doubleVal": {
+       "values": [
+        61.5,
+        59.8,
+        56.9,
+        62.4,
+        63.3,
+        62.8,
+        62.3,
+        61.9,
+        65.1,
+        59.4
+       ],
+       "nulls": "AA=="
+      }
+     },
+     {
+      "doubleVal": {
+       "values": [
+        55,
+        61,
+        65,
+        58,
+        58,
+        57,
+        57,
+        55,
+        61,
+        61
+       ],
+       "nulls": "AA=="
+      }
+     },
+     {
+      "i32Val": {
+       "values": [
+        326,
+        326,
+        327,
+        334,
+        335,
+        336,
+        336,
+        337,
+        337,
+        338
+       ],
+       "nulls": "AA=="
+      }
+     },
+     {
+      "doubleVal": {
+       "values": [
+        3.95,
+        3.89,
+        4.05,
+        4.2,
+        4.34,
+        3.94,
+        3.95,
+        4.07,
+        3.87,
+        4
+       ],
+       "nulls": "AA=="
+      }
+     },
+     {
+      "doubleVal": {
+       "values": [
+        3.98,
+        3.84,
+        4.07,
+        4.23,
+        4.35,
+        3.96,
+        3.98,
+        4.11,
+        3.78,
+        4.05
+       ],
+       "nulls": "AA=="
+      }
+     },
+     {
+      "doubleVal": {
+       "values": [
+        2.43,
+        2.31,
+        2.31,
+        2.63,
+        2.75,
+        2.48,
+        2.47,
+        2.53,
+        2.49,
+        2.39
+       ],
+       "nulls": "AA=="
+      }
+     }
+    ]
+   }
+  }
+ },
+ "executionRejected": false,
+ "maxClusterCapacity": 10,
+ "currentClusterLoad": 1,
+ "idempotencyType": "UNKNOWN"
+}

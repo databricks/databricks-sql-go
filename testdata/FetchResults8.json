@@ -1,0 +1,188 @@
+{
+ "status": {
+  "statusCode": "SUCCESS_STATUS"
+ },
+ "hasMoreRows": false,
+ "results": {
+  "startRowOffset": 10,
+  "rows": [],
+  "columns": [
+   {
+    "i32Val": {
+     "values": [
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19
+     ],
+     "nulls": "AA=="
+    }
+   },
+   {
+    "doubleVal": {
+     "values": [
+      0.3,
+      0.23,
+      0.22,
+      0.31,
+      0.2,
+      0.32,
+      0.3,
+      0.3,
+      0.3
+     ],
+     "nulls": "AA=="
+    }
+   },
+   {
+    "stringVal": {
+     "values": [
+      "Good",
+      "Ideal",
+      "Premium",
+      "Ideal",
+      "Premium",
+      "Premium",
+      "Ideal",
+      "Good",
+      "Good"
+     ],
+     "nulls": "AA=="
+    }
+   },
+   {
+    "stringVal": {
+     "values": [
+      "J",
+      "J",
+      "F",
+      "J",
+      "E",
+      "E",
+      "I",
+      "J",
+      "J"
+     ],
+     "nulls": "AA=="
+    }
+   },
+   {
+    "stringVal": {
+     "values": [
+      "SI1",
+      "VS1",
+      "SI1",
+      "SI2",
+      "SI2",
+      "I1",
+      "SI2",
+      "SI1",
+      "SI1"
+     ],
+     "nulls": "AA=="
+    }
+   },
+   {
+    "doubleVal": {
+     "values": [
+      64,
+      62.8,
+      60.4,
+      62.2,
+      60.2,
+      60.9,
+      62,
+      63.4,
+      63.8
+     ],
+     "nulls": "AA=="
+    }
+   },
+   {
+    "doubleVal": {
+     "values": [
+      55,
+      56,
+      61,
+      54,
+      62,
+      58,
+      54,
+      54,
+      56
+     ],
+     "nulls": "AA=="
+    }
+   },
+   {
+    "i32Val": {
+     "values": [
+      339,
+      340,
+      342,
+      344,
+      345,
+      345,
+      348,
+      351,
+      351
+     ],
+     "nulls": "AA=="
+    }
+   },
+   {
+    "doubleVal": {
+     "values": [
+      4.25,
+      3.93,
+      3.88,
+      4.35,
+      3.79,
+      4.38,
+      4.31,
+      4.23,
+      4.23
+     ],
+     "nulls": "AA=="
+    }
+   },
+   {
+    "doubleVal": {
+     "values": [
+      4.28,
+      3.9,
+      3.84,
+      4.37,
+      3.75,
+      4.42,
+      4.34,
+      4.29,
+      4.26
+     ],
+     "nulls": "AA=="
+    }
+   },
+   {
+    "doubleVal": {
+     "values": [
+      2.73,
+      2.46,
+      2.33,
+      2.71,
+      2.27,
+      2.68,
+      2.68,
+      2.7,
+      2.71
+     ],
+     "nulls": "AA=="
+    }
+   }
+  ]
+ }
+}

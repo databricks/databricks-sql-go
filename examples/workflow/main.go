@@ -16,7 +16,7 @@ import (
 
 func main() {
 	// use this package to set up logging. By default logging level is `warn`. If you want to disable logging, use `disabled`
-	if err := dbsqllog.SetLogLevel("error"); err != nil {
+	if err := dbsqllog.SetLogLevel("debug"); err != nil {
 		panic(err)
 	}
 	// sets the logging output. By default it will use os.Stderr. If running in terminal, it will use ConsoleWriter to make it pretty
