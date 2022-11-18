@@ -1,0 +1,121 @@
+{
+ "status": {
+  "statusCode": "SUCCESS_STATUS"
+ },
+ "operationHandle": {
+  "operationId": {
+   "guid": "Ae1mnesEHVy+MCdT4rHunA==",
+   "secret": "M41SnYJyRuuEgstBlGaDnQ=="
+  },
+  "operationType": "EXECUTE_STATEMENT",
+  "hasResultSet": true
+ },
+ "directResults": {
+  "operationStatus": {
+   "status": {
+    "statusCode": "SUCCESS_STATUS"
+   },
+   "operationState": "FINISHED_STATE"
+  },
+  "resultSetMetadata": {
+   "status": {
+    "statusCode": "SUCCESS_STATUS"
+   },
+   "schema": {
+    "columns": [
+     {
+      "columnName": "current_date()",
+      "typeDesc": {
+       "types": [
+        {
+         "primitiveEntry": {
+          "type": "DATE_TYPE"
+         }
+        }
+       ]
+      },
+      "position": 1,
+      "comment": ""
+     },
+     {
+      "columnName": "current_timestamp()",
+      "typeDesc": {
+       "types": [
+        {
+         "primitiveEntry": {
+          "type": "TIMESTAMP_TYPE"
+         }
+        }
+       ]
+      },
+      "position": 2,
+      "comment": ""
+     },
+     {
+      "columnName": "current_timezone()",
+      "typeDesc": {
+       "types": [
+        {
+         "primitiveEntry": {
+          "type": "STRING_TYPE"
+         }
+        }
+       ]
+      },
+      "position": 3,
+      "comment": ""
+     }
+    ]
+   },
+   "resultFormat": "COLUMN_BASED_SET",
+   "cacheLookupResult": "CACHE_INELIGIBLE",
+   "uncompressedBytes": 101,
+   "compressedBytes": 101
+  },
+  "resultSet": {
+   "status": {
+    "statusCode": "SUCCESS_STATUS"
+   },
+   "hasMoreRows": false,
+   "results": {
+    "startRowOffset": 0,
+    "rows": [],
+    "columns": [
+     {
+      "stringVal": {
+       "values": [
+        "2022-11-17"
+       ],
+       "nulls": "AA=="
+      }
+     },
+     {
+      "stringVal": {
+       "values": [
+        "2022-11-17 14:33:15.771"
+       ],
+       "nulls": "AA=="
+      }
+     },
+     {
+      "stringVal": {
+       "values": [
+        "America/Sao_Paulo"
+       ],
+       "nulls": "AA=="
+      }
+     }
+    ]
+   }
+  },
+  "closeOperation": {
+   "status": {
+    "statusCode": "SUCCESS_STATUS"
+   }
+  }
+ },
+ "executionRejected": false,
+ "maxClusterCapacity": 10,
+ "currentClusterLoad": 1,
+ "idempotencyType": "UNKNOWN"
+}

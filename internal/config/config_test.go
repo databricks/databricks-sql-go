@@ -1,9 +1,12 @@
 package config
 
 import (
+	"crypto/tls"
 	"reflect"
 	"testing"
 	"time"
+
+	"github.com/databricks/databricks-sql-go/internal/cli_service"
 )
 
 func TestParseConfig(t *testing.T) {
@@ -22,11 +25,13 @@ func TestParseConfig(t *testing.T) {
 			name: "base case",
 			args: args{dsn: "token:supersecret@example.cloud.databricks.com:443/sql/1.0/endpoints/12346a5b5b0e123a"},
 			wantCfg: UserConfig{
-				Protocol:    "https",
-				Host:        "example.cloud.databricks.com",
-				Port:        443,
-				AccessToken: "supersecret",
-				HTTPPath:    "/sql/1.0/endpoints/12346a5b5b0e123a",
+				Protocol:      "https",
+				Host:          "example.cloud.databricks.com",
+				Port:          443,
+				MaxRows:       10000,
+				AccessToken:   "supersecret",
+				HTTPPath:      "/sql/1.0/endpoints/12346a5b5b0e123a",
+				SessionParams: make(map[string]string),
 			},
 			wantURL: "https://token:supersecret@example.cloud.databricks.com:443/sql/1.0/endpoints/12346a5b5b0e123a",
 			wantErr: false,
@@ -35,11 +40,13 @@ func TestParseConfig(t *testing.T) {
 			name: "with https scheme",
 			args: args{dsn: "https://token:supersecret@example.cloud.databricks.com:443/sql/1.0/endpoints/12346a5b5b0e123a"},
 			wantCfg: UserConfig{
-				Protocol:    "https",
-				Host:        "example.cloud.databricks.com",
-				Port:        443,
-				AccessToken: "supersecret",
-				HTTPPath:    "/sql/1.0/endpoints/12346a5b5b0e123a",
+				Protocol:      "https",
+				Host:          "example.cloud.databricks.com",
+				Port:          443,
+				MaxRows:       10000,
+				AccessToken:   "supersecret",
+				HTTPPath:      "/sql/1.0/endpoints/12346a5b5b0e123a",
+				SessionParams: make(map[string]string),
 			},
 			wantURL: "https://token:supersecret@example.cloud.databricks.com:443/sql/1.0/endpoints/12346a5b5b0e123a",
 			wantErr: false,
@@ -48,10 +55,12 @@ func TestParseConfig(t *testing.T) {
 			name: "with http scheme",
 			args: args{dsn: "http://localhost:8080/sql/1.0/endpoints/12346a5b5b0e123a"},
 			wantCfg: UserConfig{
-				Protocol: "http",
-				Host:     "localhost",
-				Port:     8080,
-				HTTPPath: "/sql/1.0/endpoints/12346a5b5b0e123a",
+				Protocol:      "http",
+				Host:          "localhost",
+				Port:          8080,
+				MaxRows:       10000,
+				HTTPPath:      "/sql/1.0/endpoints/12346a5b5b0e123a",
+				SessionParams: make(map[string]string),
 			},
 			wantErr: false,
 			wantURL: "http://localhost:8080/sql/1.0/endpoints/12346a5b5b0e123a",
@@ -60,9 +69,11 @@ func TestParseConfig(t *testing.T) {
 			name: "with localhost",
 			args: args{dsn: "http://localhost:8080"},
 			wantCfg: UserConfig{
-				Protocol: "http",
-				Host:     "localhost",
-				Port:     8080,
+				Protocol:      "http",
+				Host:          "localhost",
+				Port:          8080,
+				MaxRows:       10000,
+				SessionParams: make(map[string]string),
 			},
 			wantErr: false,
 			wantURL: "http://localhost:8080",
@@ -71,13 +82,14 @@ func TestParseConfig(t *testing.T) {
 			name: "with query params",
 			args: args{dsn: "token:supersecret@example.cloud.databricks.com:8000/sql/1.0/endpoints/12346a5b5b0e123a?timeout=100&maxRows=1000"},
 			wantCfg: UserConfig{
-				Protocol:            "https",
-				Host:                "example.cloud.databricks.com",
-				Port:                8000,
-				AccessToken:         "supersecret",
-				HTTPPath:            "/sql/1.0/endpoints/12346a5b5b0e123a",
-				QueryTimeoutSeconds: 100,
-				MaxRows:             1000,
+				Protocol:      "https",
+				Host:          "example.cloud.databricks.com",
+				Port:          8000,
+				AccessToken:   "supersecret",
+				HTTPPath:      "/sql/1.0/endpoints/12346a5b5b0e123a",
+				QueryTimeout:  100 * time.Second,
+				MaxRows:       1000,
+				SessionParams: make(map[string]string),
 			},
 			wantURL: "https://token:supersecret@example.cloud.databricks.com:8000/sql/1.0/endpoints/12346a5b5b0e123a",
 			wantErr: false,
@@ -86,15 +98,15 @@ func TestParseConfig(t *testing.T) {
 			name: "with query params and session params",
 			args: args{dsn: "token:supersecret@example.cloud.databricks.com:8000/sql/1.0/endpoints/12346a5b5b0e123a?timeout=100&maxRows=1000&timezone=America/Vancouver"},
 			wantCfg: UserConfig{
-				Protocol:            "https",
-				Host:                "example.cloud.databricks.com",
-				Port:                8000,
-				AccessToken:         "supersecret",
-				HTTPPath:            "/sql/1.0/endpoints/12346a5b5b0e123a",
-				QueryTimeoutSeconds: 100,
-				MaxRows:             1000,
-				Location:            tz,
-				SessionParams:       map[string]string{"timezone": "America/Vancouver"},
+				Protocol:      "https",
+				Host:          "example.cloud.databricks.com",
+				Port:          8000,
+				AccessToken:   "supersecret",
+				HTTPPath:      "/sql/1.0/endpoints/12346a5b5b0e123a",
+				QueryTimeout:  100 * time.Second,
+				MaxRows:       1000,
+				Location:      tz,
+				SessionParams: map[string]string{"timezone": "America/Vancouver"},
 			},
 			wantURL: "https://token:supersecret@example.cloud.databricks.com:8000/sql/1.0/endpoints/12346a5b5b0e123a",
 			wantErr: false,
@@ -103,10 +115,12 @@ func TestParseConfig(t *testing.T) {
 			name: "bare",
 			args: args{dsn: "example.cloud.databricks.com:8000/sql/1.0/endpoints/12346a5b5b0e123a"},
 			wantCfg: UserConfig{
-				Protocol: "https",
-				Host:     "example.cloud.databricks.com",
-				Port:     8000,
-				HTTPPath: "/sql/1.0/endpoints/12346a5b5b0e123a",
+				Protocol:      "https",
+				Host:          "example.cloud.databricks.com",
+				Port:          8000,
+				MaxRows:       10000,
+				HTTPPath:      "/sql/1.0/endpoints/12346a5b5b0e123a",
+				SessionParams: make(map[string]string),
 			},
 			wantURL: "https://example.cloud.databricks.com:8000/sql/1.0/endpoints/12346a5b5b0e123a",
 			wantErr: false,
@@ -115,12 +129,30 @@ func TestParseConfig(t *testing.T) {
 			name: "with catalog",
 			args: args{dsn: "token:supersecret@example.cloud.databricks.com:8000/sql/1.0/endpoints/12346a5b5b0e123b?catalog=default"},
 			wantCfg: UserConfig{
-				Protocol:    "https",
-				Host:        "example.cloud.databricks.com",
-				Port:        8000,
-				AccessToken: "supersecret",
-				HTTPPath:    "/sql/1.0/endpoints/12346a5b5b0e123b",
-				Catalog:     "default",
+				Protocol:      "https",
+				Host:          "example.cloud.databricks.com",
+				Port:          8000,
+				MaxRows:       10000,
+				AccessToken:   "supersecret",
+				HTTPPath:      "/sql/1.0/endpoints/12346a5b5b0e123b",
+				Catalog:       "default",
+				SessionParams: make(map[string]string),
+			},
+			wantURL: "https://token:supersecret@example.cloud.databricks.com:8000/sql/1.0/endpoints/12346a5b5b0e123b",
+			wantErr: false,
+		},
+		{
+			name: "with user agent entry",
+			args: args{dsn: "token:supersecret@example.cloud.databricks.com:8000/sql/1.0/endpoints/12346a5b5b0e123b?userAgentEntry=partner-name"},
+			wantCfg: UserConfig{
+				Protocol:       "https",
+				Host:           "example.cloud.databricks.com",
+				Port:           8000,
+				MaxRows:        10000,
+				AccessToken:    "supersecret",
+				HTTPPath:       "/sql/1.0/endpoints/12346a5b5b0e123b",
+				UserAgentEntry: "partner-name",
+				SessionParams:  make(map[string]string),
 			},
 			wantURL: "https://token:supersecret@example.cloud.databricks.com:8000/sql/1.0/endpoints/12346a5b5b0e123b",
 			wantErr: false,
@@ -129,30 +161,33 @@ func TestParseConfig(t *testing.T) {
 			name: "with schema",
 			args: args{dsn: "token:supersecret2@example.cloud.databricks.com:8000/sql/1.0/endpoints/12346a5b5b0e123a?schema=system"},
 			wantCfg: UserConfig{
-				Protocol:    "https",
-				Host:        "example.cloud.databricks.com",
-				Port:        8000,
-				AccessToken: "supersecret2",
-				HTTPPath:    "/sql/1.0/endpoints/12346a5b5b0e123a",
-				Schema:      "system",
+				Protocol:      "https",
+				Host:          "example.cloud.databricks.com",
+				Port:          8000,
+				MaxRows:       10000,
+				AccessToken:   "supersecret2",
+				HTTPPath:      "/sql/1.0/endpoints/12346a5b5b0e123a",
+				Schema:        "system",
+				SessionParams: make(map[string]string),
 			},
 			wantURL: "https://token:supersecret2@example.cloud.databricks.com:8000/sql/1.0/endpoints/12346a5b5b0e123a",
 			wantErr: false,
 		},
 		{
 			name: "with everything",
-			args: args{dsn: "token:supersecret2@example.cloud.databricks.com:8000/sql/1.0/endpoints/12346a5b5b0e123a?catalog=default&schema=system&timeout=100&maxRows=1000&ANSI_MODE=true"},
+			args: args{dsn: "token:supersecret2@example.cloud.databricks.com:8000/sql/1.0/endpoints/12346a5b5b0e123a?catalog=default&schema=system&userAgentEntry=partner-name&timeout=100&maxRows=1000&ANSI_MODE=true"},
 			wantCfg: UserConfig{
-				Protocol:            "https",
-				Host:                "example.cloud.databricks.com",
-				Port:                8000,
-				AccessToken:         "supersecret2",
-				HTTPPath:            "/sql/1.0/endpoints/12346a5b5b0e123a",
-				QueryTimeoutSeconds: 100,
-				MaxRows:             1000,
-				Catalog:             "default",
-				Schema:              "system",
-				SessionParams:       map[string]string{"ANSI_MODE": "true"},
+				Protocol:       "https",
+				Host:           "example.cloud.databricks.com",
+				Port:           8000,
+				AccessToken:    "supersecret2",
+				HTTPPath:       "/sql/1.0/endpoints/12346a5b5b0e123a",
+				QueryTimeout:   100 * time.Second,
+				MaxRows:        1000,
+				UserAgentEntry: "partner-name",
+				Catalog:        "default",
+				Schema:         "system",
+				SessionParams:  map[string]string{"ANSI_MODE": "true"},
 			},
 			wantURL: "https://token:supersecret2@example.cloud.databricks.com:8000/sql/1.0/endpoints/12346a5b5b0e123a",
 			wantErr: false,
@@ -161,10 +196,12 @@ func TestParseConfig(t *testing.T) {
 			name: "missing http path",
 			args: args{dsn: "token:supersecret@example.cloud.databricks.com:443"},
 			wantCfg: UserConfig{
-				Protocol:    "https",
-				Host:        "example.cloud.databricks.com",
-				Port:        443,
-				AccessToken: "supersecret",
+				Protocol:      "https",
+				Host:          "example.cloud.databricks.com",
+				Port:          443,
+				MaxRows:       10000,
+				AccessToken:   "supersecret",
+				SessionParams: make(map[string]string),
 			},
 			wantURL: "https://token:supersecret@example.cloud.databricks.com:443",
 			wantErr: false,
@@ -173,14 +210,15 @@ func TestParseConfig(t *testing.T) {
 			name: "missing http path",
 			args: args{dsn: "token:supersecret2@example.cloud.databricks.com:443?catalog=default&schema=system&timeout=100&maxRows=1000"},
 			wantCfg: UserConfig{
-				Protocol:            "https",
-				Host:                "example.cloud.databricks.com",
-				Port:                443,
-				AccessToken:         "supersecret2",
-				QueryTimeoutSeconds: 100,
-				MaxRows:             1000,
-				Catalog:             "default",
-				Schema:              "system",
+				Protocol:      "https",
+				Host:          "example.cloud.databricks.com",
+				Port:          443,
+				AccessToken:   "supersecret2",
+				QueryTimeout:  100 * time.Second,
+				MaxRows:       1000,
+				Catalog:       "default",
+				Schema:        "system",
+				SessionParams: make(map[string]string),
 			},
 			wantURL: "https://token:supersecret2@example.cloud.databricks.com:443",
 			wantErr: false,
@@ -214,13 +252,14 @@ func TestParseConfig(t *testing.T) {
 			name: "missing host",
 			args: args{dsn: "token:supersecret2@:443?catalog=default&schema=system&timeout=100&maxRows=1000"},
 			wantCfg: UserConfig{
-				Port:                443,
-				Protocol:            "https",
-				AccessToken:         "supersecret2",
-				MaxRows:             1000,
-				QueryTimeoutSeconds: 100,
-				Catalog:             "default",
-				Schema:              "system",
+				Port:          443,
+				Protocol:      "https",
+				AccessToken:   "supersecret2",
+				MaxRows:       1000,
+				QueryTimeout:  100 * time.Second,
+				Catalog:       "default",
+				Schema:        "system",
+				SessionParams: make(map[string]string),
 			},
 			wantURL: "https://token:supersecret2@:443",
 			wantErr: false,
@@ -247,4 +286,96 @@ func TestParseConfig(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestUserConfig_DeepCopy(t *testing.T) {
+	t.Run("copy empty config", func(t *testing.T) {
+		cfg := UserConfig{}
+
+		cfg_copy := cfg.DeepCopy()
+		if !reflect.DeepEqual(cfg, cfg_copy) {
+			t.Errorf("DeepCopy() = %v, want %v", cfg_copy, cfg)
+		}
+	})
+	t.Run("copy defaults config", func(t *testing.T) {
+		cfg := UserConfig{}.WithDefaults()
+
+		cfg_copy := cfg.DeepCopy()
+		if !reflect.DeepEqual(cfg, cfg_copy) {
+			t.Errorf("DeepCopy() = %v, want %v", cfg_copy, cfg)
+		}
+	})
+	t.Run("copy config with all values", func(t *testing.T) {
+		location, _ := time.LoadLocation("Asia/Seoul")
+		cfg := UserConfig{
+			Protocol:       "a",
+			Host:           "b",
+			Port:           2,
+			HTTPPath:       "foo/bar",
+			Catalog:        "cat",
+			Schema:         "s",
+			AccessToken:    "123",
+			MaxRows:        10,
+			QueryTimeout:   time.Minute,
+			UserAgentEntry: "test",
+			Location:       location,
+			SessionParams:  map[string]string{"a": "32", "b": "4"},
+		}
+
+		cfg_copy := cfg.DeepCopy()
+		if !reflect.DeepEqual(cfg, cfg_copy) {
+			t.Errorf("DeepCopy() = %v, want %v", cfg_copy, cfg)
+		}
+	})
+}
+
+func TestConfig_DeepCopy(t *testing.T) {
+	t.Run("copy empty config", func(t *testing.T) {
+		cfg := &Config{}
+
+		cfg_copy := cfg.DeepCopy()
+		if !reflect.DeepEqual(cfg, cfg_copy) {
+			t.Errorf("DeepCopy() = %v, want %v", cfg_copy, cfg)
+		}
+	})
+	t.Run("copy nil config", func(t *testing.T) {
+		var cfg *Config
+
+		cfg_copy := cfg.DeepCopy()
+		if !reflect.DeepEqual(cfg, cfg_copy) {
+			t.Errorf("DeepCopy() = %v, want %v", cfg_copy, cfg)
+		}
+	})
+	t.Run("copy defaults config", func(t *testing.T) {
+		cfg := WithDefaults()
+
+		cfg_copy := cfg.DeepCopy()
+		if !reflect.DeepEqual(cfg, cfg_copy) {
+			t.Errorf("DeepCopy() = %v, want %v", cfg_copy, cfg)
+		}
+	})
+	t.Run("copy config with all values", func(t *testing.T) {
+		cfg := &Config{
+			UserConfig:                UserConfig{}.WithDefaults(),
+			TLSConfig:                 &tls.Config{MinVersion: tls.VersionTLS12},
+			Authenticator:             "",
+			RunAsync:                  true,
+			PollInterval:              1 * time.Second,
+			ConnectTimeout:            60 * time.Second,
+			ClientTimeout:             900 * time.Second,
+			PingTimeout:               15 * time.Second,
+			CanUseMultipleCatalogs:    true,
+			DriverName:                "godatabrickssqlconnector", //important. Do not change
+			DriverVersion:             "0.9.0",
+			ThriftProtocol:            "binary",
+			ThriftTransport:           "http",
+			ThriftProtocolVersion:     cli_service.TProtocolVersion_SPARK_CLI_SERVICE_PROTOCOL_V6,
+			ThriftDebugClientProtocol: false,
+		}
+
+		cfg_copy := cfg.DeepCopy()
+		if !reflect.DeepEqual(cfg, cfg_copy) {
+			t.Errorf("DeepCopy() = %v, want %v", cfg_copy, cfg)
+		}
+	})
 }

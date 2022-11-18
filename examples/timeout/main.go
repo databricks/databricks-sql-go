@@ -9,11 +9,16 @@ import (
 	"time"
 
 	_ "github.com/databricks/databricks-sql-go"
+	"github.com/databricks/databricks-sql-go/driverctx"
+	dbsqllog "github.com/databricks/databricks-sql-go/logger"
 	"github.com/joho/godotenv"
 )
 
 func main() {
 	// Opening a driver typically will not attempt to connect to the database.
+	if err := dbsqllog.SetLogLevel("debug"); err != nil {
+		panic(err)
+	}
 	err := godotenv.Load()
 
 	if err != nil {
@@ -28,18 +33,14 @@ func main() {
 	}
 	defer db.Close()
 
-	ctx1, cancel1 := context.WithTimeout(context.Background(), 10*time.Second)
+	ogCtx := driverctx.NewContextWithCorrelationId(context.Background(), "context-timeout-example")
+	ctx1, cancel1 := context.WithTimeout(ogCtx, 10*time.Second)
 	defer cancel1()
 	var res int
-	err1 := db.QueryRowContext(ctx1, `SELECT id FROM RANGE(100000000) ORDER BY RANDOM() + 2 asc`).Scan(&res)
-	if err1 != nil {
-		if err1 == sql.ErrNoRows {
-			fmt.Println("not found")
-			return
-		} else {
-			fmt.Printf("err: %v\n", err1)
-		}
+	if err := db.QueryRowContext(ctx1, `SELECT id FROM RANGE(100000000) ORDER BY RANDOM() + 2 asc`).Scan(&res); err != nil {
+		fmt.Println(err)
+	} else {
+		fmt.Println(res)
 	}
-	fmt.Printf("result: %d\n", res)
 
 }

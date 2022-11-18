@@ -89,7 +89,7 @@ func (c *conn) IsValid() bool {
 // Statement ExecContext is the same as connection ExecContext
 func (c *conn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
 	log := logger.WithContext(c.id, driverctx.CorrelationIdFromContext(ctx), "")
-	defer log.Duration(logger.Track("ExecContext"))
+	msg, start := logger.Track("ExecContext")
 	ctx = driverctx.NewContextWithConnId(ctx, c.id)
 	if len(args) > 0 {
 		return nil, errors.New(ErrParametersNotSupported)
@@ -99,6 +99,7 @@ func (c *conn) ExecContext(ctx context.Context, query string, args []driver.Name
 	if exStmtResp != nil && exStmtResp.OperationHandle != nil {
 		log = logger.WithContext(c.id, driverctx.CorrelationIdFromContext(ctx), client.SprintGuid(exStmtResp.OperationHandle.OperationId.GUID))
 	}
+	defer log.Duration(msg, start)
 
 	if err != nil {
 		log.Err(err).Msgf("databricks: failed to execute query: query %s", query)
@@ -243,13 +244,15 @@ func logBadQueryState(log *logger.DBSQLLogger, opStatus *cli_service.TGetOperati
 }
 
 func (c *conn) executeStatement(ctx context.Context, query string, args []driver.NamedValue) (*cli_service.TExecuteStatementResp, error) {
+	corrId := driverctx.CorrelationIdFromContext(ctx)
+	log := logger.WithContext(c.id, corrId, "")
 	sentinel := sentinel.Sentinel{
 		OnDoneFn: func(statusResp any) (any, error) {
 			req := cli_service.TExecuteStatementReq{
 				SessionHandle: c.session.SessionHandle,
 				Statement:     query,
 				RunAsync:      c.cfg.RunAsync,
-				QueryTimeout:  int64(c.cfg.QueryTimeoutSeconds),
+				QueryTimeout:  int64(c.cfg.QueryTimeout / time.Second),
 				// this is specific for databricks. It shortcuts server roundtrips
 				GetDirectResults: &cli_service.TSparkGetDirectResults{
 					MaxRows: int64(c.cfg.MaxRows),
@@ -262,8 +265,12 @@ func (c *conn) executeStatement(ctx context.Context, query string, args []driver
 			resp, err := c.client.ExecuteStatement(ctx, &req)
 			return resp, wrapErr(err, "failed to execute statement")
 		},
+		OnCancelFn: func() (any, error) {
+			log.Warn().Msg("databricks: execute statement canceled while creation operation")
+			return nil, nil
+		},
 	}
-	_, res, err := sentinel.Watch(ctx, c.cfg.PollInterval, 0)
+	_, res, err := sentinel.Watch(ctx, c.cfg.PollInterval, c.cfg.QueryTimeout)
 	if err != nil {
 		return nil, err
 	}

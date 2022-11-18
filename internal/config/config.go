@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
+	"github.com/databricks/databricks-sql-go/logger"
 	"github.com/pkg/errors"
 )
 
@@ -21,7 +22,9 @@ type Config struct {
 
 	RunAsync                  bool // TODO
 	PollInterval              time.Duration
-	DefaultTimeout            time.Duration
+	ConnectTimeout            time.Duration // max time to open session
+	ClientTimeout             time.Duration // max time the http request can last
+	PingTimeout               time.Duration //max time allowed for ping
 	CanUseMultipleCatalogs    bool
 	DriverName                string
 	DriverVersion             string
@@ -46,60 +49,76 @@ func (c *Config) DeepCopy() *Config {
 	}
 
 	return &Config{
-		UserConfig:     c.UserConfig.DeepCopy(),
-		TLSConfig:      c.TLSConfig.Clone(),
-		Authenticator:  c.Authenticator,
-		RunAsync:       c.RunAsync,
-		PollInterval:   c.PollInterval,
-		DefaultTimeout: c.DefaultTimeout,
+		UserConfig:    c.UserConfig.DeepCopy(),
+		TLSConfig:     c.TLSConfig.Clone(),
+		Authenticator: c.Authenticator,
 
+		RunAsync:                  c.RunAsync,
+		PollInterval:              c.PollInterval,
+		ConnectTimeout:            c.ConnectTimeout,
+		ClientTimeout:             c.ClientTimeout,
+		PingTimeout:               c.PingTimeout,
 		CanUseMultipleCatalogs:    c.CanUseMultipleCatalogs,
+		DriverName:                c.DriverName,
+		DriverVersion:             c.DriverVersion,
 		ThriftProtocol:            c.ThriftProtocol,
 		ThriftTransport:           c.ThriftTransport,
 		ThriftProtocolVersion:     c.ThriftProtocolVersion,
 		ThriftDebugClientProtocol: c.ThriftDebugClientProtocol,
-		DriverName:                c.DriverName,
-		DriverVersion:             c.DriverVersion,
 	}
 }
 
 // UserConfig is the set of configurations exposed to users
 type UserConfig struct {
-	Protocol            string
-	Host                string // from databricks UI
-	Port                int    // from databricks UI
-	HTTPPath            string // from databricks UI
-	Catalog             string
-	Schema              string
-	AccessToken         string // from databricks UI
-	MaxRows             int    // TODO
-	QueryTimeoutSeconds int    // There are several timeouts that can be possibly configurable
-	UserAgentEntry      string
-	Location            *time.Location
-	SessionParams       map[string]string
+	Protocol       string
+	Host           string // from databricks UI
+	Port           int    // from databricks UI
+	HTTPPath       string // from databricks UI
+	Catalog        string
+	Schema         string
+	AccessToken    string        // from databricks UI
+	MaxRows        int           // max rows per page
+	QueryTimeout   time.Duration // Timeout passed to server for query processing
+	UserAgentEntry string
+	Location       *time.Location
+	SessionParams  map[string]string
 }
 
 func (ucfg UserConfig) DeepCopy() UserConfig {
-	sessionParams := make(map[string]string)
-	for k, v := range ucfg.SessionParams {
-		sessionParams[k] = v
+	var sessionParams map[string]string
+	if ucfg.SessionParams != nil {
+		sessionParams = make(map[string]string)
+		for k, v := range ucfg.SessionParams {
+			sessionParams[k] = v
+		}
 	}
+	var loccp *time.Location
+	if ucfg.Location != nil {
+		var err error
+		loccp, err = time.LoadLocation(ucfg.Location.String())
+		if err != nil {
+			logger.Warn().Msg("could not copy location")
+		}
+
+	}
+
 	return UserConfig{
-		Protocol:            ucfg.Protocol,
-		Host:                ucfg.Host,
-		Port:                ucfg.Port,
-		HTTPPath:            ucfg.HTTPPath,
-		Catalog:             ucfg.Catalog,
-		Schema:              ucfg.Schema,
-		AccessToken:         ucfg.AccessToken,
-		MaxRows:             ucfg.MaxRows,
-		QueryTimeoutSeconds: ucfg.QueryTimeoutSeconds,
-		UserAgentEntry:      ucfg.UserAgentEntry,
-		SessionParams:       sessionParams,
+		Protocol:       ucfg.Protocol,
+		Host:           ucfg.Host,
+		Port:           ucfg.Port,
+		HTTPPath:       ucfg.HTTPPath,
+		Catalog:        ucfg.Catalog,
+		Schema:         ucfg.Schema,
+		AccessToken:    ucfg.AccessToken,
+		MaxRows:        ucfg.MaxRows,
+		QueryTimeout:   ucfg.QueryTimeout,
+		UserAgentEntry: ucfg.UserAgentEntry,
+		Location:       loccp,
+		SessionParams:  sessionParams,
 	}
 }
 
-func (ucfg UserConfig) FillDefaults() UserConfig {
+func (ucfg UserConfig) WithDefaults() UserConfig {
 	if ucfg.MaxRows == 0 {
 		ucfg.MaxRows = 10000
 	}
@@ -112,17 +131,21 @@ func (ucfg UserConfig) FillDefaults() UserConfig {
 
 func WithDefaults() *Config {
 	return &Config{
-		UserConfig:             UserConfig{}.FillDefaults(),
-		RunAsync:               true,
-		CanUseMultipleCatalogs: true,
-		PollInterval:           1 * time.Second,
-		DefaultTimeout:         60 * time.Second,
-		ThriftProtocol:         "binary",
-		ThriftTransport:        "http",
-		ThriftProtocolVersion:  cli_service.TProtocolVersion_SPARK_CLI_SERVICE_PROTOCOL_V6,
-		DriverName:             "godatabrickssqlconnector", //important. Do not change
-		DriverVersion:          "0.9.0",
-		TLSConfig:              &tls.Config{MinVersion: tls.VersionTLS12},
+		UserConfig:                UserConfig{}.WithDefaults(),
+		TLSConfig:                 &tls.Config{MinVersion: tls.VersionTLS12},
+		Authenticator:             "",
+		RunAsync:                  true,
+		PollInterval:              1 * time.Second,
+		ConnectTimeout:            60 * time.Second,
+		ClientTimeout:             900 * time.Second,
+		PingTimeout:               15 * time.Second,
+		CanUseMultipleCatalogs:    true,
+		DriverName:                "godatabrickssqlconnector", //important. Do not change
+		DriverVersion:             "0.9.0",
+		ThriftProtocol:            "binary",
+		ThriftTransport:           "http",
+		ThriftProtocolVersion:     cli_service.TProtocolVersion_SPARK_CLI_SERVICE_PROTOCOL_V6,
+		ThriftDebugClientProtocol: false,
 	}
 
 }
@@ -136,7 +159,7 @@ func ParseDSN(dsn string) (UserConfig, error) {
 	if err != nil {
 		return UserConfig{}, errors.Wrap(err, "invalid DSN: invalid format")
 	}
-	ucfg := UserConfig{}
+	ucfg := UserConfig{}.WithDefaults()
 	ucfg.Protocol = parsedURL.Scheme
 	ucfg.Host = parsedURL.Hostname()
 	port, err := strconv.Atoi(parsedURL.Port())
@@ -165,30 +188,38 @@ func ParseDSN(dsn string) (UserConfig, error) {
 		if err != nil {
 			return UserConfig{}, errors.Wrap(err, "invalid DSN: maxRows param is not an integer")
 		}
-		ucfg.MaxRows = maxRows
+		// we should always have at least some page size
+		if maxRows != 0 {
+			ucfg.MaxRows = maxRows
+		}
 	}
 	params.Del("maxRows")
 
 	timeoutStr := params.Get("timeout")
 	if timeoutStr != "" {
-		timeout, err := strconv.Atoi(timeoutStr)
+		timeoutSeconds, err := strconv.Atoi(timeoutStr)
 		if err != nil {
 			return UserConfig{}, errors.Wrap(err, "invalid DSN: timeout param is not an integer")
 		}
-		ucfg.QueryTimeoutSeconds = timeout
+		ucfg.QueryTimeout = time.Duration(timeoutSeconds) * time.Second
 	}
 	params.Del("timeout")
 	if params.Has("catalog") {
 		ucfg.Catalog = params.Get("catalog")
 		params.Del("catalog")
 	}
+	if params.Has("userAgentEntry") {
+		ucfg.UserAgentEntry = params.Get("userAgentEntry")
+		params.Del("userAgentEntry")
+	}
 	if params.Has("schema") {
 		ucfg.Schema = params.Get("schema")
 		params.Del("schema")
 	}
-	if params.Has("timezone") {
-		tz := params.Get("timezone")
-		ucfg.Location, err = time.LoadLocation(tz)
+	for k := range params {
+		if strings.ToLower(k) == "timezone" {
+			ucfg.Location, err = time.LoadLocation(params.Get("timezone"))
+		}
 	}
 	if len(params) > 0 {
 		sessionParams := make(map[string]string)
@@ -196,7 +227,6 @@ func ParseDSN(dsn string) (UserConfig, error) {
 			sessionParams[k] = params.Get(k)
 		}
 		ucfg.SessionParams = sessionParams
-
 	}
 
 	return ucfg, err

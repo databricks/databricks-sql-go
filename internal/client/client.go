@@ -3,8 +3,10 @@ package client
 import (
 	"compress/zlib"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 
 	"github.com/apache/thrift/lib/go/thrift"
 	"github.com/databricks/databricks-sql-go/driverctx"
@@ -13,6 +15,10 @@ import (
 	"github.com/databricks/databricks-sql-go/logger"
 	"github.com/pkg/errors"
 )
+
+// this is used to generate test data. Developer should change this manually
+var RecordResults bool
+var resultIndex int
 
 type ThriftServiceClient struct {
 	*cli_service.TCLIServiceClient
@@ -27,6 +33,11 @@ func (tsc *ThriftServiceClient) OpenSession(ctx context.Context, req *cli_servic
 	}
 	log := logger.WithContext(SprintGuid(resp.SessionHandle.SessionId.GUID), driverctx.CorrelationIdFromContext(ctx), "")
 	defer log.Duration(msg, start)
+	if RecordResults {
+		j, _ := json.MarshalIndent(resp, "", " ")
+		_ = os.WriteFile(fmt.Sprintf("OpenSession%d.json", resultIndex), j, 0600)
+		resultIndex++
+	}
 	return resp, CheckStatus(resp)
 }
 
@@ -36,6 +47,11 @@ func (tsc *ThriftServiceClient) CloseSession(ctx context.Context, req *cli_servi
 	resp, err := tsc.TCLIServiceClient.CloseSession(ctx, req)
 	if err != nil {
 		return resp, errors.Wrap(err, "close session request error")
+	}
+	if RecordResults {
+		j, _ := json.MarshalIndent(resp, "", " ")
+		_ = os.WriteFile(fmt.Sprintf("CloseSession%d.json", resultIndex), j, 0600)
+		resultIndex++
 	}
 	return resp, CheckStatus(resp)
 }
@@ -47,6 +63,11 @@ func (tsc *ThriftServiceClient) FetchResults(ctx context.Context, req *cli_servi
 	if err != nil {
 		return resp, errors.Wrap(err, "fetch results request error")
 	}
+	if RecordResults {
+		j, _ := json.MarshalIndent(resp, "", " ")
+		_ = os.WriteFile(fmt.Sprintf("FetchResults%d.json", resultIndex), j, 0600)
+		resultIndex++
+	}
 	return resp, CheckStatus(resp)
 }
 
@@ -57,6 +78,11 @@ func (tsc *ThriftServiceClient) GetResultSetMetadata(ctx context.Context, req *c
 	if err != nil {
 		return resp, errors.Wrap(err, "get result set metadata request error")
 	}
+	if RecordResults {
+		j, _ := json.MarshalIndent(resp, "", " ")
+		_ = os.WriteFile(fmt.Sprintf("ExecuteStatement%d.json", resultIndex), j, 0600)
+		resultIndex++
+	}
 	return resp, CheckStatus(resp)
 }
 
@@ -65,6 +91,14 @@ func (tsc *ThriftServiceClient) ExecuteStatement(ctx context.Context, req *cli_s
 	resp, err := tsc.TCLIServiceClient.ExecuteStatement(ctx, req)
 	if err != nil {
 		return resp, errors.Wrap(err, "execute statement request error")
+	}
+	if RecordResults {
+		j, _ := json.MarshalIndent(resp, "", " ")
+		_ = os.WriteFile(fmt.Sprintf("ExecuteStatement%d.json", resultIndex), j, 0600)
+		// f, _ := os.ReadFile(fmt.Sprintf("ExecuteStatement%d.json", resultIndex))
+		// var resp2 cli_service.TExecuteStatementResp
+		// json.Unmarshal(f, &resp2)
+		resultIndex++
 	}
 	if resp != nil && resp.OperationHandle != nil {
 		log := logger.WithContext(driverctx.ConnIdFromContext(ctx), driverctx.CorrelationIdFromContext(ctx), SprintGuid(resp.OperationHandle.OperationId.GUID))
@@ -80,6 +114,11 @@ func (tsc *ThriftServiceClient) GetOperationStatus(ctx context.Context, req *cli
 	if err != nil {
 		return resp, errors.Wrap(err, "get operation status request error")
 	}
+	if RecordResults {
+		j, _ := json.MarshalIndent(resp, "", " ")
+		_ = os.WriteFile(fmt.Sprintf("GetOperationStatus%d.json", resultIndex), j, 0600)
+		resultIndex++
+	}
 	return resp, CheckStatus(resp)
 }
 
@@ -90,6 +129,11 @@ func (tsc *ThriftServiceClient) CloseOperation(ctx context.Context, req *cli_ser
 	if err != nil {
 		return resp, errors.Wrap(err, "close operation request error")
 	}
+	if RecordResults {
+		j, _ := json.MarshalIndent(resp, "", " ")
+		_ = os.WriteFile(fmt.Sprintf("CloseOperation%d.json", resultIndex), j, 0600)
+		resultIndex++
+	}
 	return resp, CheckStatus(resp)
 }
 
@@ -99,6 +143,11 @@ func (tsc *ThriftServiceClient) CancelOperation(ctx context.Context, req *cli_se
 	resp, err := tsc.TCLIServiceClient.CancelOperation(ctx, req)
 	if err != nil {
 		return resp, errors.Wrap(err, "cancel operation request error")
+	}
+	if RecordResults {
+		j, _ := json.MarshalIndent(resp, "", " ")
+		_ = os.WriteFile(fmt.Sprintf("CancelOperation%d.json", resultIndex), j, 0600)
+		resultIndex++
 	}
 	return resp, CheckStatus(resp)
 }
@@ -160,7 +209,7 @@ func InitThriftClient(cfg *config.Config) (*ThriftServiceClient, error) {
 		}
 		httpclient := &http.Client{
 			Transport: tr,
-			// Timeout:   time.Duration(cfg.TimeoutSeconds * int(time.Second)), // Needed?
+			Timeout:   cfg.ClientTimeout,
 		}
 		tTrans, err = thrift.NewTHttpClientWithOptions(endpoint, thrift.THttpClientOptions{Client: httpclient})
 		httpTransport := tTrans.(*thrift.THttpClient)

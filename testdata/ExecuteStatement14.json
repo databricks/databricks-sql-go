@@ -1,0 +1,25 @@
+{
+ "status": {
+  "statusCode": "SUCCESS_STATUS"
+ },
+ "operationHandle": {
+  "operationId": {
+   "guid": "Ae1mx7DHFFCQrdbZihIgMg==",
+   "secret": "M41SnYJyRuuEgstBlGaDnQ=="
+  },
+  "operationType": "EXECUTE_STATEMENT",
+  "hasResultSet": true
+ },
+ "directResults": {
+  "operationStatus": {
+   "status": {
+    "statusCode": "SUCCESS_STATUS"
+   },
+   "operationState": "RUNNING_STATE"
+  }
+ },
+ "executionRejected": false,
+ "maxClusterCapacity": 10,
+ "currentClusterLoad": 1,
+ "idempotencyType": "UNKNOWN"
+}

@@ -1,0 +1,77 @@
+{
+ "status": {
+  "statusCode": "SUCCESS_STATUS"
+ },
+ "operationHandle": {
+  "operationId": {
+   "guid": "Ae1mneXMHTWYV6dKhNkbCQ==",
+   "secret": "M41SnYJyRuuEgstBlGaDnQ=="
+  },
+  "operationType": "EXECUTE_STATEMENT",
+  "hasResultSet": true
+ },
+ "directResults": {
+  "operationStatus": {
+   "status": {
+    "statusCode": "SUCCESS_STATUS"
+   },
+   "operationState": "FINISHED_STATE"
+  },
+  "resultSetMetadata": {
+   "status": {
+    "statusCode": "SUCCESS_STATUS"
+   },
+   "schema": {
+    "columns": [
+     {
+      "columnName": "1",
+      "typeDesc": {
+       "types": [
+        {
+         "primitiveEntry": {
+          "type": "INT_TYPE"
+         }
+        }
+       ]
+      },
+      "position": 1,
+      "comment": ""
+     }
+    ]
+   },
+   "resultFormat": "COLUMN_BASED_SET",
+   "cacheLookupResult": "CACHE_INELIGIBLE",
+   "uncompressedBytes": 63,
+   "compressedBytes": 63
+  },
+  "resultSet": {
+   "status": {
+    "statusCode": "SUCCESS_STATUS"
+   },
+   "hasMoreRows": false,
+   "results": {
+    "startRowOffset": 0,
+    "rows": [],
+    "columns": [
+     {
+      "i32Val": {
+       "values": [
+        1
+       ],
+       "nulls": "AA=="
+      }
+     }
+    ]
+   }
+  },
+  "closeOperation": {
+   "status": {
+    "statusCode": "SUCCESS_STATUS"
+   }
+  }
+ },
+ "executionRejected": false,
+ "maxClusterCapacity": 10,
+ "currentClusterLoad": 1,
+ "idempotencyType": "UNKNOWN"
+}
