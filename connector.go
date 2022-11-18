@@ -88,6 +88,8 @@ var _ driver.Connector = (*connector)(nil)
 
 type connOption func(*config.Config)
 
+// NewConnector creates a connection that can be used with sql.OpenDB().
+// This is an easier way to set up the DB instead of having to construct a DSN string.
 func NewConnector(options ...connOption) (driver.Connector, error) {
 	// config with default options
 	cfg := config.WithDefaults()
@@ -100,6 +102,7 @@ func NewConnector(options ...connOption) (driver.Connector, error) {
 	return &connector{cfg}, nil
 }
 
+// WithServerHostname sets up the server hostname. Mandatory.
 func WithServerHostname(host string) connOption {
 	return func(c *config.Config) {
 		if host == "localhost" {
@@ -109,24 +112,28 @@ func WithServerHostname(host string) connOption {
 	}
 }
 
+// WithPort sets up the server port. Mandatory.
 func WithPort(port int) connOption {
 	return func(c *config.Config) {
 		c.Port = port
 	}
 }
 
+// WithAccessToken sets up the Personal Access Token. Mandatory for now.
 func WithAccessToken(token string) connOption {
 	return func(c *config.Config) {
 		c.AccessToken = token
 	}
 }
 
+// WithHTTPPath sets up the endpoint to the warehouse. Mandatory.
 func WithHTTPPath(path string) connOption {
 	return func(c *config.Config) {
 		c.HTTPPath = path
 	}
 }
 
+// WithMaxRows sets up the max rows fetched per request. Default is 10000
 func WithMaxRows(n int) connOption {
 	return func(c *config.Config) {
 		if n != 0 {
@@ -135,14 +142,15 @@ func WithMaxRows(n int) connOption {
 	}
 }
 
-// This will add a timeout for the server execution.
-// Use time.Duration.
+// WithTimeout adds timeout for the server query execution. Default is no timeout.
 func WithTimeout(n time.Duration) connOption {
 	return func(c *config.Config) {
 		c.QueryTimeout = n
 	}
 }
 
+// Sets the initial catalog name and schema name in the session.
+// Use <select * from foo> instead of <select * from catalog.schema.foo>
 func WithInitialNamespace(catalog, schema string) connOption {
 	return func(c *config.Config) {
 		c.Catalog = catalog
@@ -150,14 +158,14 @@ func WithInitialNamespace(catalog, schema string) connOption {
 	}
 }
 
+// Used to identify partners. Set as a string with format <isv-name+product-name>.
 func WithUserAgentEntry(entry string) connOption {
 	return func(c *config.Config) {
 		c.UserAgentEntry = entry
 	}
-
 }
 
-// Sessions params will be set upon opening the session
+// Sessions params will be set upon opening the session by calling SET function.
 // If using connection pool, session params can avoid successive calls of "SET ..."
 func WithSessionParams(params map[string]string) connOption {
 	return func(c *config.Config) {

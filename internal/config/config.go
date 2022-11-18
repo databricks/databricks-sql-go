@@ -208,6 +208,10 @@ func ParseDSN(dsn string) (UserConfig, error) {
 		ucfg.Catalog = params.Get("catalog")
 		params.Del("catalog")
 	}
+	if params.Has("userAgentEntry") {
+		ucfg.UserAgentEntry = params.Get("userAgentEntry")
+		params.Del("userAgentEntry")
+	}
 	if params.Has("schema") {
 		ucfg.Schema = params.Get("schema")
 		params.Del("schema")

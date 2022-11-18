@@ -9,6 +9,7 @@ import (
 	"time"
 
 	_ "github.com/databricks/databricks-sql-go"
+	"github.com/databricks/databricks-sql-go/driverctx"
 	dbsqllog "github.com/databricks/databricks-sql-go/logger"
 	"github.com/joho/godotenv"
 )
@@ -32,7 +33,8 @@ func main() {
 	}
 	defer db.Close()
 
-	ctx1, cancel1 := context.WithTimeout(context.Background(), 10*time.Second)
+	ogCtx := driverctx.NewContextWithCorrelationId(context.Background(), "context-timeout-example")
+	ctx1, cancel1 := context.WithTimeout(ogCtx, 10*time.Second)
 	defer cancel1()
 	var res int
 	if err := db.QueryRowContext(ctx1, `SELECT id FROM RANGE(100000000) ORDER BY RANDOM() + 2 asc`).Scan(&res); err != nil {
