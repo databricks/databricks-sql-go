@@ -244,6 +244,8 @@ func logBadQueryState(log *logger.DBSQLLogger, opStatus *cli_service.TGetOperati
 }
 
 func (c *conn) executeStatement(ctx context.Context, query string, args []driver.NamedValue) (*cli_service.TExecuteStatementResp, error) {
+	corrId := driverctx.CorrelationIdFromContext(ctx)
+	log := logger.WithContext(c.id, corrId, "")
 	sentinel := sentinel.Sentinel{
 		OnDoneFn: func(statusResp any) (any, error) {
 			req := cli_service.TExecuteStatementReq{
@@ -262,6 +264,10 @@ func (c *conn) executeStatement(ctx context.Context, query string, args []driver
 			ctx = driverctx.NewContextWithConnId(ctx, c.id)
 			resp, err := c.client.ExecuteStatement(ctx, &req)
 			return resp, wrapErr(err, "failed to execute statement")
+		},
+		OnCancelFn: func() (any, error) {
+			log.Warn().Msg("databricks: execute statement canceled while creation operation")
+			return nil, nil
 		},
 	}
 	_, res, err := sentinel.Watch(ctx, c.cfg.PollInterval, c.cfg.QueryTimeout)

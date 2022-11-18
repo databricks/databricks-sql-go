@@ -51,7 +51,7 @@ type Sentinel struct {
 
 // Wait takes care of checking the status of something on a given interval, up to a timeout.
 // The StatusFn check will continue until given Done function returns true or statusFn returns an error.
-// Context cancelation is supported and in that case it will return WaitCanceled status.
+// Context cancellation is supported and in that case it will return WaitCanceled status.
 func (s Sentinel) Watch(ctx context.Context, interval, timeout time.Duration) (WatchStatus, any, error) {
 	if s.StatusFn == nil {
 		s.StatusFn = func() (Done, any, error) { return func() bool { return true }, nil, nil }

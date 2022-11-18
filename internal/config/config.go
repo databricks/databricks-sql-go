@@ -78,7 +78,7 @@ type UserConfig struct {
 	Schema         string
 	AccessToken    string        // from databricks UI
 	MaxRows        int           // max rows per page
-	QueryTimeout   time.Duration // There are several timeouts that can be possibly configurable
+	QueryTimeout   time.Duration // Timeout passed to server for query processing
 	UserAgentEntry string
 	Location       *time.Location
 	SessionParams  map[string]string
