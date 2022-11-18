@@ -4,7 +4,7 @@
  },
  "operationHandle": {
   "operationId": {
-   "guid": "Ae1mnexEFnyDpONNLN4q/g==",
+   "guid": "Ae1mx76JH7KiWE8ogp37Dg==",
    "secret": "M41SnYJyRuuEgstBlGaDnQ=="
   },
   "operationType": "EXECUTE_STATEMENT",
@@ -24,25 +24,53 @@
    "schema": {
     "columns": [
      {
-      "columnName": "Result",
+      "columnName": "array_col",
       "typeDesc": {
        "types": [
         {
          "primitiveEntry": {
-          "type": "STRING_TYPE"
+          "type": "ARRAY_TYPE"
          }
         }
        ]
       },
       "position": 1,
       "comment": ""
+     },
+     {
+      "columnName": "map_col",
+      "typeDesc": {
+       "types": [
+        {
+         "primitiveEntry": {
+          "type": "MAP_TYPE"
+         }
+        }
+       ]
+      },
+      "position": 2,
+      "comment": ""
+     },
+     {
+      "columnName": "struct_col",
+      "typeDesc": {
+       "types": [
+        {
+         "primitiveEntry": {
+          "type": "STRUCT_TYPE"
+         }
+        }
+       ]
+      },
+      "position": 3,
+      "comment": ""
      }
     ]
    },
    "resultFormat": "COLUMN_BASED_SET",
-   "cacheLookupResult": "CACHE_INELIGIBLE",
-   "uncompressedBytes": 0,
-   "compressedBytes": 0
+   "cacheLookupResult": "CACHE_MISS",
+   "uncompressedBytes": 162,
+   "compressedBytes": 162
   },
   "resultSet": {
    "status": {
@@ -55,7 +83,25 @@
     "columns": [
      {
       "stringVal": {
-       "values": [],
+       "values": [
+        "[1,2,3]"
+       ],
+       "nulls": "AA=="
+      }
+     },
+     {
+      "stringVal": {
+       "values": [
+        "{\"key1\":1}"
+       ],
+       "nulls": "AA=="
+      }
+     },
+     {
+      "stringVal": {
+       "values": [
+        "{\"string_field\":\"string_val\",\"array_field\":[4,5,6]}"
+       ],
        "nulls": "AA=="
       }
      }

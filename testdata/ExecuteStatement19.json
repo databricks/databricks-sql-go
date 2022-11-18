@@ -4,7 +4,7 @@
  },
  "operationHandle": {
   "operationId": {
-   "guid": "Ae1mne07GXe2BJQdcp1tdw==",
+   "guid": "Ae1mx7sjGLyxUqfZoezseQ==",
    "secret": "M41SnYJyRuuEgstBlGaDnQ=="
   },
   "operationType": "EXECUTE_STATEMENT",
@@ -15,7 +15,8 @@
    "status": {
     "statusCode": "SUCCESS_STATUS"
    },
-   "operationState": "FINISHED_STATE"
+   "operationState": "FINISHED_STATE",
+   "numModifiedRows": 1
   },
   "resultSetMetadata": {
    "status": {
@@ -24,7 +25,7 @@
    "schema": {
     "columns": [
      {
-      "columnName": "count(1)",
+      "columnName": "num_affected_rows",
       "typeDesc": {
        "types": [
         {
@@ -36,13 +37,27 @@
       },
       "position": 1,
       "comment": ""
+     },
+     {
+      "columnName": "num_inserted_rows",
+      "typeDesc": {
+       "types": [
+        {
+         "primitiveEntry": {
+          "type": "BIGINT_TYPE"
+         }
+        }
+       ]
+      },
+      "position": 2,
+      "comment": ""
      }
     ]
    },
    "resultFormat": "COLUMN_BASED_SET",
-   "cacheLookupResult": "LOCAL_CACHE_HIT",
-   "uncompressedBytes": 16,
-   "compressedBytes": 16
+   "cacheLookupResult": "CACHE_INELIGIBLE",
+   "uncompressedBytes": 24,
+   "compressedBytes": 24
   },
   "resultSet": {
    "status": {
@@ -53,6 +68,14 @@
     "startRowOffset": 0,
     "rows": [],
     "columns": [
+     {
+      "i64Val": {
+       "values": [
+        1
+       ],
+       "nulls": "AA=="
+      }
+     },
      {
       "i64Val": {
        "values": [

@@ -95,9 +95,9 @@ func (tsc *ThriftServiceClient) ExecuteStatement(ctx context.Context, req *cli_s
 	if RecordResults {
 		j, _ := json.MarshalIndent(resp, "", " ")
 		_ = os.WriteFile(fmt.Sprintf("ExecuteStatement%d.json", resultIndex), j, 0600)
-		f, _ := os.ReadFile(fmt.Sprintf("ExecuteStatement%d.json", resultIndex))
-		var resp2 cli_service.TExecuteStatementResp
-		json.Unmarshal(f, &resp2)
+		// f, _ := os.ReadFile(fmt.Sprintf("ExecuteStatement%d.json", resultIndex))
+		// var resp2 cli_service.TExecuteStatementResp
+		// json.Unmarshal(f, &resp2)
 		resultIndex++
 	}
 	if resp != nil && resp.OperationHandle != nil {

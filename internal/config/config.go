@@ -77,7 +77,7 @@ type UserConfig struct {
 	Catalog        string
 	Schema         string
 	AccessToken    string        // from databricks UI
-	MaxRows        int           // TODO
+	MaxRows        int           // max rows per page
 	QueryTimeout   time.Duration // There are several timeouts that can be possibly configurable
 	UserAgentEntry string
 	Location       *time.Location
@@ -118,7 +118,7 @@ func (ucfg UserConfig) DeepCopy() UserConfig {
 	}
 }
 
-func (ucfg UserConfig) FillDefaults() UserConfig {
+func (ucfg UserConfig) WithDefaults() UserConfig {
 	if ucfg.MaxRows == 0 {
 		ucfg.MaxRows = 10000
 	}
@@ -131,7 +131,7 @@ func (ucfg UserConfig) FillDefaults() UserConfig {
 
 func WithDefaults() *Config {
 	return &Config{
-		UserConfig:                UserConfig{}.FillDefaults(),
+		UserConfig:                UserConfig{}.WithDefaults(),
 		TLSConfig:                 &tls.Config{MinVersion: tls.VersionTLS12},
 		Authenticator:             "",
 		RunAsync:                  true,
@@ -159,7 +159,7 @@ func ParseDSN(dsn string) (UserConfig, error) {
 	if err != nil {
 		return UserConfig{}, errors.Wrap(err, "invalid DSN: invalid format")
 	}
-	ucfg := UserConfig{}
+	ucfg := UserConfig{}.WithDefaults()
 	ucfg.Protocol = parsedURL.Scheme
 	ucfg.Host = parsedURL.Hostname()
 	port, err := strconv.Atoi(parsedURL.Port())
@@ -188,7 +188,10 @@ func ParseDSN(dsn string) (UserConfig, error) {
 		if err != nil {
 			return UserConfig{}, errors.Wrap(err, "invalid DSN: maxRows param is not an integer")
 		}
-		ucfg.MaxRows = maxRows
+		// we should always have at least some page size
+		if maxRows != 0 {
+			ucfg.MaxRows = maxRows
+		}
 	}
 	params.Del("maxRows")
 
