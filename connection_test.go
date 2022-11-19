@@ -1087,6 +1087,90 @@ func TestConn_ResetSession(t *testing.T) {
 	})
 }
 
+func TestConn_Close(t *testing.T) {
+	t.Run("Close will call CloseSession", func(t *testing.T) {
+		var closeSessionCount int
+
+		closeSession := func(ctx context.Context, req *cli_service.TCloseSessionReq) (r *cli_service.TCloseSessionResp, err error) {
+			closeSessionCount++
+			closeSessionResp := &cli_service.TCloseSessionResp{
+				Status: &cli_service.TStatus{
+					StatusCode: cli_service.TStatusCode_SUCCESS_STATUS,
+				},
+			}
+			return closeSessionResp, nil
+		}
+
+		testClient := &client.TestClient{
+			FnCloseSession: closeSession,
+		}
+		testConn := &conn{
+			session: getTestSession(),
+			client:  testClient,
+			cfg:     config.WithDefaults(),
+		}
+		err := testConn.Close()
+
+		assert.NoError(t, err)
+		assert.Equal(t, 1, closeSessionCount)
+	})
+
+	t.Run("Close will err when CloseSession fails", func(t *testing.T) {
+		var closeSessionCount int
+
+		closeSession := func(ctx context.Context, req *cli_service.TCloseSessionReq) (r *cli_service.TCloseSessionResp, err error) {
+			closeSessionCount++
+			closeSessionResp := &cli_service.TCloseSessionResp{
+				Status: &cli_service.TStatus{
+					StatusCode: cli_service.TStatusCode_ERROR_STATUS,
+				},
+			}
+			return closeSessionResp, fmt.Errorf("error")
+		}
+
+		testClient := &client.TestClient{
+			FnCloseSession: closeSession,
+		}
+		testConn := &conn{
+			session: getTestSession(),
+			client:  testClient,
+			cfg:     config.WithDefaults(),
+		}
+		err := testConn.Close()
+
+		assert.Error(t, err)
+		assert.Equal(t, 1, closeSessionCount)
+	})
+}
+
+func TestConn_Prepare(t *testing.T) {
+	t.Run("Prepare returns stmt struct", func(t *testing.T) {
+		testClient := &client.TestClient{}
+		testConn := &conn{
+			session: getTestSession(),
+			client:  testClient,
+			cfg:     config.WithDefaults(),
+		}
+		stmt, err := testConn.Prepare("query string")
+		assert.NoError(t, err)
+		assert.NotNil(t, stmt)
+	})
+}
+
+func TestConn_PrepareContext(t *testing.T) {
+	t.Run("PrepareContext returns stmt struct", func(t *testing.T) {
+		testClient := &client.TestClient{}
+		testConn := &conn{
+			session: getTestSession(),
+			client:  testClient,
+			cfg:     config.WithDefaults(),
+		}
+		stmt, err := testConn.PrepareContext(context.Background(), "query string")
+		assert.NoError(t, err)
+		assert.NotNil(t, stmt)
+	})
+}
+
 func getTestSession() *cli_service.TOpenSessionResp {
 	return &cli_service.TOpenSessionResp{SessionHandle: &cli_service.TSessionHandle{
 		SessionId: &cli_service.THandleIdentifier{

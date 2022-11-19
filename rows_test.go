@@ -481,6 +481,7 @@ func TestColumnsWithDirectResults(t *testing.T) {
 	var getMetadataCount, fetchResultsCount int
 
 	rowSet := &rows{}
+	defer rowSet.Close()
 	client := getRowsTestSimpleClient(&getMetadataCount, &fetchResultsCount)
 
 	req := &cli_service.TFetchResultsReq{
@@ -755,6 +756,47 @@ func TestColumnTypeLength(t *testing.T) {
 			assert.False(t, ok)
 		}
 	}
+}
+
+func TestColumnTypeDatabaseTypeName(t *testing.T) {
+	var getMetadataCount, fetchResultsCount int
+
+	rowSet := &rows{}
+	client := getRowsTestSimpleClient(&getMetadataCount, &fetchResultsCount)
+	rowSet.client = client
+
+	resp, err := rowSet.getResultMetadata()
+	assert.Nil(t, err)
+
+	cols := resp.Schema.Columns
+	expectedScanTypes := []reflect.Type{
+		scanTypeBoolean,
+		scanTypeInt8,
+		scanTypeInt16,
+		scanTypeInt32,
+		scanTypeInt64,
+		scanTypeFloat32,
+		scanTypeFloat64,
+		scanTypeString,
+		scanTypeDateTime,
+		scanTypeRawBytes,
+		scanTypeRawBytes,
+		scanTypeRawBytes,
+		scanTypeRawBytes,
+		scanTypeRawBytes,
+		scanTypeDateTime,
+		scanTypeString,
+		scanTypeString,
+	}
+
+	assert.Equal(t, len(expectedScanTypes), len(cols))
+
+	scanTypes := make([]reflect.Type, len(cols))
+	for i := range cols {
+		scanTypes[i] = rowSet.ColumnTypeScanType(i)
+	}
+
+	assert.Equal(t, expectedScanTypes, scanTypes)
 }
 
 type rowTestPagingResult struct {
