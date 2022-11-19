@@ -2,6 +2,19 @@
 
 ## 0.1.x (Unreleased)
 
+## 0.2.0 (2022-11-18)
+
+- Support for DirectResults
+- Support for context cancellation and timeout
+- Session parameters (e.g.: timezone)
+- Thrift Protocol update
+- Several logging improvements
+- Added better examples. See [workflow](https://github.com/databricks/databricks-sql-go/blob/main/examples/workflow/main.go)
+- Added dbsql.NewConnector() function to help initialize DB
+- Many other small improvements and bug fixes
+- Removed support for client-side query parameterization
+- Removed need to start DSN with "databricks://"
+
 ## 0.1.4 (2022-07-30)
 
 - Fix: Could not fetch rowsets greater than the value of `maxRows` (#18)
