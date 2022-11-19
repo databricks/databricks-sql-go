@@ -119,7 +119,7 @@ func (ucfg UserConfig) DeepCopy() UserConfig {
 }
 
 func (ucfg UserConfig) WithDefaults() UserConfig {
-	if ucfg.MaxRows == 0 {
+	if ucfg.MaxRows <= 0 {
 		ucfg.MaxRows = 10000
 	}
 	if ucfg.Protocol == "" {
