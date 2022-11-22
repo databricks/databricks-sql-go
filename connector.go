@@ -182,10 +182,3 @@ func WithSessionParams(params map[string]string) connOption {
 		c.SessionParams = params
 	}
 }
-
-// WithRunAsync
-func withRunAsync() connOption {
-	return func(c *config.Config) {
-		c.RunAsync = true
-	}
-}

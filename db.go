@@ -11,9 +11,9 @@ import (
 
 type DatabricksDB interface {
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, Execution, error)
-	CancelExecution(ctx context.Context, exec Execution) error
-	GetExecutionRows(ctx context.Context, exec Execution) (*sql.Rows, error)
-	CheckExecution(ctx context.Context, exec Execution) (Execution, error)
+	CancelExecution(ctx context.Context, exc Execution) error
+	GetExecutionRows(ctx context.Context, exc Execution) (*sql.Rows, error)
+	CheckExecution(ctx context.Context, exc Execution) (Execution, error)
 	Close() error
 }
 
@@ -29,10 +29,10 @@ func OpenDB(c driver.Connector) DatabricksDB {
 }
 
 func (db *databricksDB) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, Execution, error) {
-	exec := Execution{}
-	ctx2 := newContextWithExec(ctx, &exec)
+	exc := Execution{}
+	ctx2 := newContextWithExecution(ctx, &exc)
 	ret, err := db.sqldb.QueryContext(ctx2, query, args...)
-	return ret, exec, err
+	return ret, exc, err
 }
 
 func (db *databricksDB) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, string, error) {
@@ -44,7 +44,7 @@ func (db *databricksDB) Close() error {
 	return db.sqldb.Close()
 }
 
-func (db *databricksDB) CancelExecution(ctx context.Context, exec Execution) error {
+func (db *databricksDB) CancelExecution(ctx context.Context, exc Execution) error {
 	con, err := db.sqldb.Conn(ctx)
 	if err != nil {
 		return err
@@ -54,50 +54,72 @@ func (db *databricksDB) CancelExecution(ctx context.Context, exec Execution) err
 		if !ok {
 			return errors.New("invalid connection type")
 		}
-		return dbsqlcon.cancelOperation(ctx, exec)
+		return dbsqlcon.cancelOperation(ctx, exc)
 	})
 }
 
-func (db *databricksDB) CheckExecution(ctx context.Context, exec Execution) (Execution, error) {
+func (db *databricksDB) CheckExecution(ctx context.Context, exc Execution) (Execution, error) {
 	con, err := db.sqldb.Conn(ctx)
 	if err != nil {
-		return exec, err
+		return exc, err
 	}
-	exRet := exec
+	exRet := exc
 	err = con.Raw(func(driverConn any) error {
 		dbsqlcon, ok := driverConn.(*Conn)
 		if !ok {
 			return errors.New("invalid connection type")
 		}
-		exRet, err = dbsqlcon.getOperationStatus(ctx, exec)
+		exRet, err = dbsqlcon.getOperationStatus(ctx, exc)
 		return err
 	})
 	return exRet, err
 }
 
-func (db *databricksDB) GetExecutionRows(ctx context.Context, exec Execution) (*sql.Rows, error) {
-	return db.sqldb.QueryContext(ctx, "", exec)
+func (db *databricksDB) GetExecutionRows(ctx context.Context, exc Execution) (*sql.Rows, error) {
+	return db.sqldb.QueryContext(ctx, "", exc)
 }
 
-func (db *databricksDB) GetExecutionResult(ctx context.Context, exec Execution) (sql.Result, error) {
-	return db.sqldb.ExecContext(ctx, "", exec)
+func (db *databricksDB) GetExecutionResult(ctx context.Context, exc Execution) (sql.Result, error) {
+	return db.sqldb.ExecContext(ctx, "", exc)
 }
 
 type Execution struct {
-	Status       string
+	Status       ExecutionStatus
 	Id           string
 	Secret       []byte
 	HasResultSet bool
 }
 
-func newContextWithExec(ctx context.Context, exec *Execution) context.Context {
-	return context.WithValue(ctx, driverctx.ExecutionContextKey, exec)
+type ExecutionStatus string
+
+const (
+	// live state Initialized
+	ExecutionInitialized ExecutionStatus = "Initialized"
+	// live state Running
+	ExecutionRunning ExecutionStatus = "Running"
+	// terminal state Finished
+	ExecutionFinished ExecutionStatus = "Finished"
+	// terminal state Canceled
+	ExecutionCanceled ExecutionStatus = "Canceled"
+	// terminal state Closed
+	ExecutionClosed ExecutionStatus = "Closed"
+	// terminal state Error
+	ExecutionError   ExecutionStatus = "Error"
+	ExecutionUnknown ExecutionStatus = "Unknown"
+	// live state Pending
+	ExecutionPending ExecutionStatus = "Pending"
+	// terminal state TimedOut
+	ExecutionTimedOut ExecutionStatus = "TimedOut"
+)
+
+func newContextWithExecution(ctx context.Context, exc *Execution) context.Context {
+	return context.WithValue(ctx, driverctx.ExecutionContextKey, exc)
 }
 
-func execFromContext(ctx context.Context) *Execution {
-	execId, ok := ctx.Value(driverctx.ExecutionContextKey).(*Execution)
+func excFromContext(ctx context.Context) *Execution {
+	excId, ok := ctx.Value(driverctx.ExecutionContextKey).(*Execution)
 	if !ok {
 		return nil
 	}
-	return execId
+	return excId
 }

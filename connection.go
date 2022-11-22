@@ -15,11 +15,11 @@ import (
 )
 
 type Conn struct {
-	id        string
-	cfg       *config.Config
-	client    cli_service.TCLIService
-	session   *cli_service.TOpenSessionResp
-	execution *Execution
+	id      string
+	cfg     *config.Config
+	client  cli_service.TCLIService
+	session *cli_service.TOpenSessionResp
+	exc     *Execution
 }
 
 // The driver does not really implement prepared statements.
@@ -76,7 +76,7 @@ func (c *Conn) Ping(ctx context.Context) error {
 // Implementation of SessionResetter
 func (c *Conn) ResetSession(ctx context.Context) error {
 	// For now our session does not have any important state to reset before re-use
-	c.execution = nil
+	c.exc = nil
 	return nil
 }
 
@@ -126,15 +126,8 @@ func (c *Conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 	if len(args) > 0 {
 		return nil, errors.New(ErrParametersNotSupported)
 	}
-	if query == "" && c.execution != nil {
-		opHandle := &cli_service.TOperationHandle{
-			OperationId: &cli_service.THandleIdentifier{
-				GUID:   client.DecodeGuid(c.execution.Id),
-				Secret: c.execution.Secret,
-			},
-			HasResultSet:  c.execution.HasResultSet,
-			OperationType: cli_service.TOperationType_EXECUTE_STATEMENT,
-		}
+	if query == "" && c.exc != nil {
+		opHandle := toOperationHandle(c.exc)
 		rows := rows{
 			connId:        c.id,
 			correlationId: corrId,
@@ -150,17 +143,17 @@ func (c *Conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 		// at any point in time that the context is done we must cancel and return
 		exStmtResp, opStatus, err := c.runQuery(ctx, query, args)
 
-		execId := ""
-		execStatus := "UNKNOWN"
+		excId := ""
+		excStatus := ExecutionUnknown
 
 		if opStatus != nil {
-			execStatus = opStatus.GetOperationState().String()
+			excStatus = toExecutionStatus(opStatus.GetOperationState())
 		}
 		// hold on to the operation handle
 		opHandle := exStmtResp.OperationHandle
 
-		execId = client.SprintGuid(exStmtResp.OperationHandle.OperationId.GUID)
-		log = logger.WithContext(c.id, driverctx.CorrelationIdFromContext(ctx), execId)
+		excId = client.SprintGuid(exStmtResp.OperationHandle.OperationId.GUID)
+		log = logger.WithContext(c.id, driverctx.CorrelationIdFromContext(ctx), excId)
 
 		defer log.Duration(msg, start)
 
@@ -184,10 +177,10 @@ func (c *Conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 			rows.fetchResultsMetadata = exStmtResp.DirectResults.ResultSetMetadata
 		}
 
-		execPtr := execFromContext(ctx)
-		*execPtr = Execution{
-			Id:           execId,
-			Status:       execStatus,
+		excPtr := excFromContext(ctx)
+		*excPtr = Execution{
+			Id:           excId,
+			Status:       excStatus,
 			Secret:       opHandle.OperationId.Secret,
 			HasResultSet: opHandle.HasResultSet,
 		}
@@ -228,8 +221,9 @@ func (c *Conn) runQuery(ctx context.Context, query string, args []driver.NamedVa
 			return exStmtResp, opStatus, errors.New(opStatus.GetDisplayMessage())
 		// live states
 		case cli_service.TOperationState_INITIALIZED_STATE, cli_service.TOperationState_PENDING_STATE, cli_service.TOperationState_RUNNING_STATE:
-			if !c.cfg.RunAsync {
-
+			if c.cfg.RunAsync {
+				return exStmtResp, opStatus, nil
+			} else {
 				statusResp, err := c.pollOperation(ctx, opHandle)
 				if err != nil {
 					return exStmtResp, statusResp, err
@@ -249,8 +243,6 @@ func (c *Conn) runQuery(ctx context.Context, query string, args []driver.NamedVa
 					logBadQueryState(log, statusResp)
 					return exStmtResp, opStatus, errors.New("invalid operation state. This should not have happened")
 				}
-			} else {
-				return exStmtResp, opStatus, nil
 			}
 		// weird states
 		default:
@@ -259,7 +251,9 @@ func (c *Conn) runQuery(ctx context.Context, query string, args []driver.NamedVa
 		}
 
 	} else {
-		if !c.cfg.RunAsync {
+		if c.cfg.RunAsync {
+			return exStmtResp, nil, nil
+		} else {
 			statusResp, err := c.pollOperation(ctx, opHandle)
 			if err != nil {
 				return exStmtResp, statusResp, err
@@ -279,8 +273,6 @@ func (c *Conn) runQuery(ctx context.Context, query string, args []driver.NamedVa
 				logBadQueryState(log, statusResp)
 				return exStmtResp, statusResp, errors.New("invalid operation state. This should not have happened")
 			}
-		} else {
-			return exStmtResp, nil, nil
 		}
 	}
 }
@@ -300,7 +292,7 @@ func (c *Conn) executeStatement(ctx context.Context, query string, args []driver
 				Statement:     query,
 				RunAsync:      true,
 				QueryTimeout:  int64(c.cfg.QueryTimeout / time.Second),
-				// this is specific for databricks. It shortcuts server roundtrips
+				// this is specific for databricks. It shortcuts server round-trips
 				GetDirectResults: &cli_service.TSparkGetDirectResults{
 					MaxRows: int64(c.cfg.MaxRows),
 				},
@@ -345,7 +337,7 @@ func (c *Conn) pollOperation(ctx context.Context, opHandle *cli_service.TOperati
 				OperationHandle: opHandle,
 			})
 			if statusResp != nil && statusResp.OperationState != nil {
-				log.Debug().Msgf("databricks: status %s", statusResp.GetOperationState().String())
+				log.Debug().Msgf("databricks: status %s", toExecutionStatus(statusResp.GetOperationState()))
 			}
 			return func() bool {
 				// which other states?
@@ -380,40 +372,26 @@ func (c *Conn) pollOperation(ctx context.Context, opHandle *cli_service.TOperati
 	return statusResp, nil
 }
 
-func (c *Conn) cancelOperation(ctx context.Context, execution Execution) error {
+func (c *Conn) cancelOperation(ctx context.Context, exc Execution) error {
 	req := cli_service.TCancelOperationReq{
-		OperationHandle: &cli_service.TOperationHandle{
-			OperationId: &cli_service.THandleIdentifier{
-				GUID:   client.DecodeGuid(execution.Id),
-				Secret: execution.Secret,
-			},
-			OperationType: cli_service.TOperationType_EXECUTE_STATEMENT,
-			HasResultSet:  execution.HasResultSet,
-		},
+		OperationHandle: toOperationHandle(&exc),
 	}
 	_, err := c.client.CancelOperation(ctx, &req)
 	return err
 }
 
-func (c *Conn) getOperationStatus(ctx context.Context, execution Execution) (Execution, error) {
+func (c *Conn) getOperationStatus(ctx context.Context, exc Execution) (Execution, error) {
 	statusResp, err := c.client.GetOperationStatus(ctx, &cli_service.TGetOperationStatusReq{
-		OperationHandle: &cli_service.TOperationHandle{
-			OperationId: &cli_service.THandleIdentifier{
-				GUID:   client.DecodeGuid(execution.Id),
-				Secret: execution.Secret,
-			},
-			OperationType: cli_service.TOperationType_EXECUTE_STATEMENT,
-			HasResultSet:  execution.HasResultSet,
-		},
+		OperationHandle: toOperationHandle(&exc),
 	})
 	if err != nil {
-		return execution, err
+		return exc, err
 	}
 	exRet := Execution{
-		Status:       statusResp.GetOperationState().String(),
-		Id:           execution.Id,
-		Secret:       execution.Secret,
-		HasResultSet: execution.HasResultSet,
+		Status:       toExecutionStatus(statusResp.GetOperationState()),
+		Id:           exc.Id,
+		Secret:       exc.Secret,
+		HasResultSet: exc.HasResultSet,
 	}
 	return exRet, nil
 }
@@ -421,10 +399,45 @@ func (c *Conn) getOperationStatus(ctx context.Context, execution Execution) (Exe
 func (c *Conn) CheckNamedValue(nv *driver.NamedValue) error {
 	ex, ok := nv.Value.(Execution)
 	if ok {
-		c.execution = &ex
+		c.exc = &ex
 		return driver.ErrRemoveArgument
 	}
 	return nil
+}
+
+func toExecutionStatus(state cli_service.TOperationState) ExecutionStatus {
+	switch state {
+
+	case cli_service.TOperationState_INITIALIZED_STATE:
+		return ExecutionInitialized
+	case cli_service.TOperationState_RUNNING_STATE:
+		return ExecutionRunning
+	case cli_service.TOperationState_FINISHED_STATE:
+		return ExecutionFinished
+	case cli_service.TOperationState_CANCELED_STATE:
+		return ExecutionCanceled
+	case cli_service.TOperationState_CLOSED_STATE:
+		return ExecutionClosed
+	case cli_service.TOperationState_ERROR_STATE:
+		return ExecutionError
+	case cli_service.TOperationState_PENDING_STATE:
+		return ExecutionPending
+	case cli_service.TOperationState_TIMEDOUT_STATE:
+		return ExecutionTimedOut
+	default:
+		return ExecutionUnknown
+	}
+}
+
+func toOperationHandle(ex *Execution) *cli_service.TOperationHandle {
+	return &cli_service.TOperationHandle{
+		OperationId: &cli_service.THandleIdentifier{
+			GUID:   client.DecodeGuid(ex.Id),
+			Secret: ex.Secret,
+		},
+		OperationType: cli_service.TOperationType_EXECUTE_STATEMENT,
+		HasResultSet:  ex.HasResultSet,
+	}
 }
 
 var _ driver.Conn = (*Conn)(nil)
