@@ -15,6 +15,8 @@ type DatabricksDB interface {
 	GetExecutionRows(ctx context.Context, exc Execution) (*sql.Rows, error)
 	CheckExecution(ctx context.Context, exc Execution) (Execution, error)
 	Close() error
+	Stats() sql.DBStats
+	SetMaxOpenConns(n int)
 }
 
 type databricksDB struct {
@@ -42,6 +44,14 @@ func (db *databricksDB) ExecContext(ctx context.Context, query string, args ...a
 
 func (db *databricksDB) Close() error {
 	return db.sqldb.Close()
+}
+
+func (db *databricksDB) Stats() sql.DBStats {
+	return db.sqldb.Stats()
+}
+
+func (db *databricksDB) SetMaxOpenConns(n int) {
+	db.sqldb.SetMaxOpenConns(n)
 }
 
 func (db *databricksDB) CancelExecution(ctx context.Context, exc Execution) error {
@@ -111,6 +121,15 @@ const (
 	// terminal state TimedOut
 	ExecutionTimedOut ExecutionStatus = "TimedOut"
 )
+
+func (e ExecutionStatus) Terminal() bool {
+	switch e {
+	case ExecutionInitialized, ExecutionPending, ExecutionRunning:
+		return false
+	default:
+		return true
+	}
+}
 
 func newContextWithExecution(ctx context.Context, exc *Execution) context.Context {
 	return context.WithValue(ctx, driverctx.ExecutionContextKey, exc)

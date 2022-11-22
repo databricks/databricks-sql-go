@@ -96,6 +96,10 @@ func (c *Conn) ExecContext(ctx context.Context, query string, args []driver.Name
 	if len(args) > 0 {
 		return nil, errors.New(ErrParametersNotSupported)
 	}
+	if query == "" && c.exc != nil {
+		//TODO
+		return nil, errors.New(ErrNotImplemented)
+	}
 	exStmtResp, opStatusResp, err := c.runQuery(ctx, query, args)
 
 	if exStmtResp != nil && exStmtResp.OperationHandle != nil {
@@ -175,15 +179,21 @@ func (c *Conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 			// return results
 			rows.fetchResults = exStmtResp.DirectResults.ResultSet
 			rows.fetchResultsMetadata = exStmtResp.DirectResults.ResultSetMetadata
+		} else {
+			// set to closed so clients won't ask for it
+			excStatus = ExecutionClosed
+		}
+		if c.cfg.RunAsync {
+
+			excPtr := excFromContext(ctx)
+			*excPtr = Execution{
+				Id:           excId,
+				Status:       excStatus,
+				Secret:       opHandle.OperationId.Secret,
+				HasResultSet: opHandle.HasResultSet,
+			}
 		}
 
-		excPtr := excFromContext(ctx)
-		*excPtr = Execution{
-			Id:           excId,
-			Status:       excStatus,
-			Secret:       opHandle.OperationId.Secret,
-			HasResultSet: opHandle.HasResultSet,
-		}
 		return &rows, nil
 	}
 
@@ -373,6 +383,7 @@ func (c *Conn) pollOperation(ctx context.Context, opHandle *cli_service.TOperati
 }
 
 func (c *Conn) cancelOperation(ctx context.Context, exc Execution) error {
+	// TODO wrap in Sentinel
 	req := cli_service.TCancelOperationReq{
 		OperationHandle: toOperationHandle(&exc),
 	}
@@ -381,6 +392,7 @@ func (c *Conn) cancelOperation(ctx context.Context, exc Execution) error {
 }
 
 func (c *Conn) getOperationStatus(ctx context.Context, exc Execution) (Execution, error) {
+	// TODO wrap in Sentinel
 	statusResp, err := c.client.GetOperationStatus(ctx, &cli_service.TGetOperationStatusReq{
 		OperationHandle: toOperationHandle(&exc),
 	})
