@@ -57,7 +57,7 @@ func main() {
 	// make sure to close it later
 	defer db.Close()
 
-	db.SetMaxOpenConns(1)
+	db.SetMaxOpenConns(2)
 
 	// the "github.com/databricks/databricks-sql-go/driverctx" has some functions to help set the context for the driver
 	ogCtx := dbsqlctx.NewContextWithCorrelationId(context.Background(), "asyncWorkflow-example")
@@ -66,12 +66,22 @@ func main() {
 	// i := v
 	// go func() {
 	// _, exc, err := db.QueryContext(ogCtx, fmt.Sprintf("select %s", i))
-	rs, exc, err := db.QueryContext(ogCtx, `SELECT id FROM RANGE(100000000) ORDER BY RANDOM() + 2 asc`)
+	rs, exc, err := db.QueryContext(ogCtx, `SELECT id FROM RANGE(100) ORDER BY RANDOM() + 2 asc`)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer rs.Close()
+	// can't do this. If direct results is done, the operation is gone
+	exc, err = db.CheckExecution(ogCtx, exc)
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	if exc.Status == dbsql.ExecutionFinished {
+		rs, err = db.GetExecutionRows(ogCtx, exc)
+		if err != nil {
+			log.Fatal(err)
+		}
 		var res string
 		i := 0
 		for rs.Next() {

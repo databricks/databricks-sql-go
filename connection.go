@@ -161,6 +161,17 @@ func (c *Conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 
 		defer log.Duration(msg, start)
 
+		if c.cfg.RunAsync {
+
+			excPtr := excFromContext(ctx)
+			*excPtr = Execution{
+				Id:           excId,
+				Status:       excStatus,
+				Secret:       opHandle.OperationId.Secret,
+				HasResultSet: opHandle.HasResultSet,
+			}
+		}
+
 		if err != nil {
 			log.Err(err).Msgf("databricks: failed to run query: query %s", query)
 			return nil, wrapErrf(err, "failed to run query")
@@ -179,19 +190,15 @@ func (c *Conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 			// return results
 			rows.fetchResults = exStmtResp.DirectResults.ResultSet
 			rows.fetchResultsMetadata = exStmtResp.DirectResults.ResultSetMetadata
-		} else {
-			// set to closed so clients won't ask for it
-			excStatus = ExecutionClosed
 		}
-		if c.cfg.RunAsync {
 
-			excPtr := excFromContext(ctx)
-			*excPtr = Execution{
-				Id:           excId,
-				Status:       excStatus,
-				Secret:       opHandle.OperationId.Secret,
-				HasResultSet: opHandle.HasResultSet,
-			}
+		// if the direct results has all rows, the operation will be deleted, so
+		// set it to closed so clients won't ask for it
+		// excStatus = ExecutionClosed
+
+		if c.cfg.RunAsync && excStatus != ExecutionFinished {
+			rows.opHandle = nil
+
 		}
 
 		return &rows, nil

@@ -33,8 +33,11 @@ func OpenDB(c driver.Connector) DatabricksDB {
 func (db *databricksDB) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, Execution, error) {
 	exc := Execution{}
 	ctx2 := newContextWithExecution(ctx, &exc)
-	ret, err := db.sqldb.QueryContext(ctx2, query, args...)
-	return ret, exc, err
+	rs, err := db.sqldb.QueryContext(ctx2, query, args...)
+	if exc.Status != ExecutionFinished && rs != nil {
+		rs.Close()
+	}
+	return rs, exc, err
 }
 
 func (db *databricksDB) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, string, error) {
@@ -59,6 +62,7 @@ func (db *databricksDB) CancelExecution(ctx context.Context, exc Execution) erro
 	if err != nil {
 		return err
 	}
+	defer con.Close()
 	return con.Raw(func(driverConn any) error {
 		dbsqlcon, ok := driverConn.(*Conn)
 		if !ok {
@@ -73,6 +77,7 @@ func (db *databricksDB) CheckExecution(ctx context.Context, exc Execution) (Exec
 	if err != nil {
 		return exc, err
 	}
+	defer con.Close()
 	exRet := exc
 	err = con.Raw(func(driverConn any) error {
 		dbsqlcon, ok := driverConn.(*Conn)
