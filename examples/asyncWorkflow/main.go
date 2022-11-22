@@ -68,29 +68,10 @@ func main() {
 	// _, exc, err := db.QueryContext(ogCtx, fmt.Sprintf("select %s", i))
 	rs, exc, err := db.QueryContext(ogCtx, `SELECT id FROM RANGE(100000000) ORDER BY RANDOM() + 2 asc`)
 	if err != nil {
-		panic(err)
+		log.Fatal(err)
 	}
-	for {
-		if exc.Status.Terminal() {
-			break
-		} else {
-			// TODO: how to prevent the connection being locked when rows has no data??
-			exc, err = db.CheckExecution(ogCtx, exc)
-			if err != nil {
-				log.Fatal(err)
-			}
-		}
-		fmt.Println(db.Stats())
-		time.Sleep(time.Second)
-	}
-
-	fmt.Println(exc.Status)
+	defer rs.Close()
 	if exc.Status == dbsql.ExecutionFinished {
-		rs, err = db.GetExecutionRows(ogCtx, exc)
-		if err != nil {
-			panic(err)
-		}
-		defer rs.Close()
 		var res string
 		i := 0
 		for rs.Next() {
@@ -104,9 +85,45 @@ func main() {
 			if i < 10 {
 				i++
 			} else {
-				rs.Close()
+				return
 			}
 		}
+	}
+	for {
+		if exc.Status.Terminal() {
+			break
+		} else {
+			exc, err = db.CheckExecution(ogCtx, exc)
+			if err != nil {
+				log.Fatal(err)
+			}
+		}
+		fmt.Println(db.Stats())
+		time.Sleep(time.Second)
+	}
+
+	if exc.Status == dbsql.ExecutionFinished {
+		rs, err = db.GetExecutionRows(ogCtx, exc)
+		if err != nil {
+			log.Fatal(err)
+		}
+		var res string
+		i := 0
+		for rs.Next() {
+			err := rs.Scan(&res)
+			if err != nil {
+				fmt.Println(err)
+				break
+			}
+			fmt.Println(res)
+			if i < 12 {
+				i++
+			} else {
+				return
+			}
+		}
+	} else {
+		fmt.Println(exc.Status)
 	}
 	// }
 	// timezones are also supported
