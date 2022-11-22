@@ -67,12 +67,26 @@ func main() {
 		if err != nil {
 			panic(err)
 		}
-		rs, err := db.GetExecutionResult(ogCtx, exec)
+		ex, err := db.CheckExecution(ogCtx, exec)
 		if err != nil {
 			panic(err)
 		}
-		fmt.Println(rs)
-		// }()
+		fmt.Println(ex.Status)
+
+		rs, err := db.GetExecutionRows(ogCtx, exec)
+		if err != nil {
+			panic(err)
+		}
+		var res string
+		for rs.Next() {
+			err := rs.Scan(&res)
+			if err != nil {
+				fmt.Println(err)
+				rs.Close()
+				return
+			}
+			fmt.Println(res)
+		}
 	}
 	// timezones are also supported
 	// var curTimestamp time.Time

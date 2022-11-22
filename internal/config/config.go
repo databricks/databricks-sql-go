@@ -20,7 +20,7 @@ type Config struct {
 	TLSConfig     *tls.Config // nil disables TLS
 	Authenticator string      //TODO for oauth
 
-	RunAsync                  bool // TODO
+	RunAsync                  bool
 	PollInterval              time.Duration
 	ConnectTimeout            time.Duration // max time to open session
 	ClientTimeout             time.Duration // max time the http request can last
@@ -134,7 +134,7 @@ func WithDefaults() *Config {
 		UserConfig:                UserConfig{}.WithDefaults(),
 		TLSConfig:                 &tls.Config{MinVersion: tls.VersionTLS12},
 		Authenticator:             "",
-		RunAsync:                  true,
+		RunAsync:                  false,
 		PollInterval:              1 * time.Second,
 		ConnectTimeout:            60 * time.Second,
 		ClientTimeout:             900 * time.Second,

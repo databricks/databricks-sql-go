@@ -26,7 +26,7 @@ func TestConn_executeStatement(t *testing.T) {
 		testClient := &client.TestClient{
 			FnExecuteStatement: executeStatement,
 		}
-		testConn := &conn{
+		testConn := &Conn{
 			session: getTestSession(),
 			client:  testClient,
 			cfg:     config.WithDefaults(),
@@ -76,7 +76,7 @@ func TestConn_executeStatement(t *testing.T) {
 		testClient := &client.TestClient{
 			FnExecuteStatement: executeStatement,
 		}
-		testConn := &conn{
+		testConn := &Conn{
 			session: getTestSession(),
 			client:  testClient,
 			cfg:     config.WithDefaults(),
@@ -102,7 +102,7 @@ func TestConn_pollOperation(t *testing.T) {
 		testClient := &client.TestClient{
 			FnGetOperationStatus: getOperationStatus,
 		}
-		testConn := &conn{
+		testConn := &Conn{
 			session: getTestSession(),
 			client:  testClient,
 			cfg:     config.WithDefaults(),
@@ -132,7 +132,7 @@ func TestConn_pollOperation(t *testing.T) {
 		testClient := &client.TestClient{
 			FnGetOperationStatus: getOperationStatus,
 		}
-		testConn := &conn{
+		testConn := &Conn{
 			session: getTestSession(),
 			client:  testClient,
 			cfg:     config.WithDefaults(),
@@ -162,7 +162,7 @@ func TestConn_pollOperation(t *testing.T) {
 		testClient := &client.TestClient{
 			FnGetOperationStatus: getOperationStatus,
 		}
-		testConn := &conn{
+		testConn := &Conn{
 			session: getTestSession(),
 			client:  testClient,
 			cfg:     config.WithDefaults(),
@@ -192,7 +192,7 @@ func TestConn_pollOperation(t *testing.T) {
 		testClient := &client.TestClient{
 			FnGetOperationStatus: getOperationStatus,
 		}
-		testConn := &conn{
+		testConn := &Conn{
 			session: getTestSession(),
 			client:  testClient,
 			cfg:     config.WithDefaults(),
@@ -222,7 +222,7 @@ func TestConn_pollOperation(t *testing.T) {
 		testClient := &client.TestClient{
 			FnGetOperationStatus: getOperationStatus,
 		}
-		testConn := &conn{
+		testConn := &Conn{
 			session: getTestSession(),
 			client:  testClient,
 			cfg:     config.WithDefaults(),
@@ -254,7 +254,7 @@ func TestConn_pollOperation(t *testing.T) {
 		testClient := &client.TestClient{
 			FnGetOperationStatus: getOperationStatus,
 		}
-		testConn := &conn{
+		testConn := &Conn{
 			session: getTestSession(),
 			client:  testClient,
 			cfg:     config.WithDefaults(),
@@ -296,7 +296,7 @@ func TestConn_pollOperation(t *testing.T) {
 			FnGetOperationStatus: getOperationStatus,
 			FnCancelOperation:    cancelOperation,
 		}
-		testConn := &conn{
+		testConn := &Conn{
 			session: getTestSession(),
 			client:  testClient,
 			cfg:     config.WithDefaults(),
@@ -342,7 +342,7 @@ func TestConn_pollOperation(t *testing.T) {
 		}
 		cfg := config.WithDefaults()
 		cfg.PollInterval = 100 * time.Millisecond
-		testConn := &conn{
+		testConn := &Conn{
 			session: getTestSession(),
 			client:  testClient,
 			cfg:     cfg,
@@ -388,7 +388,7 @@ func TestConn_pollOperation(t *testing.T) {
 		}
 		cfg := config.WithDefaults()
 		cfg.PollInterval = 100 * time.Millisecond
-		testConn := &conn{
+		testConn := &Conn{
 			session: getTestSession(),
 			client:  testClient,
 			cfg:     cfg,
@@ -423,7 +423,7 @@ func TestConn_runQuery(t *testing.T) {
 		testClient := &client.TestClient{
 			FnExecuteStatement: executeStatement,
 		}
-		testConn := &conn{
+		testConn := &Conn{
 			session: getTestSession(),
 			client:  testClient,
 			cfg:     config.WithDefaults(),
@@ -465,7 +465,7 @@ func TestConn_runQuery(t *testing.T) {
 			FnExecuteStatement:   executeStatement,
 			FnGetOperationStatus: getOperationStatus,
 		}
-		testConn := &conn{
+		testConn := &Conn{
 			session: getTestSession(),
 			client:  testClient,
 			cfg:     config.WithDefaults(),
@@ -509,7 +509,7 @@ func TestConn_runQuery(t *testing.T) {
 			FnExecuteStatement:   executeStatement,
 			FnGetOperationStatus: getOperationStatus,
 		}
-		testConn := &conn{
+		testConn := &Conn{
 			session: getTestSession(),
 			client:  testClient,
 			cfg:     config.WithDefaults(),
@@ -553,7 +553,7 @@ func TestConn_runQuery(t *testing.T) {
 			FnExecuteStatement:   executeStatement,
 			FnGetOperationStatus: getOperationStatus,
 		}
-		testConn := &conn{
+		testConn := &Conn{
 			session: getTestSession(),
 			client:  testClient,
 			cfg:     config.WithDefaults(),
@@ -605,7 +605,7 @@ func TestConn_runQuery(t *testing.T) {
 			FnExecuteStatement:   executeStatement,
 			FnGetOperationStatus: getOperationStatus,
 		}
-		testConn := &conn{
+		testConn := &Conn{
 			session: getTestSession(),
 			client:  testClient,
 			cfg:     config.WithDefaults(),
@@ -657,7 +657,7 @@ func TestConn_runQuery(t *testing.T) {
 			FnExecuteStatement:   executeStatement,
 			FnGetOperationStatus: getOperationStatus,
 		}
-		testConn := &conn{
+		testConn := &Conn{
 			session: getTestSession(),
 			client:  testClient,
 			cfg:     config.WithDefaults(),
@@ -709,7 +709,7 @@ func TestConn_runQuery(t *testing.T) {
 			FnExecuteStatement:   executeStatement,
 			FnGetOperationStatus: getOperationStatus,
 		}
-		testConn := &conn{
+		testConn := &Conn{
 			session: getTestSession(),
 			client:  testClient,
 			cfg:     config.WithDefaults(),
@@ -761,7 +761,7 @@ func TestConn_runQuery(t *testing.T) {
 			FnExecuteStatement:   executeStatement,
 			FnGetOperationStatus: getOperationStatus,
 		}
-		testConn := &conn{
+		testConn := &Conn{
 			session: getTestSession(),
 			client:  testClient,
 			cfg:     config.WithDefaults(),
@@ -782,7 +782,7 @@ func TestConn_ExecContext(t *testing.T) {
 		var executeStatementCount int
 
 		testClient := &client.TestClient{}
-		testConn := &conn{
+		testConn := &Conn{
 			session: getTestSession(),
 			client:  testClient,
 			cfg:     config.WithDefaults(),
@@ -817,7 +817,7 @@ func TestConn_ExecContext(t *testing.T) {
 		testClient := &client.TestClient{
 			FnExecuteStatement: executeStatement,
 		}
-		testConn := &conn{
+		testConn := &Conn{
 			session: getTestSession(),
 			client:  testClient,
 			cfg:     config.WithDefaults(),
@@ -860,7 +860,7 @@ func TestConn_ExecContext(t *testing.T) {
 			FnExecuteStatement:   executeStatement,
 			FnGetOperationStatus: getOperationStatus,
 		}
-		testConn := &conn{
+		testConn := &Conn{
 			session: getTestSession(),
 			client:  testClient,
 			cfg:     config.WithDefaults(),
@@ -881,7 +881,7 @@ func TestConn_QueryContext(t *testing.T) {
 		var executeStatementCount int
 
 		testClient := &client.TestClient{}
-		testConn := &conn{
+		testConn := &Conn{
 			session: getTestSession(),
 			client:  testClient,
 			cfg:     config.WithDefaults(),
@@ -916,7 +916,7 @@ func TestConn_QueryContext(t *testing.T) {
 		testClient := &client.TestClient{
 			FnExecuteStatement: executeStatement,
 		}
-		testConn := &conn{
+		testConn := &Conn{
 			session: getTestSession(),
 			client:  testClient,
 			cfg:     config.WithDefaults(),
@@ -959,7 +959,7 @@ func TestConn_QueryContext(t *testing.T) {
 			FnExecuteStatement:   executeStatement,
 			FnGetOperationStatus: getOperationStatus,
 		}
-		testConn := &conn{
+		testConn := &Conn{
 			session: getTestSession(),
 			client:  testClient,
 			cfg:     config.WithDefaults(),
@@ -994,7 +994,7 @@ func TestConn_Ping(t *testing.T) {
 		testClient := &client.TestClient{
 			FnExecuteStatement: executeStatement,
 		}
-		testConn := &conn{
+		testConn := &Conn{
 			session: getTestSession(),
 			client:  testClient,
 			cfg:     config.WithDefaults(),
@@ -1037,7 +1037,7 @@ func TestConn_Ping(t *testing.T) {
 			FnGetOperationStatus: getOperationStatus,
 		}
 
-		testConn := &conn{
+		testConn := &Conn{
 			session: getTestSession(),
 			client:  testClient,
 			cfg:     config.WithDefaults(),
@@ -1051,7 +1051,7 @@ func TestConn_Ping(t *testing.T) {
 
 func TestConn_Begin(t *testing.T) {
 	t.Run("Begin not supported", func(t *testing.T) {
-		testConn := &conn{
+		testConn := &Conn{
 			session: getTestSession(),
 			client:  &client.TestClient{},
 			cfg:     config.WithDefaults(),
@@ -1064,7 +1064,7 @@ func TestConn_Begin(t *testing.T) {
 
 func TestConn_BeginTx(t *testing.T) {
 	t.Run("BeginTx not supported", func(t *testing.T) {
-		testConn := &conn{
+		testConn := &Conn{
 			session: getTestSession(),
 			client:  &client.TestClient{},
 			cfg:     config.WithDefaults(),
@@ -1077,7 +1077,7 @@ func TestConn_BeginTx(t *testing.T) {
 
 func TestConn_ResetSession(t *testing.T) {
 	t.Run("ResetSession not currently supported", func(t *testing.T) {
-		testConn := &conn{
+		testConn := &Conn{
 			session: getTestSession(),
 			client:  &client.TestClient{},
 			cfg:     config.WithDefaults(),

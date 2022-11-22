@@ -3,6 +3,7 @@ package client
 import (
 	"compress/zlib"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -270,4 +271,22 @@ func SprintGuid(bts []byte) string {
 	}
 	logger.Warn().Msgf("GUID not valid: %x", bts)
 	return fmt.Sprintf("%x", bts)
+}
+
+func DecodeGuid(str string) []byte {
+	if len(str) == 36 {
+		bts, err := hex.DecodeString(str[0:8] + str[9:13] + str[14:18] + str[19:23] + str[24:36])
+		if err != nil {
+			logger.Warn().Msgf("GUID not valid: %s", str)
+			return []byte{}
+		}
+		return bts
+	}
+	logger.Warn().Msgf("GUID not valid: %s", str)
+	bts, err := hex.DecodeString(str)
+	if err != nil {
+		logger.Warn().Msgf("GUID not valid: %s", str)
+		return []byte{}
+	}
+	return bts
 }
