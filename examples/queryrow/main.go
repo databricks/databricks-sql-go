@@ -40,7 +40,7 @@ func main() {
 	// defer cancel()
 	ctx := context.Background()
 	var res float64
-	err1 := db.QueryRowContext(ctx, `select max(carat) from default.diamonds`).Scan(res)
+	err1 := db.QueryRowContext(ctx, `select max(carat) from default.diamonds`).Scan(&res)
 
 	if err1 != nil {
 		if err1 == sql.ErrNoRows {
