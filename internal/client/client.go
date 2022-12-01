@@ -212,6 +212,10 @@ func InitThriftClient(cfg *config.Config) (*ThriftServiceClient, error) {
 			Timeout:   cfg.ClientTimeout,
 		}
 		tTrans, err = thrift.NewTHttpClientWithOptions(endpoint, thrift.THttpClientOptions{Client: httpclient})
+		if err != nil {
+			return nil, err
+		}
+
 		httpTransport := tTrans.(*thrift.THttpClient)
 		userAgent := fmt.Sprintf("%s/%s", cfg.DriverName, cfg.DriverVersion)
 		if cfg.UserAgentEntry != "" {
