@@ -194,7 +194,7 @@ func WithConfig(cfg *sdk.Config) connOption {
 	}
 }
 
-// Used to specify 
+// Used to specify
 func WithWarehouseName(name string) connOption {
 	return func(c *config.Config) {
 		c.WarehouseName = name
