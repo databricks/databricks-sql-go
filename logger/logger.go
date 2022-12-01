@@ -1,11 +1,13 @@
 package logger
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"runtime"
 	"time"
 
+	sdkLogger "github.com/databricks/databricks-sdk-go/logger"
 	"github.com/mattn/go-isatty"
 	"github.com/rs/zerolog"
 )
@@ -48,6 +50,10 @@ func init() {
 	}
 	Logger.Logger = Logger.Level(loglvl)
 	Logger.Info().Msgf("setting log level to %s", loglvl)
+
+	// TODO: TBD: Align with the logger used in Databricks SDK
+	// attach SDK logger to the one used by the SQL Driver
+	sdkLogger.DefaultLogger = sdkLogWrapper{}
 }
 
 // Sets log level. Default is "warn"
@@ -127,4 +133,26 @@ func Track(msg string) (string, time.Time) {
 // Duration is a convenience function to log elapsed time. Often used with Track
 func Duration(msg string, start time.Time) {
 	Logger.Debug().Msgf("%v elapsed time: %v", msg, time.Since(start))
+}
+
+type sdkLogWrapper struct{}
+
+func (l sdkLogWrapper) Tracef(format string, v ...interface{}) {
+	Logger.Trace().Msg(fmt.Sprintf(format, v...))
+}
+
+func (l sdkLogWrapper) Debugf(format string, v ...interface{}) {
+	Logger.Debug().Msg(fmt.Sprintf(format, v...))
+}
+
+func (l sdkLogWrapper) Infof(format string, v ...interface{}) {
+	Logger.Info().Msg(fmt.Sprintf(format, v...))
+}
+
+func (l sdkLogWrapper) Warnf(format string, v ...interface{}) {
+	Logger.Warn().Msg(fmt.Sprintf(format, v...))
+}
+
+func (l sdkLogWrapper) Errorf(format string, v ...interface{}) {
+	Logger.Error().Msg(fmt.Sprintf(format, v...))
 }

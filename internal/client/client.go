@@ -9,6 +9,9 @@ import (
 	"os"
 
 	"github.com/apache/thrift/lib/go/thrift"
+	"github.com/databricks/databricks-sdk-go/client"
+	sdk "github.com/databricks/databricks-sdk-go/config"
+	"github.com/databricks/databricks-sdk-go/service/warehouses"
 	"github.com/databricks/databricks-sql-go/driverctx"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/config"
@@ -162,16 +165,46 @@ func (tsc *ThriftServiceClient) CancelOperation(ctx context.Context, req *cli_se
 // It is important to know the code and headers to know if we need to retry or not
 type Transport struct {
 	*http.Transport
-	response *http.Response
+	sdkConfig *sdk.Config // TODO: TBD: field name
+	response  *http.Response
 }
 
 func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
+	err := t.sdkConfig.Authenticate(req)
+	if err != nil {
+		return nil, err
+	}
 	resp, err := t.Transport.RoundTrip(req)
 	t.response = resp
+
 	return resp, err
 }
 
-func InitThriftClient(cfg *config.Config) (*ThriftServiceClient, error) {
+func InitThriftClient(ctx context.Context, cfg *config.Config) (*ThriftServiceClient, error) {
+	if cfg.SdkConfig == nil {
+		cfg.SdkConfig = &sdk.Config{}
+	}
+	if cfg.AccessToken != "" {
+		cfg.SdkConfig.Token = cfg.AccessToken
+	}
+	if cfg.Host != "" {
+		cfg.SdkConfig.Host = fmt.Sprintf("https://%s", cfg.Host)
+	}
+	if cfg.WarehouseName != "" {
+		apiClient, err := client.New(cfg.SdkConfig)
+		if err != nil {
+			return nil, err
+		}
+		whClient := warehouses.NewWarehouses(apiClient)
+		wh, err := whClient.GetByName(ctx, cfg.WarehouseName)
+		if err != nil {
+			return nil, err
+		}
+		cfg.Protocol = wh.OdbcParams.Protocol
+		cfg.Host = wh.OdbcParams.Hostname
+		cfg.Port = wh.OdbcParams.Port
+		cfg.HTTPPath = wh.OdbcParams.Path
+	}
 	endpoint := cfg.ToEndpointURL()
 	tcfg := &thrift.TConfiguration{
 		TLSConfig: cfg.TLSConfig,
@@ -203,6 +236,7 @@ func InitThriftClient(cfg *config.Config) (*ThriftServiceClient, error) {
 	switch cfg.ThriftTransport {
 	case "http":
 		tr = &Transport{
+			sdkConfig: cfg.SdkConfig,
 			Transport: &http.Transport{
 				TLSClientConfig: cfg.TLSConfig,
 			},
@@ -217,9 +251,12 @@ func InitThriftClient(cfg *config.Config) (*ThriftServiceClient, error) {
 		if cfg.UserAgentEntry != "" {
 			userAgent = fmt.Sprintf("%s/%s (%s)", cfg.DriverName, cfg.DriverVersion, cfg.UserAgentEntry)
 		}
+		// TODO: TBD: Fix HTTP 400 error by allowing standard SDK user agent header on the proxy level.
+		// Client unknown/0.0.0 databricks-sdk-go/0.0.1 go/1.19.3 os/darwin godatabrickssqlconnector/0.9.0 is not supported for SQL warehouses
 		httpTransport.SetHeader("User-Agent", userAgent)
 
 	case "framed":
+		// TODO: TBD: are these branches even used?
 		tTrans = thrift.NewTFramedTransportConf(tTrans, tcfg)
 	case "buffered":
 		tTrans = thrift.NewTBufferedTransport(tTrans, 8192)

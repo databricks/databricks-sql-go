@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/databricks/databricks-sdk-go"
+	sdk "github.com/databricks/databricks-sdk-go/config"
 	"github.com/databricks/databricks-sql-go/driverctx"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/client"
@@ -22,7 +24,7 @@ type connector struct {
 
 func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 
-	tclient, err := client.InitThriftClient(c.cfg)
+	tclient, err := client.InitThriftClient(ctx, c.cfg)
 	if err != nil {
 		return nil, wrapErr(err, "error initializing thrift client")
 	}
@@ -158,9 +160,11 @@ func WithInitialNamespace(catalog, schema string) connOption {
 	}
 }
 
+// TODO: TBD: replace with databricks.WithProduct("<isv-name+product-name>", "<product-version>")
 // Used to identify partners. Set as a string with format <isv-name+product-name>.
 func WithUserAgentEntry(entry string) connOption {
 	return func(c *config.Config) {
+		databricks.WithProduct(entry, "0.0.0")
 		c.UserAgentEntry = entry
 	}
 }
@@ -180,5 +184,19 @@ func WithSessionParams(params map[string]string) connOption {
 			}
 		}
 		c.SessionParams = params
+	}
+}
+
+// Used to pass config from Databricks SDK for Go
+func WithConfig(cfg *sdk.Config) connOption {
+	return func(c *config.Config) {
+		c.SdkConfig = cfg
+	}
+}
+
+// Used to specify 
+func WithWarehouseName(name string) connOption {
+	return func(c *config.Config) {
+		c.WarehouseName = name
 	}
 }

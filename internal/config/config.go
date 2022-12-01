@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	sdk "github.com/databricks/databricks-sdk-go/config"
+	"github.com/databricks/databricks-sdk-go/useragent"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/logger"
 	"github.com/pkg/errors"
@@ -18,7 +20,7 @@ import (
 type Config struct {
 	UserConfig
 	TLSConfig     *tls.Config // nil disables TLS
-	Authenticator string      //TODO for oauth
+	Authenticator string      //TODO for oauth, align with SDK
 
 	RunAsync                  bool // TODO
 	PollInterval              time.Duration
@@ -70,13 +72,15 @@ func (c *Config) DeepCopy() *Config {
 
 // UserConfig is the set of configurations exposed to users
 type UserConfig struct {
+	SdkConfig      *sdk.Config // TODO: TBD: embed or refer?..
+	WarehouseName  string      // TODO: TBD: field name
 	Protocol       string
-	Host           string // from databricks UI
+	Host           string // from databricks UI TODO: TBD: capture semantics in SDK
 	Port           int    // from databricks UI
 	HTTPPath       string // from databricks UI
 	Catalog        string
 	Schema         string
-	AccessToken    string        // from databricks UI
+	AccessToken    string        // from databricks UI TODO: TBD: Name is non-compliant
 	MaxRows        int           // max rows per page
 	QueryTimeout   time.Duration // Timeout passed to server for query processing
 	UserAgentEntry string
@@ -140,14 +144,19 @@ func WithDefaults() *Config {
 		ClientTimeout:             900 * time.Second,
 		PingTimeout:               15 * time.Second,
 		CanUseMultipleCatalogs:    true,
-		DriverName:                "godatabrickssqlconnector", //important. Do not change
-		DriverVersion:             "0.9.0",
+		DriverName:                "godatabrickssqlconnector", //important. Do not change - TODO: if it's not static, it can be changed
+		DriverVersion:             "0.9.0",                    // TODO: TBD: See example in init()
 		ThriftProtocol:            "binary",
 		ThriftTransport:           "http",
 		ThriftProtocolVersion:     cli_service.TProtocolVersion_SPARK_CLI_SERVICE_PROTOCOL_V6,
 		ThriftDebugClientProtocol: false,
 	}
 
+}
+
+// TODO: TBD: align on unified user agent handling
+func init() {
+	useragent.WithUserAgentExtra("godatabrickssqlconnector", "0.9.0")
 }
 
 func ParseDSN(dsn string) (UserConfig, error) {
