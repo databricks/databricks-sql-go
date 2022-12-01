@@ -46,7 +46,7 @@ func TestWorkflowExample(t *testing.T) {
 		WithServerHostname("localhost"),
 		WithPort(port),
 		WithHTTPPath(""),
-		WithAccessToken(""),
+		WithAccessToken("test"),
 		WithSessionParams(map[string]string{"timezone": "America/Sao_Paulo", "ansi_mode": "true"}),
 		WithUserAgentEntry("workflow-example"),
 		WithInitialNamespace(catalog, schema),
@@ -254,6 +254,7 @@ func TestWorkflowExample(t *testing.T) {
 
 func TestContextTimeoutExample(t *testing.T) {
 
+	os.Setenv("DATABRICKS_TOKEN", "dummy")
 	_ = logger.SetLogLevel("debug")
 	state := &callState{}
 	// load basic responses
