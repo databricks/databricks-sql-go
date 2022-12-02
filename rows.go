@@ -28,6 +28,7 @@ type rows struct {
 	fetchResultsMetadata *cli_service.TGetResultSetMetadataResp
 	nextRowIndex         int64
 	nextRowNumber        int64
+	closed               bool
 }
 
 var _ driver.Rows = (*rows)(nil)
@@ -40,6 +41,27 @@ var errRowsFetchPriorToStart = "unable to fetch row page prior to start of resul
 var errRowsNoSchemaAvailable = "no schema in result set metadata response"
 var errRowsNoClient = "instance of Rows missing client"
 var errRowsNilRows = "nil Rows instance"
+
+func NewRows(connID string, corrId string, client cli_service.TCLIService, opHandle *cli_service.TOperationHandle, pageSize int64, location *time.Location, directResults *cli_service.TSparkDirectResults) driver.Rows {
+	r := &rows{
+		connId:        connID,
+		correlationId: corrId,
+		client:        client,
+		opHandle:      opHandle,
+		pageSize:      pageSize,
+		location:      location,
+	}
+
+	if directResults != nil {
+		r.fetchResults = directResults.ResultSet
+		r.fetchResultsMetadata = directResults.ResultSetMetadata
+		if directResults.CloseOperation != nil {
+			r.closed = true
+		}
+	}
+
+	return r
+}
 
 // Columns returns the names of the columns. The number of
 // columns of the result is inferred from the length of the
@@ -72,20 +94,23 @@ func (r *rows) Columns() []string {
 
 // Close closes the rows iterator.
 func (r *rows) Close() error {
-	err := isValidRows(r)
-	if err != nil {
-		return err
+	if !r.closed {
+		err := isValidRows(r)
+		if err != nil {
+			return err
+		}
+
+		req := cli_service.TCloseOperationReq{
+			OperationHandle: r.opHandle,
+		}
+		ctx := driverctx.NewContextWithCorrelationId(driverctx.NewContextWithConnId(context.Background(), r.connId), r.correlationId)
+
+		_, err1 := r.client.CloseOperation(ctx, &req)
+		if err1 != nil {
+			return err1
+		}
 	}
 
-	req := cli_service.TCloseOperationReq{
-		OperationHandle: r.opHandle,
-	}
-	ctx := driverctx.NewContextWithCorrelationId(driverctx.NewContextWithConnId(context.Background(), r.connId), r.correlationId)
-
-	_, err1 := r.client.CloseOperation(ctx, &req)
-	if err1 != nil {
-		return err1
-	}
 	return nil
 }
 

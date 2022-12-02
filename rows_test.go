@@ -799,6 +799,40 @@ func TestColumnTypeDatabaseTypeName(t *testing.T) {
 	assert.Equal(t, expectedScanTypes, scanTypes)
 }
 
+func TestRowsCloseOptimization(t *testing.T) {
+	t.Parallel()
+
+	var closeCount int
+	client := &client.TestClient{
+		FnCloseOperation: func(ctx context.Context, req *cli_service.TCloseOperationReq) (_r *cli_service.TCloseOperationResp, _err error) {
+			closeCount++
+			return nil, nil
+		},
+	}
+
+	rowSet := NewRows("", "", client, &cli_service.TOperationHandle{}, 1, nil, nil)
+
+	// rowSet has no direct results calling Close should result in call to client to close operation
+	err := rowSet.Close()
+	assert.Nil(t, err, "rows.Close should not throw an error")
+	assert.Equal(t, 1, closeCount)
+
+	// rowSet has direct results, but operation was not closed so it should call client to close operation
+	closeCount = 0
+	rowSet = NewRows("", "", client, &cli_service.TOperationHandle{}, 1, nil, &cli_service.TSparkDirectResults{})
+	err = rowSet.Close()
+	assert.Nil(t, err, "rows.Close should not throw an error")
+	assert.Equal(t, 1, closeCount)
+
+	// rowSet has direct results which include a close operation response.  rowSet should be marked as closed
+	// and calling Close should not call into the client.
+	closeCount = 0
+	rowSet = NewRows("", "", client, &cli_service.TOperationHandle{}, 1, nil, &cli_service.TSparkDirectResults{CloseOperation: &cli_service.TCloseOperationResp{}})
+	err = rowSet.Close()
+	assert.Nil(t, err, "rows.Close should not throw an error")
+	assert.Equal(t, 0, closeCount)
+}
+
 type rowTestPagingResult struct {
 	getMetadataCount  int
 	fetchResultsCount int
