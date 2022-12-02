@@ -167,6 +167,18 @@ func TestConn_executeStatement(t *testing.T) {
 			assert.Equal(t, 1, executeStatementCount)
 			assert.Equal(t, opTest.closeOperationCount, closeOperationCount)
 		}
+
+		// if the execute statement response contains direct results with a non-nil CloseOperation member
+		// we shouldn't call close
+		closeOperationCount = 0
+		executeStatementCount = 0
+		executeStatementResp.DirectResults.CloseOperation = &cli_service.TCloseOperationResp{}
+		finished := cli_service.TOperationState_FINISHED_STATE
+		executeStatementResp.DirectResults.OperationStatus.OperationState = &finished
+		_, err := testConn.ExecContext(context.Background(), "select 1", []driver.NamedValue{})
+		assert.NoError(t, err)
+		assert.Equal(t, 1, executeStatementCount)
+		assert.Equal(t, 0, closeOperationCount)
 	})
 
 }

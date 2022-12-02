@@ -102,13 +102,14 @@ func (c *conn) ExecContext(ctx context.Context, query string, args []driver.Name
 		// we have an operation id so update the logger
 		log = logger.WithContext(c.id, driverctx.CorrelationIdFromContext(ctx), client.SprintGuid(exStmtResp.OperationHandle.OperationId.GUID))
 
-		// since we have an operation handle we can close the operation
-		if opStatusResp == nil || opStatusResp.GetOperationState() != cli_service.TOperationState_CLOSED_STATE {
+		// since we have an operation handle we can close the operation if necessary
+		alreadyClosed := exStmtResp.DirectResults != nil && exStmtResp.DirectResults.CloseOperation != nil
+		if !alreadyClosed && (opStatusResp == nil || opStatusResp.GetOperationState() != cli_service.TOperationState_CLOSED_STATE) {
 			_, err1 := c.client.CloseOperation(ctx, &cli_service.TCloseOperationReq{
 				OperationHandle: exStmtResp.OperationHandle,
 			})
 			if err1 != nil {
-				log.Err(err1).Msg("failed to close operation after executing statement")
+				log.Err(err1).Msg("databricks: failed to close operation after executing statement")
 			}
 		}
 	}
