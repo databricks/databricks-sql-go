@@ -304,6 +304,8 @@ func (c *conn) executeStatement(ctx context.Context, query string, args []driver
 			}
 			log.Debug().Msgf("databricks: cancel success")
 
+		} else {
+			log.Debug().Msg("databricks: query did not need cancellation")
 		}
 		return nil, ctx.Err()
 	}

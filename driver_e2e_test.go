@@ -296,50 +296,6 @@ func TestContextTimeoutExample(t *testing.T) {
 
 }
 
-func TestCancelOperation(t *testing.T) {
-
-	_ = logger.SetLogLevel("debug")
-	state := &callState{}
-	// load basic responses
-	loadTestData(t, "OpenSessionSuccess.json", &state.openSessionResp)
-	loadTestData(t, "CloseSessionSuccess.json", &state.closeSessionResp)
-	loadTestData(t, "CloseOperationSuccess.json", &state.closeOperationResp)
-
-	ts := getServer(state)
-
-	defer ts.Close()
-
-	r, err := url.Parse(ts.URL)
-	require.NoError(t, err)
-
-	db, err := sql.Open("databricks", fmt.Sprintf("http://localhost:%s", r.Port()))
-	require.NoError(t, err)
-	defer db.Close()
-
-	ogCtx := driverctx.NewContextWithCorrelationId(context.Background(), "context-timeout-example")
-
-	state.executeStatementResp = cli_service.TExecuteStatementResp{}
-	loadTestData(t, "ExecuteStatement21.json", &state.executeStatementResp)
-	state.getOperationStatusResp = cli_service.TGetOperationStatusResp{}
-	loadTestData(t, "GetOperationStatusRunning.json", &state.getOperationStatusResp)
-	loadTestData(t, "CancelOperationSuccess.json", &state.cancelOperationResp)
-
-	ctx1, cancel := context.WithTimeout(ogCtx, 5*time.Second)
-	defer cancel()
-	rows, err := db.QueryContext(ctx1, `SELECT id FROM RANGE(100000000) ORDER BY RANDOM() + 2 asc`)
-	require.ErrorContains(t, err, context.DeadlineExceeded.Error())
-	require.Nil(t, rows)
-	_, ok := err.(causer)
-	assert.True(t, ok)
-	_, ok = err.(stackTracer)
-	assert.True(t, ok)
-	assert.Equal(t, 1, state.executeStatementCalls)
-	assert.GreaterOrEqual(t, state.getOperationStatusCalls, 1)
-	time.Sleep(time.Second)
-	assert.Equal(t, 1, state.cancelOperationCalls)
-
-}
-
 func strPtr(s string) *string {
 	return &s
 }

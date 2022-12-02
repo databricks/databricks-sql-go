@@ -16,7 +16,7 @@ import (
 
 type connector struct {
 	cfg    *config.Config
-	client *client.ThriftServiceClient
+	client cli_service.TCLIService
 }
 
 func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
@@ -118,6 +118,9 @@ func WithAccessToken(token string) connOption {
 // WithHTTPPath sets up the endpoint to the warehouse. Mandatory.
 func WithHTTPPath(path string) connOption {
 	return func(c *config.Config) {
+		if !strings.HasPrefix(path, "/") {
+			path = "/" + path
+		}
 		c.HTTPPath = path
 	}
 }
