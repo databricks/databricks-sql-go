@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"os"
 
 	"github.com/apache/thrift/lib/go/thrift"
@@ -13,6 +12,7 @@ import (
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/config"
 	"github.com/databricks/databricks-sql-go/logger"
+	"github.com/hashicorp/go-retryablehttp"
 	"github.com/pkg/errors"
 )
 
@@ -22,7 +22,6 @@ var resultIndex int
 
 type ThriftServiceClient struct {
 	*cli_service.TCLIServiceClient
-	transport *Transport
 }
 
 func (tsc *ThriftServiceClient) OpenSession(ctx context.Context, req *cli_service.TOpenSessionReq) (*cli_service.TOpenSessionResp, error) {
@@ -88,7 +87,7 @@ func (tsc *ThriftServiceClient) GetResultSetMetadata(ctx context.Context, req *c
 
 func (tsc *ThriftServiceClient) ExecuteStatement(ctx context.Context, req *cli_service.TExecuteStatementReq) (*cli_service.TExecuteStatementResp, error) {
 	msg, start := logger.Track("ExecuteStatement")
-	resp, err := tsc.TCLIServiceClient.ExecuteStatement(ctx, req)
+	resp, err := tsc.TCLIServiceClient.ExecuteStatement(context.Background(), req)
 	if err != nil {
 		return resp, errors.Wrap(err, "execute statement request error")
 	}
@@ -160,16 +159,6 @@ func (tsc *ThriftServiceClient) CancelOperation(ctx context.Context, req *cli_se
 
 // This is a wrapper of the http transport so we can have access to response code and headers
 // It is important to know the code and headers to know if we need to retry or not
-type Transport struct {
-	*http.Transport
-	response *http.Response
-}
-
-func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
-	resp, err := t.Transport.RoundTrip(req)
-	t.response = resp
-	return resp, err
-}
 
 func InitThriftClient(cfg *config.Config) (*ThriftServiceClient, error) {
 	endpoint := cfg.ToEndpointURL()
@@ -197,31 +186,21 @@ func InitThriftClient(cfg *config.Config) (*ThriftServiceClient, error) {
 	}
 
 	var tTrans thrift.TTransport
-	var tr *Transport
 	var err error
 
 	switch cfg.ThriftTransport {
 	case "http":
-		tr = &Transport{
-			Transport: &http.Transport{
-				TLSClientConfig: cfg.TLSConfig,
-			},
-		}
-		httpclient := &http.Client{
-			Transport: tr,
-			Timeout:   cfg.ClientTimeout,
-		}
-		tTrans, err = thrift.NewTHttpClientWithOptions(endpoint, thrift.THttpClientOptions{Client: httpclient})
-		if err != nil {
-			return nil, err
-		}
-
-		httpTransport := tTrans.(*thrift.THttpClient)
+		retryableClient := retryablehttp.NewClient()
+		retryableClient.HTTPClient.Timeout = cfg.ClientTimeout
+		// TODO
+		// add custom retryableClient.CheckRetry to retry based on thrift server headers and response code
+		tTrans, err = thrift.NewTHttpClientWithOptions(endpoint, thrift.THttpClientOptions{Client: retryableClient.HTTPClient})
+		thriftHttpClient := tTrans.(*thrift.THttpClient)
 		userAgent := fmt.Sprintf("%s/%s", cfg.DriverName, cfg.DriverVersion)
 		if cfg.UserAgentEntry != "" {
 			userAgent = fmt.Sprintf("%s/%s (%s)", cfg.DriverName, cfg.DriverVersion, cfg.UserAgentEntry)
 		}
-		httpTransport.SetHeader("User-Agent", userAgent)
+		thriftHttpClient.SetHeader("User-Agent", userAgent)
 
 	case "framed":
 		tTrans = thrift.NewTFramedTransportConf(tTrans, tcfg)
@@ -241,7 +220,7 @@ func InitThriftClient(cfg *config.Config) (*ThriftServiceClient, error) {
 	iprot := protocolFactory.GetProtocol(tTrans)
 	oprot := protocolFactory.GetProtocol(tTrans)
 	tclient := cli_service.NewTCLIServiceClient(thrift.NewTStandardClient(iprot, oprot))
-	tsClient := &ThriftServiceClient{tclient, tr}
+	tsClient := &ThriftServiceClient{tclient}
 	return tsClient, nil
 }
 

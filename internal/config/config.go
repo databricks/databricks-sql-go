@@ -120,7 +120,7 @@ func (ucfg UserConfig) DeepCopy() UserConfig {
 
 func (ucfg UserConfig) WithDefaults() UserConfig {
 	if ucfg.MaxRows <= 0 {
-		ucfg.MaxRows = 10000
+		ucfg.MaxRows = 100000
 	}
 	if ucfg.Protocol == "" {
 		ucfg.Protocol = "https"

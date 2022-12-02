@@ -191,7 +191,7 @@ func main() {
 		} else {
 			i, err1 := res.RowsAffected()
 			if err1 != nil {
-				panic(err1)
+				log.Fatal(err1)
 			}
 			fmt.Printf("inserted %d rows", i)
 		}

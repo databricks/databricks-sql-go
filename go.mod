@@ -16,6 +16,7 @@ require (
 	github.com/fatih/color v1.13.0 // indirect
 	github.com/fsnotify/fsnotify v1.5.4 // indirect
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510 // indirect
+	github.com/hashicorp/go-cleanhttp v0.5.1 // indirect
 	github.com/kr/pretty v0.2.1 // indirect
 	github.com/mattn/go-colorable v0.1.12 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
@@ -28,6 +29,7 @@ require (
 )
 
 require (
+	github.com/hashicorp/go-retryablehttp v0.7.1
 	github.com/pkg/errors v0.9.1
 	github.com/rs/zerolog v1.28.0
 	golang.org/x/sys v0.0.0-20220811171246-fbc7d0a398ab // indirect
