@@ -140,22 +140,9 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 	// hold on to the operation handle
 	opHandle := exStmtResp.OperationHandle
 
-	rows := rows{
-		connId:        c.id,
-		correlationId: corrId,
-		client:        c.client,
-		opHandle:      opHandle,
-		pageSize:      int64(c.cfg.MaxRows),
-		location:      c.cfg.Location,
-	}
+	rows := NewRows(c.id, corrId, c.client, opHandle, int64(c.cfg.MaxRows), c.cfg.Location, exStmtResp.DirectResults)
 
-	if exStmtResp.DirectResults != nil {
-		// return results
-		rows.fetchResults = exStmtResp.DirectResults.ResultSet
-		rows.fetchResultsMetadata = exStmtResp.DirectResults.ResultSetMetadata
-
-	}
-	return &rows, nil
+	return rows, nil
 
 }
 
