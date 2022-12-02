@@ -7,7 +7,7 @@ import (
 )
 
 type stmt struct {
-	conn  *conn
+	conn  *Conn
 	query string
 }
 

@@ -51,6 +51,10 @@ func (r *rows) Columns() []string {
 		return []string{}
 	}
 
+	if r.opHandle == nil {
+		return []string{}
+	}
+
 	resultMetadata, err := r.getResultMetadata()
 	if err != nil {
 		return []string{}
@@ -76,15 +80,17 @@ func (r *rows) Close() error {
 	if err != nil {
 		return err
 	}
+	if r.opHandle != nil {
 
-	req := cli_service.TCloseOperationReq{
-		OperationHandle: r.opHandle,
-	}
-	ctx := driverctx.NewContextWithCorrelationId(driverctx.NewContextWithConnId(context.Background(), r.connId), r.correlationId)
+		req := cli_service.TCloseOperationReq{
+			OperationHandle: r.opHandle,
+		}
+		ctx := driverctx.NewContextWithCorrelationId(driverctx.NewContextWithConnId(context.Background(), r.connId), r.correlationId)
 
-	_, err1 := r.client.CloseOperation(ctx, &req)
-	if err1 != nil {
-		return err1
+		_, err1 := r.client.CloseOperation(ctx, &req)
+		if err1 != nil {
+			return err1
+		}
 	}
 	return nil
 }
@@ -102,6 +108,9 @@ func (r *rows) Next(dest []driver.Value) error {
 	err := isValidRows(r)
 	if err != nil {
 		return err
+	}
+	if r.opHandle == nil {
+		return io.EOF
 	}
 
 	// if the next row is not in the current result page
@@ -333,6 +342,9 @@ func (r *rows) getResultMetadata() (*cli_service.TGetResultSetMetadataResp, erro
 		err := isValidRows(r)
 		if err != nil {
 			return nil, err
+		}
+		if r.opHandle == nil {
+			return nil, errors.New("metadata not available")
 		}
 
 		req := cli_service.TGetResultSetMetadataReq{

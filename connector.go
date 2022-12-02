@@ -59,7 +59,7 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 		return nil, errors.New("databricks: invalid open session response")
 	}
 
-	conn := &conn{
+	conn := &Conn{
 		id:      client.SprintGuid(session.SessionHandle.GetSessionId().GUID),
 		cfg:     c.cfg,
 		client:  tclient,

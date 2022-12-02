@@ -11,6 +11,7 @@ type contextKey int
 const (
 	CorrelationIdContextKey contextKey = iota
 	ConnIdContextKey
+	ExecutionContextKey
 )
 
 // NewContextWithCorrelationId creates a new context with correlationId value. Used by Logger to populate field corrId.
