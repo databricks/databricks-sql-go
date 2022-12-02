@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log"
 	"os"
 	"strconv"
 	"time"
@@ -17,18 +18,18 @@ import (
 func main() {
 	// use this package to set up logging. By default logging level is `warn`. If you want to disable logging, use `disabled`
 	if err := dbsqllog.SetLogLevel("debug"); err != nil {
-		panic(err)
+		log.Fatal(err)
 	}
 	// sets the logging output. By default it will use os.Stderr. If running in terminal, it will use ConsoleWriter to make it pretty
 	// dbsqllog.SetLogOutput(os.Stdout)
 
 	// this is just to make it easy to load all variables
 	if err := godotenv.Load(); err != nil {
-		panic(err)
+		log.Fatal(err)
 	}
 	port, err := strconv.Atoi(os.Getenv("DATABRICKS_PORT"))
 	if err != nil {
-		panic(err)
+		log.Fatal(err)
 	}
 
 	// programmatically initializes the connector
@@ -50,7 +51,7 @@ func main() {
 	if err != nil {
 		// This will not be a connection error, but a DSN parse error or
 		// another initialization error.
-		panic(err)
+		log.Fatal(err)
 
 	}
 	// Opening a driver typically will not attempt to connect to the database.
@@ -88,18 +89,18 @@ func main() {
 	ctx1, cancel := context.WithTimeout(ogCtx, 30*time.Second)
 	defer cancel()
 	if err := db.PingContext(ctx1); err != nil {
-		panic(err)
+		log.Fatal(err)
 	}
 
 	// create a table with some data. This has no context timeout, it will follow the timeout of one minute set for the connection.
 	if _, err := db.ExecContext(ogCtx, `CREATE TABLE IF NOT EXISTS diamonds USING CSV LOCATION '/databricks-datasets/Rdatasets/data-001/csv/ggplot2/diamonds.csv' options (header = true, inferSchema = true)`); err != nil {
-		panic(err)
+		log.Fatal(err)
 	}
 
 	// QueryRowContext is a shortcut function to get a single value
 	var max float64
 	if err := db.QueryRowContext(ogCtx, `select max(carat) from diamonds`).Scan(&max); err != nil {
-		panic(err)
+		log.Fatal(err)
 	} else {
 		fmt.Printf("max carat in dataset is: %f\n", max)
 	}
@@ -109,7 +110,7 @@ func main() {
 	defer cancel()
 
 	if rows, err := db.QueryContext(ctx2, "select * from diamonds limit 19"); err != nil {
-		panic(err)
+		log.Fatal(err)
 	} else {
 		type row struct {
 			_c0     int
@@ -127,11 +128,11 @@ func main() {
 
 		cols, err := rows.Columns()
 		if err != nil {
-			panic(err)
+			log.Fatal(err)
 		}
 		types, err := rows.ColumnTypes()
 		if err != nil {
-			panic(err)
+			log.Fatal(err)
 		}
 		for i, c := range cols {
 			fmt.Printf("column %d is %s and has type %v\n", i, c, types[i].DatabaseTypeName())
@@ -141,7 +142,7 @@ func main() {
 			// After row 10 this will cause one fetch call, as 10 rows (maxRows config) will come from the first execute statement call.
 			r := row{}
 			if err := rows.Scan(&r._c0, &r.carat, &r.cut, &r.color, &r.clarity, &r.depth, &r.table, &r.price, &r.x, &r.y, &r.z); err != nil {
-				panic(err)
+				log.Fatal(err)
 			}
 			res = append(res, r)
 		}
@@ -156,7 +157,7 @@ func main() {
 	var curTimezone string
 
 	if err := db.QueryRowContext(ogCtx, `select current_date(), current_timestamp(), current_timezone()`).Scan(&curDate, &curTimestamp, &curTimezone); err != nil {
-		panic(err)
+		log.Fatal(err)
 	} else {
 		// this will print now at timezone America/Sao_Paulo is: 2022-11-16 20:25:15.282 -0300 -03
 		fmt.Printf("current timestamp at timezone %s is: %s\n", curTimezone, curTimestamp)
@@ -170,11 +171,11 @@ func main() {
 			array_col array < int >,
 			map_col map < string, int >,
 			struct_col struct < string_field string, array_field array < int > >)`); err != nil {
-		panic(err)
+		log.Fatal(err)
 	}
 	var numRows int
 	if err := db.QueryRowContext(ogCtx, `select count(*) from array_map_struct`).Scan(&numRows); err != nil {
-		panic(err)
+		log.Fatal(err)
 	} else {
 		fmt.Printf("table has %d rows\n", numRows)
 	}
@@ -186,7 +187,7 @@ func main() {
 				array(1, 2, 3),
 				map('key1', 1),
 				struct('string_val', array(4, 5, 6)))`); err != nil {
-			panic(err)
+			log.Fatal(err)
 		} else {
 			i, err1 := res.RowsAffected()
 			if err1 != nil {
@@ -197,7 +198,7 @@ func main() {
 	}
 
 	if rows, err := db.QueryContext(ogCtx, "select * from array_map_struct"); err != nil {
-		panic(err)
+		log.Fatal(err)
 	} else {
 		// complex data types are returned as string
 		type row struct {
@@ -208,11 +209,11 @@ func main() {
 		res := []row{}
 		cols, err := rows.Columns()
 		if err != nil {
-			panic(err)
+			log.Fatal(err)
 		}
 		types, err := rows.ColumnTypes()
 		if err != nil {
-			panic(err)
+			log.Fatal(err)
 		}
 		for i, c := range cols {
 			fmt.Printf("column %d is %s and has type %v\n", i, c, types[i].DatabaseTypeName())
@@ -221,7 +222,7 @@ func main() {
 		for rows.Next() {
 			r := row{}
 			if err := rows.Scan(&r.arrayVal, &r.mapVal, &r.structVal); err != nil {
-				panic(err)
+				log.Fatal(err)
 			}
 			res = append(res, r)
 		}

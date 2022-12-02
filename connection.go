@@ -90,6 +90,8 @@ func (c *conn) IsValid() bool {
 func (c *conn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
 	log := logger.WithContext(c.id, driverctx.CorrelationIdFromContext(ctx), "")
 	msg, start := logger.Track("ExecContext")
+	defer log.Duration(msg, start)
+
 	ctx = driverctx.NewContextWithConnId(ctx, c.id)
 	if len(args) > 0 {
 		return nil, errors.New(ErrParametersNotSupported)
@@ -97,14 +99,29 @@ func (c *conn) ExecContext(ctx context.Context, query string, args []driver.Name
 	exStmtResp, opStatusResp, err := c.runQuery(ctx, query, args)
 
 	if exStmtResp != nil && exStmtResp.OperationHandle != nil {
+		// we have an operation id so update the logger
 		log = logger.WithContext(c.id, driverctx.CorrelationIdFromContext(ctx), client.SprintGuid(exStmtResp.OperationHandle.OperationId.GUID))
+
+		// since we have an operation handle we can close the operation if necessary
+		alreadyClosed := exStmtResp.DirectResults != nil && exStmtResp.DirectResults.CloseOperation != nil
+		if !alreadyClosed && (opStatusResp == nil || opStatusResp.GetOperationState() != cli_service.TOperationState_CLOSED_STATE) {
+			_, err1 := c.client.CloseOperation(ctx, &cli_service.TCloseOperationReq{
+				OperationHandle: exStmtResp.OperationHandle,
+			})
+			if err1 != nil {
+				log.Err(err1).Msg("databricks: failed to close operation after executing statement")
+			}
+		}
 	}
-	defer log.Duration(msg, start)
 
 	if err != nil {
+		// TODO: are there error situations in which the operation still needs to be closed?
+		// Currently if there is an error we never get back a TExecuteStatementResponse so
+		// can't try to close.
 		log.Err(err).Msgf("databricks: failed to execute query: query %s", query)
 		return nil, wrapErrf(err, "failed to execute query")
 	}
+
 	res := result{AffectedRows: opStatusResp.GetNumModifiedRows()}
 
 	return &res, nil
@@ -261,10 +278,12 @@ func (c *conn) executeStatement(ctx context.Context, query string, args []driver
 	if err != nil {
 		return nil, err
 	}
+
 	exStmtResp, ok := res.(*cli_service.TExecuteStatementResp)
 	if !ok {
 		return exStmtResp, errors.New("databricks: invalid execute statement response")
 	}
+
 	return exStmtResp, err
 }
 
