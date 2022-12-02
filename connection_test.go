@@ -86,6 +86,89 @@ func TestConn_executeStatement(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Equal(t, 1, executeStatementCount)
 	})
+
+	t.Run("ExecStatement should close operation on success", func(t *testing.T) {
+		var executeStatementCount, closeOperationCount int
+		executeStatementResp := &cli_service.TExecuteStatementResp{
+			Status: &cli_service.TStatus{
+				StatusCode: cli_service.TStatusCode_SUCCESS_STATUS,
+			},
+			OperationHandle: &cli_service.TOperationHandle{
+				OperationId: &cli_service.THandleIdentifier{
+					GUID:   []byte{1, 2, 3, 4, 2, 23, 4, 2, 3, 1, 2, 3, 4, 4, 223, 34, 54},
+					Secret: []byte("b"),
+				},
+			},
+			DirectResults: &cli_service.TSparkDirectResults{
+				OperationStatus: &cli_service.TGetOperationStatusResp{
+					Status: &cli_service.TStatus{
+						StatusCode: cli_service.TStatusCode_SUCCESS_STATUS,
+					},
+					OperationState: cli_service.TOperationStatePtr(cli_service.TOperationState_ERROR_STATE),
+					ErrorMessage:   strPtr("error message"),
+					DisplayMessage: strPtr("display message"),
+				},
+				ResultSetMetadata: &cli_service.TGetResultSetMetadataResp{
+					Status: &cli_service.TStatus{
+						StatusCode: cli_service.TStatusCode_SUCCESS_STATUS,
+					},
+				},
+				ResultSet: &cli_service.TFetchResultsResp{
+					Status: &cli_service.TStatus{
+						StatusCode: cli_service.TStatusCode_SUCCESS_STATUS,
+					},
+				},
+			},
+		}
+
+		testClient := &client.TestClient{
+			FnExecuteStatement: func(ctx context.Context, req *cli_service.TExecuteStatementReq) (r *cli_service.TExecuteStatementResp, err error) {
+				executeStatementCount++
+				return executeStatementResp, nil
+			},
+			FnCloseOperation: func(ctx context.Context, req *cli_service.TCloseOperationReq) (_r *cli_service.TCloseOperationResp, _err error) {
+				closeOperationCount++
+				return &cli_service.TCloseOperationResp{}, nil
+			},
+		}
+
+		testConn := &conn{
+			session: getTestSession(),
+			client:  testClient,
+			cfg:     config.WithDefaults(),
+		}
+
+		type opStateTest struct {
+			state               cli_service.TOperationState
+			err                 string
+			closeOperationCount int
+		}
+
+		// test behaviour with all terminal operation states
+		operationStateTests := []opStateTest{
+			{state: cli_service.TOperationState_ERROR_STATE, err: "error state", closeOperationCount: 1},
+			{state: cli_service.TOperationState_FINISHED_STATE, err: "", closeOperationCount: 1},
+			{state: cli_service.TOperationState_CANCELED_STATE, err: "cancelled state", closeOperationCount: 1},
+			{state: cli_service.TOperationState_CLOSED_STATE, err: "closed state", closeOperationCount: 0},
+			{state: cli_service.TOperationState_TIMEDOUT_STATE, err: "timeout state", closeOperationCount: 1},
+		}
+
+		for _, opTest := range operationStateTests {
+			closeOperationCount = 0
+			executeStatementCount = 0
+			executeStatementResp.DirectResults.OperationStatus.OperationState = &opTest.state
+			executeStatementResp.DirectResults.OperationStatus.DisplayMessage = &opTest.err
+			_, err := testConn.ExecContext(context.Background(), "select 1", []driver.NamedValue{})
+			if opTest.err == "" {
+				assert.NoError(t, err)
+			} else {
+				assert.EqualError(t, err, opTest.err)
+			}
+			assert.Equal(t, 1, executeStatementCount)
+			assert.Equal(t, opTest.closeOperationCount, closeOperationCount)
+		}
+	})
+
 }
 
 func TestConn_pollOperation(t *testing.T) {
