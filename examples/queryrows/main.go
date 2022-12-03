@@ -83,7 +83,7 @@ func main() {
 			rows.Close()
 			return
 		}
-		// fmt.Printf("%v, %v\n", res1, res2)
+		fmt.Printf("%v, %v\n", res1, res2)
 	}
 
 }
