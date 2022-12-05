@@ -131,7 +131,6 @@ func TestConn_executeStatement(t *testing.T) {
 				return &cli_service.TCloseOperationResp{}, nil
 			},
 		}
-
 		testConn := &conn{
 			session: getTestSession(),
 			client:  testClient,
@@ -179,6 +178,147 @@ func TestConn_executeStatement(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Equal(t, 1, executeStatementCount)
 		assert.Equal(t, 0, closeOperationCount)
+	})
+
+	t.Run("executeStatement should not call cancel if not needed", func(t *testing.T) {
+		var executeStatementCount int
+		var cancelOperationCount int
+		var cancel context.CancelFunc
+		executeStatement := func(ctx context.Context, req *cli_service.TExecuteStatementReq) (r *cli_service.TExecuteStatementResp, err error) {
+			executeStatementCount++
+			cancel()
+			executeStatementResp := &cli_service.TExecuteStatementResp{
+				Status: &cli_service.TStatus{
+					StatusCode: cli_service.TStatusCode_SUCCESS_STATUS,
+				},
+				OperationHandle: &cli_service.TOperationHandle{
+					OperationId: &cli_service.THandleIdentifier{
+						GUID:   []byte{1, 2, 3, 4, 2, 23, 4, 2, 3, 1, 2, 3, 4, 4, 223, 34, 54},
+						Secret: []byte("b"),
+					},
+				},
+				DirectResults: &cli_service.TSparkDirectResults{
+					OperationStatus: &cli_service.TGetOperationStatusResp{
+						Status: &cli_service.TStatus{
+							StatusCode: cli_service.TStatusCode_SUCCESS_STATUS,
+						},
+						OperationState: cli_service.TOperationStatePtr(cli_service.TOperationState_FINISHED_STATE),
+						ErrorMessage:   strPtr("error message"),
+						DisplayMessage: strPtr("display message"),
+					},
+					ResultSetMetadata: &cli_service.TGetResultSetMetadataResp{
+						Status: &cli_service.TStatus{
+							StatusCode: cli_service.TStatusCode_SUCCESS_STATUS,
+						},
+					},
+					ResultSet: &cli_service.TFetchResultsResp{
+						Status: &cli_service.TStatus{
+							StatusCode: cli_service.TStatusCode_SUCCESS_STATUS,
+						},
+					},
+					CloseOperation: &cli_service.TCloseOperationResp{
+						Status: &cli_service.TStatus{
+							StatusCode: cli_service.TStatusCode_SUCCESS_STATUS,
+						},
+					},
+				},
+			}
+			return executeStatementResp, nil
+		}
+		cancelOperation := func(ctx context.Context, req *cli_service.TCancelOperationReq) (r *cli_service.TCancelOperationResp, err error) {
+			cancelOperationCount++
+			cancelOperationResp := &cli_service.TCancelOperationResp{
+				Status: &cli_service.TStatus{
+					StatusCode: cli_service.TStatusCode_SUCCESS_STATUS,
+				},
+			}
+			return cancelOperationResp, nil
+		}
+		testClient := &client.TestClient{
+			FnExecuteStatement: executeStatement,
+			FnCancelOperation:  cancelOperation,
+		}
+		testConn := &conn{
+			session: getTestSession(),
+			client:  testClient,
+			cfg:     config.WithDefaults(),
+		}
+
+		ctx := context.Background()
+		ctx, cancel = context.WithCancel(ctx)
+		defer cancel()
+		_, err := testConn.executeStatement(ctx, "select 1", []driver.NamedValue{})
+
+		assert.Error(t, err)
+		assert.Equal(t, 1, executeStatementCount)
+		assert.Equal(t, 0, cancelOperationCount)
+	})
+	t.Run("executeStatement should call cancel if needed", func(t *testing.T) {
+		var executeStatementCount int
+		var cancelOperationCount int
+		var cancel context.CancelFunc
+		executeStatement := func(ctx context.Context, req *cli_service.TExecuteStatementReq) (r *cli_service.TExecuteStatementResp, err error) {
+			executeStatementCount++
+			cancel()
+			executeStatementResp := &cli_service.TExecuteStatementResp{
+				Status: &cli_service.TStatus{
+					StatusCode: cli_service.TStatusCode_SUCCESS_STATUS,
+				},
+				OperationHandle: &cli_service.TOperationHandle{
+					OperationId: &cli_service.THandleIdentifier{
+						GUID:   []byte{1, 2, 3, 4, 2, 23, 4, 2, 3, 1, 2, 3, 4, 4, 223, 34, 54},
+						Secret: []byte("b"),
+					},
+				},
+				DirectResults: &cli_service.TSparkDirectResults{
+					OperationStatus: &cli_service.TGetOperationStatusResp{
+						Status: &cli_service.TStatus{
+							StatusCode: cli_service.TStatusCode_SUCCESS_STATUS,
+						},
+						OperationState: cli_service.TOperationStatePtr(cli_service.TOperationState_FINISHED_STATE),
+						ErrorMessage:   strPtr("error message"),
+						DisplayMessage: strPtr("display message"),
+					},
+					ResultSetMetadata: &cli_service.TGetResultSetMetadataResp{
+						Status: &cli_service.TStatus{
+							StatusCode: cli_service.TStatusCode_SUCCESS_STATUS,
+						},
+					},
+					ResultSet: &cli_service.TFetchResultsResp{
+						Status: &cli_service.TStatus{
+							StatusCode: cli_service.TStatusCode_SUCCESS_STATUS,
+						},
+					},
+				},
+			}
+			return executeStatementResp, nil
+		}
+		cancelOperation := func(ctx context.Context, req *cli_service.TCancelOperationReq) (r *cli_service.TCancelOperationResp, err error) {
+			cancelOperationCount++
+			cancelOperationResp := &cli_service.TCancelOperationResp{
+				Status: &cli_service.TStatus{
+					StatusCode: cli_service.TStatusCode_SUCCESS_STATUS,
+				},
+			}
+			return cancelOperationResp, nil
+		}
+		testClient := &client.TestClient{
+			FnExecuteStatement: executeStatement,
+			FnCancelOperation:  cancelOperation,
+		}
+		testConn := &conn{
+			session: getTestSession(),
+			client:  testClient,
+			cfg:     config.WithDefaults(),
+		}
+		ctx := context.Background()
+		ctx, cancel = context.WithCancel(ctx)
+		defer cancel()
+		_, err := testConn.executeStatement(ctx, "select 1", []driver.NamedValue{})
+
+		assert.Error(t, err)
+		assert.Equal(t, 1, executeStatementCount)
+		assert.Equal(t, 1, cancelOperationCount)
 	})
 
 }

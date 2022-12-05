@@ -144,7 +144,7 @@ func TestWatch(t *testing.T) {
 		assert.Nil(t, res)
 		assert.Error(t, err)
 	})
-	t.Run("it should call cancelFn upon cancelation", func(t *testing.T) {
+	t.Run("it should call cancelFn upon cancellation while polling", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		go func() {
 			time.Sleep(100 * time.Millisecond)

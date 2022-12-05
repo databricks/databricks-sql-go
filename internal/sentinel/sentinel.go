@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	DEFAULT_TIMEOUT  = 0
+	DEFAULT_TIMEOUT  = 0 //no timeout
 	DEFAULT_INTERVAL = 100 * time.Millisecond
 )
 
