@@ -37,10 +37,11 @@ var _ driver.RowsColumnTypeDatabaseTypeName = (*rows)(nil)
 var _ driver.RowsColumnTypeNullable = (*rows)(nil)
 var _ driver.RowsColumnTypeLength = (*rows)(nil)
 
-var errRowsFetchPriorToStart = "unable to fetch row page prior to start of results"
-var errRowsNoSchemaAvailable = "no schema in result set metadata response"
-var errRowsNoClient = "instance of Rows missing client"
-var errRowsNilRows = "nil Rows instance"
+var errRowsFetchPriorToStart = "databricks: unable to fetch row page prior to start of results"
+var errRowsNoSchemaAvailable = "databricks: no schema in result set metadata response"
+var errRowsNoClient = "databricks: instance of Rows missing client"
+var errRowsNilRows = "databricks: nil Rows instance"
+var errRowsParseValue = "databricks: unable to parse %s value '%s' from column %s"
 
 func NewRows(connID string, corrId string, client cli_service.TCLIService, opHandle *cli_service.TOperationHandle, pageSize int64, location *time.Location, directResults *cli_service.TSparkDirectResults) driver.Rows {
 	r := &rows{
@@ -240,7 +241,7 @@ var (
 	scanTypeString   = reflect.TypeOf("")
 	scanTypeDateTime = reflect.TypeOf(time.Time{})
 	scanTypeRawBytes = reflect.TypeOf(sql.RawBytes{})
-	scanTypeUnknown  = reflect.TypeOf(new(interface{}))
+	scanTypeUnknown  = reflect.TypeOf(new(any))
 )
 
 func getScanType(column *cli_service.TColumnDesc) reflect.Type {
@@ -454,13 +455,12 @@ func (r *rows) getPageStartRowNum() int64 {
 	return r.fetchResults.GetResults().GetStartRowOffset()
 }
 
-const (
-	// TimestampFormat is JDBC compliant timestamp format
-	TimestampFormat = "2006-01-02 15:04:05.999999999"
-	DateFormat      = "2006-01-02"
-)
+var dateTimeFormats map[string]string = map[string]string{
+	"TIMESTAMP": "2006-01-02 15:04:05.999999999",
+	"DATE":      "2006-01-02",
+}
 
-func value(tColumn *cli_service.TColumn, tColumnDesc *cli_service.TColumnDesc, rowNum int64, location *time.Location) (val interface{}, err error) {
+func value(tColumn *cli_service.TColumn, tColumnDesc *cli_service.TColumnDesc, rowNum int64, location *time.Location) (val any, err error) {
 	if location == nil {
 		location = time.UTC
 	}
@@ -469,17 +469,7 @@ func value(tColumn *cli_service.TColumn, tColumnDesc *cli_service.TColumnDesc, r
 	dbtype := strings.TrimSuffix(entry.Type.String(), "_TYPE")
 	if tVal := tColumn.GetStringVal(); tVal != nil && !isNull(tVal.Nulls, rowNum) {
 		val = tVal.Values[rowNum]
-		if dbtype == "TIMESTAMP" {
-			t, err := time.ParseInLocation(TimestampFormat, val.(string), location)
-			if err == nil {
-				val = t
-			}
-		} else if dbtype == "DATE" {
-			t, err := time.ParseInLocation(DateFormat, val.(string), location)
-			if err == nil {
-				val = t
-			}
-		}
+		val, err = handleDateTime(val, dbtype, tColumnDesc.ColumnName, location)
 	} else if tVal := tColumn.GetByteVal(); tVal != nil && !isNull(tVal.Nulls, rowNum) {
 		val = tVal.Values[rowNum]
 	} else if tVal := tColumn.GetI16Val(); tVal != nil && !isNull(tVal.Nulls, rowNum) {
@@ -497,6 +487,21 @@ func value(tColumn *cli_service.TColumn, tColumnDesc *cli_service.TColumnDesc, r
 	}
 
 	return val, err
+}
+
+// handleDateTime will convert the passed val to a time.Time value if necessary
+func handleDateTime(val any, dbType, columnName string, location *time.Location) (any, error) {
+	// if there is a date/time format corresponding to the column type we need to
+	// convert to time.Time
+	if format, ok := dateTimeFormats[dbType]; ok {
+		t, err := parseInLocation(format, val.(string), location)
+		if err != nil {
+			err = wrapErrf(err, errRowsParseValue, dbType, val, columnName)
+		}
+		return t, err
+	}
+
+	return val, nil
 }
 
 func isNull(nulls []byte, position int64) bool {
@@ -539,4 +544,58 @@ func getNRows(rs *cli_service.TRowSet) int64 {
 		}
 	}
 	return 0
+}
+
+// parseInLocation parses a date/time string in the given format and using the provided
+// location.
+// This is, essentially, a wrapper around time.ParseInLocation to handle negative year
+// values
+func parseInLocation(format, dateTimeString string, loc *time.Location) (time.Time, error) {
+	// we want to handle dates with negative year values and currently we only
+	// support formats that start with the year so we can just strip a leading minus
+	// sign
+	var isNegative bool
+	dateTimeString, isNegative = stripLeadingNegative(dateTimeString)
+
+	date, err := time.ParseInLocation(format, dateTimeString, loc)
+	if err != nil {
+		return time.Time{}, err
+	}
+
+	if isNegative {
+		date = date.AddDate(-2*date.Year(), 0, 0)
+	}
+
+	return date, nil
+}
+
+// stripLeadingNegative will remove a leading ascii or unicode minus
+// if present. The possibly shortened string is returned and a flag indicating if
+// the string was altered
+func stripLeadingNegative(dateTimeString string) (string, bool) {
+	if dateStartsWithNegative(dateTimeString) {
+		// strip leading rune from dateTimeString
+		// using range because it is supposed to be faster than utf8.DecodeRuneInString
+		for i := range dateTimeString {
+			if i > 0 {
+				return dateTimeString[i:], true
+			}
+		}
+	}
+
+	return dateTimeString, false
+}
+
+// ISO 8601 allows for both the ascii and unicode characters for minus
+const (
+	// unicode minus sign
+	uMinus string = "\u2212"
+	// ascii hyphen/minus
+	aMinus string = "\x2D"
+)
+
+// dateStartsWithNegative returns true if the string starts with
+// a minus sign
+func dateStartsWithNegative(val string) bool {
+	return strings.HasPrefix(val, aMinus) || strings.HasPrefix(val, uMinus)
 }
