@@ -33,9 +33,10 @@ func (tsc *ThriftServiceClient) OpenSession(ctx context.Context, req *cli_servic
 	log := logger.WithContext(SprintGuid(resp.SessionHandle.SessionId.GUID), driverctx.CorrelationIdFromContext(ctx), "")
 	defer log.Duration(msg, start)
 	if RecordResults {
-		j, _ := json.MarshalIndent(resp, "", " ")
-		_ = os.WriteFile(fmt.Sprintf("OpenSession%d.json", resultIndex), j, 0600)
-		resultIndex++
+		recordRequestResponse(req, resp)
+		// j, _ := json.MarshalIndent(resp, "", " ")
+		// _ = os.WriteFile(fmt.Sprintf("OpenSession%d.json", resultIndex), j, 0600)
+		// resultIndex++
 	}
 	return resp, CheckStatus(resp)
 }
@@ -48,9 +49,10 @@ func (tsc *ThriftServiceClient) CloseSession(ctx context.Context, req *cli_servi
 		return resp, errors.Wrap(err, "close session request error")
 	}
 	if RecordResults {
-		j, _ := json.MarshalIndent(resp, "", " ")
-		_ = os.WriteFile(fmt.Sprintf("CloseSession%d.json", resultIndex), j, 0600)
-		resultIndex++
+		recordRequestResponse(req, resp)
+		// j, _ := json.MarshalIndent(resp, "", " ")
+		// _ = os.WriteFile(fmt.Sprintf("CloseSession%d.json", resultIndex), j, 0600)
+		// resultIndex++
 	}
 	return resp, CheckStatus(resp)
 }
@@ -63,9 +65,10 @@ func (tsc *ThriftServiceClient) FetchResults(ctx context.Context, req *cli_servi
 		return resp, errors.Wrap(err, "fetch results request error")
 	}
 	if RecordResults {
-		j, _ := json.MarshalIndent(resp, "", " ")
-		_ = os.WriteFile(fmt.Sprintf("FetchResults%d.json", resultIndex), j, 0600)
-		resultIndex++
+		recordRequestResponse(req, resp)
+		// j, _ := json.MarshalIndent(resp, "", " ")
+		// _ = os.WriteFile(fmt.Sprintf("FetchResults%d.json", resultIndex), j, 0600)
+		// resultIndex++
 	}
 	return resp, CheckStatus(resp)
 }
@@ -78,9 +81,10 @@ func (tsc *ThriftServiceClient) GetResultSetMetadata(ctx context.Context, req *c
 		return resp, errors.Wrap(err, "get result set metadata request error")
 	}
 	if RecordResults {
-		j, _ := json.MarshalIndent(resp, "", " ")
-		_ = os.WriteFile(fmt.Sprintf("ExecuteStatement%d.json", resultIndex), j, 0600)
-		resultIndex++
+		recordRequestResponse(req, resp)
+		// j, _ := json.MarshalIndent(resp, "", " ")
+		// _ = os.WriteFile(fmt.Sprintf("ExecuteStatement%d.json", resultIndex), j, 0600)
+		// resultIndex++
 	}
 	return resp, CheckStatus(resp)
 }
@@ -92,12 +96,13 @@ func (tsc *ThriftServiceClient) ExecuteStatement(ctx context.Context, req *cli_s
 		return resp, errors.Wrap(err, "execute statement request error")
 	}
 	if RecordResults {
-		j, _ := json.MarshalIndent(resp, "", " ")
-		_ = os.WriteFile(fmt.Sprintf("ExecuteStatement%d.json", resultIndex), j, 0600)
-		// f, _ := os.ReadFile(fmt.Sprintf("ExecuteStatement%d.json", resultIndex))
-		// var resp2 cli_service.TExecuteStatementResp
-		// json.Unmarshal(f, &resp2)
-		resultIndex++
+		recordRequestResponse(req, resp)
+		// j, _ := json.MarshalIndent(resp, "", " ")
+		// _ = os.WriteFile(fmt.Sprintf("ExecuteStatement%d.json", resultIndex), j, 0600)
+		// // f, _ := os.ReadFile(fmt.Sprintf("ExecuteStatement%d.json", resultIndex))
+		// // var resp2 cli_service.TExecuteStatementResp
+		// // json.Unmarshal(f, &resp2)
+		// resultIndex++
 	}
 	if resp != nil && resp.OperationHandle != nil {
 		log := logger.WithContext(driverctx.ConnIdFromContext(ctx), driverctx.CorrelationIdFromContext(ctx), SprintGuid(resp.OperationHandle.OperationId.GUID))
@@ -114,9 +119,10 @@ func (tsc *ThriftServiceClient) GetOperationStatus(ctx context.Context, req *cli
 		return resp, errors.Wrap(err, "get operation status request error")
 	}
 	if RecordResults {
-		j, _ := json.MarshalIndent(resp, "", " ")
-		_ = os.WriteFile(fmt.Sprintf("GetOperationStatus%d.json", resultIndex), j, 0600)
-		resultIndex++
+		recordRequestResponse(req, resp)
+		// j, _ := json.MarshalIndent(resp, "", " ")
+		// _ = os.WriteFile(fmt.Sprintf("GetOperationStatus%d.json", resultIndex), j, 0600)
+		// resultIndex++
 	}
 	return resp, CheckStatus(resp)
 }
@@ -129,9 +135,10 @@ func (tsc *ThriftServiceClient) CloseOperation(ctx context.Context, req *cli_ser
 		return resp, errors.Wrap(err, "close operation request error")
 	}
 	if RecordResults {
-		j, _ := json.MarshalIndent(resp, "", " ")
-		_ = os.WriteFile(fmt.Sprintf("CloseOperation%d.json", resultIndex), j, 0600)
-		resultIndex++
+		recordRequestResponse(req, resp)
+		// j, _ := json.MarshalIndent(resp, "", " ")
+		// _ = os.WriteFile(fmt.Sprintf("CloseOperation%d.json", resultIndex), j, 0600)
+		// resultIndex++
 	}
 	return resp, CheckStatus(resp)
 }
@@ -144,9 +151,10 @@ func (tsc *ThriftServiceClient) CancelOperation(ctx context.Context, req *cli_se
 		return resp, errors.Wrap(err, "cancel operation request error")
 	}
 	if RecordResults {
-		j, _ := json.MarshalIndent(resp, "", " ")
-		_ = os.WriteFile(fmt.Sprintf("CancelOperation%d.json", resultIndex), j, 0600)
-		resultIndex++
+		recordRequestResponse(req, resp)
+		// j, _ := json.MarshalIndent(resp, "", " ")
+		// _ = os.WriteFile(fmt.Sprintf("CancelOperation%d.json", resultIndex), j, 0600)
+		// resultIndex++
 	}
 	return resp, CheckStatus(resp)
 }
@@ -253,4 +261,27 @@ func SprintGuid(bts []byte) string {
 	}
 	logger.Warn().Msgf("GUID not valid: %x", bts)
 	return fmt.Sprintf("%x", bts)
+}
+
+type rr struct {
+	Request  any
+	Response any
+}
+
+func recordRequestResponse(req, resp any) {
+
+	pair := rr{Request: req, Response: resp}
+
+	j, err := json.MarshalIndent(&pair, "", " ")
+	// fmt.Println(string(j))
+	if err == nil {
+		f, err := os.OpenFile("session.json", os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0600)
+		if err == nil {
+			defer f.Close()
+			_, err = f.WriteString(string(j) + ",\n")
+			if err != nil {
+				fmt.Println(err.Error())
+			}
+		}
+	}
 }
