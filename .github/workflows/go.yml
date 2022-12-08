@@ -1,4 +1,4 @@
-name: Go
+name: CI
 
 on:
   push:
@@ -19,6 +19,49 @@ jobs:
         uses: golangci/golangci-lint-action@v2
         with:
           version: v1.48
+
+  integration:
+    permissions:
+      contents: read
+      packages: read
+    name: Integration Tests
+    strategy:
+      matrix:
+        go-version: [1.19.x]
+        os: [ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    services:
+      test-server:
+        options: --user "appuser"
+        credentials:
+          username: ${{ github.repository }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+        image: ghcr.io/databricks/databricks/databricks-thrift-test-server:main
+        ports:
+          - 8087:8087
+    steps:
+      - name: Check out code into the Go module directory
+        uses: actions/checkout@v3
+
+      - name: Set up Go Toolchain
+        uses: actions/setup-go@v3
+        with:
+          go-version: ${{ matrix.go-version }}
+
+      - name: Cache Go artifacts
+        uses: actions/cache@v2
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: ${{ runner.os }}-go-${{ matrix.go-version }}-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-${{ matrix.go-version }}-
+
+
+      - name: run integration tests
+        run: make test-integration
+
   build-and-test:
     name: Test and Build
     strategy:
