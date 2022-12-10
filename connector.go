@@ -20,17 +20,21 @@ type connector struct {
 }
 
 func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
+	var catalogName *cli_service.TIdentifier
+	var schemaName *cli_service.TIdentifier
 	var initialNamespace *cli_service.TNamespace
 
 	if c.cfg.Catalog != "" {
-		initialNamespace = &cli_service.TNamespace{}
-		initialNamespace.CatalogName = cli_service.TIdentifierPtr(cli_service.TIdentifier(c.cfg.Catalog))
+		catalogName = cli_service.TIdentifierPtr(cli_service.TIdentifier(c.cfg.Catalog))
 	}
 	if c.cfg.Schema != "" {
-		if initialNamespace == nil {
-			initialNamespace = &cli_service.TNamespace{}
+		schemaName = cli_service.TIdentifierPtr(cli_service.TIdentifier(c.cfg.Schema))
+	}
+	if catalogName != nil || schemaName != nil {
+		initialNamespace = &cli_service.TNamespace{
+			CatalogName: catalogName,
+			SchemaName:  schemaName,
 		}
-		initialNamespace.SchemaName = cli_service.TIdentifierPtr(cli_service.TIdentifier(c.cfg.Schema))
 	}
 
 	// we need to ensure that open session will eventually end
