@@ -1,37 +1,13 @@
 package dbsql
 
 import (
-	"context"
 	"testing"
 	"time"
 
-	"github.com/databricks/databricks-sql-go/internal/cli_service"
-	"github.com/databricks/databricks-sql-go/internal/client"
 	"github.com/databricks/databricks-sql-go/internal/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-func TestConnector_Connect(t *testing.T) {
-	t.Run("Connect returns err when thrift client initialization fails", func(t *testing.T) {
-		cfg := config.WithDefaults()
-		var openSessionCount int
-		openSession := func(ctx context.Context, req *cli_service.TOpenSessionReq) (r *cli_service.TOpenSessionResp, err error) {
-			openSessionCount++
-			return getTestSession(), nil
-		}
-		testClient := &client.TestClient{
-			FnOpenSession: openSession,
-		}
-		testConnector := connector{
-			cfg:    cfg,
-			client: testClient,
-		}
-		conn, err := testConnector.Connect(context.Background())
-		assert.NotNil(t, conn)
-		assert.NoError(t, err)
-	})
-}
 
 func TestNewConnector(t *testing.T) {
 	t.Run("Connector initialized with functional options should have all options set", func(t *testing.T) {

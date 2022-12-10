@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"database/sql/driver"
 
-	"github.com/databricks/databricks-sql-go/internal/client"
 	"github.com/databricks/databricks-sql-go/internal/config"
 	_ "github.com/databricks/databricks-sql-go/logger"
 )
@@ -36,11 +35,8 @@ func (d *databricksDriver) OpenConnector(dsn string) (driver.Connector, error) {
 		return nil, err
 	}
 	cfg.UserConfig = ucfg
-	tclient, err := client.InitThriftClient(cfg)
-	if err != nil {
-		return nil, wrapErr(err, "error initializing thrift client")
-	}
-	return &connector{cfg, tclient}, nil
+
+	return &connector{cfg: cfg}, nil
 }
 
 var _ driver.Driver = (*databricksDriver)(nil)
