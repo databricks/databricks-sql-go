@@ -20,10 +20,15 @@ type connector struct {
 
 func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 	var initialNamespace *cli_service.TNamespace
+
 	if c.cfg.Catalog != "" {
+		initialNamespace = &cli_service.TNamespace{}
 		initialNamespace.CatalogName = cli_service.TIdentifierPtr(cli_service.TIdentifier(c.cfg.Catalog))
 	}
 	if c.cfg.Schema != "" {
+		if initialNamespace == nil {
+			initialNamespace = &cli_service.TNamespace{}
+		}
 		initialNamespace.SchemaName = cli_service.TIdentifierPtr(cli_service.TIdentifier(c.cfg.Schema))
 	}
 

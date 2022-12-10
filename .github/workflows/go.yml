@@ -79,7 +79,7 @@ jobs:
         env:
           CGO_ENABLED: 0
 
-      - name: run integration tests
+      - name: Contract Test
         run: make test-integration
         env:
           CGO_ENABLED: 0
