@@ -147,52 +147,44 @@ The result log may look like this:
 
 ==================================
 
-Thrift Server Type --> Golang Type
+Databricks Type --> Golang Type
 
 ==================================
 
-TTypeId_BOOLEAN_TYPE      --> bool
+BOOLEAN --> bool
 
-TTypeId_TINYINT_TYPE      --> int8
+TINYINT --> int8
 
-TTypeId_SMALLINT_TYPE     --> int16
+SMALLINT --> int16
 
-TTypeId_INT_TYPE          --> int32
+INT --> int32
 
-TTypeId_BIGINT_TYPE       --> int64
+BIGINT --> int64
 
-TTypeId_FLOAT_TYPE        --> float32
+FLOAT --> float32
 
-TTypeId_DOUBLE_TYPE       --> float64
+DOUBLE --> float64
 
-TTypeId_NULL_TYPE         --> nil
+VOID --> nil
 
-TTypeId_STRING_TYPE       --> string
+STRING --> string
 
-TTypeId_CHAR_TYPE         --> string
+DATE --> time.Time
 
-TTypeId_VARCHAR_TYPE      --> string
+TIMESTAMP --> time.Time
 
-TTypeId_DATE_TYPE         --> time.Time
+DECIMAL(p,s) --> sql.RawBytes
 
-TTypeId_TIMESTAMP_TYPE    --> time.Time
+BINARY --> sql.RawBytes
 
-TTypeId_DECIMAL_TYPE      --> sql.RawBytes
+ARRAY<elementType> --> sql.RawBytes
 
-TTypeId_BINARY_TYPE       --> sql.RawBytes
+STRUCT --> sql.RawBytes
 
-TTypeId_ARRAY_TYPE        --> sql.RawBytes
+MAP<keyType, valueType> --> sql.RawBytes
 
-TTypeId_STRUCT_TYPE       --> sql.RawBytes
+INTERVAL (year-month) --> string
 
-TTypeId_MAP_TYPE          --> sql.RawBytes
-
-TTypeId_UNION_TYPE        --> sql.RawBytes
-
-TTypeId_USER_DEFINED_TYPE --> *interface{}
-
-TTypeId_INTERVAL_DAY_TIME_TYPE --> string
-
-TTypeId_INTERVAL_YEAR_MONTH_TYPE --> string
+INTERVAL (day-time) --> string
 */
 package dbsql
