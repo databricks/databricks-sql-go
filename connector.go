@@ -15,8 +15,7 @@ import (
 )
 
 type connector struct {
-	cfg    *config.Config
-	client cli_service.TCLIService
+	cfg *config.Config
 }
 
 func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
@@ -29,8 +28,13 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 		schemaName = cli_service.TIdentifierPtr(cli_service.TIdentifier(c.cfg.Schema))
 	}
 
+	tclient, err := client.InitThriftClient(c.cfg)
+	if err != nil {
+		return nil, wrapErr(err, "error initializing thrift client")
+	}
+
 	// we need to ensure that open session will eventually end
-	session, err := c.client.OpenSession(ctx, &cli_service.TOpenSessionReq{
+	session, err := tclient.OpenSession(ctx, &cli_service.TOpenSessionReq{
 		ClientProtocol: c.cfg.ThriftProtocolVersion,
 		Configuration:  make(map[string]string),
 		InitialNamespace: &cli_service.TNamespace{
@@ -47,7 +51,7 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 	conn := &conn{
 		id:      client.SprintGuid(session.SessionHandle.GetSessionId().GUID),
 		cfg:     c.cfg,
-		client:  c.client,
+		client:  tclient,
 		session: session,
 	}
 	log := logger.WithContext(conn.id, driverctx.CorrelationIdFromContext(ctx), "")
@@ -82,13 +86,8 @@ func NewConnector(options ...connOption) (driver.Connector, error) {
 	for _, opt := range options {
 		opt(cfg)
 	}
-	// validate config?
-	tclient, err := client.InitThriftClient(cfg)
-	if err != nil {
-		return nil, wrapErr(err, "error initializing thrift client")
-	}
 
-	return &connector{cfg, tclient}, nil
+	return &connector{cfg: cfg}, nil
 }
 
 // WithServerHostname sets up the server hostname. Mandatory.

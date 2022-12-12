@@ -2,6 +2,8 @@
 
 ## 0.1.x (Unreleased)
 
+- Fix thread safety issue in connector
+
 ## 0.2.0 (2022-11-18)
 
 - Support for DirectResults
