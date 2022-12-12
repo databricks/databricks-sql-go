@@ -142,5 +142,57 @@ The user can also utilize Track() and Duration() to custom log the elapsed time 
 The result log may look like this:
 
 	{"level":"debug","connId":"01ed6545-5669-1ec7-8c7e-6d8a1ea0ab16","corrId":"workflow-example","queryId":"01ed6545-57cc-188a-bfc5-d9c0eaf8e189","time":1668558402,"message":"Run Main elapsed time: 1.298712292s"}
+
+# Supported Data Types
+
+==================================
+
+Thrift Server Type --> Golang Type
+
+==================================
+
+TTypeId_BOOLEAN_TYPE      --> bool
+
+TTypeId_TINYINT_TYPE      --> int8
+
+TTypeId_SMALLINT_TYPE     --> int16
+
+TTypeId_INT_TYPE          --> int32
+
+TTypeId_BIGINT_TYPE       --> int64
+
+TTypeId_FLOAT_TYPE        --> float32
+
+TTypeId_DOUBLE_TYPE       --> float64
+
+TTypeId_NULL_TYPE         --> nil
+
+TTypeId_STRING_TYPE       --> string
+
+TTypeId_CHAR_TYPE         --> string
+
+TTypeId_VARCHAR_TYPE      --> string
+
+TTypeId_DATE_TYPE         --> time.Time
+
+TTypeId_TIMESTAMP_TYPE    --> time.Time
+
+TTypeId_DECIMAL_TYPE      --> sql.RawBytes
+
+TTypeId_BINARY_TYPE       --> sql.RawBytes
+
+TTypeId_ARRAY_TYPE        --> sql.RawBytes
+
+TTypeId_STRUCT_TYPE       --> sql.RawBytes
+
+TTypeId_MAP_TYPE          --> sql.RawBytes
+
+TTypeId_UNION_TYPE        --> sql.RawBytes
+
+TTypeId_USER_DEFINED_TYPE --> *interface{}
+
+TTypeId_INTERVAL_DAY_TIME_TYPE --> string
+
+TTypeId_INTERVAL_YEAR_MONTH_TYPE --> string
 */
 package dbsql
