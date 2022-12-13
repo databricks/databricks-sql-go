@@ -40,7 +40,7 @@ Supported optional connection parameters can be specified in param=value and inc
 
 Supported optional session parameters can be specified in param=value and include:
 
-  - ansi_mode: (Boolean string). Session statements will adhere to rules defined by ANSI SQL specification. Default is "false"
+  - ansi_mode: (Boolean string). Session statements will adhere to rules defined by ANSI SQL specification.
   - timezone: (e.g. "America/Los_Angeles"). Sets the timezone of the session
 
 # Connection via new connector object
@@ -186,5 +186,43 @@ MAP<keyType, valueType> --> sql.RawBytes
 INTERVAL (year-month) --> string
 
 INTERVAL (day-time) --> string
+
+For ARRAY, STRUCT, and MAP types, sql.Scan can cast sql.RawBytes to JSON string, which can be unmarshalled to Golang
+arrays, maps, and structs. For example:
+
+	type structVal struct {
+			StringField string `json:"string_field"`
+			ArrayField  []int  `json:"array_field"`
+	}
+	type row struct {
+		arrayVal  []int
+		mapVal    map[string]int
+		structVal structVal
+	}
+	res := []row{}
+
+	for rows.Next() {
+		r := row{}
+		tempArray := []byte{}
+		tempStruct := []byte{}
+		tempMap := []byte{}
+		if err := rows.Scan(&tempArray, &tempMap, &tempStruct); err != nil {
+			log.Fatal(err)
+		}
+		if err := json.Unmarshal(tempArray, &r.arrayVal); err != nil {
+			log.Fatal(err)
+		}
+		if err := json.Unmarshal(tempMap, &r.mapVal); err != nil {
+			log.Fatal(err)
+		}
+		if err := json.Unmarshal(tempStruct, &r.structVal); err != nil {
+			log.Fatal(err)
+		}
+		res = append(res, r)
+	}
+
+May generate the following row:
+
+	{arrayVal:[1,2,3] mapVal:{"key1":1} structVal:{"string_field":"string_val","array_field":[4,5,6]}}
 */
 package dbsql
