@@ -6,6 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"reflect"
+	"strings"
+	"time"
 
 	"github.com/apache/thrift/lib/go/thrift"
 	"github.com/databricks/databricks-sql-go/driverctx"
@@ -18,7 +21,6 @@ import (
 
 // this is used to generate test data. Developer should change this manually
 var RecordResults bool
-var resultIndex int
 
 type ThriftServiceClient struct {
 	*cli_service.TCLIServiceClient
@@ -33,58 +35,49 @@ func (tsc *ThriftServiceClient) OpenSession(ctx context.Context, req *cli_servic
 	log := logger.WithContext(SprintGuid(resp.SessionHandle.SessionId.GUID), driverctx.CorrelationIdFromContext(ctx), "")
 	defer log.Duration(msg, start)
 	if RecordResults {
-		recordRequestResponse(req, resp)
-		// j, _ := json.MarshalIndent(resp, "", " ")
-		// _ = os.WriteFile(fmt.Sprintf("OpenSession%d.json", resultIndex), j, 0600)
-		// resultIndex++
+		recordRequestResponse(req, resp, time.Since(start))
 	}
 	return resp, CheckStatus(resp)
 }
 
 func (tsc *ThriftServiceClient) CloseSession(ctx context.Context, req *cli_service.TCloseSessionReq) (*cli_service.TCloseSessionResp, error) {
 	log := logger.WithContext(driverctx.ConnIdFromContext(ctx), driverctx.CorrelationIdFromContext(ctx), "")
-	defer log.Duration(logger.Track("CloseSession"))
+	msg, start := logger.Track("CloseSession")
+	defer log.Duration(msg, start)
 	resp, err := tsc.TCLIServiceClient.CloseSession(ctx, req)
 	if err != nil {
 		return resp, errors.Wrap(err, "close session request error")
 	}
 	if RecordResults {
-		recordRequestResponse(req, resp)
-		// j, _ := json.MarshalIndent(resp, "", " ")
-		// _ = os.WriteFile(fmt.Sprintf("CloseSession%d.json", resultIndex), j, 0600)
-		// resultIndex++
+		recordRequestResponse(req, resp, time.Since(start))
 	}
 	return resp, CheckStatus(resp)
 }
 
 func (tsc *ThriftServiceClient) FetchResults(ctx context.Context, req *cli_service.TFetchResultsReq) (*cli_service.TFetchResultsResp, error) {
 	log := logger.WithContext(driverctx.ConnIdFromContext(ctx), driverctx.CorrelationIdFromContext(ctx), SprintGuid(req.OperationHandle.OperationId.GUID))
-	defer log.Duration(logger.Track("FetchResults"))
+	msg, start := logger.Track("FetchResults")
+	defer log.Duration(msg, start)
 	resp, err := tsc.TCLIServiceClient.FetchResults(ctx, req)
 	if err != nil {
 		return resp, errors.Wrap(err, "fetch results request error")
 	}
 	if RecordResults {
-		recordRequestResponse(req, resp)
-		// j, _ := json.MarshalIndent(resp, "", " ")
-		// _ = os.WriteFile(fmt.Sprintf("FetchResults%d.json", resultIndex), j, 0600)
-		// resultIndex++
+		recordRequestResponse(req, resp, time.Since(start))
 	}
 	return resp, CheckStatus(resp)
 }
 
 func (tsc *ThriftServiceClient) GetResultSetMetadata(ctx context.Context, req *cli_service.TGetResultSetMetadataReq) (*cli_service.TGetResultSetMetadataResp, error) {
 	log := logger.WithContext(driverctx.ConnIdFromContext(ctx), driverctx.CorrelationIdFromContext(ctx), SprintGuid(req.OperationHandle.OperationId.GUID))
-	defer log.Duration(logger.Track("GetResultSetMetadata"))
+	msg, start := logger.Track("GetResultSetMetadata")
+	defer log.Duration(msg, start)
 	resp, err := tsc.TCLIServiceClient.GetResultSetMetadata(ctx, req)
 	if err != nil {
 		return resp, errors.Wrap(err, "get result set metadata request error")
 	}
 	if RecordResults {
-		recordRequestResponse(req, resp)
-		// j, _ := json.MarshalIndent(resp, "", " ")
-		// _ = os.WriteFile(fmt.Sprintf("ExecuteStatement%d.json", resultIndex), j, 0600)
-		// resultIndex++
+		recordRequestResponse(req, resp, time.Since(start))
 	}
 	return resp, CheckStatus(resp)
 }
@@ -96,13 +89,7 @@ func (tsc *ThriftServiceClient) ExecuteStatement(ctx context.Context, req *cli_s
 		return resp, errors.Wrap(err, "execute statement request error")
 	}
 	if RecordResults {
-		recordRequestResponse(req, resp)
-		// j, _ := json.MarshalIndent(resp, "", " ")
-		// _ = os.WriteFile(fmt.Sprintf("ExecuteStatement%d.json", resultIndex), j, 0600)
-		// // f, _ := os.ReadFile(fmt.Sprintf("ExecuteStatement%d.json", resultIndex))
-		// // var resp2 cli_service.TExecuteStatementResp
-		// // json.Unmarshal(f, &resp2)
-		// resultIndex++
+		recordRequestResponse(req, resp, time.Since(start))
 	}
 	if resp != nil && resp.OperationHandle != nil {
 		log := logger.WithContext(driverctx.ConnIdFromContext(ctx), driverctx.CorrelationIdFromContext(ctx), SprintGuid(resp.OperationHandle.OperationId.GUID))
@@ -113,48 +100,42 @@ func (tsc *ThriftServiceClient) ExecuteStatement(ctx context.Context, req *cli_s
 
 func (tsc *ThriftServiceClient) GetOperationStatus(ctx context.Context, req *cli_service.TGetOperationStatusReq) (*cli_service.TGetOperationStatusResp, error) {
 	log := logger.WithContext(driverctx.ConnIdFromContext(ctx), driverctx.CorrelationIdFromContext(ctx), SprintGuid(req.OperationHandle.OperationId.GUID))
-	defer log.Duration(logger.Track("GetOperationStatus"))
+	msg, start := logger.Track("GetOperationStatus")
+	defer log.Duration(msg, start)
 	resp, err := tsc.TCLIServiceClient.GetOperationStatus(ctx, req)
 	if err != nil {
 		return resp, errors.Wrap(err, "get operation status request error")
 	}
 	if RecordResults {
-		recordRequestResponse(req, resp)
-		// j, _ := json.MarshalIndent(resp, "", " ")
-		// _ = os.WriteFile(fmt.Sprintf("GetOperationStatus%d.json", resultIndex), j, 0600)
-		// resultIndex++
+		recordRequestResponse(req, resp, time.Since(start))
 	}
 	return resp, CheckStatus(resp)
 }
 
 func (tsc *ThriftServiceClient) CloseOperation(ctx context.Context, req *cli_service.TCloseOperationReq) (*cli_service.TCloseOperationResp, error) {
 	log := logger.WithContext(driverctx.ConnIdFromContext(ctx), driverctx.CorrelationIdFromContext(ctx), SprintGuid(req.OperationHandle.OperationId.GUID))
-	defer log.Duration(logger.Track("CloseOperation"))
+	msg, start := logger.Track("CloseOperation")
+	defer log.Duration(msg, start)
 	resp, err := tsc.TCLIServiceClient.CloseOperation(ctx, req)
 	if err != nil {
 		return resp, errors.Wrap(err, "close operation request error")
 	}
 	if RecordResults {
-		recordRequestResponse(req, resp)
-		// j, _ := json.MarshalIndent(resp, "", " ")
-		// _ = os.WriteFile(fmt.Sprintf("CloseOperation%d.json", resultIndex), j, 0600)
-		// resultIndex++
+		recordRequestResponse(req, resp, time.Since(start))
 	}
 	return resp, CheckStatus(resp)
 }
 
 func (tsc *ThriftServiceClient) CancelOperation(ctx context.Context, req *cli_service.TCancelOperationReq) (*cli_service.TCancelOperationResp, error) {
 	log := logger.WithContext(driverctx.ConnIdFromContext(ctx), driverctx.CorrelationIdFromContext(ctx), SprintGuid(req.OperationHandle.OperationId.GUID))
-	defer log.Duration(logger.Track("CancelOperation"))
+	msg, start := logger.Track("CancelOperation")
+	defer log.Duration(msg, start)
 	resp, err := tsc.TCLIServiceClient.CancelOperation(ctx, req)
 	if err != nil {
 		return resp, errors.Wrap(err, "cancel operation request error")
 	}
 	if RecordResults {
-		recordRequestResponse(req, resp)
-		// j, _ := json.MarshalIndent(resp, "", " ")
-		// _ = os.WriteFile(fmt.Sprintf("CancelOperation%d.json", resultIndex), j, 0600)
-		// resultIndex++
+		recordRequestResponse(req, resp, time.Since(start))
 	}
 	return resp, CheckStatus(resp)
 }
@@ -264,13 +245,22 @@ func SprintGuid(bts []byte) string {
 }
 
 type rr struct {
-	Request  any
-	Response any
+	RequestType string
+	RequestTime time.Duration
+	Request     any
+	Response    any
 }
 
-func recordRequestResponse(req, resp any) {
+func recordRequestResponse(req, resp any, dur time.Duration) {
 
-	pair := rr{Request: req, Response: resp}
+	rt := reflect.TypeOf(req).String()
+	rt = rt[strings.LastIndex(rt, ".")+1:]
+	pair := rr{
+		RequestType: rt,
+		RequestTime: dur,
+		Request:     req,
+		Response:    resp,
+	}
 
 	j, err := json.MarshalIndent(&pair, "", " ")
 	// fmt.Println(string(j))
