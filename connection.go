@@ -208,18 +208,18 @@ func (c *conn) runQuery(ctx context.Context, query string, args []driver.NamedVa
 			// good
 			case cli_service.TOperationState_FINISHED_STATE:
 				// return handle to fetch results later
-				return exStmtResp, opStatus, nil
+				return exStmtResp, statusResp, nil
 			// bad
 			case cli_service.TOperationState_CANCELED_STATE,
 				cli_service.TOperationState_CLOSED_STATE,
 				cli_service.TOperationState_ERROR_STATE,
 				cli_service.TOperationState_TIMEDOUT_STATE:
 				logBadQueryState(log, statusResp)
-				return exStmtResp, opStatus, errors.New(statusResp.GetDisplayMessage())
+				return exStmtResp, statusResp, errors.New(statusResp.GetDisplayMessage())
 				// live states
 			default:
 				logBadQueryState(log, statusResp)
-				return exStmtResp, opStatus, errors.New("invalid operation state. This should not have happened")
+				return exStmtResp, statusResp, errors.New("invalid operation state. This should not have happened")
 			}
 		// weird states
 		default:

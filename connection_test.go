@@ -731,11 +731,13 @@ func TestConn_runQuery(t *testing.T) {
 			}
 			return executeStatementResp, nil
 		}
+		var numModRows int64 = 2
 
 		getOperationStatus := func(ctx context.Context, req *cli_service.TGetOperationStatusReq) (r *cli_service.TGetOperationStatusResp, err error) {
 			getOperationStatusCount++
 			getOperationStatusResp := &cli_service.TGetOperationStatusResp{
-				OperationState: cli_service.TOperationStatePtr(cli_service.TOperationState_FINISHED_STATE),
+				OperationState:  cli_service.TOperationStatePtr(cli_service.TOperationState_FINISHED_STATE),
+				NumModifiedRows: &numModRows,
 			}
 			return getOperationStatusResp, nil
 		}
@@ -756,6 +758,7 @@ func TestConn_runQuery(t *testing.T) {
 		assert.Equal(t, 1, getOperationStatusCount)
 		assert.NotNil(t, exStmtResp)
 		assert.NotNil(t, opStatusResp)
+		assert.Equal(t, &numModRows, opStatusResp.NumModifiedRows)
 	})
 
 	t.Run("runQuery should return resp and error when query is canceled", func(t *testing.T) {
@@ -775,11 +778,13 @@ func TestConn_runQuery(t *testing.T) {
 			}
 			return executeStatementResp, nil
 		}
+		var numModRows int64 = 3
 
 		getOperationStatus := func(ctx context.Context, req *cli_service.TGetOperationStatusReq) (r *cli_service.TGetOperationStatusResp, err error) {
 			getOperationStatusCount++
 			getOperationStatusResp := &cli_service.TGetOperationStatusResp{
-				OperationState: cli_service.TOperationStatePtr(cli_service.TOperationState_CANCELED_STATE),
+				OperationState:  cli_service.TOperationStatePtr(cli_service.TOperationState_CANCELED_STATE),
+				NumModifiedRows: &numModRows,
 			}
 			return getOperationStatusResp, nil
 		}
@@ -800,6 +805,7 @@ func TestConn_runQuery(t *testing.T) {
 		assert.Equal(t, 1, getOperationStatusCount)
 		assert.NotNil(t, exStmtResp)
 		assert.NotNil(t, opStatusResp)
+		assert.Equal(t, &numModRows, opStatusResp.NumModifiedRows)
 	})
 
 	t.Run("runQuery should return resp when query is finished with DirectResults", func(t *testing.T) {
@@ -931,11 +937,12 @@ func TestConn_runQuery(t *testing.T) {
 			}
 			return executeStatementResp, nil
 		}
-
+		var numModRows int64 = 3
 		getOperationStatus := func(ctx context.Context, req *cli_service.TGetOperationStatusReq) (r *cli_service.TGetOperationStatusResp, err error) {
 			getOperationStatusCount++
 			getOperationStatusResp := &cli_service.TGetOperationStatusResp{
-				OperationState: cli_service.TOperationStatePtr(cli_service.TOperationState_FINISHED_STATE),
+				OperationState:  cli_service.TOperationStatePtr(cli_service.TOperationState_FINISHED_STATE),
+				NumModifiedRows: &numModRows,
 			}
 			return getOperationStatusResp, nil
 		}
@@ -953,6 +960,7 @@ func TestConn_runQuery(t *testing.T) {
 
 		assert.NoError(t, err)
 		assert.Equal(t, 1, executeStatementCount)
+		assert.Equal(t, &numModRows, opStatusResp.NumModifiedRows)
 		assert.Equal(t, 1, getOperationStatusCount)
 		assert.NotNil(t, exStmtResp)
 		assert.NotNil(t, opStatusResp)
