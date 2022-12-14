@@ -481,7 +481,15 @@ func value(tColumn *cli_service.TColumn, tColumnDesc *cli_service.TColumnDesc, r
 	} else if tVal := tColumn.GetBoolVal(); tVal != nil && !isNull(tVal.Nulls, rowNum) {
 		val = tVal.Values[rowNum]
 	} else if tVal := tColumn.GetDoubleVal(); tVal != nil && !isNull(tVal.Nulls, rowNum) {
-		val = tVal.Values[rowNum]
+		if dbtype == "FLOAT" {
+			// database types FLOAT and DOUBLE are both returned as a float64
+			// convert to a float32 is valid because the FLOAT type would have
+			// only been four bytes on the server
+			val = float32(tVal.Values[rowNum])
+		} else {
+			val = tVal.Values[rowNum]
+		}
+
 	} else if tVal := tColumn.GetBinaryVal(); tVal != nil && !isNull(tVal.Nulls, rowNum) {
 		val = tVal.Values[rowNum]
 	}
