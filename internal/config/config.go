@@ -13,7 +13,7 @@ import (
 	"github.com/pkg/errors"
 )
 
-// Driver Configurations
+// Driver Configurations.
 // Only UserConfig are currently exposed to users
 type Config struct {
 	UserConfig
@@ -34,6 +34,7 @@ type Config struct {
 	ThriftDebugClientProtocol bool
 }
 
+// ToEndpointURL generates the endpoint URL from Config that a Thrift client will connect to
 func (c *Config) ToEndpointURL() string {
 	var userInfo string
 	if c.AccessToken != "" {
@@ -43,6 +44,7 @@ func (c *Config) ToEndpointURL() string {
 	return endpointUrl
 }
 
+// DeepCopy returns a true deep copy of Config
 func (c *Config) DeepCopy() *Config {
 	if c == nil {
 		return nil
@@ -84,6 +86,7 @@ type UserConfig struct {
 	SessionParams  map[string]string
 }
 
+// DeepCopy returns a true deep copy of UserConfig
 func (ucfg UserConfig) DeepCopy() UserConfig {
 	var sessionParams map[string]string
 	if ucfg.SessionParams != nil {
@@ -120,6 +123,7 @@ func (ucfg UserConfig) DeepCopy() UserConfig {
 
 var defaultMaxRows = 100000
 
+// WithDefaults provides default settings for optional fields in UserConfig
 func (ucfg UserConfig) WithDefaults() UserConfig {
 	if ucfg.MaxRows <= 0 {
 		ucfg.MaxRows = defaultMaxRows
@@ -131,6 +135,7 @@ func (ucfg UserConfig) WithDefaults() UserConfig {
 	return ucfg
 }
 
+// WithDefaults provides default settings for Config
 func WithDefaults() *Config {
 	return &Config{
 		UserConfig:                UserConfig{}.WithDefaults(),
@@ -152,6 +157,7 @@ func WithDefaults() *Config {
 
 }
 
+// ParseDSN constructs UserConfig by parsing DSN string supplied to `sql.Open()`
 func ParseDSN(dsn string) (UserConfig, error) {
 	fullDSN := dsn
 	if !strings.HasPrefix(dsn, "https://") && !strings.HasPrefix(dsn, "http://") {

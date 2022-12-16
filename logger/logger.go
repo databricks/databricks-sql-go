@@ -14,10 +14,24 @@ type DBSQLLogger struct {
 	zerolog.Logger
 }
 
+// Track is a simple utility function to use with logger to log a message with a timestamp.
+// Recommended to use in conjunction with Duration.
+//
+// For example:
+//
+//	msg, start := log.Track("Run operation")
+//	defer log.Duration(msg, start)
 func (l *DBSQLLogger) Track(msg string) (string, time.Time) {
 	return msg, time.Now()
 }
 
+// Duration logs a debug message with the time elapsed between the provided start and the current time.
+// Use in conjunction with Track.
+//
+// For example:
+//
+//	msg, start := log.Track("Run operation")
+//	defer log.Duration(msg, start)
 func (l *DBSQLLogger) Duration(msg string, start time.Time) {
 	l.Debug().Msgf("%v elapsed time: %v", msg, time.Since(start))
 }
@@ -26,7 +40,7 @@ var Logger = &DBSQLLogger{
 	zerolog.New(os.Stderr).With().Timestamp().Logger(),
 }
 
-// enable pretty printing for interactive terminals and json for production.
+// Enable pretty printing for interactive terminals and json for production.
 func init() {
 	// for tty terminal enable pretty logs
 	if isatty.IsTerminal(os.Stdout.Fd()) && runtime.GOOS != "windows" {
@@ -114,7 +128,7 @@ func Err(err error) *zerolog.Event {
 	return Logger.Err(err)
 }
 
-// WithContext sets connectionId, correlationId, and queryID to be used as fields.
+// WithContext sets connectionId, correlationId, and queryId to be used as fields.
 func WithContext(connectionId string, correlationId string, queryId string) *DBSQLLogger {
 	return &DBSQLLogger{Logger.With().Str("connId", connectionId).Str("corrId", correlationId).Str("queryId", queryId).Logger()}
 }
