@@ -4,9 +4,12 @@ import (
 	"context"
 	"database/sql/driver"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
+	"github.com/databricks/databricks-sql-go/auth"
+	"github.com/databricks/databricks-sql-go/auth/pat"
 	"github.com/databricks/databricks-sql-go/driverctx"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/client"
@@ -15,7 +18,8 @@ import (
 )
 
 type connector struct {
-	cfg *config.Config
+	cfg    *config.Config
+	client *http.Client
 }
 
 func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
@@ -27,8 +31,7 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 	if c.cfg.Schema != "" {
 		schemaName = cli_service.TIdentifierPtr(cli_service.TIdentifier(c.cfg.Schema))
 	}
-
-	tclient, err := client.InitThriftClient(c.cfg)
+	tclient, err := client.InitThriftClient(c.cfg, c.client)
 	if err != nil {
 		return nil, wrapErr(err, "error initializing thrift client")
 	}
@@ -86,8 +89,10 @@ func NewConnector(options ...connOption) (driver.Connector, error) {
 	for _, opt := range options {
 		opt(cfg)
 	}
+	client := client.PooledClient(cfg.Authenticator)
+	client.Timeout = cfg.ClientTimeout
 
-	return &connector{cfg: cfg}, nil
+	return &connector{cfg: cfg, client: client}, nil
 }
 
 // WithServerHostname sets up the server hostname. Mandatory.
@@ -110,7 +115,19 @@ func WithPort(port int) connOption {
 // WithAccessToken sets up the Personal Access Token. Mandatory for now.
 func WithAccessToken(token string) connOption {
 	return func(c *config.Config) {
-		c.AccessToken = token
+		if token != "" {
+			pat := &pat.PATAuth{
+				AccessToken: token,
+			}
+			c.Authenticator = pat
+		}
+	}
+}
+
+// WithAuthenticator sets up the Authentication. Mandatory if access token is not provided.
+func WithAuthenticator(authr auth.Authenticator) connOption {
+	return func(c *config.Config) {
+		c.Authenticator = authr
 	}
 }
 

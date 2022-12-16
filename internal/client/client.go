@@ -5,9 +5,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
+	"net"
+	"net/http"
+	"net/http/httptrace"
 	"os"
+	"time"
 
 	"github.com/apache/thrift/lib/go/thrift"
+	"github.com/databricks/databricks-sql-go/auth"
 	"github.com/databricks/databricks-sql-go/driverctx"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/config"
@@ -160,7 +166,7 @@ func (tsc *ThriftServiceClient) CancelOperation(ctx context.Context, req *cli_se
 // This is a wrapper of the http transport so we can have access to response code and headers
 // It is important to know the code and headers to know if we need to retry or not
 
-func InitThriftClient(cfg *config.Config) (*ThriftServiceClient, error) {
+func InitThriftClient(cfg *config.Config, httpclient *http.Client) (*ThriftServiceClient, error) {
 	endpoint := cfg.ToEndpointURL()
 	tcfg := &thrift.TConfiguration{
 		TLSConfig: cfg.TLSConfig,
@@ -190,11 +196,23 @@ func InitThriftClient(cfg *config.Config) (*ThriftServiceClient, error) {
 
 	switch cfg.ThriftTransport {
 	case "http":
-		retryableClient := retryablehttp.NewClient()
-		retryableClient.HTTPClient.Timeout = cfg.ClientTimeout
-		// TODO
-		// add custom retryableClient.CheckRetry to retry based on thrift server headers and response code
-		tTrans, err = thrift.NewTHttpClientWithOptions(endpoint, thrift.THttpClientOptions{Client: retryableClient.HTTPClient})
+		if httpclient == nil {
+			if cfg.Authenticator == nil {
+				return nil, errors.New("databricks: no authentication method set")
+			}
+			httpclient = PooledClient(cfg.Authenticator)
+		}
+		retryableClient := &retryablehttp.Client{
+			HTTPClient:   httpclient,
+			Logger:       &leveledLogger{},
+			RetryWaitMin: 1 * time.Second,
+			RetryWaitMax: 30 * time.Second,
+			RetryMax:     4,
+			ErrorHandler: errorHandler,
+			CheckRetry:   retryablehttp.DefaultRetryPolicy,
+			Backoff:      retryablehttp.DefaultBackoff,
+		}
+		tTrans, err = thrift.NewTHttpClientWithOptions(endpoint, thrift.THttpClientOptions{Client: retryableClient.StandardClient()})
 		thriftHttpClient := tTrans.(*thrift.THttpClient)
 		userAgent := fmt.Sprintf("%s/%s", cfg.DriverName, cfg.DriverVersion)
 		if cfg.UserAgentEntry != "" {
@@ -224,7 +242,7 @@ func InitThriftClient(cfg *config.Config) (*ThriftServiceClient, error) {
 	return tsClient, nil
 }
 
-// ThriftResponse respresents thrift rpc response
+// ThriftResponse represents thrift rpc response
 type ThriftResponse interface {
 	GetStatus() *cli_service.TStatus
 }
@@ -253,4 +271,124 @@ func SprintGuid(bts []byte) string {
 	}
 	logger.Warn().Msgf("GUID not valid: %x", bts)
 	return fmt.Sprintf("%x", bts)
+}
+
+type Transport struct {
+	Base  *http.Transport
+	Authr auth.Authenticator
+	trace bool
+}
+
+func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if t.trace {
+		trace := &httptrace.ClientTrace{
+			GotConn: func(info httptrace.GotConnInfo) { log.Printf("conn was reused: %t", info.Reused) },
+		}
+		req = req.WithContext(httptrace.WithClientTrace(req.Context(), trace))
+	}
+
+	defer logger.Duration(logger.Track("RoundTrip"))
+	// this is inspired by oauth2.Transport
+	reqBodyClosed := false
+	if req.Body != nil {
+		defer func() {
+			if !reqBodyClosed {
+				req.Body.Close()
+			}
+		}()
+	}
+
+	req2 := cloneRequest(req) // per RoundTripper contract
+
+	err := t.Authr.Authenticate(req2)
+
+	if err != nil {
+		return nil, err
+	}
+
+	// req.Body is assumed to be closed by the base RoundTripper.
+	reqBodyClosed = true
+	resp, err := t.Base.RoundTrip(req2)
+	if err != nil {
+		return nil, err
+	}
+
+	return resp, nil
+}
+
+func PooledTransport() *http.Transport {
+	transport := &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+			DualStack: true,
+		}).DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          100,
+		IdleConnTimeout:       180 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+		MaxIdleConnsPerHost:   10, // this client is only used for one host
+		// MaxConnsPerHost:       100,
+	}
+	return transport
+}
+
+func PooledClient(authr auth.Authenticator) *http.Client {
+	if authr == nil {
+		return nil
+	}
+	tr := &Transport{
+		Base:  PooledTransport(),
+		Authr: authr,
+	}
+	return &http.Client{
+		Transport: tr,
+	}
+}
+
+// cloneRequest returns a clone of the provided *http.Request.
+// The clone is a shallow copy of the struct and its Header map.
+func cloneRequest(r *http.Request) *http.Request {
+	// shallow copy of the struct
+	r2 := new(http.Request)
+	*r2 = *r
+	// deep copy of the Header
+	r2.Header = make(http.Header, len(r.Header))
+	for k, s := range r.Header {
+		r2.Header[k] = append([]string(nil), s...)
+	}
+	return r2
+}
+
+type leveledLogger struct {
+}
+
+func (l *leveledLogger) Error(msg string, keysAndValues ...interface{}) {
+	logger.Error().Msg(msg)
+}
+func (l *leveledLogger) Info(msg string, keysAndValues ...interface{}) {
+	logger.Info().Msg(msg)
+}
+func (l *leveledLogger) Debug(msg string, keysAndValues ...interface{}) {
+	logger.Debug().Msg(msg)
+}
+func (l *leveledLogger) Warn(msg string, keysAndValues ...interface{}) {
+	logger.Warn().Msg(msg)
+}
+
+func errorHandler(resp *http.Response, err error, numTries int) (*http.Response, error) {
+	var werr error
+	if err == nil {
+		err = errors.New(fmt.Sprintf("request error after %d retries", numTries))
+	}
+	orgid := resp.Header.Get("X-Databricks-Org-Id")
+	reason := resp.Header.Get("X-Databricks-Reason-Phrase")
+	terrmsg := resp.Header.Get("X-Thriftserver-Error-Message")
+	errmsg := resp.Header.Get("x-databricks-error-or-redirect-message")
+
+	werr = errors.Wrapf(err, fmt.Sprintf("orgId: %s, reason: %s, thriftErr: %s, err: %s", orgid, reason, terrmsg, errmsg))
+
+	return resp, werr
 }

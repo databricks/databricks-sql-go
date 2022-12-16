@@ -102,7 +102,7 @@ func (c *conn) ExecContext(ctx context.Context, query string, args []driver.Name
 		// since we have an operation handle we can close the operation if necessary
 		alreadyClosed := exStmtResp.DirectResults != nil && exStmtResp.DirectResults.CloseOperation != nil
 		if !alreadyClosed && (opStatusResp == nil || opStatusResp.GetOperationState() != cli_service.TOperationState_CLOSED_STATE) {
-			_, err1 := c.client.CloseOperation(ctx, &cli_service.TCloseOperationReq{
+			_, err1 := c.client.CloseOperation(context.Background(), &cli_service.TCloseOperationReq{
 				OperationHandle: exStmtResp.OperationHandle,
 			})
 			if err1 != nil {
