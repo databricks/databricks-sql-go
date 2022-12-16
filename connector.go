@@ -18,6 +18,7 @@ type connector struct {
 	cfg *config.Config
 }
 
+// Connect returns a connection to the Databricks database from a connection pool.
 func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 	var catalogName *cli_service.TIdentifier
 	var schemaName *cli_service.TIdentifier
@@ -68,6 +69,7 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 	return conn, nil
 }
 
+// Driver returns underlying databricksDriver for compatibility with sql.DB Driver method
 func (c *connector) Driver() driver.Driver {
 	return &databricksDriver{}
 }
@@ -76,7 +78,7 @@ var _ driver.Connector = (*connector)(nil)
 
 type connOption func(*config.Config)
 
-// NewConnector creates a connection that can be used with sql.OpenDB().
+// NewConnector creates a connection that can be used with `sql.OpenDB()`.
 // This is an easier way to set up the DB instead of having to construct a DSN string.
 func NewConnector(options ...connOption) (driver.Connector, error) {
 	// config with default options

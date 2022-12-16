@@ -17,15 +17,20 @@ func (s *stmt) Close() error {
 	return nil
 }
 
+// NumInput returns -1 and the sql package will not sanity check Exec or Query argument counts.
 func (s *stmt) NumInput() int {
 	return -1
 }
 
+// Exec is not implemented.
+//
 // Deprecated: Use StmtExecContext instead.
 func (s *stmt) Exec(args []driver.Value) (driver.Result, error) {
 	return nil, errors.New(ErrNotImplemented)
 }
 
+// Query is not implemented.
+//
 // Deprecated: Use StmtQueryContext instead.
 func (s *stmt) Query(args []driver.Value) (driver.Rows, error) {
 	return nil, errors.New(ErrNotImplemented)

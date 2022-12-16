@@ -21,16 +21,19 @@ type conn struct {
 	session *cli_service.TOpenSessionResp
 }
 
-// The driver does not really implement prepared statements.
+// Prepare prepares a statement with the query bound to this connection.
 func (c *conn) Prepare(query string) (driver.Stmt, error) {
 	return &stmt{conn: c, query: query}, nil
 }
 
-// The driver does not really implement prepared statements.
+// PrepareContext prepares a statement with the query bound to this connection.
+// Currently, PrepareContext does not use context and is functionally equivalent to Prepare.
 func (c *conn) PrepareContext(ctx context.Context, query string) (driver.Stmt, error) {
 	return &stmt{conn: c, query: query}, nil
 }
 
+// Close closes the session.
+// sql package maintains a free pool of connections and only calls Close when there's a surplus of idle connections.
 func (c *conn) Close() error {
 	log := logger.WithContext(c.id, "", "")
 	ctx := driverctx.NewContextWithConnId(context.Background(), c.id)
@@ -46,16 +49,18 @@ func (c *conn) Close() error {
 	return nil
 }
 
-// Not supported in Databricks
+// Not supported in Databricks.
 func (c *conn) Begin() (driver.Tx, error) {
 	return nil, errors.New(ErrTransactionsNotSupported)
 }
 
-// Not supported in Databricks
+// Not supported in Databricks.
 func (c *conn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, error) {
 	return nil, errors.New(ErrTransactionsNotSupported)
 }
 
+// Ping attempts to verify that the server is accessible.
+// Returns ErrBadConn if ping fails and consequently DB.Ping will remove the conn from the pool.
 func (c *conn) Ping(ctx context.Context) error {
 	log := logger.WithContext(c.id, driverctx.CorrelationIdFromContext(ctx), "")
 	ctx = driverctx.NewContextWithConnId(ctx, c.id)
@@ -69,12 +74,13 @@ func (c *conn) Ping(ctx context.Context) error {
 	return nil
 }
 
-// Implementation of SessionResetter
+// ResetSession is called prior to executing a query on the connection.
+// The session with this driver does not have any important state to reset before re-use.
 func (c *conn) ResetSession(ctx context.Context) error {
-	// For now our session does not have any important state to reset before re-use
 	return nil
 }
 
+// IsValid signals whether a connection is valid or if it should be discarded.
 func (c *conn) IsValid() bool {
 	return c.session.GetStatus().StatusCode == cli_service.TStatusCode_SUCCESS_STATUS
 }
