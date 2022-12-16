@@ -33,7 +33,6 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 		return nil, wrapErr(err, "error initializing thrift client")
 	}
 
-	// we need to ensure that open session will eventually end
 	session, err := tclient.OpenSession(ctx, &cli_service.TOpenSessionReq{
 		ClientProtocol: c.cfg.ThriftProtocolVersion,
 		Configuration:  make(map[string]string),

@@ -142,7 +142,7 @@ func WithDefaults() *Config {
 		ClientTimeout:             900 * time.Second,
 		PingTimeout:               15 * time.Second,
 		CanUseMultipleCatalogs:    true,
-		DriverName:                "godatabrickssqlconnector", //important. Do not change
+		DriverName:                "godatabrickssqlconnector", // important. Do not change
 		DriverVersion:             "0.9.0",
 		ThriftProtocol:            "binary",
 		ThriftTransport:           "http",

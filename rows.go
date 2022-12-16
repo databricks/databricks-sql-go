@@ -145,7 +145,7 @@ func (r *rows) Next(dest []driver.Value) error {
 		return err
 	}
 
-	// populate the destinatino slice
+	// populate the destination slice
 	for i := range dest {
 		val, err := value(r.fetchResults.Results.Columns[i], metadata.Schema.Columns[i], r.nextRowIndex, r.location)
 
@@ -200,10 +200,9 @@ func (r *rows) ColumnTypeDatabaseTypeName(index int) string {
 }
 
 // ColumnTypeNullable returns a flag indicating whether the column is nullable
-// and an ok value of true if the status of the column is known.  Otherwise
+// and an ok value of true if the status of the column is known. Otherwise
 // a value of false is returned for ok.
 func (r *rows) ColumnTypeNullable(index int) (nullable, ok bool) {
-	// TODO: Update if we can figure out this information
 	return false, false
 }
 
@@ -214,8 +213,6 @@ func (r *rows) ColumnTypeLength(index int) (length int64, ok bool) {
 	}
 
 	typeName := getDBTypeID(columnInfo)
-	// TODO: figure out how to get better metadata about complex types
-	// currently map, array, and struct are returned as strings
 	switch typeName {
 	case cli_service.TTypeId_STRING_TYPE,
 		cli_service.TTypeId_VARCHAR_TYPE,
@@ -246,7 +243,6 @@ var (
 
 func getScanType(column *cli_service.TColumnDesc) reflect.Type {
 
-	// TODO: handle non-primitive types
 	entry := column.TypeDesc.Types[0].PrimitiveEntry
 
 	switch entry.Type {
@@ -287,7 +283,6 @@ func getScanType(column *cli_service.TColumnDesc) reflect.Type {
 }
 
 func getDBTypeName(column *cli_service.TColumnDesc) string {
-	// TODO: handle non-primitive types
 	entry := column.TypeDesc.Types[0].PrimitiveEntry
 	dbtype := strings.TrimSuffix(entry.Type.String(), "_TYPE")
 
@@ -295,7 +290,6 @@ func getDBTypeName(column *cli_service.TColumnDesc) string {
 }
 
 func getDBTypeID(column *cli_service.TColumnDesc) cli_service.TTypeId {
-	// TODO: handle non-primitive types
 	entry := column.TypeDesc.Types[0].PrimitiveEntry
 	return entry.Type
 }
@@ -334,7 +328,6 @@ func (r *rows) getColumnMetadataByIndex(index int) (*cli_service.TColumnDesc, er
 		return nil, errors.Errorf("invalid column index: %d", index)
 	}
 
-	// tColumns := resultMetadata.Schema.GetColumns()
 	return columns[index], nil
 }
 
@@ -392,7 +385,7 @@ func (r *rows) fetchResultPage() error {
 
 	for !r.isNextRowInPage() {
 
-		// determine the direction of page fetching.  Currently we only handle
+		// determine the direction of page fetching. Currently we only handle
 		// TFetchOrientation_FETCH_PRIOR and TFetchOrientation_FETCH_NEXT
 		var direction cli_service.TFetchOrientation = r.getPageFetchDirection()
 		if direction == cli_service.TFetchOrientation_FETCH_PRIOR {
