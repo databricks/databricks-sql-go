@@ -43,6 +43,8 @@ var errRowsNoClient = "databricks: instance of Rows missing client"
 var errRowsNilRows = "databricks: nil Rows instance"
 var errRowsParseValue = "databricks: unable to parse %s value '%s' from column %s"
 
+// NewRows generates a new rows object given the rows' fields.
+// NewRows will also parse directResults if it is available for some rows' fields.
 func NewRows(connID string, corrId string, client cli_service.TCLIService, opHandle *cli_service.TOperationHandle, pageSize int64, location *time.Location, directResults *cli_service.TSparkDirectResults) driver.Rows {
 	r := &rows{
 		connId:        connID,
