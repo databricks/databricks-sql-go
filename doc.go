@@ -62,10 +62,11 @@ Use sql.OpenDB() to create a database handle via a new connector object created 
 		if err != nil {
 			log.Fatal(err)
 		}
-		defer db.close()
-	}
 
-	db := sql.OpenDB(connector)
+		db := sql.OpenDB(connector)
+		defer db.Close()
+		...
+	}
 
 Supported functional options include:
 
