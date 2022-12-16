@@ -57,6 +57,12 @@ test: bin/gotestsum  ## Run the go unit tests.
 	@echo "INFO: Running all go unit tests."
 	CGO_ENABLED=0 ./bin/gotestsum --format pkgname-and-test-fails --junitfile $(TEST_RESULTS_DIR)/unit-tests.xml ./...
 
+.PHONY: test-integration
+test-integration: bin/gotestsum  ## Run the go unit integration tests.
+	@echo "INFO: Running all go integration tests."
+	CGO_ENABLED=0 ./bin/gotestsum --format pkgname-and-test-fails -- -tags=integration ./...
+
+
 .PHONY: coverage
 coverage: bin/gotestsum  ## Report the unit test code coverage.
 	@echo "INFO: Generating unit test coverage report."

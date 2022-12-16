@@ -1,4 +1,4 @@
-name: Go
+name: CI
 
 on:
   push:
@@ -19,14 +19,25 @@ jobs:
         uses: golangci/golangci-lint-action@v2
         with:
           version: v1.48
+
   build-and-test:
     name: Test and Build
+    permissions:
+      contents: read
+      packages: read
     strategy:
       matrix:
         go-version: [1.19.x]
         os: [ubuntu-latest]
     runs-on: ${{ matrix.os }}
-
+    services:
+      test-server:
+        credentials:
+          username: ${{ github.repository }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+        image: ghcr.io/databricks/databricks/databricks-thrift-test-server:0.1.0
+        ports:
+          - 8087:8087
     steps:
       - name: Check out code into the Go module directory
         uses: actions/checkout@v3
@@ -60,10 +71,15 @@ jobs:
           fi
           go get -v -t -d ./...
 
+      - name: Build
+        run: make linux
+
       - name: Test
         run: make test
         env:
           CGO_ENABLED: 0
 
-      - name: Build
-        run: make linux
+      - name: Contract Test
+        run: make test-integration
+        env:
+          CGO_ENABLED: 0

@@ -22,11 +22,19 @@ type connector struct {
 func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 	var catalogName *cli_service.TIdentifier
 	var schemaName *cli_service.TIdentifier
+	var initialNamespace *cli_service.TNamespace
+
 	if c.cfg.Catalog != "" {
 		catalogName = cli_service.TIdentifierPtr(cli_service.TIdentifier(c.cfg.Catalog))
 	}
 	if c.cfg.Schema != "" {
 		schemaName = cli_service.TIdentifierPtr(cli_service.TIdentifier(c.cfg.Schema))
+	}
+	if catalogName != nil || schemaName != nil {
+		initialNamespace = &cli_service.TNamespace{
+			CatalogName: catalogName,
+			SchemaName:  schemaName,
+		}
 	}
 
 	tclient, err := client.InitThriftClient(c.cfg)
@@ -35,13 +43,11 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 	}
 
 	// we need to ensure that open session will eventually end
+
 	session, err := tclient.OpenSession(ctx, &cli_service.TOpenSessionReq{
-		ClientProtocol: c.cfg.ThriftProtocolVersion,
-		Configuration:  make(map[string]string),
-		InitialNamespace: &cli_service.TNamespace{
-			CatalogName: catalogName,
-			SchemaName:  schemaName,
-		},
+		ClientProtocol:         c.cfg.ThriftProtocolVersion,
+		Configuration:          make(map[string]string),
+		InitialNamespace:       initialNamespace,
 		CanUseMultipleCatalogs: &c.cfg.CanUseMultipleCatalogs,
 	})
 
