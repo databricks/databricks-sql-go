@@ -11,42 +11,68 @@ This repo contains a Databricks SQL Driver for Go's [database/sql](https://golan
 
 ## Documentation
 
-Full documentation is not yet available. See below for usage examples.
+See `doc.go` for full documentation or the Databrick's documentation for [SQL Driver for Go](https://docs.databricks.com/dev-tools/go-sql-driver.html).
 
 ## Usage
 
 ```go
 import (
-	"database/sql"
-	"time"
-
-	_ "github.com/databricks/databricks-sql-go"
+  "context"
+  "database/sql"
+  _ "github.com/databricks/databricks-sql-go"
 )
 
-db, err := sql.Open("databricks", "token:********@********.databricks.com/sql/1.0/endpoints/********")
+db, err := sql.Open("databricks", "token:********@********.databricks.com:443/sql/1.0/endpoints/********")
 if err != nil {
-	panic(err)
+  panic(err)
 }
+defer db.Close()
 
 
-rows, err := db.Query("SELECT 1")
+rows, err := db.QueryContext(context.Background(), "SELECT 1")
+defer rows.Close()
 ```
 
 Additional usage examples are available [here](https://github.com/databricks/databricks-sql-go/tree/main/examples).
 
-### DSN (Data Source Name)
+### Connecting with DSN (Data Source Name)
 
 The DSN format is:
 
 ```
-token:[your token]@[Workspace hostname][Endpoint HTTP Path]?param=value
+token:[your token]@[Workspace hostname]:[Port number][Endpoint HTTP Path]?param=value
 ```
 
 You can set query timeout value by appending a `timeout` query parameter (in seconds) and you can set max rows to retrieve per network request by setting the `maxRows` query parameter:
 
 ```
-token:[your token]@[Workspace hostname][Endpoint HTTP Path]?timeout=1000&maxRows=1000
+token:[your token]@[Workspace hostname]:[Port number][Endpoint HTTP Path]?timeout=1000&maxRows=1000
 ```
+
+### Connecting with a new Connector
+
+You can also connect with a new connector object. For example:
+
+```go
+import (
+"database/sql"
+  _ "github.com/databricks/databricks-sql-go"
+)
+
+connector, err := dbsql.NewConnector(
+  dbsql.WithServerHostname(<Workspace hostname>),
+  dbsql.WithPort(<Port number>),
+  dbsql.WithHTTPPath(<Endpoint HTTP Path>),
+  dbsql.WithAccessToken(<your token>)
+)
+if err != nil {
+  log.Fatal(err)
+}
+db := sql.OpenDB(connector)
+defer db.Close()
+```
+
+View `doc.go` or `connector.go` to understand all the functional options available when creating a new connector object.
 
 ## Develop
 
