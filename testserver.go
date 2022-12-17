@@ -20,7 +20,6 @@ func (h *thriftHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func initThriftTestServer(handler cli_service.TCLIService) *httptest.Server {
 
-	// endpoint := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
 	tcfg := &thrift.TConfiguration{
 		TLSConfig: nil,
 	}

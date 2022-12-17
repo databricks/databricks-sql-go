@@ -117,9 +117,6 @@ func (c *conn) ExecContext(ctx context.Context, query string, args []driver.Name
 		}
 	}
 	if err != nil {
-		// TODO: are there error situations in which the operation still needs to be closed?
-		// Currently if there is an error we never get back a TExecuteStatementResponse so
-		// can't try to close.
 		log.Err(err).Msgf("databricks: failed to execute query: query %s", query)
 		return nil, wrapErrf(err, "failed to execute query")
 	}
@@ -153,7 +150,6 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 	defer log.Duration(msg, start)
 
 	if err != nil {
-		// gotta also think about close operation here
 		log.Err(err).Msgf("databricks: failed to run query: query %s", query)
 		return nil, wrapErrf(err, "failed to run query")
 	}
@@ -175,7 +171,6 @@ func (c *conn) runQuery(ctx context.Context, query string, args []driver.NamedVa
 	if err != nil {
 		return exStmtResp, nil, err
 	}
-	// hold on to the operation handle
 	opHandle := exStmtResp.OperationHandle
 	if opHandle != nil && opHandle.OperationId != nil {
 		log = logger.WithContext(
@@ -191,14 +186,12 @@ func (c *conn) runQuery(ctx context.Context, query string, args []driver.NamedVa
 		// terminal states
 		// good
 		case cli_service.TOperationState_FINISHED_STATE:
-			// return results
 			return exStmtResp, opStatus, nil
 		// bad
 		case cli_service.TOperationState_CANCELED_STATE,
 			cli_service.TOperationState_CLOSED_STATE,
 			cli_service.TOperationState_ERROR_STATE,
 			cli_service.TOperationState_TIMEDOUT_STATE:
-			// do we need to close the operation in these cases?
 			logBadQueryState(log, opStatus)
 			return exStmtResp, opStatus, errors.New(opStatus.GetDisplayMessage())
 		// live states
@@ -213,7 +206,6 @@ func (c *conn) runQuery(ctx context.Context, query string, args []driver.NamedVa
 			// terminal states
 			// good
 			case cli_service.TOperationState_FINISHED_STATE:
-				// return handle to fetch results later
 				return exStmtResp, statusResp, nil
 			// bad
 			case cli_service.TOperationState_CANCELED_STATE,
@@ -242,7 +234,6 @@ func (c *conn) runQuery(ctx context.Context, query string, args []driver.NamedVa
 		// terminal states
 		// good
 		case cli_service.TOperationState_FINISHED_STATE:
-			// return handle to fetch results later
 			return exStmtResp, statusResp, nil
 		// bad
 		case cli_service.TOperationState_CANCELED_STATE,
@@ -273,13 +264,9 @@ func (c *conn) executeStatement(ctx context.Context, query string, args []driver
 		Statement:     query,
 		RunAsync:      c.cfg.RunAsync,
 		QueryTimeout:  int64(c.cfg.QueryTimeout / time.Second),
-		// this is specific for databricks. It shortcuts server round trips
 		GetDirectResults: &cli_service.TSparkGetDirectResults{
 			MaxRows: int64(c.cfg.MaxRows),
 		},
-		// CanReadArrowResult_: &t,
-		// CanDecompressLZ4Result_: &f,
-		// CanDownloadResult_: &t,
 	}
 
 	ctx = driverctx.NewContextWithConnId(ctx, c.id)
@@ -339,7 +326,6 @@ func (c *conn) pollOperation(ctx context.Context, opHandle *cli_service.TOperati
 				log.Debug().Msgf("databricks: status %s", statusResp.GetOperationState().String())
 			}
 			return func() bool {
-				// which other states?
 				if err != nil {
 					return true
 				}
