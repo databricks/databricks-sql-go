@@ -130,6 +130,10 @@ func (ucfg UserConfig) WithDefaults() UserConfig {
 	}
 	if ucfg.Protocol == "" {
 		ucfg.Protocol = "https"
+		ucfg.Port = 443
+	}
+	if ucfg.Port == 0 {
+		ucfg.Port = 443
 	}
 	ucfg.SessionParams = make(map[string]string)
 	return ucfg
