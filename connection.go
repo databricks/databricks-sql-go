@@ -91,7 +91,8 @@ func (c *conn) IsValid() bool {
 // ExecContext honors the context timeout and return when it is canceled.
 // Statement ExecContext is the same as connection ExecContext
 func (c *conn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
-	log := logger.WithContext(c.id, driverctx.CorrelationIdFromContext(ctx), "")
+	corrId := driverctx.CorrelationIdFromContext(ctx)
+	log := logger.WithContext(c.id, corrId, "")
 	msg, start := logger.Track("ExecContext")
 	defer log.Duration(msg, start)
 
@@ -103,12 +104,13 @@ func (c *conn) ExecContext(ctx context.Context, query string, args []driver.Name
 
 	if exStmtResp != nil && exStmtResp.OperationHandle != nil {
 		// we have an operation id so update the logger
-		log = logger.WithContext(c.id, driverctx.CorrelationIdFromContext(ctx), client.SprintGuid(exStmtResp.OperationHandle.OperationId.GUID))
+		log = logger.WithContext(c.id, corrId, client.SprintGuid(exStmtResp.OperationHandle.OperationId.GUID))
 
 		// since we have an operation handle we can close the operation if necessary
 		alreadyClosed := exStmtResp.DirectResults != nil && exStmtResp.DirectResults.CloseOperation != nil
+		newCtx := driverctx.NewContextWithCorrelationId(driverctx.NewContextWithConnId(context.Background(), c.id), corrId)
 		if !alreadyClosed && (opStatusResp == nil || opStatusResp.GetOperationState() != cli_service.TOperationState_CLOSED_STATE) {
-			_, err1 := c.client.CloseOperation(ctx, &cli_service.TCloseOperationReq{
+			_, err1 := c.client.CloseOperation(newCtx, &cli_service.TCloseOperationReq{
 				OperationHandle: exStmtResp.OperationHandle,
 			})
 			if err1 != nil {

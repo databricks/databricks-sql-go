@@ -95,7 +95,7 @@ func TestConn_executeStatement(t *testing.T) {
 			},
 			OperationHandle: &cli_service.TOperationHandle{
 				OperationId: &cli_service.THandleIdentifier{
-					GUID:   []byte{1, 2, 3, 4, 2, 23, 4, 2, 3, 1, 2, 3, 4, 4, 223, 34, 54},
+					GUID:   []byte{1, 2, 3, 4, 2, 23, 4, 2, 3, 1, 2, 3, 4, 223, 34, 54},
 					Secret: []byte("b"),
 				},
 			},
@@ -344,7 +344,7 @@ func TestConn_pollOperation(t *testing.T) {
 		}
 		res, err := testConn.pollOperation(context.Background(), &cli_service.TOperationHandle{
 			OperationId: &cli_service.THandleIdentifier{
-				GUID:   []byte{1, 2, 3, 4, 2, 23, 4, 2, 3, 2, 3, 4, 4, 223, 34, 54},
+				GUID:   []byte{1, 2, 3, 4, 2, 23, 4, 2, 3, 2, 4, 7, 8, 223, 34, 54},
 				Secret: []byte("b"),
 			},
 		})
@@ -1059,6 +1059,11 @@ func TestConn_ExecContext(t *testing.T) {
 
 		testClient := &client.TestClient{
 			FnExecuteStatement: executeStatement,
+			FnCloseOperation: func(ctx context.Context, req *cli_service.TCloseOperationReq) (_r *cli_service.TCloseOperationResp, _err error) {
+				ctxErr := ctx.Err()
+				assert.NoError(t, ctxErr)
+				return &cli_service.TCloseOperationResp{}, nil
+			},
 		}
 		testConn := &conn{
 			session: getTestSession(),
@@ -1102,6 +1107,11 @@ func TestConn_ExecContext(t *testing.T) {
 		testClient := &client.TestClient{
 			FnExecuteStatement:   executeStatement,
 			FnGetOperationStatus: getOperationStatus,
+			FnCloseOperation: func(ctx context.Context, req *cli_service.TCloseOperationReq) (_r *cli_service.TCloseOperationResp, _err error) {
+				ctxErr := ctx.Err()
+				assert.NoError(t, ctxErr)
+				return &cli_service.TCloseOperationResp{}, nil
+			},
 		}
 		testConn := &conn{
 			session: getTestSession(),
@@ -1115,6 +1125,71 @@ func TestConn_ExecContext(t *testing.T) {
 		rowsAffected, _ := res.RowsAffected()
 		assert.Equal(t, int64(10), rowsAffected)
 		assert.Equal(t, 1, executeStatementCount)
+	})
+	t.Run("ExecContext uses new context to close operation", func(t *testing.T) {
+		var executeStatementCount, getOperationStatusCount, closeOperationCount, cancelOperationCount int
+		var cancel context.CancelFunc
+		executeStatement := func(ctx context.Context, req *cli_service.TExecuteStatementReq) (r *cli_service.TExecuteStatementResp, err error) {
+			executeStatementCount++
+			executeStatementResp := &cli_service.TExecuteStatementResp{
+				Status: &cli_service.TStatus{
+					StatusCode: cli_service.TStatusCode_SUCCESS_STATUS,
+				},
+				OperationHandle: &cli_service.TOperationHandle{
+					OperationId: &cli_service.THandleIdentifier{
+						GUID:   []byte{1, 2, 3, 4, 2, 23, 4, 2, 3, 2, 3, 4, 4, 223, 34, 54},
+						Secret: []byte("b"),
+					},
+				},
+			}
+			return executeStatementResp, nil
+		}
+
+		getOperationStatus := func(ctx context.Context, req *cli_service.TGetOperationStatusReq) (r *cli_service.TGetOperationStatusResp, err error) {
+			getOperationStatusCount++
+			cancel()
+			getOperationStatusResp := &cli_service.TGetOperationStatusResp{
+				OperationState:  cli_service.TOperationStatePtr(cli_service.TOperationState_FINISHED_STATE),
+				NumModifiedRows: thrift.Int64Ptr(10),
+			}
+			return getOperationStatusResp, nil
+		}
+
+		testClient := &client.TestClient{
+			FnExecuteStatement:   executeStatement,
+			FnGetOperationStatus: getOperationStatus,
+			FnCloseOperation: func(ctx context.Context, req *cli_service.TCloseOperationReq) (_r *cli_service.TCloseOperationResp, _err error) {
+				closeOperationCount++
+				ctxErr := ctx.Err()
+				assert.NoError(t, ctxErr)
+				return &cli_service.TCloseOperationResp{}, nil
+			},
+			FnCancelOperation: func(ctx context.Context, req *cli_service.TCancelOperationReq) (r *cli_service.TCancelOperationResp, err error) {
+				cancelOperationCount++
+				cancelOperationResp := &cli_service.TCancelOperationResp{
+					Status: &cli_service.TStatus{
+						StatusCode: cli_service.TStatusCode_SUCCESS_STATUS,
+					},
+				}
+				return cancelOperationResp, nil
+			},
+		}
+		testConn := &conn{
+			session: getTestSession(),
+			client:  testClient,
+			cfg:     config.WithDefaults(),
+		}
+		ctx := context.Background()
+		ctx, cancel = context.WithCancel(ctx)
+		defer cancel()
+		res, err := testConn.ExecContext(ctx, "insert 10", []driver.NamedValue{})
+		time.Sleep(10 * time.Millisecond)
+		assert.Error(t, err)
+		assert.Nil(t, res)
+		assert.Equal(t, 1, executeStatementCount)
+		assert.Equal(t, 1, cancelOperationCount)
+		assert.Equal(t, 1, getOperationStatusCount)
+		assert.Equal(t, 1, closeOperationCount)
 	})
 }
 
