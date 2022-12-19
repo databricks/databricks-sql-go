@@ -52,4 +52,32 @@ func TestNewConnector(t *testing.T) {
 		assert.Nil(t, err)
 		assert.Equal(t, expectedCfg, coni.cfg)
 	})
+	t.Run("Connector initialized minimal settings", func(t *testing.T) {
+		host := "databricks-host"
+		port := 443
+		accessToken := "token"
+		httpPath := "http-path"
+		maxRows := 100000
+		sessionParams := map[string]string{}
+		con, err := NewConnector(
+			WithServerHostname(host),
+			WithAccessToken(accessToken),
+			WithHTTPPath(httpPath),
+		)
+		expectedUserConfig := config.UserConfig{
+			Host:          host,
+			Port:          port,
+			Protocol:      "https",
+			AccessToken:   accessToken,
+			HTTPPath:      "/" + httpPath,
+			MaxRows:       maxRows,
+			SessionParams: sessionParams,
+		}
+		expectedCfg := config.WithDefaults()
+		expectedCfg.UserConfig = expectedUserConfig
+		coni, ok := con.(*connector)
+		require.True(t, ok)
+		assert.Nil(t, err)
+		assert.Equal(t, expectedCfg, coni.cfg)
+	})
 }
