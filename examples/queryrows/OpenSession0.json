@@ -1,0 +1,12 @@
+{
+ "status": {
+  "statusCode": "SUCCESS_STATUS"
+ },
+ "serverProtocolVersion": "SPARK_CLI_SERVICE_PROTOCOL_V2",
+ "sessionHandle": {
+  "sessionId": {
+   "guid": "Ae2XkEZKH6iL3VYLWOM5EA==",
+   "secret": "M41SnYJyRuuEgstBlGaDnQ=="
+  }
+ }
+}

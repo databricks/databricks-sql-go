@@ -9,6 +9,7 @@ import (
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/client"
 	"github.com/databricks/databricks-sql-go/internal/config"
+	"github.com/databricks/databricks-sql-go/internal/rows"
 	"github.com/databricks/databricks-sql-go/internal/sentinel"
 	"github.com/databricks/databricks-sql-go/logger"
 	"github.com/pkg/errors"
@@ -158,9 +159,9 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 	// hold on to the operation handle
 	opHandle := exStmtResp.OperationHandle
 
-	rows := NewRows(c.id, corrId, c.client, opHandle, int64(c.cfg.MaxRows), c.cfg.Location, exStmtResp.DirectResults)
+	rows, err := rows.NewRows(c.id, corrId, opHandle, c.client, c.cfg, exStmtResp.DirectResults)
 
-	return rows, nil
+	return rows, err
 
 }
 
@@ -269,6 +270,16 @@ func (c *conn) executeStatement(ctx context.Context, query string, args []driver
 		GetDirectResults: &cli_service.TSparkGetDirectResults{
 			MaxRows: int64(c.cfg.MaxRows),
 		},
+	}
+
+	if c.cfg.UseArrowBatches {
+		req.CanReadArrowResult_ = &c.cfg.UseArrowBatches
+		req.UseArrowNativeTypes = &cli_service.TSparkArrowTypes{
+			DecimalAsArrow:       &c.cfg.UseArrowNativeDecimal,
+			TimestampAsArrow:     &c.cfg.UseArrowNativeTimestamp,
+			ComplexTypesAsArrow:  &c.cfg.UseArrowNativeComplexTypes,
+			IntervalTypesAsArrow: &c.cfg.UseArrowNativeIntervalTypes,
+		}
 	}
 
 	ctx = driverctx.NewContextWithConnId(ctx, c.id)

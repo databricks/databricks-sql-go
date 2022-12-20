@@ -1,0 +1,87 @@
+{
+ "status": {
+  "statusCode": "SUCCESS_STATUS"
+ },
+ "operationHandle": {
+  "operationId": {
+   "guid": "Ae2RGUh1HY+fLqg+PvKjfQ==",
+   "secret": "M41SnYJyRuuEgstBlGaDnQ=="
+  },
+  "operationType": "EXECUTE_STATEMENT",
+  "hasResultSet": true
+ },
+ "directResults": {
+  "operationStatus": {
+   "status": {
+    "statusCode": "SUCCESS_STATUS"
+   },
+   "operationState": "FINISHED_STATE"
+  },
+  "resultSetMetadata": {
+   "status": {
+    "statusCode": "SUCCESS_STATUS"
+   },
+   "schema": {
+    "columns": [
+     {
+      "columnName": "date_col",
+      "typeDesc": {
+       "types": [
+        {
+         "primitiveEntry": {
+          "type": "DATE_TYPE"
+         }
+        }
+       ]
+      },
+      "position": 1,
+      "comment": ""
+     },
+     {
+      "columnName": "timestamp_col",
+      "typeDesc": {
+       "types": [
+        {
+         "primitiveEntry": {
+          "type": "TIMESTAMP_TYPE"
+         }
+        }
+       ]
+      },
+      "position": 2,
+      "comment": ""
+     }
+    ]
+   },
+   "resultFormat": "ARROW_BASED_SET",
+   "cacheLookupResult": "LOCAL_CACHE_HIT",
+   "uncompressedBytes": 224,
+   "compressedBytes": 224
+  },
+  "resultSet": {
+   "status": {
+    "statusCode": "SUCCESS_STATUS"
+   },
+   "hasMoreRows": false,
+   "results": {
+    "startRowOffset": 0,
+    "rows": [],
+    "arrowBatches": [
+     {
+      "batch": "/////7gAAAAUAAAAAAAAAAwAFgAOABUAEAAEAAwAAAAgAAAAAAAAAAAABAAQAAAAAAMKABgADAAIAAQACgAAABQAAABYAAAAAQAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAQAAAAAAAAAIAAAAAAAAAAQAAAAAAAAAEAAAAAAAAAABAAAAAAAAABgAAAAAAAAACAAAAAAAAAAAAAAAAgAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAQAAAAAAAADHxOn/AAAAAAEAAAAAAAAAAOBfRQOdQP4=",
+      "rowCount": 1
+     }
+    ]
+   }
+  },
+  "closeOperation": {
+   "status": {
+    "statusCode": "SUCCESS_STATUS"
+   }
+  }
+ },
+ "executionRejected": false,
+ "maxClusterCapacity": 10,
+ "currentClusterLoad": 1,
+ "idempotencyType": "UNKNOWN"
+}

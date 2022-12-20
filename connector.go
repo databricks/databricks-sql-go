@@ -204,3 +204,9 @@ func WithSessionParams(params map[string]string) connOption {
 		c.SessionParams = params
 	}
 }
+
+func WithArrowBatches() connOption {
+	return func(c *config.Config) {
+		c.UseArrowBatches = true
+	}
+}
