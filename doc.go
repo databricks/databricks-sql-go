@@ -34,7 +34,7 @@ Supported optional connection parameters can be specified in param=value and inc
 
   - catalog: Sets the initial catalog name in the session
   - schema: Sets the initial schema name in the session
-  - maxRows: Sets up the max rows fetched per request. Default is 10000
+  - maxRows: Sets up the max rows fetched per request. Default is 100000
   - timeout: Adds timeout (in seconds) for the server query execution. Default is no timeout
   - userAgentEntry: Used to identify partners. Set as a string with format <isv-name+product-name>
 
@@ -75,7 +75,7 @@ Supported functional options include:
   - WithAccessToken(<my_token> string): Sets up the Personal Access Token. Mandatory
   - WithHTTPPath(<http_path> string): Sets up the endpoint to the warehouse. Mandatory
   - WithInitialNamespace(<catalog> string, <schema> string): Sets up the catalog and schema name in the session. Optional
-  - WithMaxRows(<max_rows> int): Sets up the max rows fetched per request. Default is 10000. Optional
+  - WithMaxRows(<max_rows> int): Sets up the max rows fetched per request. Default is 100000. Optional
   - WithSessionParams(<params_map> map[string]string): Sets up session parameters including "timezone" and "ansi_mode". Optional
   - WithTimeout(<timeout> Duration). Adds timeout (in time.Duration) for the server query execution. Default is no timeout. Optional
   - WithUserAgentEntry(<isv-name+product-name> string). Used to identify partners. Optional
