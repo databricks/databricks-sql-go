@@ -20,8 +20,9 @@ import (
 // Only UserConfig are currently exposed to users
 type Config struct {
 	UserConfig
-	TLSConfig                 *tls.Config // nil disables TLS
-	RunAsync                  bool
+	TLSConfig *tls.Config // nil disables TLS
+	ArrowConfig
+	RunAsync                  bool // TODO
 	PollInterval              time.Duration
 	ClientTimeout             time.Duration // max time the http request can last
 	PingTimeout               time.Duration // max time allowed for ping
@@ -161,6 +162,7 @@ func WithDefaults() *Config {
 	return &Config{
 		UserConfig:                UserConfig{}.WithDefaults(),
 		TLSConfig:                 &tls.Config{MinVersion: tls.VersionTLS12},
+		ArrowConfig:               ArrowConfig{}.WithDefaults(),
 		RunAsync:                  true,
 		PollInterval:              1 * time.Second,
 		ClientTimeout:             900 * time.Second,
@@ -262,4 +264,20 @@ func ParseDSN(dsn string) (UserConfig, error) {
 	}
 
 	return ucfg, err
+}
+
+type ArrowConfig struct {
+	UseArrowBatches         bool
+	UseArrowNativeDecimal   bool
+	UseArrowNativeTimestamp bool
+
+	// the following are currently not supported
+	UseArrowNativeComplexTypes  bool
+	UseArrowNativeIntervalTypes bool
+}
+
+func (ucfg ArrowConfig) WithDefaults() ArrowConfig {
+	ucfg.UseArrowNativeTimestamp = true
+
+	return ucfg
 }
