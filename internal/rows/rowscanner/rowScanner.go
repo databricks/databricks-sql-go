@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
-	"github.com/pkg/errors"
+	dbsqlerr "github.com/databricks/databricks-sql-go/internal/err"
 )
 
 // RowScanner is an interface defining the behaviours that are specific to
@@ -51,9 +51,6 @@ func HandleDateTime(val any, dbType, columnName string, location *time.Location)
 	// convert to time.Time
 	if format, ok := DateTimeFormats[dbType]; ok {
 		t, err := parseInLocation(format, val.(string), location)
-		if err != nil {
-			err = errors.Wrapf(err, ErrRowsParseValue, dbType, val, columnName)
-		}
 		return t, err
 	}
 
@@ -73,6 +70,7 @@ func parseInLocation(format, dateTimeString string, loc *time.Location) (time.Ti
 
 	date, err := time.ParseInLocation(format, dateTimeString, loc)
 	if err != nil {
+		err = dbsqlerr.WrapErr(err, "databricks: failed to parse date/time")
 		return time.Time{}, err
 	}
 

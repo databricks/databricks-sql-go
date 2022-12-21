@@ -13,12 +13,23 @@ import (
 	"github.com/apache/arrow/go/v11/arrow/ipc"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/config"
+	dbsqlerr "github.com/databricks/databricks-sql-go/internal/err"
 	"github.com/databricks/databricks-sql-go/internal/rows/rowscanner"
+	dbsqllog "github.com/databricks/databricks-sql-go/logger"
 	"github.com/pkg/errors"
 )
 
-var errChunkedByteReaderInvalidState1 = "chunkedByteReader invalid state chunkIndex:%d, byteIndex:%d"
-var errChunkedByteReaderOverreadOfNonterminalChunk = "chunkedByteReader invalid state chunks:%d chunkIndex:%d len:%d byteIndex%d"
+var errArrowRowsUnsupportedNativeType = "databricks: arrow native values not yet supported for %s"
+var errArrowRowsInvalidBatchIndex = "databricks: invalid arrow batch index index = %d, n = %d"
+var errArrowRowsNoArrowBatches = "databricks: result set contains 0 arrow batches"
+var errArrowRowsUnableToReadBatch = "databricks: unable to read arrow batch"
+var errArrowRowsNilArrowSchema = "databricks: nil arrow.Schema"
+var errArrowRowsUnableToWriteArrowSchema = "databricks: unable to write arrow schema"
+var errArrowRowsInvalidRowIndex = "databricks: row index %d is not contained in any arrow batch"
+var errArrowRowsInvalidDecimalType = "databricks: decimal type with no scale/precision"
+var errArrowRowsUnableToCreateDecimalType = "databricks: unable to create decimal type scale: %d, precision: %d"
+var errChunkedByteReaderInvalidState1 = "databricks: chunkedByteReader invalid state chunkIndex:%d, byteIndex:%d"
+var errChunkedByteReaderOverreadOfNonterminalChunk = "databricks: chunkedByteReader invalid state chunks:%d chunkIndex:%d len:%d byteIndex%d"
 
 // arrowRowScanner handles extracting values from arrow records
 type arrowRowScanner struct {
@@ -51,23 +62,33 @@ type arrowRowScanner struct {
 
 	// function to convert arrow timestamp when using native arrow format
 	toTimestampFn func(arrow.Timestamp) time.Time
+
+	*dbsqllog.DBSQLLogger
 }
 
 // Make sure arrowRowScanner fulfills the RowScanner interface
 var _ rowscanner.RowScanner = (*arrowRowScanner)(nil)
 
 // NewArrowRowScanner returns an instance of RowScanner which handles arrow format results
-func NewArrowRowScanner(schema *cli_service.TTableSchema, rowSet *cli_service.TRowSet, config *config.Config) (rowscanner.RowScanner, error) {
+func NewArrowRowScanner(schema *cli_service.TTableSchema, rowSet *cli_service.TRowSet, config *config.Config, logger *dbsqllog.DBSQLLogger) (rowscanner.RowScanner, error) {
+
+	if logger == nil {
+		logger = dbsqllog.Logger
+	}
+
+	logger.Debug().Msgf("databricks: creating arrow row scanner, nArrowBatches: %d", len(rowSet.ArrowBatches))
 
 	// convert the TTableSchema to an arrow Schema
 	arrowSchema, err := tTableSchemaToArrowSchema(schema, &config.ArrowConfig)
 	if err != nil {
+		logger.Err(err).Msg("databricks: arrow row scanner failed to convert schema")
 		return nil, err
 	}
 
 	// serialize the arrow schema
 	schemaBytes, err := getArrowSchemaBytes(arrowSchema)
 	if err != nil {
+		logger.Err(err).Msg("databricks: arrow row scanner failed to serialize schema")
 		return nil, err
 	}
 
@@ -81,6 +102,8 @@ func NewArrowRowScanner(schema *cli_service.TTableSchema, rowSet *cli_service.TR
 	// time values from the server are returned as UTC with microsecond precision
 	ttsf, err := arrow.FixedWidthTypes.Timestamp_us.(*arrow.TimestampType).GetToTimeFunc()
 	if err != nil {
+		logger.Err(err).Msg("databricks: arrow row scanner failed getting toTimestamp function")
+		err = dbsqlerr.WrapErr(err, "databricks: arrow row scanner failed getting toTimestamp function")
 		return nil, err
 	}
 
@@ -92,13 +115,15 @@ func NewArrowRowScanner(schema *cli_service.TTableSchema, rowSet *cli_service.TR
 		arrowSchema:      arrowSchema,
 		toTimestampFn:    ttsf,
 		colDBTypeNames:   colDBTypes,
+		DBSQLLogger:      logger,
 	}
 
 	return rs, nil
 }
 
-// Close releases any retained arrow arrays
+// Close is called when the Rows instance is closed.
 func (ars *arrowRowScanner) Close() {
+	// release any retained arrow arrays
 	for i := range ars.columnValues {
 		if ars.columnValues[i] != nil {
 			ars.columnValues[i].Release()
@@ -115,6 +140,81 @@ func (ars *arrowRowScanner) NRows() int64 {
 	return 0
 }
 
+var complexTypes map[string]struct{} = map[string]struct{}{"ARRAY": {}, "MAP": {}, "STRUCT": {}}
+var intervalTypes map[string]struct{} = map[string]struct{}{"INTERVAL_YEAR_MONTH": {}, "INTERVAL_DAY_TIME": {}}
+
+// ScanRow is called to populate the provided slice with the
+// content of the current row. The provided slice will be the same
+// size as the number of columns.
+// The dest should not be written to outside of ScanRow. Care
+// should be taken when closing a RowScanner not to modify
+// a buffer held in dest.
+func (ars *arrowRowScanner) ScanRow(
+	destination []driver.Value,
+	rowIndex int64,
+	location *time.Location) (err error) {
+
+	// load the error batch for the specified row, if necessary
+	err = ars.loadBatchFor(rowIndx(rowIndex))
+	if err != nil {
+		return err
+	}
+
+	// if no location is provided default to UTC
+	if location == nil {
+		location = time.UTC
+	}
+
+	nCols := len(ars.columnValues)
+
+	// loop over the destination slice filling in values
+	for i := range destination {
+		// clear the destination
+		destination[i] = nil
+
+		// if there is a corresponding column and the value for the specified row
+		// is not null we put the value in the destination
+		if err == nil && i < nCols && !ars.columnValues[i].IsNull(int(rowIndex)) {
+
+			// get the value from the column values holder
+			var val any = ars.columnValues[i].Value(int(rowIndex))
+
+			if ars.colDBTypeNames[i] == "DATE" {
+				// Need to convert the arrow Date32 value to time.Time
+				val = val.(arrow.Date32).ToTime().In(location)
+			} else if ars.colDBTypeNames[i] == "TIMESTAMP" {
+				if ars.UseArrowNativeTimestamp {
+					// Need to convert the arrow timestamp value to a time.Time
+					val = ars.toTimestampFn(val.(arrow.Timestamp)).In(location)
+				} else {
+					// Timestamp is returned as a string so need to parse to time.Time
+					val, err = rowscanner.HandleDateTime(val, "TIMESTAMP", ars.arrowSchema.Fields()[i].Name, location)
+					if err != nil {
+						ars.Err(err).Msg("databrics: arrow row scanner failed to parse date/time")
+					}
+				}
+			}
+
+			destination[i] = val
+		} else if ars.colDBTypeNames[i] == "DECIMAL" && ars.UseArrowNativeDecimal {
+			//	not yet fully supported
+			ars.Error().Msgf(errArrowRowsUnsupportedNativeType, ars.colDBTypeNames[i])
+			err = errors.Errorf(errArrowRowsUnsupportedNativeType, ars.colDBTypeNames[i])
+		} else if _, ok := complexTypes[ars.colDBTypeNames[i]]; ok && ars.UseArrowNativeComplexTypes {
+			//	not yet fully supported
+			ars.Error().Msgf(errArrowRowsUnsupportedNativeType, ars.colDBTypeNames[i])
+			err = errors.Errorf(errArrowRowsUnsupportedNativeType, ars.colDBTypeNames[i])
+		} else if _, ok := intervalTypes[ars.colDBTypeNames[i]]; ok && ars.UseArrowNativeIntervalTypes {
+			//	not yet fully supported
+			ars.Error().Msgf(errArrowRowsUnsupportedNativeType, ars.colDBTypeNames[i])
+			err = errors.Errorf(errArrowRowsUnsupportedNativeType, ars.colDBTypeNames[i])
+		}
+	}
+
+	return err
+}
+
+// countRows returns the number of rows in the TRowSet
 func countRows(rowSet *cli_service.TRowSet) int64 {
 	if rowSet != nil && rowSet.ArrowBatches != nil {
 		batches := rowSet.ArrowBatches
@@ -129,56 +229,18 @@ func countRows(rowSet *cli_service.TRowSet) int64 {
 	return 0
 }
 
-func (ars *arrowRowScanner) ScanRow(
-	dest []driver.Value,
-	rowIndex int64,
-	location *time.Location) error {
-
-	err := ars.loadBatchFor(rowIndx(rowIndex))
-	if err != nil {
-		return err
-	}
-
-	nCols := len(ars.columnValues)
-	if location == nil {
-		location = time.UTC
-	}
-
-	for i := range dest {
-		dest[i] = nil
-		if i < nCols && !ars.columnValues[i].IsNull(int(rowIndex)) {
-			var val any = ars.columnValues[i].Value(int(rowIndex))
-
-			if ars.colDBTypeNames[i] == "DATE" {
-				val = val.(arrow.Date32).ToTime().In(location)
-			} else if ars.colDBTypeNames[i] == "TIMESTAMP" {
-				if ars.UseArrowNativeTimestamp {
-					val = ars.toTimestampFn(val.(arrow.Timestamp)).In(location)
-				} else {
-					t, err := rowscanner.HandleDateTime(val, "TIMESTAMP", ars.arrowSchema.Fields()[i].Name, location)
-					if err != nil {
-						return err
-					}
-					val = t
-				}
-			} else if ars.UseArrowNativeDecimal && ars.colDBTypeNames[i] == "DECIMAL" {
-				val = "0"
-			}
-
-			dest[i] = val
-		}
-	}
-
-	return nil
-}
-
+// loadBatchFor loads the batch containing the specified row if necessary
 func (ars *arrowRowScanner) loadBatchFor(rowIndex rowIndx) error {
 
+	// if we haven't loaded the initial batch or the row is not in the current batch
+	// we need to load a different batch
 	if ars.columnValues == nil || !rowIndex.in(ars.getBatchRanges()[ars.currentBatchIndex]) {
 		batchIndex, err := ars.rowIndexToBatchIndex(rowIndex)
 		if err != nil {
 			return err
 		}
+
+		ars.Debug().Msgf("databricks: loading arrow batch, rowIndex: %d, batchIndex: %d", rowIndex, batchIndex)
 
 		err = ars.loadBatch(batchIndex)
 		if err != nil {
@@ -189,84 +251,101 @@ func (ars *arrowRowScanner) loadBatchFor(rowIndex rowIndx) error {
 	return nil
 }
 
+// loadBatch loads the arrow batch at the specified index
 func (ars *arrowRowScanner) loadBatch(batchIndex int) error {
 	if ars == nil || ars.arrowBatches == nil {
-		return errors.New("nil arrow batches")
+		ars.Error().Msg(errArrowRowsNoArrowBatches)
+		return errors.New(errArrowRowsNoArrowBatches)
 	}
 
+	// if the batch already loaded we can just return
 	if ars.currentBatchIndex == batchIndex && ars.columnValues != nil {
 		return nil
 	}
 
+	if batchIndex < 0 || batchIndex >= len(ars.arrowBatches) {
+		ars.Error().Msgf(errArrowRowsInvalidBatchIndex, batchIndex, len(ars.arrowBatches))
+		return errors.Errorf(errArrowRowsInvalidBatchIndex, batchIndex, len(ars.arrowBatches))
+	}
+
+	// set up the column values containers
 	if ars.columnValues == nil {
 		makeColumnValues(ars)
 	}
 
-	if batchIndex < 0 || batchIndex >= len(ars.arrowBatches) {
-		return errors.New("invalid batch index")
-	}
-
+	// The arrow batches returned from the thrift server are actually a serialized arrow Record
+	// an arrow batch should consist of a Schema and at least one Record.
+	// Use a chunked byte reader to concatenate the schema bytes and the record bytes without
+	// having to allocate/copy slices.
 	schemaBytes := ars.arrowSchemaBytes
 
 	br := &chunkedByteReader{chunks: [][]byte{schemaBytes, ars.arrowBatches[batchIndex].Batch}}
 	rdr, err := ipc.NewReader(br)
 	if err != nil {
-		return err
+		ars.Err(err).Msg(errArrowRowsUnableToReadBatch)
+		return dbsqlerr.WrapErr(err, errArrowRowsUnableToReadBatch)
 	}
 
 	if !rdr.Next() {
-		return errors.New("unable to read batch")
+		ars.Err(rdr.Err()).Msg(errArrowRowsUnableToReadBatch)
+		return dbsqlerr.WrapErr(rdr.Err(), errArrowRowsUnableToReadBatch)
 	}
 
 	r := rdr.Record()
 	r.Retain()
 	defer r.Release()
 
+	// for each column we want to create an arrow array specific to the data type
 	for i, col := range r.Columns() {
 		col.Retain()
 		defer col.Release()
 
 		colData := col.Data()
 		colDataType := col.DataType()
-		colVals := ars.columnValues[i]
-		colVals.Release()
+		colValsHolder := ars.columnValues[i]
+
+		// release the arrow array already held
+		colValsHolder.Release()
 
 		switch colDataType.(type) {
 		case *arrow.BooleanType:
-			colVals.(*columnValuesTyped[*array.Boolean, bool]).holder = array.NewBooleanData(colData)
+			colValsHolder.(*columnValuesTyped[*array.Boolean, bool]).holder = array.NewBooleanData(colData)
 
 		case *arrow.Int8Type:
-			colVals.(*columnValuesTyped[*array.Int8, int8]).holder = array.NewInt8Data(colData)
+			colValsHolder.(*columnValuesTyped[*array.Int8, int8]).holder = array.NewInt8Data(colData)
 
 		case *arrow.Int16Type:
-			colVals.(*columnValuesTyped[*array.Int16, int16]).holder = array.NewInt16Data(colData)
+			colValsHolder.(*columnValuesTyped[*array.Int16, int16]).holder = array.NewInt16Data(colData)
 
 		case *arrow.Int32Type:
-			colVals.(*columnValuesTyped[*array.Int32, int32]).holder = array.NewInt32Data(colData)
+			colValsHolder.(*columnValuesTyped[*array.Int32, int32]).holder = array.NewInt32Data(colData)
 
 		case *arrow.Int64Type:
-			colVals.(*columnValuesTyped[*array.Int64, int64]).holder = array.NewInt64Data(colData)
+			colValsHolder.(*columnValuesTyped[*array.Int64, int64]).holder = array.NewInt64Data(colData)
 
 		case *arrow.Float32Type:
-			colVals.(*columnValuesTyped[*array.Float32, float32]).holder = array.NewFloat32Data(colData)
+			colValsHolder.(*columnValuesTyped[*array.Float32, float32]).holder = array.NewFloat32Data(colData)
 
 		case *arrow.Float64Type:
-			colVals.(*columnValuesTyped[*array.Float64, float64]).holder = array.NewFloat64Data(colData)
+			colValsHolder.(*columnValuesTyped[*array.Float64, float64]).holder = array.NewFloat64Data(colData)
 
 		case *arrow.StringType:
-			colVals.(*columnValuesTyped[*array.String, string]).holder = array.NewStringData(colData)
+			colValsHolder.(*columnValuesTyped[*array.String, string]).holder = array.NewStringData(colData)
 
 		case *arrow.Decimal128Type:
-			colVals.(*columnValuesTyped[*array.Decimal128, decimal128.Num]).holder = array.NewDecimal128Data(colData)
+			colValsHolder.(*columnValuesTyped[*array.Decimal128, decimal128.Num]).holder = array.NewDecimal128Data(colData)
 
 		case *arrow.Date32Type:
-			colVals.(*columnValuesTyped[*array.Date32, arrow.Date32]).holder = array.NewDate32Data(colData)
+			colValsHolder.(*columnValuesTyped[*array.Date32, arrow.Date32]).holder = array.NewDate32Data(colData)
 
 		case *arrow.TimestampType:
-			colVals.(*columnValuesTyped[*array.Timestamp, arrow.Timestamp]).holder = array.NewTimestampData(colData)
+			colValsHolder.(*columnValuesTyped[*array.Timestamp, arrow.Timestamp]).holder = array.NewTimestampData(colData)
 
 		case *arrow.BinaryType:
-			colVals.(*columnValuesTyped[*array.Binary, []byte]).holder = array.NewBinaryData(colData)
+			colValsHolder.(*columnValuesTyped[*array.Binary, []byte]).holder = array.NewBinaryData(colData)
+
+		default:
+			ars.Warn().Msgf("databricks: arrow row scanner unhandled type %s", colDataType.String())
 
 		}
 	}
@@ -276,24 +355,29 @@ func (ars *arrowRowScanner) loadBatch(batchIndex int) error {
 	return nil
 }
 
+// getArrowSchemaBytes returns the serialized schema in ipc format
 func getArrowSchemaBytes(schema *arrow.Schema) ([]byte, error) {
 	if schema == nil {
-		return nil, errors.New("nil table schema")
+		return nil, errors.New(errArrowRowsNilArrowSchema)
 	}
 
 	var output bytes.Buffer
 	w := ipc.NewWriter(&output, ipc.WithSchema(schema))
 	err := w.Close()
 	if err != nil {
-		return nil, err
+		return nil, dbsqlerr.WrapErr(err, errArrowRowsUnableToWriteArrowSchema)
 	}
 
 	arrowSchemaBytes := output.Bytes()
+
+	// the writer serializes to an arrow batch but we just want the
+	// schema bytes so we strip off the empty Record at the end
 	arrowSchemaBytes = arrowSchemaBytes[:len(arrowSchemaBytes)-8]
 
 	return arrowSchemaBytes, nil
 }
 
+// rowIndexToBatchIndex returns the index of the batch containing the specified row
 func (ars *arrowRowScanner) rowIndexToBatchIndex(rowIndex rowIndx) (int, error) {
 	ranges := ars.getBatchRanges()
 	for i := range ranges {
@@ -302,9 +386,12 @@ func (ars *arrowRowScanner) rowIndexToBatchIndex(rowIndex rowIndx) (int, error) 
 		}
 	}
 
-	return -1, errors.New("row index not in any batch")
+	ars.Error().Msgf(errArrowRowsInvalidRowIndex, rowIndex)
+	return -1, errors.Errorf(errArrowRowsInvalidRowIndex, rowIndex)
 }
 
+// getBatchRanges does a one time calculation of the row range in each arrow batch
+// and returns the ranges
 func (ars *arrowRowScanner) getBatchRanges() []batchRange {
 	if ars == nil || ars.arrowBatches == nil {
 		return []batchRange{}
@@ -325,6 +412,7 @@ func (ars *arrowRowScanner) getBatchRanges() []batchRange {
 	return ars.batchRanges
 }
 
+// tTableSchemaToArrowSchema convers the TTableSchema retrieved by the thrift server into an arrow.Schema instance
 func tTableSchemaToArrowSchema(schema *cli_service.TTableSchema, arrowConfig *config.ArrowConfig) (*arrow.Schema, error) {
 	columns := schema.GetColumns()
 	fields := make([]arrow.Field, len(columns))
@@ -343,6 +431,7 @@ func tTableSchemaToArrowSchema(schema *cli_service.TTableSchema, arrowConfig *co
 	return arrowSchema, nil
 }
 
+// map the thrift data types to the corresponding arrow data type
 var toArrowTypeMap map[cli_service.TTypeId]arrow.DataType = map[cli_service.TTypeId]arrow.DataType{
 	cli_service.TTypeId_BOOLEAN_TYPE:  arrow.FixedWidthTypes.Boolean,
 	cli_service.TTypeId_TINYINT_TYPE:  arrow.PrimitiveTypes.Int8,
@@ -369,40 +458,55 @@ var toArrowTypeMap map[cli_service.TTypeId]arrow.DataType = map[cli_service.TTyp
 }
 
 func tColumnDescToArrowDataType(tColumnDesc *cli_service.TColumnDesc, arrowConfig *config.ArrowConfig) (arrow.DataType, error) {
+	// get the thrift type id
 	tType := rowscanner.GetDBTypeID(tColumnDesc)
 
-	if tType == cli_service.TTypeId_DECIMAL_TYPE {
-		if !arrowConfig.UseArrowNativeDecimal {
-			return arrow.BinaryTypes.String, nil
-		}
-
-		typeQualifiers := rowscanner.GetDBTypeQualifiers(tColumnDesc)
-		if typeQualifiers == nil || typeQualifiers.Qualifiers == nil {
-			return nil, errors.New("decimal type with no scale/precision")
-		}
-		scale, ok := typeQualifiers.Qualifiers["scale"]
-		if !ok {
-			return nil, errors.New("decimal type with no scale/precision")
-		}
-
-		precision, ok := typeQualifiers.Qualifiers["precision"]
-		if !ok {
-			return nil, errors.New("decimal type with no scale/precision")
-		}
-
-		x, _ := arrow.NewDecimalType(arrow.DECIMAL128, *scale.I32Value, *precision.I32Value)
-		return x, nil
-
-	} else if tType == cli_service.TTypeId_TIMESTAMP_TYPE {
-		if !arrowConfig.UseArrowNativeTimestamp {
-			return arrow.BinaryTypes.String, nil
-		}
-
-		return arrow.FixedWidthTypes.Timestamp_us, nil
-	} else if at, ok := toArrowTypeMap[tType]; ok {
+	if at, ok := toArrowTypeMap[tType]; ok {
+		// simple type mapping
 		return at, nil
 	} else {
-		return nil, errors.New("unknown data type when converting to arrow type")
+		// for some types there isn't a simple 1:1 correspondence to an arrow data type
+		if tType == cli_service.TTypeId_DECIMAL_TYPE {
+			// if not using arrow native decimal type decimals are returned as strings
+			if !arrowConfig.UseArrowNativeDecimal {
+				return arrow.BinaryTypes.String, nil
+			}
+
+			// Need to construct an instance of arrow DecimalType with the
+			// correct scale and precision
+			typeQualifiers := rowscanner.GetDBTypeQualifiers(tColumnDesc)
+			if typeQualifiers == nil || typeQualifiers.Qualifiers == nil {
+				return nil, errors.New(errArrowRowsInvalidDecimalType)
+			}
+
+			scale, ok := typeQualifiers.Qualifiers["scale"]
+			if !ok {
+				return nil, errors.New(errArrowRowsInvalidDecimalType)
+			}
+
+			precision, ok := typeQualifiers.Qualifiers["precision"]
+			if !ok {
+				return nil, errors.New(errArrowRowsInvalidDecimalType)
+			}
+
+			decimalType, err := arrow.NewDecimalType(arrow.DECIMAL128, *scale.I32Value, *precision.I32Value)
+			if err != nil {
+				return nil, dbsqlerr.WrapErr(err, fmt.Sprintf(errArrowRowsUnableToCreateDecimalType, *scale.I32Value, *precision.I32Value))
+			}
+
+			return decimalType, nil
+
+		} else if tType == cli_service.TTypeId_TIMESTAMP_TYPE {
+			// if not using arrow native timestamps thrift server returns strings
+			if !arrowConfig.UseArrowNativeTimestamp {
+				return arrow.BinaryTypes.String, nil
+			}
+
+			// timestamp is UTC with microsecond precision
+			return arrow.FixedWidthTypes.Timestamp_us, nil
+		} else {
+			return nil, errors.New("unknown data type when converting to arrow type")
+		}
 	}
 
 }
@@ -413,12 +517,9 @@ func tColumnDescToArrowField(columnDesc *cli_service.TColumnDesc, arrowConfig *c
 		return arrow.Field{}, err
 	}
 
-	// TODO: Nullable and Metadata if Field structure
 	arrowField := arrow.Field{
 		Name: columnDesc.ColumnName,
 		Type: arrowDataType,
-		// Nullable:
-		// Metadata:
 	}
 
 	return arrowField, nil
@@ -429,136 +530,6 @@ type batchRange [2]rowIndx
 
 func (ri rowIndx) in(rng batchRange) bool {
 	return ri >= rng[0] && ri <= rng[1]
-}
-
-// chunkedByteReader implements the io.Reader interface on a collection
-// of byte arrays.
-// The TSparkArrowBatch instances returned in TFetchResultsResp contain
-// a byte array containing an ipc formatted MessageRecordBatch message.
-// The ipc reader expects a bytestream containing a MessageSchema message
-// followed by a MessageRecordBatch message.
-// chunkedByteReader is used to avoid allocating new byte arrays for each
-// TSparkRecordBatch and copying the schema and record bytes.
-type chunkedByteReader struct {
-	// byte slices to be read as a single slice
-	chunks [][]byte
-	// index of the chunk being read from
-	chunkIndex int
-	// index in the current chunk
-	byteIndex int
-}
-
-// Read reads up to len(p) bytes into p. It returns the number of bytes
-// read (0 <= n <= len(p)) and any error encountered.
-//
-// When Read encounters an error or end-of-file condition after
-// successfully reading n > 0 bytes, it returns the number of
-// bytes read and a non-nil error.  If len(p) is zero Read will
-// return 0, nil
-//
-// Callers should always process the n > 0 bytes returned before
-// considering the error err. Doing so correctly handles I/O errors
-// that happen after reading some bytes.
-func (c *chunkedByteReader) Read(p []byte) (bytesRead int, err error) {
-	err = c.isValid()
-
-	for err == nil && bytesRead < len(p) && !c.isEOF() {
-		chunk := c.chunks[c.chunkIndex]
-		chunkLen := len(chunk)
-		source := chunk[c.byteIndex:]
-
-		n := copy(p[bytesRead:], source)
-		bytesRead += n
-
-		c.byteIndex += n
-
-		if c.byteIndex >= chunkLen {
-			c.byteIndex = 0
-			c.chunkIndex += 1
-		}
-	}
-
-	if err == nil && c.isEOF() {
-		err = io.EOF
-	}
-
-	return bytesRead, err
-}
-
-// isEOF returns true if the chunkedByteReader is in
-// an end-of-file condition.
-func (c *chunkedByteReader) isEOF() bool {
-	return c.chunkIndex >= len(c.chunks)
-}
-
-// reset returns the chunkedByteReader to its initial state
-func (c *chunkedByteReader) reset() {
-	c.byteIndex = 0
-	c.chunkIndex = 0
-}
-
-// verify that the chunkedByteReader is in a valid state
-func (c *chunkedByteReader) isValid() error {
-	if c == nil {
-		return errors.New("call to Read on nil chunkedByteReader")
-	}
-	if c.byteIndex < 0 || c.chunkIndex < 0 {
-		return errors.New(fmt.Sprintf(errChunkedByteReaderInvalidState1, c.chunkIndex, c.byteIndex))
-	}
-
-	if c.chunkIndex < len(c.chunks)-1 {
-		chunkLen := len(c.chunks[c.chunkIndex])
-		if 0 < chunkLen && c.byteIndex >= chunkLen {
-			return errors.New(fmt.Sprintf(errChunkedByteReaderOverreadOfNonterminalChunk, len(c.chunks), c.chunkIndex, len(c.chunks[c.chunkIndex]), c.byteIndex))
-		}
-	}
-	return nil
-}
-
-func makeColumnValues(ars *arrowRowScanner) {
-	if ars.columnValues == nil {
-		ars.columnValues = make([]columnValues, len(ars.arrowSchema.Fields()))
-		for i, field := range ars.arrowSchema.Fields() {
-			switch field.Type.(type) {
-
-			case *arrow.BooleanType:
-				ars.columnValues[i] = &columnValuesTyped[*array.Boolean, bool]{}
-
-			case *arrow.Int8Type:
-				ars.columnValues[i] = &columnValuesTyped[*array.Int8, int8]{}
-
-			case *arrow.Int16Type:
-				ars.columnValues[i] = &columnValuesTyped[*array.Int16, int16]{}
-
-			case *arrow.Int32Type:
-				ars.columnValues[i] = &columnValuesTyped[*array.Int32, int32]{}
-
-			case *arrow.Int64Type:
-				ars.columnValues[i] = &columnValuesTyped[*array.Int64, int64]{}
-
-			case *arrow.Float32Type:
-				ars.columnValues[i] = &columnValuesTyped[*array.Float32, float32]{}
-
-			case *arrow.Float64Type:
-				ars.columnValues[i] = &columnValuesTyped[*array.Float64, float64]{}
-
-			case *arrow.StringType:
-				ars.columnValues[i] = &columnValuesTyped[*array.String, string]{}
-
-			case *arrow.Decimal128Type:
-				ars.columnValues[i] = &columnValuesTyped[*array.Decimal128, decimal128.Num]{}
-
-			case *arrow.Date32Type:
-				ars.columnValues[i] = &columnValuesTyped[*array.Date32, arrow.Date32]{}
-
-			case *arrow.TimestampType:
-				ars.columnValues[i] = &columnValuesTyped[*array.Timestamp, arrow.Timestamp]{}
-
-			case *arrow.BinaryType:
-				ars.columnValues[i] = &columnValuesTyped[*array.Binary, []byte]{}
-			}
-		}
-	}
 }
 
 // columnValues is the interface for accessing the values for a column
@@ -631,3 +602,136 @@ func (cv *columnValuesTyped[X, T]) Release() {
 }
 
 var _ columnValues = (*columnValuesTyped[*array.Int16, int16])(nil)
+
+// makeColumnValues creates appropriately typed  column values holders for each column
+func makeColumnValues(ars *arrowRowScanner) {
+	if ars.columnValues == nil {
+		ars.columnValues = make([]columnValues, len(ars.arrowSchema.Fields()))
+		for i, field := range ars.arrowSchema.Fields() {
+			switch field.Type.(type) {
+
+			case *arrow.BooleanType:
+				ars.columnValues[i] = &columnValuesTyped[*array.Boolean, bool]{}
+
+			case *arrow.Int8Type:
+				ars.columnValues[i] = &columnValuesTyped[*array.Int8, int8]{}
+
+			case *arrow.Int16Type:
+				ars.columnValues[i] = &columnValuesTyped[*array.Int16, int16]{}
+
+			case *arrow.Int32Type:
+				ars.columnValues[i] = &columnValuesTyped[*array.Int32, int32]{}
+
+			case *arrow.Int64Type:
+				ars.columnValues[i] = &columnValuesTyped[*array.Int64, int64]{}
+
+			case *arrow.Float32Type:
+				ars.columnValues[i] = &columnValuesTyped[*array.Float32, float32]{}
+
+			case *arrow.Float64Type:
+				ars.columnValues[i] = &columnValuesTyped[*array.Float64, float64]{}
+
+			case *arrow.StringType:
+				ars.columnValues[i] = &columnValuesTyped[*array.String, string]{}
+
+			case *arrow.Decimal128Type:
+				ars.columnValues[i] = &columnValuesTyped[*array.Decimal128, decimal128.Num]{}
+
+			case *arrow.Date32Type:
+				ars.columnValues[i] = &columnValuesTyped[*array.Date32, arrow.Date32]{}
+
+			case *arrow.TimestampType:
+				ars.columnValues[i] = &columnValuesTyped[*array.Timestamp, arrow.Timestamp]{}
+
+			case *arrow.BinaryType:
+				ars.columnValues[i] = &columnValuesTyped[*array.Binary, []byte]{}
+			}
+		}
+	}
+}
+
+// chunkedByteReader implements the io.Reader interface on a collection
+// of byte arrays.
+// The TSparkArrowBatch instances returned in TFetchResultsResp contain
+// a byte array containing an ipc formatted MessageRecordBatch message.
+// The ipc reader expects a bytestream containing a MessageSchema message
+// followed by a MessageRecordBatch message.
+// chunkedByteReader is used to avoid allocating new byte arrays for each
+// TSparkRecordBatch and copying the schema and record bytes.
+type chunkedByteReader struct {
+	// byte slices to be read as a single slice
+	chunks [][]byte
+	// index of the chunk being read from
+	chunkIndex int
+	// index in the current chunk
+	byteIndex int
+}
+
+// Read reads up to len(p) bytes into p. It returns the number of bytes
+// read (0 <= n <= len(p)) and any error encountered.
+//
+// When Read encounters an error or end-of-file condition after
+// successfully reading n > 0 bytes, it returns the number of
+// bytes read and a non-nil error.  If len(p) is zero Read will
+// return 0, nil
+//
+// Callers should always process the n > 0 bytes returned before
+// considering the error err. Doing so correctly handles I/O errors
+// that happen after reading some bytes.
+func (c *chunkedByteReader) Read(p []byte) (bytesRead int, err error) {
+	err = c.isValid()
+
+	for err == nil && bytesRead < len(p) && !c.isEOF() {
+		chunk := c.chunks[c.chunkIndex]
+		chunkLen := len(chunk)
+		source := chunk[c.byteIndex:]
+
+		n := copy(p[bytesRead:], source)
+		bytesRead += n
+
+		c.byteIndex += n
+
+		if c.byteIndex >= chunkLen {
+			c.byteIndex = 0
+			c.chunkIndex += 1
+		}
+	}
+
+	if err != nil {
+		err = dbsqlerr.WrapErr(err, "datbricks: read failure in chunked byte reader")
+	} else if c.isEOF() {
+		err = io.EOF
+	}
+
+	return bytesRead, err
+}
+
+// isEOF returns true if the chunkedByteReader is in
+// an end-of-file condition.
+func (c *chunkedByteReader) isEOF() bool {
+	return c.chunkIndex >= len(c.chunks)
+}
+
+// reset returns the chunkedByteReader to its initial state
+func (c *chunkedByteReader) reset() {
+	c.byteIndex = 0
+	c.chunkIndex = 0
+}
+
+// verify that the chunkedByteReader is in a valid state
+func (c *chunkedByteReader) isValid() error {
+	if c == nil {
+		return errors.New("call to Read on nil chunkedByteReader")
+	}
+	if c.byteIndex < 0 || c.chunkIndex < 0 {
+		return errors.New(fmt.Sprintf(errChunkedByteReaderInvalidState1, c.chunkIndex, c.byteIndex))
+	}
+
+	if c.chunkIndex < len(c.chunks)-1 {
+		chunkLen := len(c.chunks[c.chunkIndex])
+		if 0 < chunkLen && c.byteIndex >= chunkLen {
+			return errors.New(fmt.Sprintf(errChunkedByteReaderOverreadOfNonterminalChunk, len(c.chunks), c.chunkIndex, len(c.chunks[c.chunkIndex]), c.byteIndex))
+		}
+	}
+	return nil
+}
