@@ -207,7 +207,7 @@ func InitThriftClient(cfg *config.Config, httpclient *http.Client) (*ThriftServi
 			Logger:       &leveledLogger{},
 			RetryWaitMin: 1 * time.Second,
 			RetryWaitMax: 30 * time.Second,
-			RetryMax:     4,
+			RetryMax:     1,
 			ErrorHandler: errorHandler,
 			CheckRetry:   retryablehttp.DefaultRetryPolicy,
 			Backoff:      retryablehttp.DefaultBackoff,
@@ -383,12 +383,17 @@ func errorHandler(resp *http.Response, err error, numTries int) (*http.Response,
 	if err == nil {
 		err = errors.New(fmt.Sprintf("request error after %d retries", numTries))
 	}
-	orgid := resp.Header.Get("X-Databricks-Org-Id")
-	reason := resp.Header.Get("X-Databricks-Reason-Phrase")
-	terrmsg := resp.Header.Get("X-Thriftserver-Error-Message")
-	errmsg := resp.Header.Get("x-databricks-error-or-redirect-message")
+	if resp != nil && resp.Header != nil {
 
-	werr = errors.Wrapf(err, fmt.Sprintf("orgId: %s, reason: %s, thriftErr: %s, err: %s", orgid, reason, terrmsg, errmsg))
+		orgid := resp.Header.Get("X-Databricks-Org-Id")
+		reason := resp.Header.Get("X-Databricks-Reason-Phrase")
+		terrmsg := resp.Header.Get("X-Thriftserver-Error-Message")
+		errmsg := resp.Header.Get("x-databricks-error-or-redirect-message")
+
+		werr = errors.Wrapf(err, fmt.Sprintf("orgId: %s, reason: %s, thriftErr: %s, err: %s", orgid, reason, terrmsg, errmsg))
+	} else {
+		werr = err
+	}
 
 	return resp, werr
 }
