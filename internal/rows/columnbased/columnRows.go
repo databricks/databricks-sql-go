@@ -7,10 +7,12 @@ import (
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/config"
 	"github.com/databricks/databricks-sql-go/internal/rows/rowscanner"
+	dbsqllog "github.com/databricks/databricks-sql-go/logger"
 )
 
 // row scanner for query results in column based format
 type columnRowScanner struct {
+	*dbsqllog.DBSQLLogger
 	// TRowSet with query results in column format
 	rowSet *cli_service.TRowSet
 	schema *cli_service.TTableSchema
@@ -23,11 +25,17 @@ var _ rowscanner.RowScanner = (*columnRowScanner)(nil)
 
 // NewColumnRowScanner returns a columnRowScanner initialized with the provided
 // values.
-func NewColumnRowScanner(schema *cli_service.TTableSchema, rowSet *cli_service.TRowSet, _ *config.Config) (rowscanner.RowScanner, error) {
+func NewColumnRowScanner(schema *cli_service.TTableSchema, rowSet *cli_service.TRowSet, _ *config.Config, logger *dbsqllog.DBSQLLogger) (rowscanner.RowScanner, error) {
+	if logger == nil {
+		logger = dbsqllog.Logger
+	}
+
+	logger.Debug().Msg("databricks: creating column row scanner")
 	rs := &columnRowScanner{
-		schema: schema,
-		rowSet: rowSet,
-		nRows:  countRows(rowSet),
+		schema:      schema,
+		rowSet:      rowSet,
+		nRows:       countRows(rowSet),
+		DBSQLLogger: logger,
 	}
 
 	return rs, nil
@@ -83,6 +91,9 @@ func (crs *columnRowScanner) value(tColumn *cli_service.TColumn, tColumnDesc *cl
 		val = tVal.Values[rowNum]
 		// DATE and TIMESTAMP are returned as strings so we need to handle that possibility
 		val, err = rowscanner.HandleDateTime(val, dbtype, tColumnDesc.ColumnName, location)
+		if err != nil {
+			crs.Err(err).Msg("databrics: column row scanner failed to parse date/time")
+		}
 	} else if tVal := tColumn.GetByteVal(); tVal != nil && !rowscanner.IsNull(tVal.Nulls, rowNum) {
 		val = tVal.Values[rowNum]
 	} else if tVal := tColumn.GetI16Val(); tVal != nil && !rowscanner.IsNull(tVal.Nulls, rowNum) {

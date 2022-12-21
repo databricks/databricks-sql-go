@@ -14,18 +14,18 @@ func TestLengArrowRowScanner(t *testing.T) {
 
 	rowSet := &cli_service.TRowSet{}
 
-	ars, _ := NewArrowRowScanner(nil, nil, nil)
+	ars, _ := NewArrowRowScanner(nil, nil, nil, nil)
 	assert.Equal(t, int64(0), ars.NRows())
 
-	ars, _ = NewArrowRowScanner(nil, rowSet, nil)
+	ars, _ = NewArrowRowScanner(nil, rowSet, nil, nil)
 	assert.Equal(t, int64(0), ars.NRows())
 
 	rowSet.ArrowBatches = []*cli_service.TSparkArrowBatch{}
-	ars, _ = NewArrowRowScanner(nil, rowSet, nil)
+	ars, _ = NewArrowRowScanner(nil, rowSet, nil, nil)
 	assert.Equal(t, int64(0), ars.NRows())
 
 	rowSet.ArrowBatches = []*cli_service.TSparkArrowBatch{{RowCount: 2}, {RowCount: 3}}
-	ars, _ = NewArrowRowScanner(nil, rowSet, nil)
+	ars, _ = NewArrowRowScanner(nil, rowSet, nil, nil)
 	assert.Equal(t, int64(5), ars.NRows())
 }
 
