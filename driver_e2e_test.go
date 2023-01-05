@@ -291,7 +291,6 @@ func TestContextTimeoutExample(t *testing.T) {
 	assert.True(t, ok)
 	assert.Equal(t, 1, state.executeStatementCalls)
 	assert.GreaterOrEqual(t, state.getOperationStatusCalls, 1)
-	time.Sleep(time.Second)
 	assert.Equal(t, 1, state.cancelOperationCalls)
 
 }
