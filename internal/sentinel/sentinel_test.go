@@ -98,7 +98,6 @@ func TestWatch(t *testing.T) {
 			},
 		}
 		status, res, err := s.Watch(context.Background(), 0, 100*time.Millisecond)
-		time.Sleep(10 * time.Millisecond)
 		assert.Equal(t, WatchTimeout, status)
 		assert.Equal(t, 1, cancelFnCalls)
 		assert.Nil(t, res)
@@ -167,7 +166,6 @@ func TestWatch(t *testing.T) {
 		}
 		status, res, err := s.Watch(ctx, 0, 15*time.Second)
 		assert.Equal(t, WatchCanceled, status)
-		time.Sleep(10 * time.Millisecond)
 		assert.Equal(t, cancelFnCalls, 1)
 		assert.Nil(t, res)
 		assert.Error(t, err)
@@ -194,7 +192,6 @@ func TestWatch(t *testing.T) {
 		}
 		status, res, err := s.Watch(ctx, 0, 200*time.Millisecond)
 		assert.Equal(t, WatchCanceled, status)
-		time.Sleep(10 * time.Millisecond)
 		assert.Equal(t, cancelFnCalls, 1)
 		assert.Nil(t, res)
 		assert.Error(t, err)
@@ -273,7 +270,6 @@ func TestWatch(t *testing.T) {
 			},
 		}
 		status, res, err := s.Watch(context.Background(), 0, 0)
-		time.Sleep(10 * time.Millisecond)
 		assert.Equal(t, WatchErr, status)
 		assert.Equal(t, 1, statusFnCalls)
 		assert.Nil(t, res)

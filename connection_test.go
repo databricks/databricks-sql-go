@@ -544,7 +544,6 @@ func TestConn_pollOperation(t *testing.T) {
 				Secret: []byte("b"),
 			},
 		})
-		time.Sleep(50 * time.Millisecond)
 		assert.Error(t, err)
 		assert.Equal(t, 0, getOperationStatusCount)
 		assert.Equal(t, 1, cancelOperationCount)
@@ -590,7 +589,7 @@ func TestConn_pollOperation(t *testing.T) {
 				Secret: []byte("b"),
 			},
 		})
-		time.Sleep(50 * time.Millisecond)
+
 		assert.Error(t, err)
 		assert.GreaterOrEqual(t, getOperationStatusCount, 1)
 		assert.Equal(t, 1, cancelOperationCount)
@@ -1183,7 +1182,6 @@ func TestConn_ExecContext(t *testing.T) {
 		ctx, cancel = context.WithCancel(ctx)
 		defer cancel()
 		res, err := testConn.ExecContext(ctx, "insert 10", []driver.NamedValue{})
-		time.Sleep(10 * time.Millisecond)
 		assert.Error(t, err)
 		assert.Nil(t, res)
 		assert.Equal(t, 1, executeStatementCount)
