@@ -59,7 +59,7 @@ test: bin/gotestsum  ## Run the go unit tests.
 
 .PHONY: test-race
 test-race:
-	@echo "INFO: Running all go unit tests."
+	@echo "INFO: Running all go unit tests checking for race conditions."
 	go test -race
 
 
