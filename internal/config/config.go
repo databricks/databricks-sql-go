@@ -11,6 +11,7 @@ import (
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/logger"
 	"github.com/pkg/errors"
+	"github.com/rs/zerolog/log"
 )
 
 // Driver Configurations.
@@ -39,6 +40,10 @@ func (c *Config) ToEndpointURL() string {
 	var userInfo string
 	if c.AccessToken != "" {
 		userInfo = fmt.Sprintf("%s:%s@", "token", url.QueryEscape(c.AccessToken))
+	} else {
+		if c.Username != "" {
+			userInfo = fmt.Sprintf("%s:%s@", c.Username, url.QueryEscape(c.Password))
+		}
 	}
 	endpointUrl := fmt.Sprintf("%s://%s%s:%d%s", c.Protocol, userInfo, c.Host, c.Port, c.HTTPPath)
 	return endpointUrl
@@ -78,7 +83,9 @@ type UserConfig struct {
 	HTTPPath       string // from databricks UI
 	Catalog        string
 	Schema         string
-	AccessToken    string        // from databricks UI
+	AccessToken    string // from databricks UI
+	Username       string
+	Password       string
 	MaxRows        int           // max rows per page
 	QueryTimeout   time.Duration // Timeout passed to server for query processing
 	UserAgentEntry string
@@ -113,6 +120,8 @@ func (ucfg UserConfig) DeepCopy() UserConfig {
 		Catalog:        ucfg.Catalog,
 		Schema:         ucfg.Schema,
 		AccessToken:    ucfg.AccessToken,
+		Username:       ucfg.Username,
+		Password:       ucfg.Password,
 		MaxRows:        ucfg.MaxRows,
 		QueryTimeout:   ucfg.QueryTimeout,
 		UserAgentEntry: ucfg.UserAgentEntry,
@@ -130,6 +139,9 @@ func (ucfg UserConfig) WithDefaults() UserConfig {
 	}
 	if ucfg.Protocol == "" {
 		ucfg.Protocol = "https"
+		ucfg.Port = 443
+	}
+	if ucfg.Port == 0 {
 		ucfg.Port = 443
 	}
 	if ucfg.Port == 0 {
@@ -180,17 +192,15 @@ func ParseDSN(dsn string) (UserConfig, error) {
 	}
 	ucfg.Port = port
 	name := parsedURL.User.Username()
+	pass, ok := parsedURL.User.Password()
+	if !ok {
+		log.Warn().Msg("password not set")
+	}
 	if name == "token" {
-		pass, ok := parsedURL.User.Password()
-		if ok {
-			ucfg.AccessToken = pass
-		} else {
-			return UserConfig{}, errors.New("invalid DSN: token not set")
-		}
+		ucfg.AccessToken = pass
 	} else {
-		if name != "" {
-			return UserConfig{}, errors.New("invalid DSN: basic auth not enabled")
-		}
+		ucfg.Username = name
+		ucfg.Password = pass
 	}
 	ucfg.HTTPPath = parsedURL.Path
 	params := parsedURL.Query()
