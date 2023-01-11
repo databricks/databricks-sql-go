@@ -3,6 +3,7 @@ package dbsql
 import (
 	"context"
 	"database/sql/driver"
+	dbsqlerror "github.com/databricks/databricks-sql-go/error"
 	"time"
 
 	"github.com/databricks/databricks-sql-go/driverctx"
@@ -120,7 +121,7 @@ func (c *conn) ExecContext(ctx context.Context, query string, args []driver.Name
 	}
 	if err != nil {
 		log.Err(err).Msgf("databricks: failed to execute query: query %s", query)
-		return nil, wrapErrf(err, "failed to execute query")
+		return nil, &dbsqlerror.OperationStatusError{Msg: "failed to execute query", Err: err}
 	}
 
 	res := result{AffectedRows: opStatusResp.GetNumModifiedRows()}
@@ -153,7 +154,7 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 
 	if err != nil {
 		log.Err(err).Msg("databricks: failed to run query") // To log query we need to redact credentials
-		return nil, wrapErrf(err, "failed to run query")
+		return nil, &dbsqlerror.OperationStatusError{Msg: "failed to run query", Err: err}
 	}
 	// hold on to the operation handle
 	opHandle := exStmtResp.OperationHandle
