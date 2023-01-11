@@ -1,6 +1,8 @@
 package error
 
-import "fmt"
+import (
+	"fmt"
+)
 
 // ConnectionError is an error in the connection to the server
 type ConnectionError struct {
