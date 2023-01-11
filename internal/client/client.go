@@ -249,16 +249,15 @@ func CheckStatus(resp interface{}) error {
 	if ok {
 		status := rpcresp.GetStatus()
 		if status.StatusCode == cli_service.TStatusCode_ERROR_STATUS {
-			return errors.New(status.GetErrorMessage())
+			return &dbsqlerror.OperationStatusError{Msg: status.GetErrorMessage()}
 		}
 		if status.StatusCode == cli_service.TStatusCode_INVALID_HANDLE_STATUS {
-			return errors.New("thrift: invalid handle")
+			return &dbsqlerror.OperationStatusError{Msg: "thrift: invalid handle"}
 		}
 
 		// SUCCESS, SUCCESS_WITH_INFO, STILL_EXECUTING are ok
 		return nil
 	}
-
 	return &dbsqlerror.OperationStatusError{Msg: "thrift: invalid response"}
 }
 
