@@ -281,6 +281,9 @@ func TestContextTimeoutExample(t *testing.T) {
 	ctx1, cancel := context.WithTimeout(ogCtx, 5*time.Second)
 	defer cancel()
 	rows, err := db.QueryContext(ctx1, `SELECT id FROM RANGE(100000000) ORDER BY RANDOM() + 2 asc`)
+	if err, ok := err.(dbsqlerr.StackTracer); ok {
+		fmt.Printf("Stack trace: %v", err.StackTrace())
+	}
 	require.ErrorContains(t, err, context.DeadlineExceeded.Error())
 	require.Nil(t, rows)
 	_, ok := err.(dbsqlerr.Causer)

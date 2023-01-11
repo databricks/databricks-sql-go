@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	dbsqlerr "github.com/databricks/databricks-sql-go/internal/err"
 	"log"
 	"net"
 	"net/http"
@@ -37,7 +38,7 @@ func (tsc *ThriftServiceClient) OpenSession(ctx context.Context, req *cli_servic
 	msg, start := logger.Track("OpenSession")
 	resp, err := tsc.TCLIServiceClient.OpenSession(ctx, req)
 	if err != nil {
-		return nil, errors.Wrap(err, "open session request error")
+		return nil, dbsqlerr.WrapErr(err, "open session request error") // TODO: figure out what error type this should be
 	}
 	log := logger.WithContext(SprintGuid(resp.SessionHandle.SessionId.GUID), driverctx.CorrelationIdFromContext(ctx), "")
 	defer log.Duration(msg, start)
@@ -56,7 +57,7 @@ func (tsc *ThriftServiceClient) CloseSession(ctx context.Context, req *cli_servi
 	defer log.Duration(logger.Track("CloseSession"))
 	resp, err := tsc.TCLIServiceClient.CloseSession(ctx, req)
 	if err != nil {
-		return resp, errors.Wrap(err, "close session request error")
+		return resp, dbsqlerr.WrapErr(err, "open session request error") // TODO: figure out what error type this should be
 	}
 	if RecordResults {
 		j, _ := json.MarshalIndent(resp, "", " ")
@@ -73,7 +74,7 @@ func (tsc *ThriftServiceClient) FetchResults(ctx context.Context, req *cli_servi
 	defer log.Duration(logger.Track("FetchResults"))
 	resp, err := tsc.TCLIServiceClient.FetchResults(ctx, req)
 	if err != nil {
-		return resp, errors.Wrap(err, "fetch results request error")
+		return resp, dbsqlerr.WrapErr(err, "open session request error") // TODO: figure out what error type this should be
 	}
 	if RecordResults {
 		j, _ := json.MarshalIndent(resp, "", " ")
@@ -90,7 +91,7 @@ func (tsc *ThriftServiceClient) GetResultSetMetadata(ctx context.Context, req *c
 	defer log.Duration(logger.Track("GetResultSetMetadata"))
 	resp, err := tsc.TCLIServiceClient.GetResultSetMetadata(ctx, req)
 	if err != nil {
-		return resp, errors.Wrap(err, "get result set metadata request error")
+		return resp, dbsqlerr.WrapErr(err, "open session request error") // TODO: figure out what error type this should be
 	}
 	if RecordResults {
 		j, _ := json.MarshalIndent(resp, "", " ")
@@ -106,7 +107,7 @@ func (tsc *ThriftServiceClient) ExecuteStatement(ctx context.Context, req *cli_s
 	msg, start := logger.Track("ExecuteStatement")
 	resp, err := tsc.TCLIServiceClient.ExecuteStatement(context.Background(), req)
 	if err != nil {
-		return resp, errors.Wrap(err, "execute statement request error")
+		return resp, dbsqlerr.WrapErr(err, "open session request error") // TODO: figure out what error type this should be
 	}
 	if RecordResults {
 		j, _ := json.MarshalIndent(resp, "", " ")
@@ -130,7 +131,7 @@ func (tsc *ThriftServiceClient) GetOperationStatus(ctx context.Context, req *cli
 	defer log.Duration(logger.Track("GetOperationStatus"))
 	resp, err := tsc.TCLIServiceClient.GetOperationStatus(ctx, req)
 	if err != nil {
-		return resp, errors.Wrap(err, "get operation status request error")
+		return resp, dbsqlerr.WrapErr(err, "open session request error") // TODO: figure out what error type this should be
 	}
 	if RecordResults {
 		j, _ := json.MarshalIndent(resp, "", " ")
@@ -147,7 +148,7 @@ func (tsc *ThriftServiceClient) CloseOperation(ctx context.Context, req *cli_ser
 	defer log.Duration(logger.Track("CloseOperation"))
 	resp, err := tsc.TCLIServiceClient.CloseOperation(ctx, req)
 	if err != nil {
-		return resp, errors.Wrap(err, "close operation request error")
+		return resp, dbsqlerr.WrapErr(err, "open session request error") // TODO: figure out what error type this should be
 	}
 	if RecordResults {
 		j, _ := json.MarshalIndent(resp, "", " ")
@@ -164,7 +165,7 @@ func (tsc *ThriftServiceClient) CancelOperation(ctx context.Context, req *cli_se
 	defer log.Duration(logger.Track("CancelOperation"))
 	resp, err := tsc.TCLIServiceClient.CancelOperation(ctx, req)
 	if err != nil {
-		return resp, errors.Wrap(err, "cancel operation request error")
+		return resp, dbsqlerr.WrapErr(err, "open session request error") // TODO: figure out what error type this should be
 	}
 	if RecordResults {
 		j, _ := json.MarshalIndent(resp, "", " ")
@@ -199,7 +200,7 @@ func InitThriftClient(cfg *config.Config, httpclient *http.Client) (*ThriftServi
 	case "header":
 		protocolFactory = thrift.NewTHeaderProtocolFactoryConf(tcfg)
 	default:
-		return nil, errors.Errorf("invalid protocol specified %s", cfg.ThriftProtocol)
+		return nil, dbsqlerr.NewRequestError(context.TODO(), fmt.Sprintf("invalid protocol specified %s", cfg.ThriftProtocol), nil)
 	}
 	if cfg.ThriftDebugClientProtocol {
 		protocolFactory = thrift.NewTDebugProtocolFactoryWithLogger(protocolFactory, "client:", thrift.StdLogger(nil))
@@ -211,7 +212,7 @@ func InitThriftClient(cfg *config.Config, httpclient *http.Client) (*ThriftServi
 	case "http":
 		if httpclient == nil {
 			if cfg.Authenticator == nil {
-				return nil, errors.New("databricks: no authentication method set")
+				return nil, dbsqlerr.NewRequestError(context.TODO(), dbsqlerr.ErrNoAuthenticationMethod, nil)
 			}
 			httpclient = RetryableClient(cfg)
 		}
@@ -226,13 +227,13 @@ func InitThriftClient(cfg *config.Config, httpclient *http.Client) (*ThriftServi
 		thriftHttpClient.SetHeader("User-Agent", userAgent)
 
 	default:
-		return nil, errors.Errorf("unsupported transport `%s`", cfg.ThriftTransport)
+		return nil, dbsqlerr.NewSystemFault(context.TODO(), fmt.Sprintf("unsupported transport `%s`", cfg.ThriftTransport), nil)
 	}
 	if err != nil {
-		return nil, err
+		return nil, dbsqlerr.NewRequestError(context.TODO(), dbsqlerr.ErrInvalidURL, err)
 	}
 	if err = tTrans.Open(); err != nil {
-		return nil, errors.Wrapf(err, "failed to open http transport for endpoint %s", endpoint)
+		return nil, dbsqlerr.NewRequestError(context.TODO(), fmt.Sprintf("failed to open http transport for endpoint %s", endpoint), err)
 	}
 	iprot := protocolFactory.GetProtocol(tTrans)
 	oprot := protocolFactory.GetProtocol(tTrans)
@@ -262,7 +263,6 @@ func CheckStatus(resp interface{}) error {
 		// SUCCESS, SUCCESS_WITH_INFO, STILL_EXECUTING are ok
 		return nil
 	}
-
 	return errors.New("thrift: invalid response")
 }
 
@@ -429,9 +429,10 @@ func errorHandler(resp *http.Response, err error, numTries int) (*http.Response,
 		// TODO @mattdeekay: convert these to specific error types
 
 		orgid := resp.Header.Get("X-Databricks-Org-Id")
-		reason := resp.Header.Get("X-Databricks-Reason-Phrase")
+		reason := resp.Header.Get("X-Databricks-Reason-Phrase") // TODO note: shown on notebook
 		terrmsg := resp.Header.Get("X-Thriftserver-Error-Message")
 		errmsg := resp.Header.Get("x-databricks-error-or-redirect-message")
+		// TODO note: need to see if there's other headers
 
 		werr = errors.Wrapf(err, fmt.Sprintf("orgId: %s, reason: %s, thriftErr: %s, err: %s", orgid, reason, terrmsg, errmsg))
 	} else {

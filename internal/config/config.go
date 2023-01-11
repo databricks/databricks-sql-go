@@ -1,8 +1,11 @@
 package config
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
+	dbsqlerr "github.com/databricks/databricks-sql-go/internal/err"
+	"github.com/pkg/errors"
 	"net/url"
 	"strconv"
 	"strings"
@@ -13,7 +16,6 @@ import (
 	"github.com/databricks/databricks-sql-go/auth/pat"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/logger"
-	"github.com/pkg/errors"
 )
 
 // Driver Configurations.
@@ -195,21 +197,21 @@ func ParseDSN(dsn string) (UserConfig, error) {
 	}
 	parsedURL, err := url.Parse(fullDSN)
 	if err != nil {
-		return UserConfig{}, errors.Wrap(err, "invalid DSN: invalid format")
+		return UserConfig{}, dbsqlerr.NewRequestError(context.TODO(), dbsqlerr.ErrInvalidDSNFormat, err)
 	}
 	ucfg := UserConfig{}.WithDefaults()
 	ucfg.Protocol = parsedURL.Scheme
 	ucfg.Host = parsedURL.Hostname()
 	port, err := strconv.Atoi(parsedURL.Port())
 	if err != nil {
-		return UserConfig{}, errors.Wrap(err, "invalid DSN: invalid DSN port")
+		return UserConfig{}, dbsqlerr.NewRequestError(context.TODO(), dbsqlerr.ErrInvalidDSNPort, err)
 	}
 	ucfg.Port = port
 	name := parsedURL.User.Username()
 	if name == "token" {
 		pass, ok := parsedURL.User.Password()
 		if pass == "" {
-			return UserConfig{}, errors.New("invalid DSN: empty token")
+			return UserConfig{}, dbsqlerr.NewRequestError(context.TODO(), dbsqlerr.ErrInvalidDSNPATIsEmpty, err)
 		}
 		if ok {
 			ucfg.AccessToken = pass
@@ -220,7 +222,7 @@ func ParseDSN(dsn string) (UserConfig, error) {
 		}
 	} else {
 		if name != "" {
-			return UserConfig{}, errors.New("invalid DSN: basic auth not enabled")
+			return UserConfig{}, dbsqlerr.NewRequestError(context.TODO(), dbsqlerr.ErrBasicAuthNotSupported, err)
 		}
 	}
 	ucfg.HTTPPath = parsedURL.Path
@@ -229,7 +231,7 @@ func ParseDSN(dsn string) (UserConfig, error) {
 	if maxRowsStr != "" {
 		maxRows, err := strconv.Atoi(maxRowsStr)
 		if err != nil {
-			return UserConfig{}, errors.Wrap(err, "invalid DSN: maxRows param is not an integer")
+			return UserConfig{}, dbsqlerr.NewRequestError(context.TODO(), dbsqlerr.ErrInvalidDSNMaxRows, err)
 		}
 		// we should always have at least some page size
 		if maxRows != 0 {
@@ -242,7 +244,7 @@ func ParseDSN(dsn string) (UserConfig, error) {
 	if timeoutStr != "" {
 		timeoutSeconds, err := strconv.Atoi(timeoutStr)
 		if err != nil {
-			return UserConfig{}, errors.Wrap(err, "invalid DSN: timeout param is not an integer")
+			return UserConfig{}, dbsqlerr.NewRequestError(context.TODO(), dbsqlerr.ErrInvalidDSNTimeout, err)
 		}
 		ucfg.QueryTimeout = time.Duration(timeoutSeconds) * time.Second
 	}
