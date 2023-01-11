@@ -67,7 +67,7 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 		setStmt := fmt.Sprintf("SET `%s` = `%s`;", k, v)
 		_, err := conn.ExecContext(ctx, setStmt, []driver.NamedValue{})
 		if err != nil {
-			return nil, err
+			return nil, dbsqlerrint.NewExecutionError(ctx, fmt.Sprintf("error setting session param: %s", setStmt), err, nil)
 		}
 		log.Info().Msgf("set session parameter: param=%s value=%s", k, v)
 	}

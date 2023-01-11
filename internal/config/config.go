@@ -9,12 +9,13 @@ import (
 	"strings"
 	"time"
 
+	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 	"github.com/pkg/errors"
 
 	"github.com/databricks/databricks-sql-go/auth"
 	"github.com/databricks/databricks-sql-go/auth/noop"
 	"github.com/databricks/databricks-sql-go/auth/pat"
-	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
+
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	dbsqlerrint "github.com/databricks/databricks-sql-go/internal/errors"
 	"github.com/databricks/databricks-sql-go/logger"
