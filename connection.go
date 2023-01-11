@@ -45,19 +45,19 @@ func (c *conn) Close() error {
 
 	if err != nil {
 		log.Err(err).Msg("databricks: failed to close connection")
-		return wrapErr(err, "failed to close connection")
+		return &dbsqlerror.OperationStatusError{Msg: "failed to close connection", Err: err}
 	}
 	return nil
 }
 
 // Not supported in Databricks.
 func (c *conn) Begin() (driver.Tx, error) {
-	return nil, errors.New(ErrTransactionsNotSupported)
+	return nil, &dbsqlerror.RequestError{Msg: ErrTransactionsNotSupported}
 }
 
 // Not supported in Databricks.
 func (c *conn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, error) {
-	return nil, errors.New(ErrTransactionsNotSupported)
+	return nil, &dbsqlerror.RequestError{Msg: ErrTransactionsNotSupported}
 }
 
 // Ping attempts to verify that the server is accessible.
@@ -99,7 +99,7 @@ func (c *conn) ExecContext(ctx context.Context, query string, args []driver.Name
 
 	ctx = driverctx.NewContextWithConnId(ctx, c.id)
 	if len(args) > 0 {
-		return nil, errors.New(ErrParametersNotSupported)
+		return nil, &dbsqlerror.RequestError{Msg: ErrParametersNotSupported}
 	}
 	exStmtResp, opStatusResp, err := c.runQuery(ctx, query, args)
 
@@ -141,7 +141,7 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 
 	ctx = driverctx.NewContextWithConnId(ctx, c.id)
 	if len(args) > 0 {
-		return nil, errors.New(ErrParametersNotSupported)
+		return nil, &dbsqlerror.RequestError{Msg: ErrParametersNotSupported}
 	}
 	// first we try to get the results synchronously.
 	// at any point in time that the context is done we must cancel and return

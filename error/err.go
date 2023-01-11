@@ -23,3 +23,13 @@ type OperationStatusError struct {
 func (e *OperationStatusError) Error() string {
 	return fmt.Sprintf("databricks: operation status error: %s\n%v", e.Msg, e.Err)
 }
+
+// RequestError is an error with the client's request
+type RequestError struct {
+	Msg string
+	Err error
+}
+
+func (e *RequestError) Error() string {
+	return fmt.Sprintf("databricks: request error: %s\n%v", e.Msg, e.Err)
+}
