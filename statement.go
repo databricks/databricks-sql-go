@@ -3,7 +3,7 @@ package dbsql
 import (
 	"context"
 	"database/sql/driver"
-	"errors"
+	dbsqlerror "github.com/databricks/databricks-sql-go/error"
 )
 
 type stmt struct {
@@ -26,14 +26,14 @@ func (s *stmt) NumInput() int {
 //
 // Deprecated: Use StmtExecContext instead.
 func (s *stmt) Exec(args []driver.Value) (driver.Result, error) {
-	return nil, errors.New(ErrNotImplemented)
+	return nil, &dbsqlerror.RequestError{Msg: ErrNotImplemented}
 }
 
 // Query is not implemented.
 //
 // Deprecated: Use StmtQueryContext instead.
 func (s *stmt) Query(args []driver.Value) (driver.Rows, error) {
-	return nil, errors.New(ErrNotImplemented)
+	return nil, &dbsqlerror.RequestError{Msg: ErrNotImplemented}
 }
 
 // ExecContext executes a query that doesn't return rows, such
