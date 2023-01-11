@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptrace"
+	dbsqlerror "github.com/databricks/databricks-sql-go/error"
 	"os"
 	"time"
 
@@ -193,7 +194,7 @@ func InitThriftClient(cfg *config.Config, httpclient *http.Client) (*ThriftServi
 	case "header":
 		protocolFactory = thrift.NewTHeaderProtocolFactoryConf(tcfg)
 	default:
-		return nil, errors.Errorf("invalid protocol specified %s", cfg.ThriftProtocol)
+		return nil, &dbsqlerror.ConnectionError{Msg: fmt.Sprintf("invalid protocol specified %s", cfg.ThriftProtocol)}
 	}
 	if cfg.ThriftDebugClientProtocol {
 		protocolFactory = thrift.NewTDebugProtocolFactoryWithLogger(protocolFactory, "client:", thrift.StdLogger(nil))
@@ -221,13 +222,13 @@ func InitThriftClient(cfg *config.Config, httpclient *http.Client) (*ThriftServi
 		thriftHttpClient.SetHeader("User-Agent", userAgent)
 
 	default:
-		return nil, errors.Errorf("unsupported transport `%s`", cfg.ThriftTransport)
+		return nil, &dbsqlerror.ConnectionError{Msg: fmt.Sprintf("unsupported transport `%s`", cfg.ThriftTransport), Err: err}
 	}
 	if err != nil {
 		return nil, err
 	}
 	if err = tTrans.Open(); err != nil {
-		return nil, errors.Wrapf(err, "failed to open http transport for endpoint %s", endpoint)
+		return nil, &dbsqlerror.ConnectionError{Msg: fmt.Sprintf("failed to open http transport for endpoint %s", endpoint), Err: err}
 	}
 	iprot := protocolFactory.GetProtocol(tTrans)
 	oprot := protocolFactory.GetProtocol(tTrans)
@@ -258,7 +259,7 @@ func CheckStatus(resp interface{}) error {
 		return nil
 	}
 
-	return errors.New("thrift: invalid response")
+	return &dbsqlerror.OperationStatusError{Msg: "thrift: invalid response"}
 }
 
 // SprintGuid is a convenience function to format a byte array into GUID.
