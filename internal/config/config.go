@@ -167,7 +167,7 @@ func WithDefaults() *Config {
 		PingTimeout:               60 * time.Second,
 		CanUseMultipleCatalogs:    true,
 		DriverName:                "godatabrickssqlconnector", // important. Do not change
-		DriverVersion:             "0.9.0",
+		DriverVersion:             "1.0.1",
 		ThriftProtocol:            "binary",
 		ThriftTransport:           "http",
 		ThriftProtocolVersion:     cli_service.TProtocolVersion_SPARK_CLI_SERVICE_PROTOCOL_V6,
