@@ -6,7 +6,6 @@ import (
 
 	"github.com/databricks/databricks-sql-go/logger"
 	"github.com/pkg/errors"
-	"github.com/rs/zerolog/log"
 )
 
 const (
@@ -110,10 +109,10 @@ func (s Sentinel) Watch(ctx context.Context, interval, timeout time.Duration) (W
 				s.onCancelFnCalled = true
 				_, err := s.OnCancelFn()
 				if err != nil {
-					log.Err(err).Msg("cancel failed")
+					logger.Err(err).Msg("databricks: cancel failed")
 					return WatchCanceled, nil, errors.Wrap(err, ctx.Err().Error())
 				}
-				log.Debug().Msgf("cancel success")
+				logger.Debug().Msgf("databricks: cancel success")
 			}
 			return WatchCanceled, nil, errors.Wrap(ctx.Err(), "sentinel context done")
 		case <-timeoutTimerCh:
@@ -124,10 +123,10 @@ func (s Sentinel) Watch(ctx context.Context, interval, timeout time.Duration) (W
 				s.onCancelFnCalled = true
 				_, err := s.OnCancelFn()
 				if err != nil {
-					log.Err(err).Msg("cancel failed")
+					logger.Err(err).Msg("databricks: cancel failed")
 					return WatchCanceled, nil, errors.Wrap(err, ctx.Err().Error())
 				}
-				log.Debug().Msgf("cancel success")
+				logger.Debug().Msgf("databricks: cancel success")
 			}
 
 			return WatchTimeout, nil, err

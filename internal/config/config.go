@@ -8,6 +8,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/databricks/databricks-sql-go/auth"
+	"github.com/databricks/databricks-sql-go/auth/noop"
+	"github.com/databricks/databricks-sql-go/auth/pat"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/logger"
 	"github.com/pkg/errors"
@@ -17,14 +20,11 @@ import (
 // Only UserConfig are currently exposed to users
 type Config struct {
 	UserConfig
-	TLSConfig     *tls.Config // nil disables TLS
-	Authenticator string      //TODO for oauth
-
-	RunAsync                  bool // TODO
+	TLSConfig                 *tls.Config // nil disables TLS
+	RunAsync                  bool
 	PollInterval              time.Duration
-	ConnectTimeout            time.Duration // max time to open session
 	ClientTimeout             time.Duration // max time the http request can last
-	PingTimeout               time.Duration //max time allowed for ping
+	PingTimeout               time.Duration // max time allowed for ping
 	CanUseMultipleCatalogs    bool
 	DriverName                string
 	DriverVersion             string
@@ -37,9 +37,6 @@ type Config struct {
 // ToEndpointURL generates the endpoint URL from Config that a Thrift client will connect to
 func (c *Config) ToEndpointURL() string {
 	var userInfo string
-	if c.AccessToken != "" {
-		userInfo = fmt.Sprintf("%s:%s@", "token", url.QueryEscape(c.AccessToken))
-	}
 	endpointUrl := fmt.Sprintf("%s://%s%s:%d%s", c.Protocol, userInfo, c.Host, c.Port, c.HTTPPath)
 	return endpointUrl
 }
@@ -51,13 +48,10 @@ func (c *Config) DeepCopy() *Config {
 	}
 
 	return &Config{
-		UserConfig:    c.UserConfig.DeepCopy(),
-		TLSConfig:     c.TLSConfig.Clone(),
-		Authenticator: c.Authenticator,
-
+		UserConfig:                c.UserConfig.DeepCopy(),
+		TLSConfig:                 c.TLSConfig.Clone(),
 		RunAsync:                  c.RunAsync,
 		PollInterval:              c.PollInterval,
-		ConnectTimeout:            c.ConnectTimeout,
 		ClientTimeout:             c.ClientTimeout,
 		PingTimeout:               c.PingTimeout,
 		CanUseMultipleCatalogs:    c.CanUseMultipleCatalogs,
@@ -78,12 +72,16 @@ type UserConfig struct {
 	HTTPPath       string // from databricks UI
 	Catalog        string
 	Schema         string
+	Authenticator  auth.Authenticator
 	AccessToken    string        // from databricks UI
 	MaxRows        int           // max rows per page
 	QueryTimeout   time.Duration // Timeout passed to server for query processing
 	UserAgentEntry string
 	Location       *time.Location
 	SessionParams  map[string]string
+	RetryWaitMin   time.Duration
+	RetryWaitMax   time.Duration
+	RetryMax       int
 }
 
 // DeepCopy returns a true deep copy of UserConfig
@@ -112,12 +110,16 @@ func (ucfg UserConfig) DeepCopy() UserConfig {
 		HTTPPath:       ucfg.HTTPPath,
 		Catalog:        ucfg.Catalog,
 		Schema:         ucfg.Schema,
+		Authenticator:  ucfg.Authenticator,
 		AccessToken:    ucfg.AccessToken,
 		MaxRows:        ucfg.MaxRows,
 		QueryTimeout:   ucfg.QueryTimeout,
 		UserAgentEntry: ucfg.UserAgentEntry,
 		Location:       loccp,
 		SessionParams:  sessionParams,
+		RetryWaitMin:   ucfg.RetryWaitMin,
+		RetryWaitMax:   ucfg.RetryWaitMax,
+		RetryMax:       ucfg.RetryMax,
 	}
 }
 
@@ -135,7 +137,22 @@ func (ucfg UserConfig) WithDefaults() UserConfig {
 	if ucfg.Port == 0 {
 		ucfg.Port = 443
 	}
-	ucfg.SessionParams = make(map[string]string)
+	if ucfg.Authenticator == nil {
+		ucfg.Authenticator = &noop.NoopAuth{}
+	}
+	if ucfg.SessionParams == nil {
+		ucfg.SessionParams = make(map[string]string)
+	}
+	if ucfg.RetryMax == 0 {
+		ucfg.RetryMax = 4
+	}
+	if ucfg.RetryWaitMin == 0 {
+		ucfg.RetryWaitMin = 1 * time.Second
+	}
+	if ucfg.RetryWaitMax == 0 {
+		ucfg.RetryWaitMax = 30 * time.Second
+	}
+
 	return ucfg
 }
 
@@ -144,12 +161,10 @@ func WithDefaults() *Config {
 	return &Config{
 		UserConfig:                UserConfig{}.WithDefaults(),
 		TLSConfig:                 &tls.Config{MinVersion: tls.VersionTLS12},
-		Authenticator:             "",
 		RunAsync:                  true,
 		PollInterval:              1 * time.Second,
-		ConnectTimeout:            60 * time.Second,
 		ClientTimeout:             900 * time.Second,
-		PingTimeout:               15 * time.Second,
+		PingTimeout:               60 * time.Second,
 		CanUseMultipleCatalogs:    true,
 		DriverName:                "godatabrickssqlconnector", // important. Do not change
 		DriverVersion:             "0.9.0",
@@ -182,10 +197,15 @@ func ParseDSN(dsn string) (UserConfig, error) {
 	name := parsedURL.User.Username()
 	if name == "token" {
 		pass, ok := parsedURL.User.Password()
+		if pass == "" {
+			return UserConfig{}, errors.New("invalid DSN: empty token")
+		}
 		if ok {
 			ucfg.AccessToken = pass
-		} else {
-			return UserConfig{}, errors.New("invalid DSN: token not set")
+			pat := &pat.PATAuth{
+				AccessToken: pass,
+			}
+			ucfg.Authenticator = pat
 		}
 	} else {
 		if name != "" {

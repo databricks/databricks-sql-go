@@ -4,9 +4,11 @@ import (
 	"context"
 	"database/sql/driver"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
+	"github.com/databricks/databricks-sql-go/auth/pat"
 	"github.com/databricks/databricks-sql-go/driverctx"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/client"
@@ -15,7 +17,8 @@ import (
 )
 
 type connector struct {
-	cfg *config.Config
+	cfg    *config.Config
+	client *http.Client
 }
 
 // Connect returns a connection to the Databricks database from a connection pool.
@@ -29,7 +32,7 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 		schemaName = cli_service.TIdentifierPtr(cli_service.TIdentifier(c.cfg.Schema))
 	}
 
-	tclient, err := client.InitThriftClient(c.cfg)
+	tclient, err := client.InitThriftClient(c.cfg, c.client)
 	if err != nil {
 		return nil, wrapErr(err, "error initializing thrift client")
 	}
@@ -88,7 +91,15 @@ func NewConnector(options ...connOption) (driver.Connector, error) {
 		opt(cfg)
 	}
 
-	return &connector{cfg: cfg}, nil
+	client := client.PooledClient(cfg)
+
+	return &connector{cfg: cfg, client: client}, nil
+}
+
+func withUserConfig(ucfg config.UserConfig) connOption {
+	return func(c *config.Config) {
+		c.UserConfig = ucfg
+	}
 }
 
 // WithServerHostname sets up the server hostname. Mandatory.
@@ -108,10 +119,28 @@ func WithPort(port int) connOption {
 	}
 }
 
+// WithRetries sets up retrying logic. Sane defaults are provided. Negative retryMax will disable retry behavior
+// By default retryWaitMin = 1 * time.Second
+// By default retryWaitMax = 30 * time.Second
+// By default retryMax = 4
+func WithRetries(retryMax int, retryWaitMin time.Duration, retryWaitMax time.Duration) connOption {
+	return func(c *config.Config) {
+		c.RetryWaitMax = retryWaitMax
+		c.RetryWaitMin = retryWaitMin
+		c.RetryMax = retryMax
+	}
+}
+
 // WithAccessToken sets up the Personal Access Token. Mandatory for now.
 func WithAccessToken(token string) connOption {
 	return func(c *config.Config) {
-		c.AccessToken = token
+		if token != "" {
+			c.AccessToken = token
+			pat := &pat.PATAuth{
+				AccessToken: token,
+			}
+			c.Authenticator = pat
+		}
 	}
 }
 
