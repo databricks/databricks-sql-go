@@ -10,6 +10,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+var ExpectedDriverVersion = "1.0.1"
+
 func TestNewConnector(t *testing.T) {
 	t.Run("Connector initialized with functional options should have all options set", func(t *testing.T) {
 		host := "databricks-host"
@@ -52,6 +54,7 @@ func TestNewConnector(t *testing.T) {
 			RetryWaitMax:   60 * time.Second,
 		}
 		expectedCfg := config.WithDefaults()
+		expectedCfg.DriverVersion = ExpectedDriverVersion
 		expectedCfg.UserConfig = expectedUserConfig
 		coni, ok := con.(*connector)
 		require.True(t, ok)
@@ -117,6 +120,7 @@ func TestNewConnector(t *testing.T) {
 			RetryWaitMax:  0,
 		}
 		expectedCfg := config.WithDefaults()
+		expectedCfg.DriverVersion = ExpectedDriverVersion
 		expectedCfg.UserConfig = expectedUserConfig
 		coni, ok := con.(*connector)
 		require.True(t, ok)

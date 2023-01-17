@@ -86,6 +86,7 @@ type connOption func(*config.Config)
 func NewConnector(options ...connOption) (driver.Connector, error) {
 	// config with default options
 	cfg := config.WithDefaults()
+	cfg.DriverVersion = DriverVersion
 
 	for _, opt := range options {
 		opt(cfg)
