@@ -265,10 +265,7 @@ func TestContextTimeoutExample(t *testing.T) {
 
 	defer ts.Close()
 
-	r, err := url.Parse(ts.URL)
-	require.NoError(t, err)
-
-	db, err := sql.Open("databricks", fmt.Sprintf("http://localhost:%s", r.Port()))
+	db, err := sql.Open("databricks", ts.URL)
 	require.NoError(t, err)
 	defer db.Close()
 
@@ -294,6 +291,129 @@ func TestContextTimeoutExample(t *testing.T) {
 	assert.Equal(t, 1, state.cancelOperationCalls)
 
 }
+
+func TestRetries(t *testing.T) {
+	t.Run("it should retry on 503 and respect retry-after", func(t *testing.T) {
+
+		_ = logger.SetLogLevel("debug")
+		state := &callState{}
+		// load basic responses
+		loadTestData(t, "OpenSessionSuccess.json", &state.openSessionResp)
+		loadTestData(t, "CloseSessionSuccess.json", &state.closeSessionResp)
+		loadTestData(t, "CloseOperationSuccess.json", &state.closeOperationResp)
+
+		ts := getServer(state)
+
+		defer ts.Close()
+
+		db, err := sql.Open("databricks", fmt.Sprintf("%s/503-2-retries", ts.URL))
+		require.NoError(t, err)
+		defer db.Close()
+
+		state.executeStatementResp = cli_service.TExecuteStatementResp{}
+		loadTestData(t, "ExecuteStatement1.json", &state.executeStatementResp)
+
+		err = db.Ping()
+		require.NoError(t, err)
+		assert.Equal(t, 1, state.executeStatementCalls)
+	})
+
+	t.Run("it should retry on 429 and respect retry-after", func(t *testing.T) {
+
+		_ = logger.SetLogLevel("debug")
+		state := &callState{}
+		// load basic responses
+		loadTestData(t, "OpenSessionSuccess.json", &state.openSessionResp)
+		loadTestData(t, "CloseSessionSuccess.json", &state.closeSessionResp)
+		loadTestData(t, "CloseOperationSuccess.json", &state.closeOperationResp)
+
+		ts := getServer(state)
+
+		defer ts.Close()
+
+		db, err := sql.Open("databricks", fmt.Sprintf("%s/429-2-retries", ts.URL))
+		require.NoError(t, err)
+		defer db.Close()
+
+		state.executeStatementResp = cli_service.TExecuteStatementResp{}
+		loadTestData(t, "ExecuteStatement1.json", &state.executeStatementResp)
+
+		err = db.Ping()
+		require.NoError(t, err)
+		assert.Equal(t, 1, state.executeStatementCalls)
+	})
+
+	t.Run("it should fail after maxRetries", func(t *testing.T) {
+
+		_ = logger.SetLogLevel("debug")
+		state := &callState{}
+		// load basic responses
+		loadTestData(t, "OpenSessionSuccess.json", &state.openSessionResp)
+		loadTestData(t, "CloseSessionSuccess.json", &state.closeSessionResp)
+		loadTestData(t, "CloseOperationSuccess.json", &state.closeOperationResp)
+
+		ts := getServer(state)
+
+		defer ts.Close()
+		r, err := url.Parse(ts.URL)
+		require.NoError(t, err)
+		port, err := strconv.Atoi(r.Port())
+		require.NoError(t, err)
+
+		connector, err := NewConnector(
+			WithServerHostname("localhost"),
+			WithHTTPPath("/500-5-retries"),
+			WithPort(port),
+			WithRetries(2, 10*time.Millisecond, 1*time.Second),
+		)
+		require.NoError(t, err)
+		db := sql.OpenDB(connector)
+		defer db.Close()
+
+		state.executeStatementResp = cli_service.TExecuteStatementResp{}
+		loadTestData(t, "ExecuteStatement1.json", &state.executeStatementResp)
+
+		err = db.Ping()
+		require.ErrorContains(t, err, "after 3 attempt(s)")
+	})
+
+	t.Run("it should be able to turn off retries", func(t *testing.T) {
+
+		_ = logger.SetLogLevel("debug")
+		state := &callState{}
+		// load basic responses
+		loadTestData(t, "OpenSessionSuccess.json", &state.openSessionResp)
+		loadTestData(t, "CloseSessionSuccess.json", &state.closeSessionResp)
+		loadTestData(t, "CloseOperationSuccess.json", &state.closeOperationResp)
+
+		ts := getServer(state)
+
+		defer ts.Close()
+		r, err := url.Parse(ts.URL)
+		require.NoError(t, err)
+		port, err := strconv.Atoi(r.Port())
+		require.NoError(t, err)
+
+		connector, err := NewConnector(
+			WithServerHostname("localhost"),
+			WithHTTPPath("/500-5-retries"),
+			WithPort(port),
+			WithRetries(-1, 0, 0),
+		)
+		require.NoError(t, err)
+		db := sql.OpenDB(connector)
+		defer db.Close()
+
+		state.executeStatementResp = cli_service.TExecuteStatementResp{}
+		loadTestData(t, "ExecuteStatement1.json", &state.executeStatementResp)
+
+		err = db.Ping()
+		require.ErrorContains(t, err, "after 1 attempt(s)")
+	})
+
+}
+
+// TODO: add tests for x-databricks headers
 
 func strPtr(s string) *string {
 	return &s

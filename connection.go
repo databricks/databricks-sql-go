@@ -64,7 +64,7 @@ func (c *conn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, e
 func (c *conn) Ping(ctx context.Context) error {
 	log := logger.WithContext(c.id, driverctx.CorrelationIdFromContext(ctx), "")
 	ctx = driverctx.NewContextWithConnId(ctx, c.id)
-	ctx1, cancel := context.WithTimeout(ctx, 60*time.Second)
+	ctx1, cancel := context.WithTimeout(ctx, c.cfg.PingTimeout)
 	defer cancel()
 	_, err := c.QueryContext(ctx1, "select 1", nil)
 	if err != nil {
@@ -152,7 +152,7 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 	defer log.Duration(msg, start)
 
 	if err != nil {
-		log.Err(err).Msgf("databricks: failed to run query: query %s", query)
+		log.Err(err).Msg("databricks: failed to run query") // To log query we need to redact credentials
 		return nil, wrapErrf(err, "failed to run query")
 	}
 	// hold on to the operation handle
@@ -296,8 +296,9 @@ func (c *conn) executeStatement(ctx context.Context, query string, args []driver
 
 			if err1 != nil {
 				log.Err(err).Msgf("databricks: cancel failed")
+			} else {
+				log.Debug().Msgf("databricks: cancel success")
 			}
-			log.Debug().Msgf("databricks: cancel success")
 
 		} else {
 			log.Debug().Msg("databricks: query did not need cancellation")
