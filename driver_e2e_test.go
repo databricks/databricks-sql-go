@@ -374,7 +374,7 @@ func TestRetries(t *testing.T) {
 		loadTestData(t, "ExecuteStatement1.json", &state.executeStatementResp)
 
 		err = db.Ping()
-		require.ErrorContains(t, err, "after 3 attempts")
+		require.ErrorContains(t, err, "after 3 attempt(s)")
 	})
 
 	t.Run("it should be able to turn off retries", func(t *testing.T) {
@@ -408,7 +408,7 @@ func TestRetries(t *testing.T) {
 		loadTestData(t, "ExecuteStatement1.json", &state.executeStatementResp)
 
 		err = db.Ping()
-		require.ErrorContains(t, err, "after 1 attempts")
+		require.ErrorContains(t, err, "after 1 attempt(s)")
 	})
 
 }
