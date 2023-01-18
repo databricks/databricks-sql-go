@@ -377,6 +377,40 @@ func TestRetries(t *testing.T) {
 		require.ErrorContains(t, err, "after 3 attempts")
 	})
 
+	t.Run("it should be able to turn off retries", func(t *testing.T) {
+
+		_ = logger.SetLogLevel("debug")
+		state := &callState{}
+		// load basic responses
+		loadTestData(t, "OpenSessionSuccess.json", &state.openSessionResp)
+		loadTestData(t, "CloseSessionSuccess.json", &state.closeSessionResp)
+		loadTestData(t, "CloseOperationSuccess.json", &state.closeOperationResp)
+
+		ts := getServer(state)
+
+		defer ts.Close()
+		r, err := url.Parse(ts.URL)
+		require.NoError(t, err)
+		port, err := strconv.Atoi(r.Port())
+		require.NoError(t, err)
+
+		connector, err := NewConnector(
+			WithServerHostname("localhost"),
+			WithHTTPPath("/500-5-retries"),
+			WithPort(port),
+			WithRetries(-1, 0, 0),
+		)
+		require.NoError(t, err)
+		db := sql.OpenDB(connector)
+		defer db.Close()
+
+		state.executeStatementResp = cli_service.TExecuteStatementResp{}
+		loadTestData(t, "ExecuteStatement1.json", &state.executeStatementResp)
+
+		err = db.Ping()
+		require.ErrorContains(t, err, "after 1 attempts")
+	})
+
 }
 
 // TODO: add tests for x-databricks headers

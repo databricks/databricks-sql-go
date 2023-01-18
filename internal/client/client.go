@@ -394,7 +394,7 @@ func (l *leveledLogger) Warn(msg string, keysAndValues ...interface{}) {
 func errorHandler(resp *http.Response, err error, numTries int) (*http.Response, error) {
 	var werr error
 	if err == nil {
-		err = errors.New(fmt.Sprintf("request error after %d attempts", numTries))
+		err = errors.New(fmt.Sprintf("request error after %d attempt(s)", numTries))
 	}
 	if resp != nil && resp.Header != nil {
 
