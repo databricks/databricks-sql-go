@@ -91,7 +91,7 @@ func NewConnector(options ...connOption) (driver.Connector, error) {
 		opt(cfg)
 	}
 
-	client := client.PooledClient(cfg)
+	client := client.RetryableClient(cfg)
 
 	return &connector{cfg: cfg, client: client}, nil
 }
