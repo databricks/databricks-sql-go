@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"database/sql/driver"
 	"fmt"
-	"io"
 	"time"
 
 	"github.com/apache/arrow/go/v11/arrow"
@@ -28,16 +27,37 @@ var errArrowRowsUnableToWriteArrowSchema = "databricks: unable to write arrow sc
 var errArrowRowsInvalidRowIndex = "databricks: row index %d is not contained in any arrow batch"
 var errArrowRowsInvalidDecimalType = "databricks: decimal type with no scale/precision"
 var errArrowRowsUnableToCreateDecimalType = "databricks: unable to create decimal type scale: %d, precision: %d"
-var errChunkedByteReaderInvalidState1 = "databricks: chunkedByteReader invalid state chunkIndex:%d, byteIndex:%d"
-var errChunkedByteReaderOverreadOfNonterminalChunk = "databricks: chunkedByteReader invalid state chunks:%d chunkIndex:%d len:%d byteIndex%d"
+var errArrowRowsUnknownDBType = "unknown data type when converting to arrow type"
+
+type recordReader interface {
+	NewRecordFromBytes(arrowSchemaBytes []byte, sparkArrowBatch sparkArrowBatch) (arrow.Record, error)
+}
+
+type valueContainerMaker interface {
+	makeColumnValuesContainers(ars *arrowRowScanner) error
+}
+
+type sparkArrowBatch struct {
+	rowCount, startRow, endRow int64
+	arrowRecordBytes           []byte
+	index                      int
+}
+
+func (sab *sparkArrowBatch) contains(rowIndex int64) bool {
+
+	return sab != nil && sab.startRow <= rowIndex && sab.endRow >= rowIndex
+}
 
 // arrowRowScanner handles extracting values from arrow records
 type arrowRowScanner struct {
+	recordReader
+	valueContainerMaker
+
 	// configuration of different arrow options for retrieving results
 	config.ArrowConfig
 
 	// arrow batches returned by the thrift server
-	arrowBatches []*cli_service.TSparkArrowBatch
+	arrowBatches []sparkArrowBatch
 
 	// arrow schema corresponding to the TTableSchema
 	arrowSchema *arrow.Schema
@@ -45,17 +65,14 @@ type arrowRowScanner struct {
 	// serialized form of arrow format schema
 	arrowSchemaBytes []byte
 
-	// database type names for the columns
-	colDBTypeNames []string
+	// database types for the columns
+	colDBTypes []cli_service.TTypeId
 
 	// number of rows in the current TRowSet
 	nRows int64
 
 	// a TRowSet contains multiple arrow batches
-	currentBatchIndex int
-
-	// range of rows in each arrow batch
-	batchRanges []batchRange
+	currentBatch *sparkArrowBatch
 
 	// Values for each column
 	columnValues []columnValues
@@ -70,7 +87,7 @@ type arrowRowScanner struct {
 var _ rowscanner.RowScanner = (*arrowRowScanner)(nil)
 
 // NewArrowRowScanner returns an instance of RowScanner which handles arrow format results
-func NewArrowRowScanner(schema *cli_service.TTableSchema, rowSet *cli_service.TRowSet, config *config.Config, logger *dbsqllog.DBSQLLogger) (rowscanner.RowScanner, error) {
+func NewArrowRowScanner(schema *cli_service.TTableSchema, rowSet *cli_service.TRowSet, cfg *config.Config, logger *dbsqllog.DBSQLLogger) (rowscanner.RowScanner, error) {
 
 	if logger == nil {
 		logger = dbsqllog.Logger
@@ -78,8 +95,13 @@ func NewArrowRowScanner(schema *cli_service.TTableSchema, rowSet *cli_service.TR
 
 	logger.Debug().Msgf("databricks: creating arrow row scanner, nArrowBatches: %d", len(rowSet.ArrowBatches))
 
+	var arrowConfig config.ArrowConfig
+	if cfg != nil {
+		arrowConfig = cfg.ArrowConfig
+	}
+
 	// convert the TTableSchema to an arrow Schema
-	arrowSchema, err := tTableSchemaToArrowSchema(schema, &config.ArrowConfig)
+	arrowSchema, err := tTableSchemaToArrowSchema(schema, &arrowConfig)
 	if err != nil {
 		logger.Err(err).Msg("databricks: arrow row scanner failed to convert schema")
 		return nil, err
@@ -93,9 +115,9 @@ func NewArrowRowScanner(schema *cli_service.TTableSchema, rowSet *cli_service.TR
 	}
 
 	// get the database type names for each column
-	colDBTypes := make([]string, len(schema.Columns))
+	colDBTypes := make([]cli_service.TTypeId, len(schema.Columns))
 	for i := range schema.Columns {
-		colDBTypes[i] = rowscanner.GetDBTypeName(schema.Columns[i])
+		colDBTypes[i] = rowscanner.GetDBType(schema.Columns[i])
 	}
 
 	// get the function for converting arrow timestamps to a time.Time
@@ -107,15 +129,31 @@ func NewArrowRowScanner(schema *cli_service.TTableSchema, rowSet *cli_service.TR
 		return nil, err
 	}
 
+	arrowBatches := make([]sparkArrowBatch, len(rowSet.ArrowBatches))
+	var startRow int64 = 0
+	for i := range rowSet.ArrowBatches {
+		rsab := rowSet.ArrowBatches[i]
+		arrowBatches[i] = sparkArrowBatch{
+			rowCount:         rsab.RowCount,
+			startRow:         startRow,
+			endRow:           startRow + rsab.RowCount - 1,
+			arrowRecordBytes: rsab.Batch,
+			index:            i,
+		}
+		startRow = startRow + rsab.RowCount
+	}
+
 	rs := &arrowRowScanner{
-		ArrowConfig:      config.ArrowConfig,
-		arrowBatches:     rowSet.ArrowBatches,
-		nRows:            countRows(rowSet),
-		arrowSchemaBytes: schemaBytes,
-		arrowSchema:      arrowSchema,
-		toTimestampFn:    ttsf,
-		colDBTypeNames:   colDBTypes,
-		DBSQLLogger:      logger,
+		recordReader:        sparkRecordReader{},
+		valueContainerMaker: &arrowValueContainerMaker{},
+		ArrowConfig:         arrowConfig,
+		arrowBatches:        arrowBatches,
+		nRows:               countRows(rowSet),
+		arrowSchemaBytes:    schemaBytes,
+		arrowSchema:         arrowSchema,
+		toTimestampFn:       ttsf,
+		colDBTypes:          colDBTypes,
+		DBSQLLogger:         logger,
 	}
 
 	return rs, nil
@@ -140,8 +178,14 @@ func (ars *arrowRowScanner) NRows() int64 {
 	return 0
 }
 
-var complexTypes map[string]struct{} = map[string]struct{}{"ARRAY": {}, "MAP": {}, "STRUCT": {}}
-var intervalTypes map[string]struct{} = map[string]struct{}{"INTERVAL_YEAR_MONTH": {}, "INTERVAL_DAY_TIME": {}}
+var complexTypes map[cli_service.TTypeId]struct{} = map[cli_service.TTypeId]struct{}{
+	cli_service.TTypeId_ARRAY_TYPE:  {},
+	cli_service.TTypeId_MAP_TYPE:    {},
+	cli_service.TTypeId_STRUCT_TYPE: {}}
+
+var intervalTypes map[cli_service.TTypeId]struct{} = map[cli_service.TTypeId]struct{}{
+	cli_service.TTypeId_INTERVAL_DAY_TIME_TYPE:   {},
+	cli_service.TTypeId_INTERVAL_YEAR_MONTH_TYPE: {}}
 
 // ScanRow is called to populate the provided slice with the
 // content of the current row. The provided slice will be the same
@@ -155,10 +199,12 @@ func (ars *arrowRowScanner) ScanRow(
 	location *time.Location) (err error) {
 
 	// load the error batch for the specified row, if necessary
-	err = ars.loadBatchFor(rowIndx(rowIndex))
+	err = ars.loadBatchFor(rowIndex)
 	if err != nil {
 		return err
 	}
+
+	var rowInBatchIndex int = int(rowIndex - ars.currentBatch.startRow)
 
 	// if no location is provided default to UTC
 	if location == nil {
@@ -171,18 +217,19 @@ func (ars *arrowRowScanner) ScanRow(
 	for i := range destination {
 		// clear the destination
 		destination[i] = nil
+		var val any
 
 		// if there is a corresponding column and the value for the specified row
 		// is not null we put the value in the destination
-		if err == nil && i < nCols && !ars.columnValues[i].IsNull(int(rowIndex)) {
+		if err == nil && i < nCols && !ars.columnValues[i].IsNull(rowInBatchIndex) {
 
 			// get the value from the column values holder
-			var val any = ars.columnValues[i].Value(int(rowIndex))
+			val = ars.columnValues[i].Value(rowInBatchIndex)
 
-			if ars.colDBTypeNames[i] == "DATE" {
+			if ars.colDBTypes[i] == cli_service.TTypeId_DATE_TYPE {
 				// Need to convert the arrow Date32 value to time.Time
 				val = val.(arrow.Date32).ToTime().In(location)
-			} else if ars.colDBTypeNames[i] == "TIMESTAMP" {
+			} else if ars.colDBTypes[i] == cli_service.TTypeId_TIMESTAMP_TYPE {
 				if ars.UseArrowNativeTimestamp {
 					// Need to convert the arrow timestamp value to a time.Time
 					val = ars.toTimestampFn(val.(arrow.Timestamp)).In(location)
@@ -193,21 +240,21 @@ func (ars *arrowRowScanner) ScanRow(
 						ars.Err(err).Msg("databrics: arrow row scanner failed to parse date/time")
 					}
 				}
+			} else if ars.colDBTypes[i] == cli_service.TTypeId_DECIMAL_TYPE && ars.UseArrowNativeDecimal {
+				//	not yet fully supported
+				ars.Error().Msgf(errArrowRowsUnsupportedNativeType, ars.colDBTypes[i])
+				err = errors.Errorf(errArrowRowsUnsupportedNativeType, ars.colDBTypes[i])
+			} else if _, ok := complexTypes[ars.colDBTypes[i]]; ok && ars.UseArrowNativeComplexTypes {
+				//	not yet fully supported
+				ars.Error().Msgf(errArrowRowsUnsupportedNativeType, ars.colDBTypes[i])
+				err = errors.Errorf(errArrowRowsUnsupportedNativeType, ars.colDBTypes[i])
+			} else if _, ok := intervalTypes[ars.colDBTypes[i]]; ok && ars.UseArrowNativeIntervalTypes {
+				//	not yet fully supported
+				ars.Error().Msgf(errArrowRowsUnsupportedNativeType, ars.colDBTypes[i])
+				err = errors.Errorf(errArrowRowsUnsupportedNativeType, ars.colDBTypes[i])
 			}
 
 			destination[i] = val
-		} else if ars.colDBTypeNames[i] == "DECIMAL" && ars.UseArrowNativeDecimal {
-			//	not yet fully supported
-			ars.Error().Msgf(errArrowRowsUnsupportedNativeType, ars.colDBTypeNames[i])
-			err = errors.Errorf(errArrowRowsUnsupportedNativeType, ars.colDBTypeNames[i])
-		} else if _, ok := complexTypes[ars.colDBTypeNames[i]]; ok && ars.UseArrowNativeComplexTypes {
-			//	not yet fully supported
-			ars.Error().Msgf(errArrowRowsUnsupportedNativeType, ars.colDBTypeNames[i])
-			err = errors.Errorf(errArrowRowsUnsupportedNativeType, ars.colDBTypeNames[i])
-		} else if _, ok := intervalTypes[ars.colDBTypeNames[i]]; ok && ars.UseArrowNativeIntervalTypes {
-			//	not yet fully supported
-			ars.Error().Msgf(errArrowRowsUnsupportedNativeType, ars.colDBTypeNames[i])
-			err = errors.Errorf(errArrowRowsUnsupportedNativeType, ars.colDBTypeNames[i])
 		}
 	}
 
@@ -230,11 +277,11 @@ func countRows(rowSet *cli_service.TRowSet) int64 {
 }
 
 // loadBatchFor loads the batch containing the specified row if necessary
-func (ars *arrowRowScanner) loadBatchFor(rowIndex rowIndx) error {
+func (ars *arrowRowScanner) loadBatchFor(rowIndex int64) error {
 
 	// if we haven't loaded the initial batch or the row is not in the current batch
 	// we need to load a different batch
-	if ars.columnValues == nil || !rowIndex.in(ars.getBatchRanges()[ars.currentBatchIndex]) {
+	if ars.columnValues == nil || !ars.currentBatch.contains(rowIndex) {
 		batchIndex, err := ars.rowIndexToBatchIndex(rowIndex)
 		if err != nil {
 			return err
@@ -254,12 +301,14 @@ func (ars *arrowRowScanner) loadBatchFor(rowIndex rowIndx) error {
 // loadBatch loads the arrow batch at the specified index
 func (ars *arrowRowScanner) loadBatch(batchIndex int) error {
 	if ars == nil || ars.arrowBatches == nil {
-		ars.Error().Msg(errArrowRowsNoArrowBatches)
+		if ars != nil {
+			ars.Error().Msg(errArrowRowsNoArrowBatches)
+		}
 		return errors.New(errArrowRowsNoArrowBatches)
 	}
 
 	// if the batch already loaded we can just return
-	if ars.currentBatchIndex == batchIndex && ars.columnValues != nil {
+	if ars.currentBatch != nil && ars.currentBatch.index == batchIndex && ars.columnValues != nil {
 		return nil
 	}
 
@@ -270,29 +319,18 @@ func (ars *arrowRowScanner) loadBatch(batchIndex int) error {
 
 	// set up the column values containers
 	if ars.columnValues == nil {
-		makeColumnValues(ars)
+		err := ars.makeColumnValuesContainers(ars)
+		if err != nil {
+			return err
+		}
 	}
 
-	// The arrow batches returned from the thrift server are actually a serialized arrow Record
-	// an arrow batch should consist of a Schema and at least one Record.
-	// Use a chunked byte reader to concatenate the schema bytes and the record bytes without
-	// having to allocate/copy slices.
-	schemaBytes := ars.arrowSchemaBytes
-
-	br := &chunkedByteReader{chunks: [][]byte{schemaBytes, ars.arrowBatches[batchIndex].Batch}}
-	rdr, err := ipc.NewReader(br)
+	r, err := ars.NewRecordFromBytes(ars.arrowSchemaBytes, ars.arrowBatches[batchIndex])
 	if err != nil {
 		ars.Err(err).Msg(errArrowRowsUnableToReadBatch)
-		return dbsqlerr.WrapErr(err, errArrowRowsUnableToReadBatch)
+		return err
 	}
 
-	if !rdr.Next() {
-		ars.Err(rdr.Err()).Msg(errArrowRowsUnableToReadBatch)
-		return dbsqlerr.WrapErr(rdr.Err(), errArrowRowsUnableToReadBatch)
-	}
-
-	r := rdr.Record()
-	r.Retain()
 	defer r.Release()
 
 	// for each column we want to create an arrow array specific to the data type
@@ -301,6 +339,9 @@ func (ars *arrowRowScanner) loadBatch(batchIndex int) error {
 		defer col.Release()
 
 		colData := col.Data()
+		colData.Retain()
+		defer col.Release()
+
 		colDataType := col.DataType()
 		colValsHolder := ars.columnValues[i]
 
@@ -350,7 +391,7 @@ func (ars *arrowRowScanner) loadBatch(batchIndex int) error {
 		}
 	}
 
-	ars.currentBatchIndex = batchIndex
+	ars.currentBatch = &ars.arrowBatches[batchIndex]
 
 	return nil
 }
@@ -378,38 +419,16 @@ func getArrowSchemaBytes(schema *arrow.Schema) ([]byte, error) {
 }
 
 // rowIndexToBatchIndex returns the index of the batch containing the specified row
-func (ars *arrowRowScanner) rowIndexToBatchIndex(rowIndex rowIndx) (int, error) {
-	ranges := ars.getBatchRanges()
-	for i := range ranges {
-		if rowIndex.in(ranges[i]) {
+func (ars *arrowRowScanner) rowIndexToBatchIndex(rowIndex int64) (int, error) {
+
+	for i := range ars.arrowBatches {
+		if ars.arrowBatches[i].contains(rowIndex) {
 			return i, nil
 		}
 	}
 
 	ars.Error().Msgf(errArrowRowsInvalidRowIndex, rowIndex)
 	return -1, errors.Errorf(errArrowRowsInvalidRowIndex, rowIndex)
-}
-
-// getBatchRanges does a one time calculation of the row range in each arrow batch
-// and returns the ranges
-func (ars *arrowRowScanner) getBatchRanges() []batchRange {
-	if ars == nil || ars.arrowBatches == nil {
-		return []batchRange{}
-	}
-
-	if ars.batchRanges == nil {
-		var batchOffset rowIndx = 0
-		batches := ars.arrowBatches
-		ars.batchRanges = make([]batchRange, len(batches))
-
-		for i := range batches {
-			rowCount := rowIndx(batches[i].RowCount)
-			ars.batchRanges[i] = batchRange{batchOffset, batchOffset + rowCount - 1}
-			batchOffset += rowIndx(rowCount)
-		}
-	}
-
-	return ars.batchRanges
 }
 
 // tTableSchemaToArrowSchema convers the TTableSchema retrieved by the thrift server into an arrow.Schema instance
@@ -442,19 +461,19 @@ var toArrowTypeMap map[cli_service.TTypeId]arrow.DataType = map[cli_service.TTyp
 	cli_service.TTypeId_DOUBLE_TYPE:   arrow.PrimitiveTypes.Float64,
 	cli_service.TTypeId_STRING_TYPE:   arrow.BinaryTypes.String,
 	// cli_service.TTypeId_TIMESTAMP_TYPE:    see tColumnDescToArrowDataType
-	cli_service.TTypeId_BINARY_TYPE:       arrow.BinaryTypes.Binary,
-	cli_service.TTypeId_ARRAY_TYPE:        arrow.BinaryTypes.String,
-	cli_service.TTypeId_MAP_TYPE:          arrow.BinaryTypes.String,
-	cli_service.TTypeId_STRUCT_TYPE:       arrow.BinaryTypes.String,
+	cli_service.TTypeId_BINARY_TYPE: arrow.BinaryTypes.Binary,
+	// cli_service.TTypeId_ARRAY_TYPE:        see tColumnDescToArrowDataType
+	// cli_service.TTypeId_MAP_TYPE:          see tColumnDescToArrowDataType
+	// cli_service.TTypeId_STRUCT_TYPE:       see tColumnDescToArrowDataType
 	cli_service.TTypeId_UNION_TYPE:        arrow.BinaryTypes.String,
 	cli_service.TTypeId_USER_DEFINED_TYPE: arrow.BinaryTypes.String,
 	// cli_service.TTypeId_DECIMAL_TYPE:  see tColumnDescToArrowDataType
-	cli_service.TTypeId_NULL_TYPE:                arrow.Null,
-	cli_service.TTypeId_DATE_TYPE:                arrow.FixedWidthTypes.Date32,
-	cli_service.TTypeId_VARCHAR_TYPE:             arrow.BinaryTypes.String,
-	cli_service.TTypeId_CHAR_TYPE:                arrow.BinaryTypes.String,
-	cli_service.TTypeId_INTERVAL_YEAR_MONTH_TYPE: arrow.BinaryTypes.String,
-	cli_service.TTypeId_INTERVAL_DAY_TIME_TYPE:   arrow.BinaryTypes.String,
+	cli_service.TTypeId_NULL_TYPE:    arrow.Null,
+	cli_service.TTypeId_DATE_TYPE:    arrow.FixedWidthTypes.Date32,
+	cli_service.TTypeId_VARCHAR_TYPE: arrow.BinaryTypes.String,
+	cli_service.TTypeId_CHAR_TYPE:    arrow.BinaryTypes.String,
+	// cli_service.TTypeId_INTERVAL_YEAR_MONTH_TYPE: see tColumnDescToArrowDataType
+	// cli_service.TTypeId_INTERVAL_DAY_TIME_TYPE:   see tColumnDescToArrowDataType
 }
 
 func tColumnDescToArrowDataType(tColumnDesc *cli_service.TColumnDesc, arrowConfig *config.ArrowConfig) (arrow.DataType, error) {
@@ -474,24 +493,14 @@ func tColumnDescToArrowDataType(tColumnDesc *cli_service.TColumnDesc, arrowConfi
 
 			// Need to construct an instance of arrow DecimalType with the
 			// correct scale and precision
-			typeQualifiers := rowscanner.GetDBTypeQualifiers(tColumnDesc)
-			if typeQualifiers == nil || typeQualifiers.Qualifiers == nil {
-				return nil, errors.New(errArrowRowsInvalidDecimalType)
-			}
-
-			scale, ok := typeQualifiers.Qualifiers["scale"]
-			if !ok {
-				return nil, errors.New(errArrowRowsInvalidDecimalType)
-			}
-
-			precision, ok := typeQualifiers.Qualifiers["precision"]
-			if !ok {
-				return nil, errors.New(errArrowRowsInvalidDecimalType)
-			}
-
-			decimalType, err := arrow.NewDecimalType(arrow.DECIMAL128, *scale.I32Value, *precision.I32Value)
+			scale, precision, err := getDecimalScalePrecision(tColumnDesc)
 			if err != nil {
-				return nil, dbsqlerr.WrapErr(err, fmt.Sprintf(errArrowRowsUnableToCreateDecimalType, *scale.I32Value, *precision.I32Value))
+				return nil, err
+			}
+
+			decimalType, err := arrow.NewDecimalType(arrow.DECIMAL128, scale, precision)
+			if err != nil {
+				return nil, dbsqlerr.WrapErr(err, fmt.Sprintf(errArrowRowsUnableToCreateDecimalType, scale, precision))
 			}
 
 			return decimalType, nil
@@ -504,11 +513,53 @@ func tColumnDescToArrowDataType(tColumnDesc *cli_service.TColumnDesc, arrowConfi
 
 			// timestamp is UTC with microsecond precision
 			return arrow.FixedWidthTypes.Timestamp_us, nil
+		} else if _, ok := complexTypes[tType]; ok {
+			// if not using arrow native complex types thrift server returns strings
+			if !arrowConfig.UseArrowNativeComplexTypes {
+				return arrow.BinaryTypes.String, nil
+			}
+
+			return nil, errors.Errorf(errArrowRowsUnsupportedNativeType, rowscanner.GetDBTypeName(tColumnDesc))
+		} else if _, ok := intervalTypes[tType]; ok {
+			// if not using arrow native complex types thrift server returns strings
+			if !arrowConfig.UseArrowNativeIntervalTypes {
+				return arrow.BinaryTypes.String, nil
+			}
+
+			return nil, errors.Errorf(errArrowRowsUnsupportedNativeType, rowscanner.GetDBTypeName(tColumnDesc))
 		} else {
-			return nil, errors.New("unknown data type when converting to arrow type")
+			return nil, errors.New(errArrowRowsUnknownDBType)
 		}
 	}
 
+}
+
+func getDecimalScalePrecision(tColumnDesc *cli_service.TColumnDesc) (scale, precision int32, err error) {
+	fail := errors.New(errArrowRowsInvalidDecimalType)
+
+	typeQualifiers := rowscanner.GetDBTypeQualifiers(tColumnDesc)
+	if typeQualifiers == nil || typeQualifiers.Qualifiers == nil {
+		err = fail
+		return
+	}
+
+	scaleHolder, ok := typeQualifiers.Qualifiers["scale"]
+	if !ok || scaleHolder == nil || scaleHolder.I32Value == nil {
+		err = fail
+		return
+	} else {
+		scale = *scaleHolder.I32Value
+	}
+
+	precisionHolder, ok := typeQualifiers.Qualifiers["precision"]
+	if !ok || precisionHolder == nil || precisionHolder.I32Value == nil {
+		err = fail
+		return
+	} else {
+		precision = *precisionHolder.I32Value
+	}
+
+	return
 }
 
 func tColumnDescToArrowField(columnDesc *cli_service.TColumnDesc, arrowConfig *config.ArrowConfig) (arrow.Field, error) {
@@ -523,13 +574,6 @@ func tColumnDescToArrowField(columnDesc *cli_service.TColumnDesc, arrowConfig *c
 	}
 
 	return arrowField, nil
-}
-
-type rowIndx int64
-type batchRange [2]rowIndx
-
-func (ri rowIndx) in(rng batchRange) bool {
-	return ri >= rng[0] && ri <= rng[1]
 }
 
 // columnValues is the interface for accessing the values for a column
@@ -603,8 +647,40 @@ func (cv *columnValuesTyped[X, T]) Release() {
 
 var _ columnValues = (*columnValuesTyped[*array.Int16, int16])(nil)
 
-// makeColumnValues creates appropriately typed  column values holders for each column
-func makeColumnValues(ars *arrowRowScanner) {
+type sparkRecordReader struct{}
+
+// Make sure sparkRecordReader fulfills the recordReader interface
+var _ recordReader = (*sparkRecordReader)(nil)
+
+func (srr sparkRecordReader) NewRecordFromBytes(arrowSchemaBytes []byte, sparkArrowBatch sparkArrowBatch) (arrow.Record, error) {
+	// The arrow batches returned from the thrift server are actually a serialized arrow Record
+	// an arrow batch should consist of a Schema and at least one Record.
+	// Use a chunked byte reader to concatenate the schema bytes and the record bytes without
+	// having to allocate/copy slices.
+
+	br := &chunkedByteReader{chunks: [][]byte{arrowSchemaBytes, sparkArrowBatch.arrowRecordBytes}}
+	rdr, err := ipc.NewReader(br)
+	if err != nil {
+		return nil, dbsqlerr.WrapErr(err, errArrowRowsUnableToReadBatch)
+	}
+	defer rdr.Release()
+
+	r, err := rdr.Read()
+	if err != nil {
+		return nil, dbsqlerr.WrapErr(err, errArrowRowsUnableToReadBatch)
+	}
+
+	r.Retain()
+
+	return r, nil
+}
+
+type arrowValueContainerMaker struct{}
+
+var _ valueContainerMaker = (*arrowValueContainerMaker)(nil)
+
+// makeColumnValuesContainers creates appropriately typed  column values holders for each column
+func (vcm *arrowValueContainerMaker) makeColumnValuesContainers(ars *arrowRowScanner) error {
 	if ars.columnValues == nil {
 		ars.columnValues = make([]columnValues, len(ars.arrowSchema.Fields()))
 		for i, field := range ars.arrowSchema.Fields() {
@@ -645,92 +721,10 @@ func makeColumnValues(ars *arrowRowScanner) {
 
 			case *arrow.BinaryType:
 				ars.columnValues[i] = &columnValuesTyped[*array.Binary, []byte]{}
+
+			default:
+				ars.Warn().Msgf("databricks: arrow row scanner unhandled type %s", field.Type.String())
 			}
-		}
-	}
-}
-
-// chunkedByteReader implements the io.Reader interface on a collection
-// of byte arrays.
-// The TSparkArrowBatch instances returned in TFetchResultsResp contain
-// a byte array containing an ipc formatted MessageRecordBatch message.
-// The ipc reader expects a bytestream containing a MessageSchema message
-// followed by a MessageRecordBatch message.
-// chunkedByteReader is used to avoid allocating new byte arrays for each
-// TSparkRecordBatch and copying the schema and record bytes.
-type chunkedByteReader struct {
-	// byte slices to be read as a single slice
-	chunks [][]byte
-	// index of the chunk being read from
-	chunkIndex int
-	// index in the current chunk
-	byteIndex int
-}
-
-// Read reads up to len(p) bytes into p. It returns the number of bytes
-// read (0 <= n <= len(p)) and any error encountered.
-//
-// When Read encounters an error or end-of-file condition after
-// successfully reading n > 0 bytes, it returns the number of
-// bytes read and a non-nil error.  If len(p) is zero Read will
-// return 0, nil
-//
-// Callers should always process the n > 0 bytes returned before
-// considering the error err. Doing so correctly handles I/O errors
-// that happen after reading some bytes.
-func (c *chunkedByteReader) Read(p []byte) (bytesRead int, err error) {
-	err = c.isValid()
-
-	for err == nil && bytesRead < len(p) && !c.isEOF() {
-		chunk := c.chunks[c.chunkIndex]
-		chunkLen := len(chunk)
-		source := chunk[c.byteIndex:]
-
-		n := copy(p[bytesRead:], source)
-		bytesRead += n
-
-		c.byteIndex += n
-
-		if c.byteIndex >= chunkLen {
-			c.byteIndex = 0
-			c.chunkIndex += 1
-		}
-	}
-
-	if err != nil {
-		err = dbsqlerr.WrapErr(err, "datbricks: read failure in chunked byte reader")
-	} else if c.isEOF() {
-		err = io.EOF
-	}
-
-	return bytesRead, err
-}
-
-// isEOF returns true if the chunkedByteReader is in
-// an end-of-file condition.
-func (c *chunkedByteReader) isEOF() bool {
-	return c.chunkIndex >= len(c.chunks)
-}
-
-// reset returns the chunkedByteReader to its initial state
-func (c *chunkedByteReader) reset() {
-	c.byteIndex = 0
-	c.chunkIndex = 0
-}
-
-// verify that the chunkedByteReader is in a valid state
-func (c *chunkedByteReader) isValid() error {
-	if c == nil {
-		return errors.New("call to Read on nil chunkedByteReader")
-	}
-	if c.byteIndex < 0 || c.chunkIndex < 0 {
-		return errors.New(fmt.Sprintf(errChunkedByteReaderInvalidState1, c.chunkIndex, c.byteIndex))
-	}
-
-	if c.chunkIndex < len(c.chunks)-1 {
-		chunkLen := len(c.chunks[c.chunkIndex])
-		if 0 < chunkLen && c.byteIndex >= chunkLen {
-			return errors.New(fmt.Sprintf(errChunkedByteReaderOverreadOfNonterminalChunk, len(c.chunks), c.chunkIndex, len(c.chunks[c.chunkIndex]), c.byteIndex))
 		}
 	}
 	return nil

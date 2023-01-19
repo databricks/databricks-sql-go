@@ -67,7 +67,7 @@ type rows struct {
 	// closed the operation.
 	closedOnServer bool
 
-	logger *dbsqllog.DBSQLLogger
+	logger_ *dbsqllog.DBSQLLogger
 }
 
 var _ driver.Rows = (*rows)(nil)
@@ -113,7 +113,7 @@ func NewRows(
 		}
 	}
 
-	logger.Debug().Msgf("databricks: creating Rows, pageSize: %d, location: %d")
+	logger.Debug().Msgf("databricks: creating Rows, pageSize: %d, location: %v", pageSize, location)
 
 	r := &rows{
 		client:        client,
@@ -124,7 +124,7 @@ func NewRows(
 		location:      location,
 		config:        config,
 		hasMoreRows:   true,
-		logger:        logger,
+		logger_:       logger,
 	}
 
 	// if we already have results for the query do some additional initialization
@@ -189,7 +189,7 @@ func (r *rows) Close() error {
 	}
 
 	if !r.closedOnServer {
-		r.logger.Debug().Msgf("databricks: closing Rows operation")
+		r.logger().Debug().Msgf("databricks: closing Rows operation")
 
 		// if the operation hasn't already been closed on the server we
 		// need to do that now
@@ -202,7 +202,7 @@ func (r *rows) Close() error {
 
 		_, err1 := r.client.CloseOperation(ctx, &req)
 		if err1 != nil {
-			r.logger.Err(err1).Msg("databricks: Rows instance failed to close operation")
+			r.logger().Err(err1).Msg("databricks: Rows instance failed to close operation")
 			return err1
 		}
 	}
@@ -381,12 +381,11 @@ func getScanType(column *cli_service.TColumnDesc) reflect.Type {
 // and that it has a client
 func isValidRows(r *rows) error {
 	if r == nil {
-		r.logger.Error().Msg(errRowsNilRows)
 		return errors.New(errRowsNilRows)
 	}
 
 	if r.client == nil {
-		r.logger.Error().Msg(errRowsNoClient)
+		r.logger().Error().Msg(errRowsNoClient)
 		return errors.New(errRowsNoClient)
 	}
 
@@ -443,7 +442,7 @@ func (r *rows) getResultSetSchema() (*cli_service.TTableSchema, error) {
 
 		resp, err := r.client.GetResultSetMetadata(ctx, &req)
 		if err != nil {
-			r.logger.Err(err).Msg("databricks: Rows instance failed to retrieve result set metadata")
+			r.logger().Err(err).Msg("databricks: Rows instance failed to retrieve result set metadata")
 			return nil, err
 		}
 
@@ -461,7 +460,7 @@ func (r *rows) fetchResultPage() error {
 		return err
 	}
 
-	r.logger.Debug().Msgf("databricks: fetching result page for row %d", r.nextRowNumber)
+	r.logger().Debug().Msgf("databricks: fetching result page for row %d", r.nextRowNumber)
 
 	var b bool
 	var e error
@@ -481,11 +480,11 @@ func (r *rows) fetchResultPage() error {
 				return io.EOF
 			}
 		} else {
-			r.logger.Error().Msgf(errRowsUnandledFetchDirection, direction.String())
+			r.logger().Error().Msgf(errRowsUnandledFetchDirection, direction.String())
 			return errors.Errorf(errRowsUnandledFetchDirection, direction.String())
 		}
 
-		r.logger.Debug().Msgf("fetching next batch of up to %d rows, %s", r.maxPageSize, direction.String())
+		r.logger().Debug().Msgf("fetching next batch of up to %d rows, %s", r.maxPageSize, direction.String())
 
 		req := cli_service.TFetchResultsReq{
 			OperationHandle: r.opHandle,
@@ -496,7 +495,7 @@ func (r *rows) fetchResultPage() error {
 
 		fetchResult, err := r.client.FetchResults(ctx, &req)
 		if err != nil {
-			r.logger.Err(err).Msg("databricks: Rows instance failed to retrieve results")
+			r.logger().Err(err).Msg("databricks: Rows instance failed to retrieve results")
 			return err
 		}
 
@@ -505,7 +504,7 @@ func (r *rows) fetchResultPage() error {
 			return err
 		}
 
-		r.logger.Debug().Msgf("databricks: new result page startRow: %d, nRows: %d, hasMoreRows: %s", fetchResult.Results.StartRowOffset, r.NRows(), fetchResult.HasMoreRows)
+		r.logger().Debug().Msgf("databricks: new result page startRow: %d, nRows: %v, hasMoreRows: %v", fetchResult.Results.StartRowOffset, r.NRows(), fetchResult.HasMoreRows)
 	}
 
 	if e != nil {
@@ -543,21 +542,25 @@ func (r *rows) makeRowScanner(fetchResults *cli_service.TFetchResultsResp) error
 		return err1
 	}
 
+	if fetchResults == nil {
+		return nil
+	}
+
 	var rs rowscanner.RowScanner
 	var err error
 	if fetchResults.Results != nil {
 		if fetchResults.Results.Columns != nil {
-			rs, err = columnbased.NewColumnRowScanner(schema, fetchResults.Results, r.config, r.logger)
+			rs, err = columnbased.NewColumnRowScanner(schema, fetchResults.Results, r.config, r.logger())
 		} else if fetchResults.Results.ArrowBatches != nil {
-			rs, err = arrowbased.NewArrowRowScanner(schema, fetchResults.Results, r.config, r.logger)
+			rs, err = arrowbased.NewArrowRowScanner(schema, fetchResults.Results, r.config, r.logger())
 		} else {
-			r.logger.Error().Msg(errRowsUnknowRowType)
+			r.logger().Error().Msg(errRowsUnknowRowType)
 			err = errors.New(errRowsUnknowRowType)
 		}
 
 		r.pageStartingRowNum = fetchResults.Results.StartRowOffset
 	} else {
-		r.logger.Error().Msg(errRowsUnknowRowType)
+		r.logger().Error().Msg(errRowsUnknowRowType)
 		err = errors.New(errRowsUnknowRowType)
 	}
 
@@ -569,4 +572,15 @@ func (r *rows) makeRowScanner(fetchResults *cli_service.TFetchResultsResp) error
 	}
 
 	return err
+}
+
+func (r *rows) logger() *dbsqllog.DBSQLLogger {
+	if r.logger_ == nil {
+		if r.opHandle != nil {
+			r.logger_ = dbsqllog.WithContext(r.connId, r.correlationId, dbsqlclient.SprintGuid(r.opHandle.OperationId.GUID))
+		} else {
+			r.logger_ = dbsqllog.WithContext(r.connId, r.correlationId, "")
+		}
+	}
+	return r.logger_
 }
