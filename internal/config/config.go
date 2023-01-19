@@ -51,6 +51,7 @@ func (c *Config) DeepCopy() *Config {
 	return &Config{
 		UserConfig:                c.UserConfig.DeepCopy(),
 		TLSConfig:                 c.TLSConfig.Clone(),
+		ArrowConfig:               c.ArrowConfig.DeepCopy(),
 		RunAsync:                  c.RunAsync,
 		PollInterval:              c.PollInterval,
 		ClientTimeout:             c.ClientTimeout,
@@ -280,4 +281,15 @@ func (ucfg ArrowConfig) WithDefaults() ArrowConfig {
 	ucfg.UseArrowNativeTimestamp = true
 
 	return ucfg
+}
+
+// DeepCopy returns a true deep copy of UserConfig
+func (arrowConfig ArrowConfig) DeepCopy() ArrowConfig {
+	return ArrowConfig{
+		UseArrowBatches:             arrowConfig.UseArrowBatches,
+		UseArrowNativeDecimal:       arrowConfig.UseArrowNativeDecimal,
+		UseArrowNativeTimestamp:     arrowConfig.UseArrowNativeTimestamp,
+		UseArrowNativeComplexTypes:  arrowConfig.UseArrowNativeComplexTypes,
+		UseArrowNativeIntervalTypes: arrowConfig.UseArrowNativeIntervalTypes,
+	}
 }

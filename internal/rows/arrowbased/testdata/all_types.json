@@ -1,0 +1,307 @@
+{
+ "status": {
+  "statusCode": "SUCCESS_STATUS"
+ },
+ "operationHandle": {
+  "operationId": {
+   "guid": "Ae2Xj8dlH9qYHrnzX8+PrQ==",
+   "secret": "M41SnYJyRuuEgstBlGaDnQ=="
+  },
+  "operationType": "EXECUTE_STATEMENT",
+  "hasResultSet": true
+ },
+ "directResults": {
+  "operationStatus": {
+   "status": {
+    "statusCode": "SUCCESS_STATUS"
+   },
+   "operationState": "FINISHED_STATE"
+  },
+  "resultSetMetadata": {
+   "status": {
+    "statusCode": "SUCCESS_STATUS"
+   },
+   "schema": {
+    "columns": [
+     {
+      "columnName": "bool_col",
+      "typeDesc": {
+       "types": [
+        {
+         "primitiveEntry": {
+          "type": "BOOLEAN_TYPE"
+         }
+        }
+       ]
+      },
+      "position": 1,
+      "comment": ""
+     },
+     {
+      "columnName": "tinyint_col",
+      "typeDesc": {
+       "types": [
+        {
+         "primitiveEntry": {
+          "type": "TINYINT_TYPE"
+         }
+        }
+       ]
+      },
+      "position": 2,
+      "comment": ""
+     },
+     {
+      "columnName": "smallint_col",
+      "typeDesc": {
+       "types": [
+        {
+         "primitiveEntry": {
+          "type": "SMALLINT_TYPE"
+         }
+        }
+       ]
+      },
+      "position": 3,
+      "comment": ""
+     },
+     {
+      "columnName": "int_col",
+      "typeDesc": {
+       "types": [
+        {
+         "primitiveEntry": {
+          "type": "INT_TYPE"
+         }
+        }
+       ]
+      },
+      "position": 4,
+      "comment": ""
+     },
+     {
+      "columnName": "bigint_col",
+      "typeDesc": {
+       "types": [
+        {
+         "primitiveEntry": {
+          "type": "BIGINT_TYPE"
+         }
+        }
+       ]
+      },
+      "position": 5,
+      "comment": ""
+     },
+     {
+      "columnName": "float_col",
+      "typeDesc": {
+       "types": [
+        {
+         "primitiveEntry": {
+          "type": "FLOAT_TYPE"
+         }
+        }
+       ]
+      },
+      "position": 6,
+      "comment": ""
+     },
+     {
+      "columnName": "double_col",
+      "typeDesc": {
+       "types": [
+        {
+         "primitiveEntry": {
+          "type": "DOUBLE_TYPE"
+         }
+        }
+       ]
+      },
+      "position": 7,
+      "comment": ""
+     },
+     {
+      "columnName": "string_col",
+      "typeDesc": {
+       "types": [
+        {
+         "primitiveEntry": {
+          "type": "STRING_TYPE"
+         }
+        }
+       ]
+      },
+      "position": 8,
+      "comment": ""
+     },
+     {
+      "columnName": "timestamp_col",
+      "typeDesc": {
+       "types": [
+        {
+         "primitiveEntry": {
+          "type": "TIMESTAMP_TYPE"
+         }
+        }
+       ]
+      },
+      "position": 9,
+      "comment": ""
+     },
+     {
+      "columnName": "binary_col",
+      "typeDesc": {
+       "types": [
+        {
+         "primitiveEntry": {
+          "type": "BINARY_TYPE"
+         }
+        }
+       ]
+      },
+      "position": 10,
+      "comment": ""
+     },
+     {
+      "columnName": "array_col",
+      "typeDesc": {
+       "types": [
+        {
+         "primitiveEntry": {
+          "type": "ARRAY_TYPE"
+         }
+        }
+       ]
+      },
+      "position": 11,
+      "comment": ""
+     },
+     {
+      "columnName": "map_col",
+      "typeDesc": {
+       "types": [
+        {
+         "primitiveEntry": {
+          "type": "MAP_TYPE"
+         }
+        }
+       ]
+      },
+      "position": 12,
+      "comment": ""
+     },
+     {
+      "columnName": "struct_col",
+      "typeDesc": {
+       "types": [
+        {
+         "primitiveEntry": {
+          "type": "STRUCT_TYPE"
+         }
+        }
+       ]
+      },
+      "position": 13,
+      "comment": ""
+     },
+     {
+      "columnName": "decimal_col",
+      "typeDesc": {
+       "types": [
+        {
+         "primitiveEntry": {
+          "type": "DECIMAL_TYPE",
+          "typeQualifiers": {
+           "qualifiers": {
+            "precision": {
+             "i32Value": 10
+            },
+            "scale": {
+             "i32Value": 0
+            }
+           }
+          }
+         }
+        }
+       ]
+      },
+      "position": 14,
+      "comment": ""
+     },
+     {
+      "columnName": "date_col",
+      "typeDesc": {
+       "types": [
+        {
+         "primitiveEntry": {
+          "type": "DATE_TYPE"
+         }
+        }
+       ]
+      },
+      "position": 15,
+      "comment": ""
+     },
+     {
+      "columnName": "interval_ym_col",
+      "typeDesc": {
+       "types": [
+        {
+         "primitiveEntry": {
+          "type": "STRING_TYPE"
+         }
+        }
+       ]
+      },
+      "position": 16,
+      "comment": ""
+     },
+     {
+      "columnName": "interval_dt_col",
+      "typeDesc": {
+       "types": [
+        {
+         "primitiveEntry": {
+          "type": "STRING_TYPE"
+         }
+        }
+       ]
+      },
+      "position": 17,
+      "comment": ""
+     }
+    ]
+   },
+   "resultFormat": "ARROW_BASED_SET",
+   "cacheLookupResult": "LOCAL_CACHE_HIT",
+   "uncompressedBytes": 1672,
+   "compressedBytes": 1672
+  },
+  "resultSet": {
+   "status": {
+    "statusCode": "SUCCESS_STATUS"
+   },
+   "hasMoreRows": false,
+   "results": {
+    "startRowOffset": 0,
+    "rows": [],
+    "arrowBatches": [
+     {
+      "batch": "/////wgEAAAUAAAAAAAAAAwAFgAOABUAEAAEAAwAAAB4AgAAAAAAAAAABAAQAAAAAAMKABgADAAIAAQACgAAABQAAAC4AgAAAwAAAAAAAAAAAAAAKgAAAAAAAAAAAAAAAQAAAAAAAAAIAAAAAAAAAAEAAAAAAAAAEAAAAAAAAAABAAAAAAAAABgAAAAAAAAAAwAAAAAAAAAgAAAAAAAAAAEAAAAAAAAAKAAAAAAAAAAGAAAAAAAAADAAAAAAAAAAAQAAAAAAAAA4AAAAAAAAAAwAAAAAAAAASAAAAAAAAAABAAAAAAAAAFAAAAAAAAAAGAAAAAAAAABoAAAAAAAAAAEAAAAAAAAAcAAAAAAAAAAMAAAAAAAAAIAAAAAAAAAAAQAAAAAAAACIAAAAAAAAABgAAAAAAAAAoAAAAAAAAAABAAAAAAAAAKgAAAAAAAAAEAAAAAAAAAC4AAAAAAAAABIAAAAAAAAA0AAAAAAAAAABAAAAAAAAANgAAAAAAAAAGAAAAAAAAADwAAAAAAAAAAEAAAAAAAAA+AAAAAAAAAAQAAAAAAAAAAgBAAAAAAAABAAAAAAAAAAQAQAAAAAAAAEAAAAAAAAAGAEAAAAAAAAQAAAAAAAAACgBAAAAAAAADgAAAAAAAAA4AQAAAAAAAAEAAAAAAAAAQAEAAAAAAAAQAAAAAAAAAFABAAAAAAAAFAAAAAAAAABoAQAAAAAAAAEAAAAAAAAAcAEAAAAAAAAQAAAAAAAAAIABAAAAAAAATAAAAAAAAADQAQAAAAAAAAEAAAAAAAAA2AEAAAAAAAAQAAAAAAAAAOgBAAAAAAAAAgAAAAAAAADwAQAAAAAAAAEAAAAAAAAA+AEAAAAAAAAMAAAAAAAAAAgCAAAAAAAAAQAAAAAAAAAQAgAAAAAAABAAAAAAAAAAIAIAAAAAAAAKAAAAAAAAADACAAAAAAAAAQAAAAAAAAA4AgAAAAAAABAAAAAAAAAASAIAAAAAAAAqAAAAAAAAAAAAAAARAAAAAwAAAAAAAAABAAAAAAAAAAMAAAAAAAAAAQAAAAAAAAADAAAAAAAAAAEAAAAAAAAAAwAAAAAAAAABAAAAAAAAAAMAAAAAAAAAAQAAAAAAAAADAAAAAAAAAAEAAAAAAAAAAwAAAAAAAAABAAAAAAAAAAMAAAAAAAAAAQAAAAAAAAADAAAAAAAAAAEAAAAAAAAAAwAAAAAAAAABAAAAAAAAAAMAAAAAAAAAAQAAAAAAAAADAAAAAAAAAAEAAAAAAAAAAwAAAAAAAAABAAAAAAAAAAMAAAAAAAAAAQAAAAAAAAADAAAAAAAAAAEAAAAAAAAAAwAAAAAAAAABAAAAAAAAAAMAAAAAAAAAAQAAAAAAAAADAAAAAAAAAAMAAAAAAAAAAwAAAAAAAAAEBAAAAAAAAAMAAAAAAAAAAwADAAAAAAADAAAAAAAAAAIAAAACAAAAAAAAAAAAAAADAAAAAAAAAAEAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAMAAAAAAAAAMzNTQDMzU0AAAAAAAAAAAAMAAAAAAAAAmpmZmZmZAUCamZmZmZkBQAAAAAAAAAAAAwAAAAAAAAAAAAAACQAAABIAAAASAAAAc3RyaW5ndmFsc3RyaW5ndmFsAAAAAAAAAwAAAAAAAAAAgIFRCcYFAADgX0UDnUD+AAAAAAAAAAADAAAAAAAAAAAAAAACAAAABAAAAAQAAAAavxq/AAAAAAMAAAAAAAAAAAAAAAcAAAAOAAAADgAAAFsxLDIsM11bMSwyLDNdAAADAAAAAAAAAAAAAAAKAAAAFAAAABQAAAB7ImtleTEiOjF9eyJrZXkxIjoxfQAAAAADAAAAAAAAAAAAAAAmAAAATAAAAEwAAAB7IkZpZWxkMSI6NzcsIkZpZWxkMiI6IkZpZWxkIDIgdmFsdWUifXsiRmllbGQxIjo3NywiRmllbGQyIjoiRmllbGQgMiB2YWx1ZSJ9AAAAAAMAAAAAAAAAAAAAAAEAAAACAAAAAgAAADExAAAAAAAAAwAAAAAAAADDSAAAx8Tp/wAAAAAAAAAAAwAAAAAAAAAAAAAABQAAAAoAAAAKAAAAMTAwLTAxMDAtMAAAAAAAAAMAAAAAAAAAAAAAABUAAAAqAAAAKgAAAC04IDAwOjAwOjAwLjAwMDAwMDAwMC04IDAwOjAwOjAwLjAwMDAwMDAwMAAAAAAAAA==",
+      "rowCount": 3
+     }
+    ]
+   }
+  },
+  "closeOperation": {
+   "status": {
+    "statusCode": "SUCCESS_STATUS"
+   }
+  }
+ },
+ "executionRejected": false,
+ "maxClusterCapacity": 10,
+ "currentClusterLoad": 1,
+ "idempotencyType": "UNKNOWN"
+}

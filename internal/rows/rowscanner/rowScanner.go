@@ -43,7 +43,7 @@ func IsNull(nulls []byte, position int64) bool {
 	return false
 }
 
-var ErrRowsParseValue = "databricks: unable to parse %s value '%s' from column %s"
+var ErrRowsParseValue = "databricks: unable to parse %s value '%v' from column %s"
 
 // handleDateTime will convert the passed val to a time.Time value if necessary
 func HandleDateTime(val any, dbType, columnName string, location *time.Location) (any, error) {
@@ -51,6 +51,9 @@ func HandleDateTime(val any, dbType, columnName string, location *time.Location)
 	// convert to time.Time
 	if format, ok := DateTimeFormats[dbType]; ok {
 		t, err := parseInLocation(format, val.(string), location)
+		if err != nil {
+			err = dbsqlerr.WrapErrf(err, ErrRowsParseValue, dbType, val, columnName)
+		}
 		return t, err
 	}
 
@@ -70,7 +73,6 @@ func parseInLocation(format, dateTimeString string, loc *time.Location) (time.Ti
 
 	date, err := time.ParseInLocation(format, dateTimeString, loc)
 	if err != nil {
-		err = dbsqlerr.WrapErr(err, "databricks: failed to parse date/time")
 		return time.Time{}, err
 	}
 
@@ -119,6 +121,12 @@ func GetDBTypeName(column *cli_service.TColumnDesc) string {
 	dbtype := strings.TrimSuffix(entry.Type.String(), "_TYPE")
 
 	return dbtype
+}
+
+func GetDBType(column *cli_service.TColumnDesc) cli_service.TTypeId {
+	// TODO: handle non-primitive types
+	entry := column.TypeDesc.Types[0].PrimitiveEntry
+	return entry.Type
 }
 
 // GetDBTypeID returns the database type ID from a TColumnDesc

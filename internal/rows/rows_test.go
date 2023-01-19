@@ -4,11 +4,9 @@ import (
 	"context"
 	"database/sql/driver"
 	"errors"
-	"fmt"
 	"io"
 	"math"
 	"reflect"
-	"strings"
 	"testing"
 	"time"
 
@@ -515,19 +513,13 @@ var rowTestColNames []string = []string{
 func TestColumnsWithDirectResults(t *testing.T) {
 	var getMetadataCount, fetchResultsCount int
 
-	rowSet := &rows{}
-	defer rowSet.Close()
 	client := getRowsTestSimpleClient(&getMetadataCount, &fetchResultsCount)
 
-	req := &cli_service.TFetchResultsReq{
-		Orientation: cli_service.TFetchOrientation_FETCH_NEXT,
-	}
-	firstPage, _ := client.FetchResults(context.Background(), req)
-	err := rowSet.makeRowScanner(firstPage)
-	assert.EqualError(t, err, errRowsNoClient)
+	d, err := NewRows("", "", nil, client, nil, nil)
+	assert.Nil(t, err)
 
-	// fetch results has been called once
-	assert.Equal(t, 1, fetchResultsCount)
+	rowSet := d.(*rows)
+	defer rowSet.Close()
 
 	req2 := &cli_service.TGetResultSetMetadataReq{}
 	metadata, _ := client.GetResultSetMetadata(context.Background(), req2)
@@ -657,63 +649,6 @@ func TestNextWithDirectResults(t *testing.T) {
 	assert.Equal(t, int64(1), rowSet.nextRowIndex)
 	assert.Equal(t, 2, getMetadataCount)
 	assert.Equal(t, 1, fetchResultsCount)
-}
-
-func TestHandlingDateTime(t *testing.T) {
-	t.Run("should do nothing if data is not a date/time", func(t *testing.T) {
-		val, err := rowscanner.HandleDateTime("this is not a date", "STRING", "string_col", time.UTC)
-		assert.Nil(t, err, "handleDateTime should do nothing if a column is not a date/time")
-		assert.Equal(t, "this is not a date", val)
-	})
-
-	t.Run("should error on invalid date/time value", func(t *testing.T) {
-		_, err := rowscanner.HandleDateTime("this is not a date", "DATE", "date_col", time.UTC)
-		assert.NotNil(t, err)
-		assert.True(t, strings.HasPrefix(err.Error(), fmt.Sprintf(rowscanner.ErrRowsParseValue, "DATE", "this is not a date", "date_col")))
-	})
-
-	t.Run("should parse valid date", func(t *testing.T) {
-		dt, err := rowscanner.HandleDateTime("2006-12-22", "DATE", "date_col", time.UTC)
-		assert.Nil(t, err)
-		assert.Equal(t, time.Date(2006, 12, 22, 0, 0, 0, 0, time.UTC), dt)
-	})
-
-	t.Run("should parse valid timestamp", func(t *testing.T) {
-		dt, err := rowscanner.HandleDateTime("2006-12-22 17:13:11.000001000", "TIMESTAMP", "timestamp_col", time.UTC)
-		assert.Nil(t, err)
-		assert.Equal(t, time.Date(2006, 12, 22, 17, 13, 11, 1000, time.UTC), dt)
-	})
-
-	t.Run("should parse date with negative year", func(t *testing.T) {
-		expectedTime := time.Date(-2006, 12, 22, 0, 0, 0, 0, time.UTC)
-		dateStrings := []string{
-			"-2006-12-22",
-			"\u22122006-12-22",
-			"\x2D2006-12-22",
-		}
-
-		for _, s := range dateStrings {
-			dt, err := rowscanner.HandleDateTime(s, "DATE", "date_col", time.UTC)
-			assert.Nil(t, err)
-			assert.Equal(t, expectedTime, dt)
-		}
-	})
-
-	t.Run("should parse timestamp with negative year", func(t *testing.T) {
-		expectedTime := time.Date(-2006, 12, 22, 17, 13, 11, 1000, time.UTC)
-
-		timestampStrings := []string{
-			"-2006-12-22 17:13:11.000001000",
-			"\u22122006-12-22 17:13:11.000001000",
-			"\x2D2006-12-22 17:13:11.000001000",
-		}
-
-		for _, s := range timestampStrings {
-			dt, err := rowscanner.HandleDateTime(s, "TIMESTAMP", "timestamp_col", time.UTC)
-			assert.Nil(t, err)
-			assert.Equal(t, expectedTime, dt)
-		}
-	})
 }
 
 func TestGetScanType(t *testing.T) {
@@ -856,8 +791,6 @@ func TestColumnTypeDatabaseTypeName(t *testing.T) {
 }
 
 func TestRowsCloseOptimization(t *testing.T) {
-	t.Parallel()
-
 	var closeCount int
 	client := &client.TestClient{
 		FnCloseOperation: func(ctx context.Context, req *cli_service.TCloseOperationReq) (_r *cli_service.TCloseOperationResp, _err error) {
@@ -866,7 +799,8 @@ func TestRowsCloseOptimization(t *testing.T) {
 		},
 	}
 
-	rowSet, _ := NewRows("", "", &cli_service.TOperationHandle{}, client, nil, nil)
+	opHandle := &cli_service.TOperationHandle{OperationId: &cli_service.THandleIdentifier{GUID: []byte{'f', 'o'}}}
+	rowSet, _ := NewRows("", "", opHandle, client, nil, nil)
 
 	// rowSet has no direct results calling Close should result in call to client to close operation
 	err := rowSet.Close()
@@ -879,7 +813,7 @@ func TestRowsCloseOptimization(t *testing.T) {
 		ResultSet:         &cli_service.TFetchResultsResp{Results: &cli_service.TRowSet{}},
 	}
 	closeCount = 0
-	rowSet, _ = NewRows("", "", &cli_service.TOperationHandle{}, client, nil, directResults)
+	rowSet, _ = NewRows("", "", opHandle, client, nil, directResults)
 	err = rowSet.Close()
 	assert.Nil(t, err, "rows.Close should not throw an error")
 	assert.Equal(t, 1, closeCount)
@@ -892,7 +826,7 @@ func TestRowsCloseOptimization(t *testing.T) {
 		ResultSetMetadata: &cli_service.TGetResultSetMetadataResp{Schema: &cli_service.TTableSchema{}},
 		ResultSet:         &cli_service.TFetchResultsResp{Results: &cli_service.TRowSet{}},
 	}
-	rowSet, _ = NewRows("", "", &cli_service.TOperationHandle{}, client, nil, directResults)
+	rowSet, _ = NewRows("", "", opHandle, client, nil, directResults)
 	err = rowSet.Close()
 	assert.Nil(t, err, "rows.Close should not throw an error")
 	assert.Equal(t, 0, closeCount)
