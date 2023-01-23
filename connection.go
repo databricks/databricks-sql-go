@@ -98,7 +98,11 @@ func (c *conn) ExecContext(ctx context.Context, query string, args []driver.Name
 
 	ctx = driverctx.NewContextWithConnId(ctx, c.id)
 	if len(args) > 0 {
-		return nil, errors.New(ErrParametersNotSupported)
+		q, err := SubstituteArgs(query, args)
+		if err != nil {
+			return nil, err
+		}
+		query = q
 	}
 	exStmtResp, opStatusResp, err := c.runQuery(ctx, query, args)
 
@@ -140,7 +144,11 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 
 	ctx = driverctx.NewContextWithConnId(ctx, c.id)
 	if len(args) > 0 {
-		return nil, errors.New(ErrParametersNotSupported)
+		q, err := SubstituteArgs(query, args)
+		if err != nil {
+			return nil, err
+		}
+		query = q
 	}
 	// first we try to get the results synchronously.
 	// at any point in time that the context is done we must cancel and return
