@@ -52,6 +52,7 @@ func TestNewConnector(t *testing.T) {
 			RetryWaitMax:   60 * time.Second,
 		}
 		expectedCfg := config.WithDefaults()
+		expectedCfg.DriverVersion = DriverVersion
 		expectedCfg.UserConfig = expectedUserConfig
 		coni, ok := con.(*connector)
 		require.True(t, ok)
@@ -85,6 +86,7 @@ func TestNewConnector(t *testing.T) {
 		}
 		expectedCfg := config.WithDefaults()
 		expectedCfg.UserConfig = expectedUserConfig
+		expectedCfg.DriverVersion = DriverVersion
 		coni, ok := con.(*connector)
 		require.True(t, ok)
 		assert.Nil(t, err)
@@ -117,6 +119,7 @@ func TestNewConnector(t *testing.T) {
 			RetryWaitMax:  0,
 		}
 		expectedCfg := config.WithDefaults()
+		expectedCfg.DriverVersion = DriverVersion
 		expectedCfg.UserConfig = expectedUserConfig
 		coni, ok := con.(*connector)
 		require.True(t, ok)

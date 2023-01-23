@@ -26,6 +26,7 @@ func TestOOpenConnector(t *testing.T) {
 		}
 		expectedCfg := config.WithDefaults()
 		expectedCfg.UserConfig = expectedUserConfig.WithDefaults()
+		expectedCfg.DriverVersion = DriverVersion
 		d := &databricksDriver{}
 		c, err := d.OpenConnector(fmt.Sprintf("token:%s@%s:%d/%s", accessToken, host, port, httpPath))
 		require.NoError(t, err)

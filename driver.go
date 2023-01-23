@@ -13,6 +13,8 @@ func init() {
 	sql.Register("databricks", &databricksDriver{})
 }
 
+var DriverVersion = "1.0.1" // update version before each release
+
 type databricksDriver struct{}
 
 // Open returns a new connection to Databricks database with a DSN string.
