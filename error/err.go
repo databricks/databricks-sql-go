@@ -2,6 +2,7 @@ package error
 
 import (
 	"fmt"
+	"github.com/pkg/errors"
 )
 
 type DatabricksError struct {
@@ -59,7 +60,7 @@ const (
 )
 
 func NewDatabricksError(msg string, err error, corrId string, connId string, queryId string, errCondition string, errType DatabricksErrorType) *DatabricksError {
-	return &DatabricksError{msg, err, corrId, connId, queryId, errCondition, errType}
+	return &DatabricksError{msg, errors.WithStack(err), corrId, connId, queryId, errCondition, errType}
 }
 
 func (e *DatabricksError) Error() string {
