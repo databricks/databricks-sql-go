@@ -2,7 +2,7 @@
  "status": {
   "statusCode": "SUCCESS_STATUS"
  },
- "serverProtocolVersion": "SPARK_CLI_SERVICE_PROTOCOL_V2",
+ "serverProtocolVersion": "SPARK_CLI_SERVICE_PROTOCOL_V6",
  "sessionHandle": {
   "sessionId": {
    "guid": "Ae1mneMGHoSo6JW/won/xg==",

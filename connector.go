@@ -36,10 +36,10 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 	if err != nil {
 		return nil, wrapErr(err, "error initializing thrift client")
 	}
-
+	protocolVersion := int64(c.cfg.ThriftProtocolVersion)
 	session, err := tclient.OpenSession(ctx, &cli_service.TOpenSessionReq{
-		ClientProtocol: c.cfg.ThriftProtocolVersion,
-		Configuration:  make(map[string]string),
+		ClientProtocolI64: &protocolVersion,
+		Configuration:     make(map[string]string),
 		InitialNamespace: &cli_service.TNamespace{
 			CatalogName: catalogName,
 			SchemaName:  schemaName,
