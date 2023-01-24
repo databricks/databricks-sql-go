@@ -1,16 +1,18 @@
 package error
 
 import (
+	"context"
 	"fmt"
+	"github.com/databricks/databricks-sql-go/driverctx"
 	"github.com/pkg/errors"
 )
 
 type DatabricksError struct {
-	msg          string
-	err          error
-	corrId       string
-	connId       string
-	queryId      string
+	msg    string
+	err    error
+	corrId string
+	connId string
+	//queryId      string
 	errCondition string
 	errType      DatabricksErrorType
 }
@@ -59,8 +61,10 @@ const (
 	// Connection error messages
 )
 
-func NewDatabricksError(msg string, err error, corrId string, connId string, queryId string, errCondition string, errType DatabricksErrorType) *DatabricksError {
-	return &DatabricksError{msg, errors.WithStack(err), corrId, connId, queryId, errCondition, errType}
+func NewDatabricksError(ctx context.Context, msg string, err error, errCondition string, errType DatabricksErrorType) *DatabricksError {
+	corrId := driverctx.CorrelationIdFromContext(ctx)
+	connId := driverctx.ConnIdFromContext(ctx)
+	return &DatabricksError{msg, errors.WithStack(err), corrId, connId, errCondition, errType}
 }
 
 func (e *DatabricksError) Error() string {

@@ -45,19 +45,19 @@ func (c *conn) Close() error {
 
 	if err != nil {
 		log.Err(err).Msg("databricks: failed to close connection")
-		return dbsqlerror.NewDatabricksError("failed to close connection", err, "", "", "", "", dbsqlerror.Connection)
+		return dbsqlerror.NewDatabricksError(ctx, "failed to close connection", err, "", dbsqlerror.Connection)
 	}
 	return nil
 }
 
 // Not supported in Databricks.
 func (c *conn) Begin() (driver.Tx, error) {
-	return nil, dbsqlerror.NewDatabricksError(dbsqlerror.ErrTransactionsNotSupported, nil, "", "", "", "", dbsqlerror.QueryFailure)
+	return nil, dbsqlerror.NewDatabricksError(nil, dbsqlerror.ErrTransactionsNotSupported, nil, "", dbsqlerror.QueryFailure)
 }
 
 // Not supported in Databricks.
 func (c *conn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, error) {
-	return nil, dbsqlerror.NewDatabricksError(dbsqlerror.ErrTransactionsNotSupported, nil, "", "", "", "", dbsqlerror.QueryFailure)
+	return nil, dbsqlerror.NewDatabricksError(ctx, dbsqlerror.ErrTransactionsNotSupported, nil, "", dbsqlerror.QueryFailure)
 }
 
 // Ping attempts to verify that the server is accessible.
