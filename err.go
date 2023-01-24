@@ -4,10 +4,6 @@ import (
 	"github.com/pkg/errors"
 )
 
-var ErrNotImplemented = "databricks: not implemented"
-var ErrTransactionsNotSupported = "databricks: transactions are not supported"
-var ErrParametersNotSupported = "databricks: query parameters are not supported"
-
 type stackTracer interface {
 	StackTrace() errors.StackTrace
 }

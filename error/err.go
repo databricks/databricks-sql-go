@@ -16,6 +16,7 @@ type DatabricksError struct {
 
 type DatabricksErrorType int64
 
+// Error types
 const (
 	Unknown DatabricksErrorType = iota
 	Driver
@@ -40,6 +41,22 @@ func (t DatabricksErrorType) String() string {
 	}
 	return "unknown"
 }
+
+// Error messages
+const (
+	// Driver error messages
+
+	// Authentication error messages
+
+	// QueryFailure error messages
+	ErrNotImplemented           = "not implemented"
+	ErrTransactionsNotSupported = "transactions are not supported"
+	ErrParametersNotSupported   = "query parameters are not supported"
+
+	// Network error messages
+
+	// Connection error messages
+)
 
 func NewDatabricksError(msg string, err error, corrId string, connId string, queryId string, errCondition string, errType DatabricksErrorType) *DatabricksError {
 	return &DatabricksError{msg, err, corrId, connId, queryId, errCondition, errType}

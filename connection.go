@@ -52,12 +52,12 @@ func (c *conn) Close() error {
 
 // Not supported in Databricks.
 func (c *conn) Begin() (driver.Tx, error) {
-	return nil, dbsqlerror.NewDatabricksError(ErrTransactionsNotSupported, nil, "", "", "", "", dbsqlerror.QueryFailure)
+	return nil, dbsqlerror.NewDatabricksError(dbsqlerror.ErrTransactionsNotSupported, nil, "", "", "", "", dbsqlerror.QueryFailure)
 }
 
 // Not supported in Databricks.
 func (c *conn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, error) {
-	return nil, dbsqlerror.NewDatabricksError(ErrTransactionsNotSupported, nil, "", "", "", "", dbsqlerror.QueryFailure)
+	return nil, dbsqlerror.NewDatabricksError(dbsqlerror.ErrTransactionsNotSupported, nil, "", "", "", "", dbsqlerror.QueryFailure)
 }
 
 // Ping attempts to verify that the server is accessible.
