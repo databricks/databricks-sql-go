@@ -1,6 +1,7 @@
 package logger
 
 import (
+	"context"
 	"io"
 	"os"
 	"runtime"
@@ -128,9 +129,24 @@ func Err(err error) *zerolog.Event {
 	return Logger.Err(err)
 }
 
+// Ctx returns a DBSQLLogger from the provided context. If no logger is found,
+// the default logger is returned.
+func Ctx(ctx context.Context) *DBSQLLogger {
+	l := zerolog.Ctx(ctx)
+	if l == zerolog.DefaultContextLogger {
+		return Logger
+	}
+	return &DBSQLLogger{*l}
+}
+
+// AddContext sets connectionId, correlationId, and queryId as fields on the provided logger.
+func AddContext(l *DBSQLLogger, connectionId string, correlationId string, queryId string) *DBSQLLogger {
+	return &DBSQLLogger{l.With().Str("connId", connectionId).Str("corrId", correlationId).Str("queryId", queryId).Logger()}
+}
+
 // WithContext sets connectionId, correlationId, and queryId to be used as fields.
 func WithContext(connectionId string, correlationId string, queryId string) *DBSQLLogger {
-	return &DBSQLLogger{Logger.With().Str("connId", connectionId).Str("corrId", correlationId).Str("queryId", queryId).Logger()}
+	return AddContext(Logger, connectionId, correlationId, queryId)
 }
 
 // Track is a convenience function to track time spent
