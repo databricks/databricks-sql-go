@@ -11,20 +11,21 @@ type DatabricksError struct {
 	connId       string
 	queryId      string
 	errCondition string
-	errType      databricksErrorType
+	errType      DatabricksErrorType
 }
 
-type databricksErrorType int64
+type DatabricksErrorType int64
 
 const (
-	Unknown databricksErrorType = iota
+	Unknown DatabricksErrorType = iota
 	Driver
 	Authentication
 	QueryFailure
 	Network
+	Connection
 )
 
-func (t databricksErrorType) String() string {
+func (t DatabricksErrorType) String() string {
 	switch t {
 	case Driver:
 		return "driver"
@@ -34,8 +35,14 @@ func (t databricksErrorType) String() string {
 		return "query failure"
 	case Network:
 		return "network"
+	case Connection:
+		return "connection"
 	}
 	return "unknown"
+}
+
+func NewDatabricksError(msg string, err error, corrId string, connId string, queryId string, errCondition string, errType DatabricksErrorType) *DatabricksError {
+	return &DatabricksError{msg, err, corrId, connId, queryId, errCondition, errType}
 }
 
 func (e *DatabricksError) Error() string {
