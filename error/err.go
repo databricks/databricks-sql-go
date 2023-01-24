@@ -4,32 +4,68 @@ import (
 	"fmt"
 )
 
-// ConnectionError is an error in the connection to the server
-type ConnectionError struct {
-	Msg string
-	Err error
+type DatabricksError struct {
+	msg          string
+	err          error
+	corrId       string
+	connId       string
+	queryId      string
+	errCondition string
+	errType      databricksErrorType
 }
 
-func (e *ConnectionError) Error() string {
-	return fmt.Sprintf("databricks: connection error: %s\n%v", e.Msg, e.Err)
+type databricksErrorType int64
+
+const (
+	Unknown databricksErrorType = iota
+	Driver
+	Authentication
+	QueryFailure
+	Network
+)
+
+func (t databricksErrorType) String() string {
+	switch t {
+	case Driver:
+		return "driver"
+	case Authentication:
+		return "authentication"
+	case QueryFailure:
+		return "query failure"
+	case Network:
+		return "network"
+	}
+	return "unknown"
 }
 
-// OperationStatusError is returned when query operation moves to an error state
-type OperationStatusError struct {
-	Msg string
-	Err error
+func (e *DatabricksError) Error() string {
+	return fmt.Sprintf("databricks: %s error: %s\n%v", e.errType.String(), e.msg, e.err)
 }
 
-func (e *OperationStatusError) Error() string {
-	return fmt.Sprintf("databricks: operation status error: %s\n%v", e.Msg, e.Err)
+func (e *DatabricksError) Unwrap() error {
+	return e.err
 }
 
-// RequestError is an error with the client's request
-type RequestError struct {
-	Msg string
-	Err error
+func (e *DatabricksError) Message() string {
+	return e.msg
 }
 
-func (e *RequestError) Error() string {
-	return fmt.Sprintf("databricks: request error: %s\n%v", e.Msg, e.Err)
+func (e *DatabricksError) CorrelationId() string {
+	return e.corrId
+}
+
+func (e *DatabricksError) ConnectionId() string {
+	return e.connId
+}
+
+func (e *DatabricksError) QueryId() string {
+	return e.queryId
+}
+
+func (e *DatabricksError) ErrorCondition() string {
+	return e.errCondition
+}
+
+func (e *DatabricksError) ErrorType() string {
+	return e.errType.String()
 }
