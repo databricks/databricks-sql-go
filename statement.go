@@ -26,14 +26,14 @@ func (s *stmt) NumInput() int {
 //
 // Deprecated: Use StmtExecContext instead.
 func (s *stmt) Exec(args []driver.Value) (driver.Result, error) {
-	return nil, dbsqlerror.NewDriverError(nil, dbsqlerror.ErrNotImplemented, nil)
+	return nil, dbsqlerror.NewDriverError(context.TODO(), dbsqlerror.ErrNotImplemented, nil)
 }
 
 // Query is not implemented.
 //
 // Deprecated: Use StmtQueryContext instead.
 func (s *stmt) Query(args []driver.Value) (driver.Rows, error) {
-	return nil, dbsqlerror.NewDriverError(nil, dbsqlerror.ErrNotImplemented, nil)
+	return nil, dbsqlerror.NewDriverError(context.TODO(), dbsqlerror.ErrNotImplemented, nil)
 }
 
 // ExecContext executes a query that doesn't return rows, such

@@ -20,7 +20,7 @@ const (
 	ErrNoAuthenticationMethod = "no authentication method set"
 	ErrInvalidDSNFormat       = "invalid DSN: invalid format"
 	ErrInvalidDSNPort         = "invalid DSN: invalid DSN port"
-	ErrInvalidDSNEmptyToken   = "invalid DSN: empty token"
+	ErrInvalidDSNTokenIsEmpty = "invalid DSN: empty token"
 	ErrBasicAuthNotSupported  = "invalid DSN: basic auth not enabled"
 	ErrInvalidDSNMaxRows      = "invalid DSN: maxRows param is not an integer"
 	ErrInvalidDSNTimeout      = "invalid DSN: timeout param is not an integer"
@@ -54,17 +54,11 @@ type databricksError struct {
 }
 
 func newDatabricksError(ctx context.Context, msg string, err error, errType dbsqlErrorType) *databricksError {
-	corrId := ""
-	connId := ""
-	if ctx != nil {
-		corrId = driverctx.CorrelationIdFromContext(ctx)
-		connId = driverctx.ConnIdFromContext(ctx)
-	}
 	return &databricksError{
 		msg:     msg,
 		err:     errors.WithStack(err),
-		corrId:  corrId,
-		connId:  connId,
+		corrId:  driverctx.CorrelationIdFromContext(ctx),
+		connId:  driverctx.ConnIdFromContext(ctx),
 		errType: errType,
 	}
 }

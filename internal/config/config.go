@@ -197,7 +197,7 @@ func ParseDSN(dsn string) (UserConfig, error) {
 	if name == "token" {
 		pass, ok := parsedURL.User.Password()
 		if pass == "" {
-			return UserConfig{}, dbsqlerror.NewAuthenticationError(nil, dbsqlerror.ErrInvalidDSNEmptyToken, err)
+			return UserConfig{}, dbsqlerror.NewAuthenticationError(nil, dbsqlerror.ErrInvalidDSNTokenIsEmpty, err)
 		}
 		if ok {
 			ucfg.AccessToken = pass

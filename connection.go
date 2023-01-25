@@ -52,7 +52,7 @@ func (c *conn) Close() error {
 
 // Not supported in Databricks.
 func (c *conn) Begin() (driver.Tx, error) {
-	return nil, dbsqlerror.NewDriverError(nil, dbsqlerror.ErrNotImplemented, nil)
+	return nil, dbsqlerror.NewDriverError(context.TODO(), dbsqlerror.ErrNotImplemented, nil)
 }
 
 // Not supported in Databricks.
@@ -141,7 +141,7 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 
 	ctx = driverctx.NewContextWithConnId(ctx, c.id)
 	if len(args) > 0 {
-		return nil, dbsqlerror.NewDriverError(nil, dbsqlerror.ErrParametersNotSupported, nil)
+		return nil, dbsqlerror.NewDriverError(ctx, dbsqlerror.ErrParametersNotSupported, nil)
 	}
 	// first we try to get the results synchronously.
 	// at any point in time that the context is done we must cancel and return
