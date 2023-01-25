@@ -194,7 +194,7 @@ func InitThriftClient(cfg *config.Config, httpclient *http.Client) (*ThriftServi
 	case "header":
 		protocolFactory = thrift.NewTHeaderProtocolFactoryConf(tcfg)
 	default:
-		return nil, dbsqlerror.NewConnectionError(nil, fmt.Sprintf("invalid protocol specified %s", cfg.ThriftProtocol), nil)
+		return nil, dbsqlerror.NewConnectionError(context.TODO(), fmt.Sprintf("invalid protocol specified %s", cfg.ThriftProtocol), nil)
 	}
 	if cfg.ThriftDebugClientProtocol {
 		protocolFactory = thrift.NewTDebugProtocolFactoryWithLogger(protocolFactory, "client:", thrift.StdLogger(nil))
@@ -207,7 +207,7 @@ func InitThriftClient(cfg *config.Config, httpclient *http.Client) (*ThriftServi
 	case "http":
 		if httpclient == nil {
 			if cfg.Authenticator == nil {
-				return nil, dbsqlerror.NewAuthenticationError(nil, dbsqlerror.ErrNoAuthenticationMethod, nil)
+				return nil, dbsqlerror.NewAuthenticationError(context.TODO(), dbsqlerror.ErrNoAuthenticationMethod, nil)
 			}
 			httpclient = RetryableClient(cfg)
 		}
@@ -222,13 +222,13 @@ func InitThriftClient(cfg *config.Config, httpclient *http.Client) (*ThriftServi
 		thriftHttpClient.SetHeader("User-Agent", userAgent)
 
 	default:
-		return nil, dbsqlerror.NewDriverError(nil, fmt.Sprintf("unsupported transport `%s`", cfg.ThriftTransport), nil)
+		return nil, dbsqlerror.NewDriverError(context.TODO(), fmt.Sprintf("unsupported transport `%s`", cfg.ThriftTransport), nil)
 	}
 	if err != nil {
-		return nil, dbsqlerror.NewConnectionError(nil, dbsqlerror.ErrInvalidURL, err)
+		return nil, dbsqlerror.NewConnectionError(context.TODO(), dbsqlerror.ErrInvalidURL, err)
 	}
 	if err = tTrans.Open(); err != nil {
-		return nil, dbsqlerror.NewConnectionError(nil, fmt.Sprintf("failed to open http transport for endpoint %s", endpoint), err)
+		return nil, dbsqlerror.NewConnectionError(context.TODO(), fmt.Sprintf("failed to open http transport for endpoint %s", endpoint), err)
 	}
 	iprot := protocolFactory.GetProtocol(tTrans)
 	oprot := protocolFactory.GetProtocol(tTrans)
