@@ -11,6 +11,7 @@ type contextKey int
 const (
 	CorrelationIdContextKey contextKey = iota
 	ConnIdContextKey
+	QueryIdContextKey
 )
 
 // NewContextWithCorrelationId creates a new context with correlationId value. Used by Logger to populate field corrId.
@@ -39,4 +40,13 @@ func ConnIdFromContext(ctx context.Context) string {
 		return ""
 	}
 	return connId
+}
+
+// QueryIdFromContext retrieves the connectionId stored in context.
+func QueryIdFromContext(ctx context.Context) string {
+	queryId, ok := ctx.Value(QueryIdContextKey).(string)
+	if !ok {
+		return ""
+	}
+	return queryId
 }

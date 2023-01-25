@@ -4,8 +4,8 @@ import (
 	"context"
 	"database/sql/driver"
 	"fmt"
-	"net/http"
 	dbsqlerror "github.com/databricks/databricks-sql-go/error"
+	"net/http"
 	"strings"
 	"time"
 
@@ -35,7 +35,7 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 
 	tclient, err := client.InitThriftClient(c.cfg, c.client)
 	if err != nil {
-		return nil, &dbsqlerror.ConnectionError{Msg: "error initializing thrift client", Err: err}
+		return nil, dbsqlerror.NewConnectionError(ctx, dbsqlerror.ErrThriftClient, err)
 	}
 	protocolVersion := int64(c.cfg.ThriftProtocolVersion)
 	session, err := tclient.OpenSession(ctx, &cli_service.TOpenSessionReq{
@@ -49,7 +49,7 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 	})
 
 	if err != nil {
-		return nil, &dbsqlerror.ConnectionError{Msg: fmt.Sprintf("error connecting: host=%s port=%d, httpPath=%s", c.cfg.Host, c.cfg.Port, c.cfg.HTTPPath), Err: err}
+		return nil, dbsqlerror.NewConnectionError(ctx, fmt.Sprintf("error connecting: host=%s port=%d, httpPath=%s", c.cfg.Host, c.cfg.Port, c.cfg.HTTPPath), err)
 	}
 
 	conn := &conn{
@@ -66,7 +66,7 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 		setStmt := fmt.Sprintf("SET `%s` = `%s`;", k, v)
 		_, err := conn.ExecContext(ctx, setStmt, []driver.NamedValue{})
 		if err != nil {
-			return nil, wrapErr(err, fmt.Sprintf("error setting session param: %s", setStmt))
+			return nil, dbsqlerror.NewQueryFailureError(ctx, fmt.Sprintf("error setting session param: %s", setStmt), err, "") // TODO: add error condition
 		}
 		log.Info().Msgf("set session parameter: param=%s value=%s", k, v)
 	}
