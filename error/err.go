@@ -125,8 +125,8 @@ type DriverError struct {
 	databricksError
 }
 
-func NewDriverError(ctx context.Context, msg string, err error) DriverError {
-	return DriverError{newDatabricksError(ctx, msg, err, Driver)}
+func NewDriverError(ctx context.Context, msg string, err error) *DriverError {
+	return &DriverError{newDatabricksError(ctx, msg, err, Driver)}
 }
 
 // AuthenticationError are issues with the driver, e.g. not supported operations, driver specific non-recoverable failures
@@ -134,8 +134,8 @@ type AuthenticationError struct {
 	databricksError
 }
 
-func NewAuthenticationError(ctx context.Context, msg string, err error) AuthenticationError {
-	return AuthenticationError{newDatabricksError(ctx, msg, err, Driver)}
+func NewAuthenticationError(ctx context.Context, msg string, err error) *AuthenticationError {
+	return &AuthenticationError{newDatabricksError(ctx, msg, err, Driver)}
 }
 
 // QueryFailureError are errors with the query such as invalid syntax, etc
@@ -145,17 +145,17 @@ type QueryFailureError struct {
 	errCondition string
 }
 
-func (q QueryFailureError) QueryId() string {
+func (q *QueryFailureError) QueryId() string {
 	return q.queryId
 }
 
-func (q QueryFailureError) ErrorCondition() string {
+func (q *QueryFailureError) ErrorCondition() string {
 	return q.errCondition
 }
 
-func NewQueryFailureError(ctx context.Context, msg string, err error, errCondition string) QueryFailureError {
+func NewQueryFailureError(ctx context.Context, msg string, err error, errCondition string) *QueryFailureError {
 	dbsqlErr := newDatabricksError(ctx, msg, err, QueryFailure)
-	return QueryFailureError{dbsqlErr, driverctx.QueryIdFromContext(ctx), errCondition}
+	return &QueryFailureError{dbsqlErr, driverctx.QueryIdFromContext(ctx), errCondition}
 }
 
 // ConnectionError are issues with the connection
@@ -163,6 +163,6 @@ type ConnectionError struct {
 	databricksError
 }
 
-func NewConnectionError(ctx context.Context, msg string, err error) DriverError {
-	return DriverError{newDatabricksError(ctx, msg, err, Driver)}
+func NewConnectionError(ctx context.Context, msg string, err error) *DriverError {
+	return &DriverError{newDatabricksError(ctx, msg, err, Driver)}
 }
