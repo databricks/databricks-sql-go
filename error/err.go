@@ -53,8 +53,8 @@ type databricksError struct {
 	errType dbsqlErrorType
 }
 
-func newDatabricksError(ctx context.Context, msg string, err error, errType dbsqlErrorType) *databricksError {
-	return &databricksError{
+func newDatabricksError(ctx context.Context, msg string, err error, errType dbsqlErrorType) databricksError {
+	return databricksError{
 		msg:     msg,
 		err:     errors.WithStack(err),
 		corrId:  driverctx.CorrelationIdFromContext(ctx),
@@ -96,33 +96,33 @@ type DatabricksErrorWithQuery interface {
 	ErrorCondition() string
 }
 
-func (e *databricksError) Error() string {
+func (e databricksError) Error() string {
 	return fmt.Sprintf("databricks: %s error: %s: %v", e.errType.string(), e.msg, e.err)
 }
 
-func (e *databricksError) Unwrap() error {
+func (e databricksError) Unwrap() error {
 	return e.err
 }
 
-func (e *databricksError) Message() string {
+func (e databricksError) Message() string {
 	return e.msg
 }
 
-func (e *databricksError) CorrelationId() string {
+func (e databricksError) CorrelationId() string {
 	return e.corrId
 }
 
-func (e *databricksError) ConnectionId() string {
+func (e databricksError) ConnectionId() string {
 	return e.connId
 }
 
-func (e *databricksError) ErrorType() string {
+func (e databricksError) ErrorType() string {
 	return e.errType.string()
 }
 
 // DriverError are issues with the driver, e.g. not supported operations, driver specific non-recoverable failures
 type DriverError struct {
-	*databricksError
+	databricksError
 }
 
 func NewDriverError(ctx context.Context, msg string, err error) DriverError {
@@ -131,7 +131,7 @@ func NewDriverError(ctx context.Context, msg string, err error) DriverError {
 
 // AuthenticationError are issues with the driver, e.g. not supported operations, driver specific non-recoverable failures
 type AuthenticationError struct {
-	*databricksError
+	databricksError
 }
 
 func NewAuthenticationError(ctx context.Context, msg string, err error) AuthenticationError {
@@ -140,16 +140,16 @@ func NewAuthenticationError(ctx context.Context, msg string, err error) Authenti
 
 // QueryFailureError are errors with the query such as invalid syntax, etc
 type QueryFailureError struct {
-	*databricksError
+	databricksError
 	queryId      string
 	errCondition string
 }
 
-func (q *QueryFailureError) QueryId() string {
+func (q QueryFailureError) QueryId() string {
 	return q.queryId
 }
 
-func (q *QueryFailureError) ErrorCondition() string {
+func (q QueryFailureError) ErrorCondition() string {
 	return q.errCondition
 }
 
@@ -160,7 +160,7 @@ func NewQueryFailureError(ctx context.Context, msg string, err error, errConditi
 
 // ConnectionError are issues with the connection
 type ConnectionError struct {
-	*databricksError
+	databricksError
 }
 
 func NewConnectionError(ctx context.Context, msg string, err error) DriverError {

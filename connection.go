@@ -105,7 +105,8 @@ func (c *conn) ExecContext(ctx context.Context, query string, args []driver.Name
 
 	if exStmtResp != nil && exStmtResp.OperationHandle != nil {
 		// we have an operation id so update the logger
-		log = logger.WithContext(c.id, corrId, client.SprintGuid(exStmtResp.OperationHandle.OperationId.GUID))
+		ctx = driverctx.NewContextWithQueryId(ctx, client.SprintGuid(exStmtResp.OperationHandle.OperationId.GUID))
+		log = logger.WithContext(c.id, corrId, driverctx.QueryIdFromContext(ctx))
 
 		// since we have an operation handle we can close the operation if necessary
 		alreadyClosed := exStmtResp.DirectResults != nil && exStmtResp.DirectResults.CloseOperation != nil
@@ -176,9 +177,10 @@ func (c *conn) runQuery(ctx context.Context, query string, args []driver.NamedVa
 	}
 	opHandle := exStmtResp.OperationHandle
 	if opHandle != nil && opHandle.OperationId != nil {
+		ctx = driverctx.NewContextWithQueryId(ctx, client.SprintGuid(opHandle.OperationId.GUID))
 		log = logger.WithContext(
 			c.id,
-			driverctx.CorrelationIdFromContext(ctx), client.SprintGuid(opHandle.OperationId.GUID),
+			driverctx.CorrelationIdFromContext(ctx), driverctx.QueryIdFromContext(ctx),
 		)
 	}
 

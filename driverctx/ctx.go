@@ -42,7 +42,12 @@ func ConnIdFromContext(ctx context.Context) string {
 	return connId
 }
 
-// QueryIdFromContext retrieves the connectionId stored in context.
+// NewContextWithQueryId creates a new context with queryId value.
+func NewContextWithQueryId(ctx context.Context, queryId string) context.Context {
+	return context.WithValue(ctx, QueryIdContextKey, queryId)
+}
+
+// QueryIdFromContext retrieves the queryId stored in context.
 func QueryIdFromContext(ctx context.Context) string {
 	queryId, ok := ctx.Value(QueryIdContextKey).(string)
 	if !ok {
