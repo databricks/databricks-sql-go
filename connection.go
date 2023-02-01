@@ -45,19 +45,19 @@ func (c *conn) Close() error {
 
 	if err != nil {
 		log.Err(err).Msg("databricks: failed to close connection")
-		return dbsqlerror.NewConnectionError(ctx, dbsqlerror.ErrCloseConnection, err)
+		return dbsqlerror.NewRequestError(ctx, dbsqlerror.ErrCloseConnection, err)
 	}
 	return nil
 }
 
 // Not supported in Databricks.
 func (c *conn) Begin() (driver.Tx, error) {
-	return nil, dbsqlerror.NewDriverError(context.TODO(), dbsqlerror.ErrNotImplemented, nil)
+	return nil, dbsqlerror.NewSystemFault(context.TODO(), dbsqlerror.ErrNotImplemented, nil)
 }
 
 // Not supported in Databricks.
 func (c *conn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, error) {
-	return nil, dbsqlerror.NewDriverError(ctx, dbsqlerror.ErrTransactionsNotSupported, nil)
+	return nil, dbsqlerror.NewSystemFault(ctx, dbsqlerror.ErrTransactionsNotSupported, nil)
 }
 
 // Ping attempts to verify that the server is accessible.
@@ -99,7 +99,7 @@ func (c *conn) ExecContext(ctx context.Context, query string, args []driver.Name
 
 	ctx = driverctx.NewContextWithConnId(ctx, c.id)
 	if len(args) > 0 {
-		return nil, dbsqlerror.NewDriverError(ctx, dbsqlerror.ErrParametersNotSupported, nil)
+		return nil, dbsqlerror.NewSystemFault(ctx, dbsqlerror.ErrParametersNotSupported, nil)
 	}
 	exStmtResp, opStatusResp, err := c.runQuery(ctx, query, args)
 
@@ -122,7 +122,7 @@ func (c *conn) ExecContext(ctx context.Context, query string, args []driver.Name
 	}
 	if err != nil {
 		log.Err(err).Msgf("databricks: failed to execute query: query %s", query)
-		return nil, dbsqlerror.NewQueryFailureError(ctx, dbsqlerror.ErrQueryExecution, err, "") // TODO: add error condition
+		return nil, dbsqlerror.NewExecutionError(ctx, dbsqlerror.ErrQueryExecution, err, *opStatusResp.SqlState)
 	}
 
 	res := result{AffectedRows: opStatusResp.GetNumModifiedRows()}
@@ -142,11 +142,11 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 
 	ctx = driverctx.NewContextWithConnId(ctx, c.id)
 	if len(args) > 0 {
-		return nil, dbsqlerror.NewDriverError(ctx, dbsqlerror.ErrParametersNotSupported, nil)
+		return nil, dbsqlerror.NewSystemFault(ctx, dbsqlerror.ErrParametersNotSupported, nil)
 	}
 	// first we try to get the results synchronously.
 	// at any point in time that the context is done we must cancel and return
-	exStmtResp, _, err := c.runQuery(ctx, query, args)
+	exStmtResp, opStatusResp, err := c.runQuery(ctx, query, args)
 
 	if exStmtResp != nil && exStmtResp.OperationHandle != nil {
 		log = logger.WithContext(c.id, driverctx.CorrelationIdFromContext(ctx), client.SprintGuid(exStmtResp.OperationHandle.OperationId.GUID))
@@ -154,8 +154,8 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 	defer log.Duration(msg, start)
 
 	if err != nil {
-		log.Err(err).Msg("databricks: failed to run query")                                     // To log query we need to redact credentials
-		return nil, dbsqlerror.NewQueryFailureError(ctx, dbsqlerror.ErrQueryExecution, err, "") // TODO: add error condition
+		log.Err(err).Msg("databricks: failed to run query") // To log query we need to redact credentials
+		return nil, dbsqlerror.NewExecutionError(ctx, dbsqlerror.ErrQueryExecution, err, *opStatusResp.SqlState)
 	}
 	// hold on to the operation handle
 	opHandle := exStmtResp.OperationHandle
@@ -218,16 +218,16 @@ func (c *conn) runQuery(ctx context.Context, query string, args []driver.NamedVa
 				cli_service.TOperationState_ERROR_STATE,
 				cli_service.TOperationState_TIMEDOUT_STATE:
 				logBadQueryState(log, statusResp)
-				return exStmtResp, statusResp, dbsqlerror.NewDriverError(ctx, dbsqlerror.ErrInvalidOperationState, nil)
+				return exStmtResp, statusResp, dbsqlerror.NewSystemFault(ctx, dbsqlerror.ErrInvalidOperationState, nil)
 				// live states
 			default:
 				logBadQueryState(log, statusResp)
-				return exStmtResp, statusResp, dbsqlerror.NewDriverError(ctx, dbsqlerror.ErrInvalidOperationState, nil)
+				return exStmtResp, statusResp, dbsqlerror.NewSystemFault(ctx, dbsqlerror.ErrInvalidOperationState, nil)
 			}
 		// weird states
 		default:
 			logBadQueryState(log, opStatus)
-			return exStmtResp, opStatus, dbsqlerror.NewDriverError(ctx, dbsqlerror.ErrInvalidOperationState, nil)
+			return exStmtResp, opStatus, dbsqlerror.NewSystemFault(ctx, dbsqlerror.ErrInvalidOperationState, nil)
 		}
 
 	} else {
@@ -250,7 +250,7 @@ func (c *conn) runQuery(ctx context.Context, query string, args []driver.NamedVa
 			// live states
 		default:
 			logBadQueryState(log, statusResp)
-			return exStmtResp, statusResp, dbsqlerror.NewDriverError(ctx, dbsqlerror.ErrInvalidOperationState, nil)
+			return exStmtResp, statusResp, dbsqlerror.NewSystemFault(ctx, dbsqlerror.ErrInvalidOperationState, nil)
 		}
 	}
 }
@@ -360,7 +360,7 @@ func (c *conn) pollOperation(ctx context.Context, opHandle *cli_service.TOperati
 	}
 	statusResp, ok := resp.(*cli_service.TGetOperationStatusResp)
 	if !ok {
-		return nil, dbsqlerror.NewDriverError(ctx, dbsqlerror.ErrReadQueryStatus, nil)
+		return nil, dbsqlerror.NewSystemFault(ctx, dbsqlerror.ErrReadQueryStatus, nil)
 	}
 	return statusResp, nil
 }

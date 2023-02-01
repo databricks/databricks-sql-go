@@ -27,7 +27,7 @@ func main() {
 	//userDoesNotHavePermission()
 	//tableIdentifierIsInvalid()
 	//tableNotFound()
-	//invalidSqlCommand()
+	invalidSqlCommand()
 	//connectorMissingServerHostname()
 	//connectorMissingAccessToken()
 	//invalidDsnFormat()
@@ -197,7 +197,7 @@ func portInvalid() {
 // ERR org.apache.hive.service.cli.HiveSQLException: Error running query: java.lang.SecurityException: User does not have permission SELECT on any file.
 // < spark stack trace >
 // ERR databricks: failed to execute query: query CREATE TABLE IF NOT EXISTS diamonds USING CSV LOCATION '/databricks-datasets/Rdatasets/data-001/csv/ggplot2/diamonds.csv' options (header = true, inferSchema = true) error="User does not have permission SELECT on any file." connId=01eda22c-66d0-1a15-82cd-51463801f244 corrId=workflow-example queryId=01eda22c-6709-1b6d-af1c-af9993103703
-// QueryFailureError for query 01eda22c-6709-1b6d-af1c-af9993103703 . databricks: query failure error: failed to execute query: User does not have permission SELECT on any file.
+// ExecutionError for query 01eda22c-6709-1b6d-af1c-af9993103703 . databricks: query failure error: failed to execute query: User does not have permission SELECT on any file.
 func userDoesNotHavePermission() {
 	port, err := strconv.Atoi(os.Getenv("DATABRICKS_PORT"))
 	if err != nil {
@@ -228,9 +228,9 @@ func userDoesNotHavePermission() {
 
 	// Exec
 	if _, err := db.ExecContext(ogCtx, `CREATE TABLE IF NOT EXISTS diamonds USING CSV LOCATION '/databricks-datasets/Rdatasets/data-001/csv/ggplot2/diamonds.csv' options (header = true, inferSchema = true)`); err != nil {
-		var queryFailureError *dbsqlerror.QueryFailureError
+		var queryFailureError *dbsqlerror.ExecutionError
 		if errors.As(err, &queryFailureError) {
-			fmt.Println("QueryFailureError for query", queryFailureError.QueryId(), ".", queryFailureError)
+			fmt.Println("ExecutionError for query", queryFailureError.QueryId(), ".", queryFailureError)
 		}
 	}
 }
