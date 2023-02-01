@@ -135,7 +135,7 @@ type AuthenticationError struct {
 }
 
 func NewAuthenticationError(ctx context.Context, msg string, err error) *AuthenticationError {
-	return &AuthenticationError{newDatabricksError(ctx, msg, err, Driver)}
+	return &AuthenticationError{newDatabricksError(ctx, msg, err, Authentication)}
 }
 
 // QueryFailureError are errors with the query such as invalid syntax, etc
@@ -163,6 +163,6 @@ type ConnectionError struct {
 	databricksError
 }
 
-func NewConnectionError(ctx context.Context, msg string, err error) *DriverError {
-	return &DriverError{newDatabricksError(ctx, msg, err, Driver)}
+func NewConnectionError(ctx context.Context, msg string, err error) *ConnectionError {
+	return &ConnectionError{newDatabricksError(ctx, msg, err, Connection)}
 }

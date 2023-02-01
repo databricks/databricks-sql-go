@@ -1,6 +1,7 @@
 package config
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
 	"net/url"
@@ -183,21 +184,21 @@ func ParseDSN(dsn string) (UserConfig, error) {
 	}
 	parsedURL, err := url.Parse(fullDSN)
 	if err != nil {
-		return UserConfig{}, dbsqlerror.NewAuthenticationError(nil, dbsqlerror.ErrInvalidDSNFormat, err)
+		return UserConfig{}, dbsqlerror.NewAuthenticationError(context.TODO(), dbsqlerror.ErrInvalidDSNFormat, err)
 	}
 	ucfg := UserConfig{}.WithDefaults()
 	ucfg.Protocol = parsedURL.Scheme
 	ucfg.Host = parsedURL.Hostname()
 	port, err := strconv.Atoi(parsedURL.Port())
 	if err != nil {
-		return UserConfig{}, dbsqlerror.NewAuthenticationError(nil, dbsqlerror.ErrInvalidDSNPort, err)
+		return UserConfig{}, dbsqlerror.NewAuthenticationError(context.TODO(), dbsqlerror.ErrInvalidDSNPort, err)
 	}
 	ucfg.Port = port
 	name := parsedURL.User.Username()
 	if name == "token" {
 		pass, ok := parsedURL.User.Password()
 		if pass == "" {
-			return UserConfig{}, dbsqlerror.NewAuthenticationError(nil, dbsqlerror.ErrInvalidDSNTokenIsEmpty, err)
+			return UserConfig{}, dbsqlerror.NewAuthenticationError(context.TODO(), dbsqlerror.ErrInvalidDSNTokenIsEmpty, err)
 		}
 		if ok {
 			ucfg.AccessToken = pass
@@ -208,7 +209,7 @@ func ParseDSN(dsn string) (UserConfig, error) {
 		}
 	} else {
 		if name != "" {
-			return UserConfig{}, dbsqlerror.NewAuthenticationError(nil, dbsqlerror.ErrBasicAuthNotSupported, err)
+			return UserConfig{}, dbsqlerror.NewAuthenticationError(context.TODO(), dbsqlerror.ErrBasicAuthNotSupported, err)
 		}
 	}
 	ucfg.HTTPPath = parsedURL.Path
@@ -217,7 +218,7 @@ func ParseDSN(dsn string) (UserConfig, error) {
 	if maxRowsStr != "" {
 		maxRows, err := strconv.Atoi(maxRowsStr)
 		if err != nil {
-			return UserConfig{}, dbsqlerror.NewAuthenticationError(nil, dbsqlerror.ErrInvalidDSNMaxRows, err)
+			return UserConfig{}, dbsqlerror.NewAuthenticationError(context.TODO(), dbsqlerror.ErrInvalidDSNMaxRows, err)
 		}
 		// we should always have at least some page size
 		if maxRows != 0 {
@@ -230,7 +231,7 @@ func ParseDSN(dsn string) (UserConfig, error) {
 	if timeoutStr != "" {
 		timeoutSeconds, err := strconv.Atoi(timeoutStr)
 		if err != nil {
-			return UserConfig{}, dbsqlerror.NewAuthenticationError(nil, dbsqlerror.ErrInvalidDSNTimeout, err)
+			return UserConfig{}, dbsqlerror.NewAuthenticationError(context.TODO(), dbsqlerror.ErrInvalidDSNTimeout, err)
 		}
 		ucfg.QueryTimeout = time.Duration(timeoutSeconds) * time.Second
 	}
