@@ -42,7 +42,8 @@ type rows struct {
 	location *time.Location
 
 	// Metadata for result set
-	schema *cli_service.TTableSchema
+	resultSetMetadata *cli_service.TGetResultSetMetadataResp
+	schema            *cli_service.TTableSchema
 
 	hasMoreRows bool
 
@@ -132,6 +133,7 @@ func NewRows(
 		logger.Debug().Msgf("databricks: creating Rows with direct results")
 		// set the result set metadata
 		if directResults.ResultSetMetadata != nil {
+			r.resultSetMetadata = directResults.ResultSetMetadata
 			r.schema = directResults.ResultSetMetadata.Schema
 		}
 
@@ -241,7 +243,7 @@ func (r *rows) Next(dest []driver.Value) error {
 	}
 
 	// Put values into the destination slice
-	err = r.ScanRow(dest, r.nextRowIndex, r.location)
+	err = r.ScanRow(dest, r.nextRowIndex)
 	if err != nil {
 		return err
 	}
@@ -446,6 +448,7 @@ func (r *rows) getResultSetSchema() (*cli_service.TTableSchema, error) {
 			return nil, err
 		}
 
+		r.resultSetMetadata = resp
 		r.schema = resp.Schema
 
 	}
@@ -552,7 +555,7 @@ func (r *rows) makeRowScanner(fetchResults *cli_service.TFetchResultsResp) error
 		if fetchResults.Results.Columns != nil {
 			rs, err = columnbased.NewColumnRowScanner(schema, fetchResults.Results, r.config, r.logger())
 		} else if fetchResults.Results.ArrowBatches != nil {
-			rs, err = arrowbased.NewArrowRowScanner(schema, fetchResults.Results, r.config, r.logger())
+			rs, err = arrowbased.NewArrowRowScanner(r.resultSetMetadata, fetchResults.Results, r.config, r.logger())
 		} else {
 			r.logger().Error().Msg(errRowsUnknowRowType)
 			err = errors.New(errRowsUnknowRowType)
