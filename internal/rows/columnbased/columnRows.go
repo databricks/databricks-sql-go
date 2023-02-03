@@ -19,15 +19,24 @@ type columnRowScanner struct {
 
 	// number of rows in the current TRowSet
 	nRows int64
+
+	location *time.Location
 }
 
 var _ rowscanner.RowScanner = (*columnRowScanner)(nil)
 
 // NewColumnRowScanner returns a columnRowScanner initialized with the provided
 // values.
-func NewColumnRowScanner(schema *cli_service.TTableSchema, rowSet *cli_service.TRowSet, _ *config.Config, logger *dbsqllog.DBSQLLogger) (rowscanner.RowScanner, error) {
+func NewColumnRowScanner(schema *cli_service.TTableSchema, rowSet *cli_service.TRowSet, cfg *config.Config, logger *dbsqllog.DBSQLLogger) (rowscanner.RowScanner, error) {
 	if logger == nil {
 		logger = dbsqllog.Logger
+	}
+
+	var location *time.Location = time.UTC
+	if cfg != nil {
+		if cfg.Location != nil {
+			location = cfg.Location
+		}
 	}
 
 	logger.Debug().Msg("databricks: creating column row scanner")
@@ -36,6 +45,7 @@ func NewColumnRowScanner(schema *cli_service.TTableSchema, rowSet *cli_service.T
 		rowSet:      rowSet,
 		nRows:       countRows(rowSet),
 		DBSQLLogger: logger,
+		location:    location,
 	}
 
 	return rs, nil
@@ -60,12 +70,11 @@ func (crs *columnRowScanner) NRows() int64 {
 // a buffer held in dest.
 func (crs *columnRowScanner) ScanRow(
 	dest []driver.Value,
-	rowIndex int64,
-	location *time.Location) error {
+	rowIndex int64) error {
 
 	// populate the destinatino slice
 	for i := range dest {
-		val, err := crs.value(crs.rowSet.Columns[i], crs.schema.Columns[i], rowIndex, location)
+		val, err := crs.value(crs.rowSet.Columns[i], crs.schema.Columns[i], rowIndex)
 
 		if err != nil {
 			return err
@@ -78,10 +87,10 @@ func (crs *columnRowScanner) ScanRow(
 }
 
 // value retrieves the value for the specified colum/row
-func (crs *columnRowScanner) value(tColumn *cli_service.TColumn, tColumnDesc *cli_service.TColumnDesc, rowNum int64, location *time.Location) (val interface{}, err error) {
+func (crs *columnRowScanner) value(tColumn *cli_service.TColumn, tColumnDesc *cli_service.TColumnDesc, rowNum int64) (val interface{}, err error) {
 	// default to UTC time
-	if location == nil {
-		location = time.UTC
+	if crs.location == nil {
+		crs.location = time.UTC
 	}
 
 	// Database type name
@@ -90,7 +99,7 @@ func (crs *columnRowScanner) value(tColumn *cli_service.TColumn, tColumnDesc *cl
 	if tVal := tColumn.GetStringVal(); tVal != nil && !rowscanner.IsNull(tVal.Nulls, rowNum) {
 		val = tVal.Values[rowNum]
 		// DATE and TIMESTAMP are returned as strings so we need to handle that possibility
-		val, err = rowscanner.HandleDateTime(val, dbtype, tColumnDesc.ColumnName, location)
+		val, err = rowscanner.HandleDateTime(val, dbtype, tColumnDesc.ColumnName, crs.location)
 		if err != nil {
 			crs.Err(err).Msg("databrics: column row scanner failed to parse date/time")
 		}

@@ -3,12 +3,14 @@ package arrowbased
 import (
 	"bytes"
 	"database/sql/driver"
+	"encoding/json"
+	"strings"
+
 	"fmt"
 	"time"
 
 	"github.com/apache/arrow/go/v11/arrow"
 	"github.com/apache/arrow/go/v11/arrow/array"
-	"github.com/apache/arrow/go/v11/arrow/decimal128"
 	"github.com/apache/arrow/go/v11/arrow/ipc"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/config"
@@ -19,6 +21,7 @@ import (
 )
 
 var errArrowRowsUnsupportedNativeType = "databricks: arrow native values not yet supported for %s"
+var errArrowRowsUnsupportedWithHiveSchema = "databricks: arrow native values for %s require arrow schema"
 var errArrowRowsInvalidBatchIndex = "databricks: invalid arrow batch index index = %d, n = %d"
 var errArrowRowsNoArrowBatches = "databricks: result set contains 0 arrow batches"
 var errArrowRowsUnableToReadBatch = "databricks: unable to read arrow batch"
@@ -28,6 +31,8 @@ var errArrowRowsInvalidRowIndex = "databricks: row index %d is not contained in 
 var errArrowRowsInvalidDecimalType = "databricks: decimal type with no scale/precision"
 var errArrowRowsUnableToCreateDecimalType = "databricks: unable to create decimal type scale: %d, precision: %d"
 var errArrowRowsUnknownDBType = "unknown data type when converting to arrow type"
+var errArrowRowsUnhandledArrowType = "databricks: arrow row scanner unhandled type %s"
+var errArrowRowsDateTimeParse = "databrics: arrow row scanner failed to parse date/time"
 
 type recordReader interface {
 	NewRecordFromBytes(arrowSchemaBytes []byte, sparkArrowBatch sparkArrowBatch) (arrow.Record, error)
@@ -44,8 +49,15 @@ type sparkArrowBatch struct {
 }
 
 func (sab *sparkArrowBatch) contains(rowIndex int64) bool {
-
 	return sab != nil && sab.startRow <= rowIndex && sab.endRow >= rowIndex
+}
+
+type timeStampFn func(arrow.Timestamp) time.Time
+
+type colInfo struct {
+	name      string
+	arrowType arrow.DataType
+	dbType    cli_service.TTypeId
 }
 
 // arrowRowScanner handles extracting values from arrow records
@@ -66,7 +78,7 @@ type arrowRowScanner struct {
 	arrowSchemaBytes []byte
 
 	// database types for the columns
-	colDBTypes []cli_service.TTypeId
+	colInfo []colInfo
 
 	// number of rows in the current TRowSet
 	nRows int64
@@ -78,16 +90,18 @@ type arrowRowScanner struct {
 	columnValues []columnValues
 
 	// function to convert arrow timestamp when using native arrow format
-	toTimestampFn func(arrow.Timestamp) time.Time
+	toTimestampFn timeStampFn
 
 	*dbsqllog.DBSQLLogger
+
+	location *time.Location
 }
 
 // Make sure arrowRowScanner fulfills the RowScanner interface
 var _ rowscanner.RowScanner = (*arrowRowScanner)(nil)
 
 // NewArrowRowScanner returns an instance of RowScanner which handles arrow format results
-func NewArrowRowScanner(schema *cli_service.TTableSchema, rowSet *cli_service.TRowSet, cfg *config.Config, logger *dbsqllog.DBSQLLogger) (rowscanner.RowScanner, error) {
+func NewArrowRowScanner(resultSetMetadata *cli_service.TGetResultSetMetadataResp, rowSet *cli_service.TRowSet, cfg *config.Config, logger *dbsqllog.DBSQLLogger) (rowscanner.RowScanner, error) {
 
 	if logger == nil {
 		logger = dbsqllog.Logger
@@ -100,24 +114,40 @@ func NewArrowRowScanner(schema *cli_service.TTableSchema, rowSet *cli_service.TR
 		arrowConfig = cfg.ArrowConfig
 	}
 
-	// convert the TTableSchema to an arrow Schema
-	arrowSchema, err := tTableSchemaToArrowSchema(schema, &arrowConfig)
-	if err != nil {
-		logger.Err(err).Msg("databricks: arrow row scanner failed to convert schema")
-		return nil, err
-	}
+	var arrowSchema *arrow.Schema
+	schemaBytes := resultSetMetadata.ArrowSchema
+	if schemaBytes == nil {
+		var err error
+		// convert the TTableSchema to an arrow Schema
+		arrowSchema, err = tTableSchemaToArrowSchema(resultSetMetadata.Schema, &arrowConfig)
+		if err != nil {
+			logger.Err(err).Msg("databricks: arrow row scanner failed to convert schema")
+			return nil, err
+		}
 
-	// serialize the arrow schema
-	schemaBytes, err := getArrowSchemaBytes(arrowSchema)
-	if err != nil {
-		logger.Err(err).Msg("databricks: arrow row scanner failed to serialize schema")
-		return nil, err
+		// serialize the arrow schema
+		schemaBytes, err = getArrowSchemaBytes(arrowSchema)
+		if err != nil {
+			logger.Err(err).Msg("databricks: arrow row scanner failed to serialize schema")
+			return nil, err
+		}
+	} else {
+		br := &chunkedByteReader{chunks: [][]byte{schemaBytes}}
+		rdr, err := ipc.NewReader(br)
+		if err != nil {
+			return nil, dbsqlerr.WrapErr(err, errArrowRowsUnableToReadBatch)
+		}
+		defer rdr.Release()
+
+		arrowSchema = rdr.Schema()
 	}
 
 	// get the database type names for each column
-	colDBTypes := make([]cli_service.TTypeId, len(schema.Columns))
-	for i := range schema.Columns {
-		colDBTypes[i] = rowscanner.GetDBType(schema.Columns[i])
+	colInfos := make([]colInfo, len(resultSetMetadata.Schema.Columns))
+	for i := range resultSetMetadata.Schema.Columns {
+		col := resultSetMetadata.Schema.Columns[i]
+		field := arrowSchema.Field(i)
+		colInfos[i] = colInfo{name: field.Name, arrowType: field.Type, dbType: rowscanner.GetDBType(col)}
 	}
 
 	// get the function for converting arrow timestamps to a time.Time
@@ -143,6 +173,13 @@ func NewArrowRowScanner(schema *cli_service.TTableSchema, rowSet *cli_service.TR
 		startRow = startRow + rsab.RowCount
 	}
 
+	var location *time.Location = time.UTC
+	if cfg != nil {
+		if cfg.Location != nil {
+			location = cfg.Location
+		}
+	}
+
 	rs := &arrowRowScanner{
 		recordReader:        sparkRecordReader{},
 		valueContainerMaker: &arrowValueContainerMaker{},
@@ -152,8 +189,9 @@ func NewArrowRowScanner(schema *cli_service.TTableSchema, rowSet *cli_service.TR
 		arrowSchemaBytes:    schemaBytes,
 		arrowSchema:         arrowSchema,
 		toTimestampFn:       ttsf,
-		colDBTypes:          colDBTypes,
+		colInfo:             colInfos,
 		DBSQLLogger:         logger,
+		location:            location,
 	}
 
 	return rs, nil
@@ -195,11 +233,10 @@ var intervalTypes map[cli_service.TTypeId]struct{} = map[cli_service.TTypeId]str
 // a buffer held in dest.
 func (ars *arrowRowScanner) ScanRow(
 	destination []driver.Value,
-	rowIndex int64,
-	location *time.Location) (err error) {
+	rowIndex int64) error {
 
 	// load the error batch for the specified row, if necessary
-	err = ars.loadBatchFor(rowIndex)
+	err := ars.loadBatchFor(rowIndex)
 	if err != nil {
 		return err
 	}
@@ -207,8 +244,8 @@ func (ars *arrowRowScanner) ScanRow(
 	var rowInBatchIndex int = int(rowIndex - ars.currentBatch.startRow)
 
 	// if no location is provided default to UTC
-	if location == nil {
-		location = time.UTC
+	if ars.location == nil {
+		ars.location = time.UTC
 	}
 
 	nCols := len(ars.columnValues)
@@ -217,48 +254,32 @@ func (ars *arrowRowScanner) ScanRow(
 	for i := range destination {
 		// clear the destination
 		destination[i] = nil
-		var val any
 
 		// if there is a corresponding column and the value for the specified row
 		// is not null we put the value in the destination
-		if err == nil && i < nCols && !ars.columnValues[i].IsNull(rowInBatchIndex) {
+		if i < nCols && !ars.columnValues[i].IsNull(rowInBatchIndex) {
 
-			// get the value from the column values holder
-			val = ars.columnValues[i].Value(rowInBatchIndex)
+			col := ars.colInfo[i]
+			dbType := col.dbType
 
-			if ars.colDBTypes[i] == cli_service.TTypeId_DATE_TYPE {
-				// Need to convert the arrow Date32 value to time.Time
-				val = val.(arrow.Date32).ToTime().In(location)
-			} else if ars.colDBTypes[i] == cli_service.TTypeId_TIMESTAMP_TYPE {
-				if ars.UseArrowNativeTimestamp {
-					// Need to convert the arrow timestamp value to a time.Time
-					val = ars.toTimestampFn(val.(arrow.Timestamp)).In(location)
-				} else {
-					// Timestamp is returned as a string so need to parse to time.Time
-					val, err = rowscanner.HandleDateTime(val, "TIMESTAMP", ars.arrowSchema.Fields()[i].Name, location)
-					if err != nil {
-						ars.Err(err).Msg("databrics: arrow row scanner failed to parse date/time")
-					}
-				}
-			} else if ars.colDBTypes[i] == cli_service.TTypeId_DECIMAL_TYPE && ars.UseArrowNativeDecimal {
+			if (dbType == cli_service.TTypeId_DECIMAL_TYPE && ars.UseArrowNativeDecimal) ||
+				(isIntervalType(dbType) && ars.UseArrowNativeIntervalTypes) {
 				//	not yet fully supported
-				ars.Error().Msgf(errArrowRowsUnsupportedNativeType, ars.colDBTypes[i])
-				err = errors.Errorf(errArrowRowsUnsupportedNativeType, ars.colDBTypes[i])
-			} else if _, ok := complexTypes[ars.colDBTypes[i]]; ok && ars.UseArrowNativeComplexTypes {
-				//	not yet fully supported
-				ars.Error().Msgf(errArrowRowsUnsupportedNativeType, ars.colDBTypes[i])
-				err = errors.Errorf(errArrowRowsUnsupportedNativeType, ars.colDBTypes[i])
-			} else if _, ok := intervalTypes[ars.colDBTypes[i]]; ok && ars.UseArrowNativeIntervalTypes {
-				//	not yet fully supported
-				ars.Error().Msgf(errArrowRowsUnsupportedNativeType, ars.colDBTypes[i])
-				err = errors.Errorf(errArrowRowsUnsupportedNativeType, ars.colDBTypes[i])
+				ars.Error().Msgf(errArrowRowsUnsupportedNativeType, dbType)
+				return errors.Errorf(errArrowRowsUnsupportedNativeType, dbType)
 			}
 
-			destination[i] = val
+			// get the value from the column values holder
+			destination[i], err = ars.columnValues[i].Value(rowInBatchIndex)
 		}
 	}
 
 	return err
+}
+
+func isIntervalType(typeId cli_service.TTypeId) bool {
+	_, ok := intervalTypes[typeId]
+	return ok
 }
 
 // countRows returns the number of rows in the TRowSet
@@ -342,52 +363,14 @@ func (ars *arrowRowScanner) loadBatch(batchIndex int) error {
 		colData.Retain()
 		defer col.Release()
 
-		colDataType := col.DataType()
 		colValsHolder := ars.columnValues[i]
 
 		// release the arrow array already held
 		colValsHolder.Release()
 
-		switch colDataType.(type) {
-		case *arrow.BooleanType:
-			colValsHolder.(*columnValuesTyped[*array.Boolean, bool]).holder = array.NewBooleanData(colData)
-
-		case *arrow.Int8Type:
-			colValsHolder.(*columnValuesTyped[*array.Int8, int8]).holder = array.NewInt8Data(colData)
-
-		case *arrow.Int16Type:
-			colValsHolder.(*columnValuesTyped[*array.Int16, int16]).holder = array.NewInt16Data(colData)
-
-		case *arrow.Int32Type:
-			colValsHolder.(*columnValuesTyped[*array.Int32, int32]).holder = array.NewInt32Data(colData)
-
-		case *arrow.Int64Type:
-			colValsHolder.(*columnValuesTyped[*array.Int64, int64]).holder = array.NewInt64Data(colData)
-
-		case *arrow.Float32Type:
-			colValsHolder.(*columnValuesTyped[*array.Float32, float32]).holder = array.NewFloat32Data(colData)
-
-		case *arrow.Float64Type:
-			colValsHolder.(*columnValuesTyped[*array.Float64, float64]).holder = array.NewFloat64Data(colData)
-
-		case *arrow.StringType:
-			colValsHolder.(*columnValuesTyped[*array.String, string]).holder = array.NewStringData(colData)
-
-		case *arrow.Decimal128Type:
-			colValsHolder.(*columnValuesTyped[*array.Decimal128, decimal128.Num]).holder = array.NewDecimal128Data(colData)
-
-		case *arrow.Date32Type:
-			colValsHolder.(*columnValuesTyped[*array.Date32, arrow.Date32]).holder = array.NewDate32Data(colData)
-
-		case *arrow.TimestampType:
-			colValsHolder.(*columnValuesTyped[*array.Timestamp, arrow.Timestamp]).holder = array.NewTimestampData(colData)
-
-		case *arrow.BinaryType:
-			colValsHolder.(*columnValuesTyped[*array.Binary, []byte]).holder = array.NewBinaryData(colData)
-
-		default:
-			ars.Warn().Msgf("databricks: arrow row scanner unhandled type %s", colDataType.String())
-
+		err := colValsHolder.SetValueArray(colData)
+		if err != nil {
+			ars.Error().Msg(err.Error())
 		}
 	}
 
@@ -498,7 +481,7 @@ func tColumnDescToArrowDataType(tColumnDesc *cli_service.TColumnDesc, arrowConfi
 				return nil, err
 			}
 
-			decimalType, err := arrow.NewDecimalType(arrow.DECIMAL128, scale, precision)
+			decimalType, err := arrow.NewDecimalType(arrow.DECIMAL128, precision, scale)
 			if err != nil {
 				return nil, dbsqlerr.WrapErr(err, fmt.Sprintf(errArrowRowsUnableToCreateDecimalType, scale, precision))
 			}
@@ -519,14 +502,14 @@ func tColumnDescToArrowDataType(tColumnDesc *cli_service.TColumnDesc, arrowConfi
 				return arrow.BinaryTypes.String, nil
 			}
 
-			return nil, errors.Errorf(errArrowRowsUnsupportedNativeType, rowscanner.GetDBTypeName(tColumnDesc))
+			return nil, errors.Errorf(errArrowRowsUnsupportedWithHiveSchema, rowscanner.GetDBTypeName(tColumnDesc))
 		} else if _, ok := intervalTypes[tType]; ok {
 			// if not using arrow native complex types thrift server returns strings
 			if !arrowConfig.UseArrowNativeIntervalTypes {
 				return arrow.BinaryTypes.String, nil
 			}
 
-			return nil, errors.Errorf(errArrowRowsUnsupportedNativeType, rowscanner.GetDBTypeName(tColumnDesc))
+			return nil, errors.Errorf(errArrowRowsUnsupportedWithHiveSchema, rowscanner.GetDBTypeName(tColumnDesc))
 		} else {
 			return nil, errors.New(errArrowRowsUnknownDBType)
 		}
@@ -578,9 +561,10 @@ func tColumnDescToArrowField(columnDesc *cli_service.TColumnDesc, arrowConfig *c
 
 // columnValues is the interface for accessing the values for a column
 type columnValues interface {
-	Value(int) any
+	Value(int) (any, error)
 	IsNull(int) bool
 	Release()
+	SetValueArray(colData arrow.ArrayData) error
 }
 
 // a type constraint for the value types which we handle that are returned in the arrow records
@@ -593,10 +577,7 @@ type valueTypes interface {
 		float32 |
 		float64 |
 		string |
-		arrow.Date32 |
-		[]byte |
-		decimal128.Num |
-		arrow.Timestamp
+		[]byte
 }
 
 // a type constraint for the arrow array types which we handle that are returned in the arrow records
@@ -609,10 +590,7 @@ type arrowArrayTypes interface {
 		*array.Float32 |
 		*array.Float64 |
 		*array.String |
-		*array.Date32 |
-		*array.Binary |
-		*array.Decimal128 |
-		*array.Timestamp
+		*array.Binary
 }
 
 // type constraint for wrapping arrow arrays
@@ -626,11 +604,12 @@ type columnValuesHolder[T valueTypes] interface {
 // a generic container for the arrow arrays/value types we handle
 type columnValuesTyped[ValueHolderType columnValuesHolder[ValueType], ValueType valueTypes] struct {
 	holder ValueHolderType
+	foo    ValueType
 }
 
 // return the value for the specified row
-func (cv *columnValuesTyped[X, T]) Value(rowNum int) any {
-	return cv.holder.Value(rowNum)
+func (cv *columnValuesTyped[X, T]) Value(rowNum int) (any, error) {
+	return cv.holder.Value(rowNum), nil
 }
 
 // return true if the value at rowNum is null
@@ -643,6 +622,43 @@ func (cv *columnValuesTyped[X, T]) Release() {
 	if cv.holder != nil {
 		cv.holder.Release()
 	}
+}
+
+func (cv *columnValuesTyped[X, T]) SetValueArray(colData arrow.ArrayData) error {
+	var colValsHolder columnValues = cv
+	switch t := any(cv.foo).(type) {
+	case bool:
+		colValsHolder.(*columnValuesTyped[*array.Boolean, bool]).holder = array.NewBooleanData(colData)
+
+	case int8:
+		colValsHolder.(*columnValuesTyped[*array.Int8, int8]).holder = array.NewInt8Data(colData)
+
+	case int16:
+		colValsHolder.(*columnValuesTyped[*array.Int16, int16]).holder = array.NewInt16Data(colData)
+
+	case int32:
+		colValsHolder.(*columnValuesTyped[*array.Int32, int32]).holder = array.NewInt32Data(colData)
+
+	case int64:
+		colValsHolder.(*columnValuesTyped[*array.Int64, int64]).holder = array.NewInt64Data(colData)
+
+	case float32:
+		colValsHolder.(*columnValuesTyped[*array.Float32, float32]).holder = array.NewFloat32Data(colData)
+
+	case float64:
+		colValsHolder.(*columnValuesTyped[*array.Float64, float64]).holder = array.NewFloat64Data(colData)
+
+	case string:
+		colValsHolder.(*columnValuesTyped[*array.String, string]).holder = array.NewStringData(colData)
+
+	case []byte:
+		colValsHolder.(*columnValuesTyped[*array.Binary, []byte]).holder = array.NewBinaryData(colData)
+
+	default:
+		return errors.Errorf(errArrowRowsUnhandledArrowType, t)
+	}
+
+	return nil
 }
 
 var _ columnValues = (*columnValuesTyped[*array.Int16, int16])(nil)
@@ -682,50 +698,461 @@ var _ valueContainerMaker = (*arrowValueContainerMaker)(nil)
 // makeColumnValuesContainers creates appropriately typed  column values holders for each column
 func (vcm *arrowValueContainerMaker) makeColumnValuesContainers(ars *arrowRowScanner) error {
 	if ars.columnValues == nil {
-		ars.columnValues = make([]columnValues, len(ars.arrowSchema.Fields()))
+		ars.columnValues = make([]columnValues, len(ars.colInfo))
 		for i, field := range ars.arrowSchema.Fields() {
-			switch field.Type.(type) {
-
-			case *arrow.BooleanType:
-				ars.columnValues[i] = &columnValuesTyped[*array.Boolean, bool]{}
-
-			case *arrow.Int8Type:
-				ars.columnValues[i] = &columnValuesTyped[*array.Int8, int8]{}
-
-			case *arrow.Int16Type:
-				ars.columnValues[i] = &columnValuesTyped[*array.Int16, int16]{}
-
-			case *arrow.Int32Type:
-				ars.columnValues[i] = &columnValuesTyped[*array.Int32, int32]{}
-
-			case *arrow.Int64Type:
-				ars.columnValues[i] = &columnValuesTyped[*array.Int64, int64]{}
-
-			case *arrow.Float32Type:
-				ars.columnValues[i] = &columnValuesTyped[*array.Float32, float32]{}
-
-			case *arrow.Float64Type:
-				ars.columnValues[i] = &columnValuesTyped[*array.Float64, float64]{}
-
-			case *arrow.StringType:
-				ars.columnValues[i] = &columnValuesTyped[*array.String, string]{}
-
-			case *arrow.Decimal128Type:
-				ars.columnValues[i] = &columnValuesTyped[*array.Decimal128, decimal128.Num]{}
-
-			case *arrow.Date32Type:
-				ars.columnValues[i] = &columnValuesTyped[*array.Date32, arrow.Date32]{}
-
-			case *arrow.TimestampType:
-				ars.columnValues[i] = &columnValuesTyped[*array.Timestamp, arrow.Timestamp]{}
-
-			case *arrow.BinaryType:
-				ars.columnValues[i] = &columnValuesTyped[*array.Binary, []byte]{}
-
-			default:
-				ars.Warn().Msgf("databricks: arrow row scanner unhandled type %s", field.Type.String())
+			holder, err := vcm.makeColumnValueContainer(field.Type, ars.location, ars.toTimestampFn, &ars.colInfo[i])
+			if err != nil {
+				ars.Error().Msg(err.Error())
+				return err
 			}
+
+			ars.columnValues[i] = holder
 		}
 	}
 	return nil
+}
+
+func (vcm *arrowValueContainerMaker) makeColumnValueContainer(t arrow.DataType, location *time.Location, toTimestampFn timeStampFn, colInfo *colInfo) (columnValues, error) {
+	if location == nil {
+		location = time.UTC
+	}
+
+	switch t := t.(type) {
+
+	case *arrow.BooleanType:
+		return &columnValuesTyped[*array.Boolean, bool]{}, nil
+
+	case *arrow.Int8Type:
+		return &columnValuesTyped[*array.Int8, int8]{}, nil
+
+	case *arrow.Int16Type:
+		return &columnValuesTyped[*array.Int16, int16]{}, nil
+
+	case *arrow.Int32Type:
+		return &columnValuesTyped[*array.Int32, int32]{}, nil
+
+	case *arrow.Int64Type:
+		return &columnValuesTyped[*array.Int64, int64]{}, nil
+
+	case *arrow.Float32Type:
+		return &columnValuesTyped[*array.Float32, float32]{}, nil
+
+	case *arrow.Float64Type:
+		return &columnValuesTyped[*array.Float64, float64]{}, nil
+
+	case *arrow.StringType:
+		if colInfo != nil && colInfo.dbType == cli_service.TTypeId_TIMESTAMP_TYPE {
+			return &timestampStringValueContainer{location: location, fieldName: colInfo.name}, nil
+		} else {
+			return &columnValuesTyped[*array.String, string]{}, nil
+		}
+
+	case *arrow.Decimal128Type:
+		return &decimal128Container{scale: t.Scale}, nil
+
+	case *arrow.Date32Type:
+		return &dateValueContainer{location: location}, nil
+
+	case *arrow.TimestampType:
+		return &timestampValueContainer{location: location, toTimestampFn: toTimestampFn}, nil
+
+	case *arrow.BinaryType:
+		return &columnValuesTyped[*array.Binary, []byte]{}, nil
+
+	case *arrow.ListType:
+		lvc := &listValueContainer{listArrayType: t}
+		var err error
+		lvc.values, err = vcm.makeColumnValueContainer(t.Elem(), location, toTimestampFn, nil)
+		if err != nil {
+			return nil, err
+		}
+		switch t.Elem().(type) {
+		case *arrow.MapType, *arrow.ListType, *arrow.StructType:
+			lvc.complexValue = true
+		}
+		return lvc, nil
+
+	case *arrow.MapType:
+		mvc := &mapValueContainer{mapArrayType: t}
+		var err error
+		mvc.values, err = vcm.makeColumnValueContainer(t.ItemType(), location, toTimestampFn, nil)
+		if err != nil {
+			return nil, err
+		}
+		mvc.keys, err = vcm.makeColumnValueContainer(t.KeyType(), location, toTimestampFn, nil)
+		if err != nil {
+			return nil, err
+		}
+		switch t.ItemType().(type) {
+		case *arrow.MapType, *arrow.ListType, *arrow.StructType:
+			mvc.complexValue = true
+		}
+
+		return mvc, nil
+
+	case *arrow.StructType:
+		svc := &structValueContainer{structArrayType: t}
+		svc.fieldNames = make([]string, len(t.Fields()))
+		svc.fieldValues = make([]columnValues, len(t.Fields()))
+		svc.complexValue = make([]bool, len(t.Fields()))
+		for i, f := range t.Fields() {
+			svc.fieldNames[i] = f.Name
+			c, err := vcm.makeColumnValueContainer(f.Type, location, toTimestampFn, nil)
+			if err != nil {
+				return nil, err
+			}
+			svc.fieldValues[i] = c
+			switch f.Type.(type) {
+			case *arrow.MapType, *arrow.ListType, *arrow.StructType:
+				svc.complexValue[i] = true
+			}
+
+		}
+
+		return svc, nil
+
+	default:
+		return nil, errors.Errorf(errArrowRowsUnhandledArrowType, t.String())
+	}
+}
+
+type listValueContainer struct {
+	listArray     array.ListLike
+	values        columnValues
+	complexValue  bool
+	listArrayType *arrow.ListType
+}
+
+func (lvc *listValueContainer) Value(i int) (any, error) {
+	if i < lvc.listArray.Len() {
+		r := "["
+		s, e := lvc.listArray.ValueOffsets(i)
+		len := int(e - s)
+
+		for i := 0; i < len; i++ {
+			val, err := lvc.values.Value(i + int(s))
+			if err != nil {
+				return nil, err
+			}
+
+			if !lvc.complexValue {
+				vb, err := marshal(val)
+				if err != nil {
+					return nil, err
+				}
+				r = r + string(vb)
+			} else {
+				r = r + val.(string)
+			}
+
+			if i < len-1 {
+				r = r + ","
+			}
+		}
+
+		r = r + "]"
+		return r, nil
+	}
+	return nil, nil
+}
+
+func (lvc *listValueContainer) IsNull(i int) bool {
+	return lvc.listArray.IsNull(i)
+}
+
+func (lvc *listValueContainer) Release() {
+	if lvc.listArray != nil {
+		lvc.listArray.Release()
+	}
+
+	if lvc.values != nil {
+		lvc.values.Release()
+	}
+}
+
+func (lvc *listValueContainer) SetValueArray(colData arrow.ArrayData) error {
+	lvc.listArray = array.NewListData(colData)
+	lvs := lvc.listArray.ListValues()
+	err := lvc.values.SetValueArray(lvs.Data())
+
+	return err
+}
+
+type mapValueContainer struct {
+	mapArray     *array.Map
+	keys         columnValues
+	values       columnValues
+	complexValue bool
+	mapArrayType *arrow.MapType
+}
+
+func (mvc *mapValueContainer) Value(i int) (any, error) {
+	if i < mvc.mapArray.Len() {
+		s, e := mvc.mapArray.ValueOffsets(i)
+		len := e - s
+		r := "{"
+		for i := int64(0); i < len; i++ {
+			k, err := mvc.keys.Value(int(i))
+			if err != nil {
+				return nil, err
+			}
+
+			v, err := mvc.values.Value(int(i))
+			if err != nil {
+				return nil, err
+			}
+
+			key, err := marshal(k)
+			if err != nil {
+				return nil, err
+			}
+
+			var b string
+			if mvc.complexValue {
+				b = v.(string)
+			} else {
+				vb, err := marshal(v)
+				if err != nil {
+					return nil, err
+				}
+				b = string(vb)
+			}
+
+			if !strings.HasPrefix(string(key), "\"") {
+				r = r + "\"" + string(key) + "\":"
+			} else {
+				r = r + string(key) + ":"
+			}
+
+			r = r + b
+			if i < len-1 {
+				r = r + ","
+			}
+		}
+		r = r + "}"
+
+		return r, nil
+	}
+	return nil, nil
+}
+
+func (mvc *mapValueContainer) IsNull(i int) bool {
+	return mvc.mapArray.IsNull(i)
+}
+
+func (mvc *mapValueContainer) Release() {
+	if mvc.mapArray != nil {
+		mvc.mapArray.Release()
+	}
+
+	if mvc.values != nil {
+		mvc.values.Release()
+	}
+
+	if mvc.keys != nil {
+		mvc.keys.Release()
+	}
+}
+
+func (mvc *mapValueContainer) SetValueArray(colData arrow.ArrayData) error {
+	mvc.mapArray = array.NewMapData(colData)
+	err := mvc.values.SetValueArray(mvc.mapArray.Items().Data())
+	if err != nil {
+		return err
+	}
+	err = mvc.keys.SetValueArray(mvc.mapArray.Keys().Data())
+
+	return err
+}
+
+type structValueContainer struct {
+	structArray     *array.Struct
+	fieldNames      []string
+	complexValue    []bool
+	fieldValues     []columnValues
+	structArrayType *arrow.StructType
+}
+
+func (svc *structValueContainer) Value(i int) (any, error) {
+	if i < svc.structArray.Len() {
+		r := "{"
+		for j := range svc.fieldValues {
+			r = r + "\"" + svc.fieldNames[j] + "\":"
+
+			v, err := svc.fieldValues[j].Value(int(i))
+			if err != nil {
+				return nil, err
+			}
+
+			var b string
+			if svc.complexValue[j] {
+				b = v.(string)
+			} else {
+				vb, err := marshal(v)
+				if err != nil {
+					return nil, err
+				}
+				b = string(vb)
+			}
+
+			r = r + b
+			if j < len(svc.fieldValues)-1 {
+				r = r + ","
+			}
+		}
+		r = r + "}"
+
+		return r, nil
+	}
+	return nil, nil
+}
+
+func (svc *structValueContainer) IsNull(i int) bool {
+	return svc.structArray.IsNull(i)
+}
+
+func (svc *structValueContainer) Release() {
+	if svc.structArray != nil {
+		svc.structArray.Release()
+	}
+
+	for i := range svc.fieldValues {
+		if svc.fieldValues[i] != nil {
+			svc.fieldValues[i].Release()
+		}
+	}
+}
+
+func (svc *structValueContainer) SetValueArray(colData arrow.ArrayData) error {
+	svc.structArray = array.NewStructData(colData)
+	for i := range svc.fieldValues {
+		err := svc.fieldValues[i].SetValueArray(svc.structArray.Field(i).Data())
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+type dateValueContainer struct {
+	dateArray *array.Date32
+	location  *time.Location
+}
+
+func (dvc *dateValueContainer) Value(i int) (any, error) {
+	d32 := dvc.dateArray.Value(i)
+
+	val := d32.ToTime().In(dvc.location)
+	return val, nil
+}
+
+func (dvc *dateValueContainer) IsNull(i int) bool {
+	return dvc.dateArray.IsNull(i)
+}
+
+func (dvc *dateValueContainer) Release() {
+	if dvc.dateArray != nil {
+		dvc.dateArray.Release()
+	}
+}
+
+func (dvc *dateValueContainer) SetValueArray(colData arrow.ArrayData) error {
+	dvc.dateArray = array.NewDate32Data(colData)
+	return nil
+}
+
+type timestampValueContainer struct {
+	timeArray     *array.Timestamp
+	location      *time.Location
+	toTimestampFn func(arrow.Timestamp) time.Time
+}
+
+func (tvc *timestampValueContainer) Value(i int) (any, error) {
+	ats := tvc.timeArray.Value(i)
+	val := tvc.toTimestampFn(ats).In(tvc.location)
+
+	return val, nil
+}
+
+func (tvc *timestampValueContainer) IsNull(i int) bool {
+	return tvc.timeArray.IsNull(i)
+}
+
+func (tvc *timestampValueContainer) Release() {
+	if tvc.timeArray != nil {
+		tvc.timeArray.Release()
+	}
+}
+
+func (tvc *timestampValueContainer) SetValueArray(colData arrow.ArrayData) error {
+	tvc.timeArray = array.NewTimestampData(colData)
+	return nil
+}
+
+type timestampStringValueContainer struct {
+	timeStringArray *array.String
+	location        *time.Location
+	fieldName       string
+	*dbsqllog.DBSQLLogger
+}
+
+func (tvc *timestampStringValueContainer) Value(i int) (any, error) {
+	sv := tvc.timeStringArray.Value(i)
+	val, err := rowscanner.HandleDateTime(sv, "TIMESTAMP", tvc.fieldName, tvc.location)
+	if err != nil {
+		tvc.Err(err).Msg(errArrowRowsDateTimeParse)
+	}
+
+	return val, nil
+}
+
+func (tvc *timestampStringValueContainer) IsNull(i int) bool {
+	return tvc.timeStringArray.IsNull(i)
+}
+
+func (tvc *timestampStringValueContainer) Release() {
+	if tvc.timeStringArray != nil {
+		tvc.timeStringArray.Release()
+	}
+}
+
+func (tvc *timestampStringValueContainer) SetValueArray(colData arrow.ArrayData) error {
+	tvc.timeStringArray = array.NewStringData(colData)
+	return nil
+}
+
+type decimal128Container struct {
+	decimalArray *array.Decimal128
+	scale        int32
+}
+
+func (tvc *decimal128Container) Value(i int) (any, error) {
+	dv := tvc.decimalArray.Value(i)
+	fv := dv.ToFloat64(tvc.scale)
+	return fv, nil
+}
+
+func (tvc *decimal128Container) IsNull(i int) bool {
+	return tvc.decimalArray.IsNull(i)
+}
+
+func (tvc *decimal128Container) Release() {
+	if tvc.decimalArray != nil {
+		tvc.decimalArray.Release()
+	}
+}
+
+func (tvc *decimal128Container) SetValueArray(colData arrow.ArrayData) error {
+	tvc.decimalArray = array.NewDecimal128Data(colData)
+	return nil
+}
+
+func marshal(val any) ([]byte, error) {
+	if t, ok := val.(time.Time); ok {
+		s := "\"" + t.String() + "\""
+		return []byte(s), nil
+	}
+	vb, err := json.Marshal(val)
+	return vb, err
 }
