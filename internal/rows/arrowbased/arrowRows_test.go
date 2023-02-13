@@ -1144,6 +1144,22 @@ func TestArrowRowScanner(t *testing.T) {
 			assert.Equal(t, expected[i], dest[i])
 		}
 
+		// verify that the returned values for the complex type
+		// columns are valid json strings
+		var foo []any
+		var s string = dest[10].(string)
+		err = json.Unmarshal([]byte(s), &foo)
+		assert.Nil(t, err)
+
+		var foo2 map[string]any
+		s = dest[11].(string)
+		err = json.Unmarshal([]byte(s), &foo2)
+		assert.Nil(t, err)
+
+		var foo3 map[string]any
+		s = dest[12].(string)
+		err = json.Unmarshal([]byte(s), &foo3)
+		assert.Nil(t, err)
 	})
 
 	t.Run("Retrieve null values - native complex types", func(t *testing.T) {

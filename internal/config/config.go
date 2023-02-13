@@ -277,6 +277,7 @@ type ArrowConfig struct {
 }
 
 func (ucfg ArrowConfig) WithDefaults() ArrowConfig {
+	ucfg.UseArrowBatches = true
 	ucfg.UseArrowNativeTimestamp = true
 	ucfg.UseArrowNativeComplexTypes = true
 

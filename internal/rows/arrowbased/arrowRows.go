@@ -30,7 +30,7 @@ var errArrowRowsUnableToWriteArrowSchema = "databricks: unable to write arrow sc
 var errArrowRowsInvalidRowIndex = "databricks: row index %d is not contained in any arrow batch"
 var errArrowRowsInvalidDecimalType = "databricks: decimal type with no scale/precision"
 var errArrowRowsUnableToCreateDecimalType = "databricks: unable to create decimal type scale: %d, precision: %d"
-var errArrowRowsUnknownDBType = "unknown data type when converting to arrow type"
+var errArrowRowsUnknownDBType = "databricks: unknown data type when converting to arrow type"
 var errArrowRowsUnhandledArrowType = "databricks: arrow row scanner unhandled type %s"
 var errArrowRowsDateTimeParse = "databrics: arrow row scanner failed to parse date/time"
 
@@ -92,6 +92,7 @@ type arrowRowScanner struct {
 	// function to convert arrow timestamp when using native arrow format
 	toTimestampFn timeStampFn
 
+	// hold on to a logger instance with context, rather than just use the global variable
 	*dbsqllog.DBSQLLogger
 
 	location *time.Location
@@ -103,6 +104,8 @@ var _ rowscanner.RowScanner = (*arrowRowScanner)(nil)
 // NewArrowRowScanner returns an instance of RowScanner which handles arrow format results
 func NewArrowRowScanner(resultSetMetadata *cli_service.TGetResultSetMetadataResp, rowSet *cli_service.TRowSet, cfg *config.Config, logger *dbsqllog.DBSQLLogger) (rowscanner.RowScanner, error) {
 
+	// we take a passed in logger, rather than just using the global from dbsqllog, so that the containing rows
+	// instance can pass in a logger with context such as correlation ID and operation ID
 	if logger == nil {
 		logger = dbsqllog.Logger
 	}
