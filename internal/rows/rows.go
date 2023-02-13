@@ -173,7 +173,7 @@ func (r *rows) Columns() []string {
 	colNames := make([]string, len(tColumns))
 
 	for i := range tColumns {
-		colNames[i] = tColumns[i].ColumnName
+		colNames[i] = tColumns[i].Name
 	}
 
 	return colNames
@@ -197,12 +197,12 @@ func (r *rows) Close() error {
 		// need to do that now
 		r.closedOnServer = true
 
-		req := cli_service.TCloseOperationReq{
-			OperationHandle: r.opHandle,
+		req := client.CloseExecutionReq{
+			ExecutionHandle: r.opHandle,
 		}
 		ctx := driverctx.NewContextWithCorrelationId(driverctx.NewContextWithConnId(context.Background(), r.connId), r.correlationId)
 
-		_, err1 := r.client.CloseOperation(ctx, &req)
+		_, err1 := r.client.CloseExecution(ctx, &req)
 		if err1 != nil {
 			r.logger().Err(err1).Msg("databricks: Rows instance failed to close operation")
 			return err1
@@ -336,7 +336,7 @@ var (
 	scanTypeUnknown  = reflect.TypeOf(new(any))
 )
 
-func getScanType(column *cli_service.TColumnDesc) reflect.Type {
+func getScanType(column *client.ColumnInfo) reflect.Type {
 
 	// Currently all types are returned from the thrift server using
 	// the primitive entry
@@ -345,34 +345,34 @@ func getScanType(column *cli_service.TColumnDesc) reflect.Type {
 	switch entry.Type {
 	case cli_service.TTypeId_BOOLEAN_TYPE:
 		return scanTypeBoolean
-	case cli_service.TTypeId_TINYINT_TYPE:
+	case cli_service.TTypeId_TINYINT_TYPE.String():
 		return scanTypeInt8
-	case cli_service.TTypeId_SMALLINT_TYPE:
+	case cli_service.TTypeId_SMALLINT_TYPE.String():
 		return scanTypeInt16
-	case cli_service.TTypeId_INT_TYPE:
+	case cli_service.TTypeId_INT_TYPE.String():
 		return scanTypeInt32
-	case cli_service.TTypeId_BIGINT_TYPE:
+	case cli_service.TTypeId_BIGINT_TYPE.String():
 		return scanTypeInt64
-	case cli_service.TTypeId_FLOAT_TYPE:
+	case cli_service.TTypeId_FLOAT_TYPE.String():
 		return scanTypeFloat32
-	case cli_service.TTypeId_DOUBLE_TYPE:
+	case cli_service.TTypeId_DOUBLE_TYPE.String():
 		return scanTypeFloat64
-	case cli_service.TTypeId_NULL_TYPE:
+	case cli_service.TTypeId_NULL_TYPE.String():
 		return scanTypeNull
-	case cli_service.TTypeId_STRING_TYPE:
+	case cli_service.TTypeId_STRING_TYPE.String():
 		return scanTypeString
-	case cli_service.TTypeId_CHAR_TYPE:
+	case cli_service.TTypeId_CHAR_TYPE.String():
 		return scanTypeString
-	case cli_service.TTypeId_VARCHAR_TYPE:
+	case cli_service.TTypeId_VARCHAR_TYPE.String():
 		return scanTypeString
-	case cli_service.TTypeId_DATE_TYPE, cli_service.TTypeId_TIMESTAMP_TYPE:
+	case cli_service.TTypeId_DATE_TYPE.String(), cli_service.TTypeId_TIMESTAMP_TYPE.String():
 		return scanTypeDateTime
-	case cli_service.TTypeId_DECIMAL_TYPE, cli_service.TTypeId_BINARY_TYPE, cli_service.TTypeId_ARRAY_TYPE,
-		cli_service.TTypeId_STRUCT_TYPE, cli_service.TTypeId_MAP_TYPE, cli_service.TTypeId_UNION_TYPE:
+	case cli_service.TTypeId_DECIMAL_TYPE.String(), cli_service.TTypeId_BINARY_TYPE.String(), cli_service.TTypeId_ARRAY_TYPE.String(),
+		cli_service.TTypeId_STRUCT_TYPE.String(), cli_service.TTypeId_MAP_TYPE.String(), cli_service.TTypeId_UNION_TYPE.String():
 		return scanTypeRawBytes
-	case cli_service.TTypeId_USER_DEFINED_TYPE:
+	case cli_service.TTypeId_USER_DEFINED_TYPE.String():
 		return scanTypeUnknown
-	case cli_service.TTypeId_INTERVAL_DAY_TIME_TYPE, cli_service.TTypeId_INTERVAL_YEAR_MONTH_TYPE:
+	case cli_service.TTypeId_INTERVAL_DAY_TIME_TYPE.String(), cli_service.TTypeId_INTERVAL_YEAR_MONTH_TYPE.String():
 		return scanTypeString
 	default:
 		return scanTypeUnknown
@@ -394,7 +394,7 @@ func isValidRows(r *rows) error {
 	return nil
 }
 
-func (r *rows) getColumnMetadataByIndex(index int) (*cli_service.TColumnDesc, error) {
+func (r *rows) getColumnMetadataByIndex(index int) (*client.ColumnInfo, error) {
 	err := isValidRows(r)
 	if err != nil {
 		return nil, err
@@ -437,12 +437,12 @@ func (r *rows) getResultSetSchema() (*cli_service.TTableSchema, error) {
 			return nil, err
 		}
 
-		req := cli_service.TGetResultSetMetadataReq{
-			OperationHandle: r.opHandle,
+		req := client.GetResultsMetadataReq{
+			ExecutionHandle: r.opHandle,
 		}
 		ctx := driverctx.NewContextWithCorrelationId(driverctx.NewContextWithConnId(context.Background(), r.connId), r.correlationId)
 
-		resp, err := r.client.GetResultSetMetadata(ctx, &req)
+		resp, err := r.client.GetResultsMetadata(ctx, &req)
 		if err != nil {
 			r.logger().Err(err).Msg("databricks: Rows instance failed to retrieve result set metadata")
 			return nil, err
