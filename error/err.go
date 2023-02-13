@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/databricks/databricks-sql-go/driverctx"
+	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/pkg/errors"
 )
 
@@ -156,8 +157,12 @@ func (q *ExecutionError) SqlState() string {
 	return q.sqlState
 }
 
-func NewExecutionError(ctx context.Context, msg string, err error, sqlState string) *ExecutionError {
+func NewExecutionError(ctx context.Context, msg string, err error, opStatusResp *cli_service.TGetOperationStatusResp) *ExecutionError {
 	dbsqlErr := newDatabricksError(ctx, msg, err, Execution)
 	errClass := ""
+	sqlState := ""
+	if opStatusResp != nil {
+		sqlState = *opStatusResp.SqlState
+	}
 	return &ExecutionError{dbsqlErr, driverctx.QueryIdFromContext(ctx), errClass, sqlState}
 }

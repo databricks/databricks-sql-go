@@ -122,7 +122,7 @@ func (c *conn) ExecContext(ctx context.Context, query string, args []driver.Name
 	}
 	if err != nil {
 		log.Err(err).Msgf("databricks: failed to execute query: query %s", query)
-		return nil, dbsqlerror.NewExecutionError(ctx, dbsqlerror.ErrQueryExecution, err, *opStatusResp.SqlState)
+		return nil, dbsqlerror.NewExecutionError(ctx, dbsqlerror.ErrQueryExecution, err, opStatusResp)
 	}
 
 	res := result{AffectedRows: opStatusResp.GetNumModifiedRows()}
@@ -155,7 +155,7 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 
 	if err != nil {
 		log.Err(err).Msg("databricks: failed to run query") // To log query we need to redact credentials
-		return nil, dbsqlerror.NewExecutionError(ctx, dbsqlerror.ErrQueryExecution, err, *opStatusResp.SqlState)
+		return nil, dbsqlerror.NewExecutionError(ctx, dbsqlerror.ErrQueryExecution, err, opStatusResp)
 	}
 	// hold on to the operation handle
 	opHandle := exStmtResp.OperationHandle
