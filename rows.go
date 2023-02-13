@@ -18,17 +18,17 @@ import (
 )
 
 type rows struct {
-	client               cli_service.TCLIService
-	connId               string
-	correlationId        string
-	opHandle             *cli_service.TOperationHandle
-	pageSize             int64
-	location             *time.Location
-	fetchResults         *cli_service.TFetchResultsResp
-	fetchResultsMetadata *cli_service.TGetResultSetMetadataResp
-	nextRowIndex         int64
-	nextRowNumber        int64
-	closed               bool
+	client        client.DatabricksClient
+	connId        string
+	correlationId string
+	opHandle      *cli_service.TOperationHandle
+	pageSize      int64
+	location      *time.Location
+	results       *client.ResultData
+	Schema        *client.ResultSchema
+	nextRowIndex  int64
+	nextRowNumber int64
+	closed        bool
 }
 
 var _ driver.Rows = (*rows)(nil)
@@ -45,7 +45,7 @@ var errRowsParseValue = "databricks: unable to parse %s value '%s' from column %
 
 // NewRows generates a new rows object given the rows' fields.
 // NewRows will also parse directResults if it is available for some rows' fields.
-func NewRows(connID string, corrId string, client cli_service.TCLIService, opHandle *cli_service.TOperationHandle, pageSize int64, location *time.Location, directResults *cli_service.TSparkDirectResults) driver.Rows {
+func NewRows(connID string, corrId string, client client.DatabricksClient, opHandle *cli_service.TOperationHandle, pageSize int64, location *time.Location, resp *client.ExecuteStatementResp) driver.Rows {
 	r := &rows{
 		connId:        connID,
 		correlationId: corrId,
@@ -55,12 +55,10 @@ func NewRows(connID string, corrId string, client cli_service.TCLIService, opHan
 		location:      location,
 	}
 
-	if directResults != nil {
-		r.fetchResults = directResults.ResultSet
-		r.fetchResultsMetadata = directResults.ResultSetMetadata
-		if directResults.CloseOperation != nil {
-			r.closed = true
-		}
+	if resp.Result != nil {
+		r.results = resp.Result
+		r.Schema = resp.Schema
+		r.closed = resp.IsClosed
 	}
 
 	return r
@@ -76,20 +74,20 @@ func (r *rows) Columns() []string {
 		return []string{}
 	}
 
-	resultMetadata, err := r.getResultMetadata()
+	resultMetadata, err := r.getResultSchema()
 	if err != nil {
 		return []string{}
 	}
 
-	if !resultMetadata.IsSetSchema() {
+	if resultMetadata == nil {
 		return []string{}
 	}
 
-	tColumns := resultMetadata.Schema.GetColumns()
+	tColumns := resultMetadata.Columns
 	colNames := make([]string, len(tColumns))
 
 	for i := range tColumns {
-		colNames[i] = tColumns[i].ColumnName
+		colNames[i] = tColumns[i].Name
 	}
 
 	return colNames
@@ -103,12 +101,12 @@ func (r *rows) Close() error {
 			return err
 		}
 
-		req := cli_service.TCloseOperationReq{
-			OperationHandle: r.opHandle,
+		req := client.CloseExecutionReq{
+			ExecutionHandle: r.opHandle,
 		}
 		ctx := driverctx.NewContextWithCorrelationId(driverctx.NewContextWithConnId(context.Background(), r.connId), r.correlationId)
 
-		_, err1 := r.client.CloseOperation(ctx, &req)
+		_, err1 := r.client.CloseExecution(ctx, &req)
 		if err1 != nil {
 			return err1
 		}
@@ -142,14 +140,14 @@ func (r *rows) Next(dest []driver.Value) error {
 	}
 
 	// need the column info to retrieve/convert values
-	metadata, err := r.getResultMetadata()
+	metadata, err := r.getResultSchema()
 	if err != nil {
 		return err
 	}
 
 	// populate the destination slice
 	for i := range dest {
-		val, err := value(r.fetchResults.Results.Columns[i], metadata.Schema.Columns[i], r.nextRowIndex, r.location)
+		val, err := value(r.results.Columns[i], metadata.Columns[i], r.nextRowIndex, r.location)
 
 		if err != nil {
 			return err
@@ -196,9 +194,7 @@ func (r *rows) ColumnTypeDatabaseTypeName(index int) string {
 		return ""
 	}
 
-	dbtype := getDBTypeName(column)
-
-	return dbtype
+	return strings.TrimSuffix(column.TypeName, "_TYPE")
 }
 
 // ColumnTypeNullable returns a flag indicating whether the column is nullable
@@ -214,14 +210,13 @@ func (r *rows) ColumnTypeLength(index int) (length int64, ok bool) {
 		return 0, false
 	}
 
-	typeName := getDBTypeID(columnInfo)
-	switch typeName {
-	case cli_service.TTypeId_STRING_TYPE,
-		cli_service.TTypeId_VARCHAR_TYPE,
-		cli_service.TTypeId_BINARY_TYPE,
-		cli_service.TTypeId_ARRAY_TYPE,
-		cli_service.TTypeId_MAP_TYPE,
-		cli_service.TTypeId_STRUCT_TYPE:
+	switch columnInfo.TypeName {
+	case cli_service.TTypeId_STRING_TYPE.String(),
+		cli_service.TTypeId_VARCHAR_TYPE.String(),
+		cli_service.TTypeId_BINARY_TYPE.String(),
+		cli_service.TTypeId_ARRAY_TYPE.String(),
+		cli_service.TTypeId_MAP_TYPE.String(),
+		cli_service.TTypeId_STRUCT_TYPE.String():
 		return math.MaxInt64, true
 	default:
 		return 0, false
@@ -243,57 +238,43 @@ var (
 	scanTypeUnknown  = reflect.TypeOf(new(any))
 )
 
-func getScanType(column *cli_service.TColumnDesc) reflect.Type {
+func getScanType(column *client.ColumnInfo) reflect.Type {
 
-	entry := column.TypeDesc.Types[0].PrimitiveEntry
-
-	switch entry.Type {
-	case cli_service.TTypeId_BOOLEAN_TYPE:
+	switch column.TypeName {
+	case cli_service.TTypeId_BOOLEAN_TYPE.String():
 		return scanTypeBoolean
-	case cli_service.TTypeId_TINYINT_TYPE:
+	case cli_service.TTypeId_TINYINT_TYPE.String():
 		return scanTypeInt8
-	case cli_service.TTypeId_SMALLINT_TYPE:
+	case cli_service.TTypeId_SMALLINT_TYPE.String():
 		return scanTypeInt16
-	case cli_service.TTypeId_INT_TYPE:
+	case cli_service.TTypeId_INT_TYPE.String():
 		return scanTypeInt32
-	case cli_service.TTypeId_BIGINT_TYPE:
+	case cli_service.TTypeId_BIGINT_TYPE.String():
 		return scanTypeInt64
-	case cli_service.TTypeId_FLOAT_TYPE:
+	case cli_service.TTypeId_FLOAT_TYPE.String():
 		return scanTypeFloat32
-	case cli_service.TTypeId_DOUBLE_TYPE:
+	case cli_service.TTypeId_DOUBLE_TYPE.String():
 		return scanTypeFloat64
-	case cli_service.TTypeId_NULL_TYPE:
+	case cli_service.TTypeId_NULL_TYPE.String():
 		return scanTypeNull
-	case cli_service.TTypeId_STRING_TYPE:
+	case cli_service.TTypeId_STRING_TYPE.String():
 		return scanTypeString
-	case cli_service.TTypeId_CHAR_TYPE:
+	case cli_service.TTypeId_CHAR_TYPE.String():
 		return scanTypeString
-	case cli_service.TTypeId_VARCHAR_TYPE:
+	case cli_service.TTypeId_VARCHAR_TYPE.String():
 		return scanTypeString
-	case cli_service.TTypeId_DATE_TYPE, cli_service.TTypeId_TIMESTAMP_TYPE:
+	case cli_service.TTypeId_DATE_TYPE.String(), cli_service.TTypeId_TIMESTAMP_TYPE.String():
 		return scanTypeDateTime
-	case cli_service.TTypeId_DECIMAL_TYPE, cli_service.TTypeId_BINARY_TYPE, cli_service.TTypeId_ARRAY_TYPE,
-		cli_service.TTypeId_STRUCT_TYPE, cli_service.TTypeId_MAP_TYPE, cli_service.TTypeId_UNION_TYPE:
+	case cli_service.TTypeId_DECIMAL_TYPE.String(), cli_service.TTypeId_BINARY_TYPE.String(), cli_service.TTypeId_ARRAY_TYPE.String(),
+		cli_service.TTypeId_STRUCT_TYPE.String(), cli_service.TTypeId_MAP_TYPE.String(), cli_service.TTypeId_UNION_TYPE.String():
 		return scanTypeRawBytes
-	case cli_service.TTypeId_USER_DEFINED_TYPE:
+	case cli_service.TTypeId_USER_DEFINED_TYPE.String():
 		return scanTypeUnknown
-	case cli_service.TTypeId_INTERVAL_DAY_TIME_TYPE, cli_service.TTypeId_INTERVAL_YEAR_MONTH_TYPE:
+	case cli_service.TTypeId_INTERVAL_DAY_TIME_TYPE.String(), cli_service.TTypeId_INTERVAL_YEAR_MONTH_TYPE.String():
 		return scanTypeString
 	default:
 		return scanTypeUnknown
 	}
-}
-
-func getDBTypeName(column *cli_service.TColumnDesc) string {
-	entry := column.TypeDesc.Types[0].PrimitiveEntry
-	dbtype := strings.TrimSuffix(entry.Type.String(), "_TYPE")
-
-	return dbtype
-}
-
-func getDBTypeID(column *cli_service.TColumnDesc) cli_service.TTypeId {
-	entry := column.TypeDesc.Types[0].PrimitiveEntry
-	return entry.Type
 }
 
 // isValidRows checks that the row instance is not nil
@@ -310,22 +291,22 @@ func isValidRows(r *rows) error {
 	return nil
 }
 
-func (r *rows) getColumnMetadataByIndex(index int) (*cli_service.TColumnDesc, error) {
+func (r *rows) getColumnMetadataByIndex(index int) (*client.ColumnInfo, error) {
 	err := isValidRows(r)
 	if err != nil {
 		return nil, err
 	}
 
-	resultMetadata, err := r.getResultMetadata()
+	resultSchema, err := r.getResultSchema()
 	if err != nil {
 		return nil, err
 	}
 
-	if !resultMetadata.IsSetSchema() {
+	if resultSchema == nil {
 		return nil, errors.New(errRowsNoSchemaAvailable)
 	}
 
-	columns := resultMetadata.GetSchema().GetColumns()
+	columns := resultSchema.Columns
 	if index < 0 || index >= len(columns) {
 		return nil, errors.Errorf("invalid column index: %d", index)
 	}
@@ -336,11 +317,11 @@ func (r *rows) getColumnMetadataByIndex(index int) (*cli_service.TColumnDesc, er
 // isNextRowInPage returns a boolean flag indicating whether
 // the next result set row is in the current result set page
 func (r *rows) isNextRowInPage() bool {
-	if r == nil || r.fetchResults == nil {
+	if r == nil || r.results == nil {
 		return false
 	}
 
-	nRowsInPage := getNRows(r.fetchResults.GetResults())
+	nRowsInPage := getNRows(r.results)
 	if nRowsInPage == 0 {
 		return false
 	}
@@ -349,28 +330,28 @@ func (r *rows) isNextRowInPage() bool {
 	return r.nextRowNumber >= startRowOffset && r.nextRowNumber < (startRowOffset+nRowsInPage)
 }
 
-func (r *rows) getResultMetadata() (*cli_service.TGetResultSetMetadataResp, error) {
-	if r.fetchResultsMetadata == nil {
+func (r *rows) getResultSchema() (*client.ResultSchema, error) {
+	if r.Schema == nil {
 		err := isValidRows(r)
 		if err != nil {
 			return nil, err
 		}
 
-		req := cli_service.TGetResultSetMetadataReq{
-			OperationHandle: r.opHandle,
+		req := client.GetResultsMetadataReq{
+			ExecutionHandle: r.opHandle,
 		}
 		ctx := driverctx.NewContextWithCorrelationId(driverctx.NewContextWithConnId(context.Background(), r.connId), r.correlationId)
 
-		resp, err := r.client.GetResultSetMetadata(ctx, &req)
+		resp, err := r.client.GetResultsMetadata(ctx, &req)
 		if err != nil {
 			return nil, err
 		}
 
-		r.fetchResultsMetadata = resp
+		r.Schema = resp.Schema
 
 	}
 
-	return r.fetchResultsMetadata, nil
+	return r.Schema, nil
 }
 
 func (r *rows) fetchResultPage() error {
@@ -395,15 +376,15 @@ func (r *rows) fetchResultPage() error {
 				return errors.New(errRowsFetchPriorToStart)
 			}
 		} else if direction == cli_service.TFetchOrientation_FETCH_NEXT {
-			if r.fetchResults != nil && !r.fetchResults.GetHasMoreRows() {
+			if r.results != nil && !r.results.HasMoreRows {
 				return io.EOF
 			}
 		} else {
 			return errors.Errorf("unhandled fetch result orientation: %s", direction)
 		}
 
-		req := cli_service.TFetchResultsReq{
-			OperationHandle: r.opHandle,
+		req := client.FetchResultsReq{
+			ExecutionHandle: r.opHandle,
 			MaxRows:         r.pageSize,
 			Orientation:     direction,
 		}
@@ -414,7 +395,7 @@ func (r *rows) fetchResultPage() error {
 			return err
 		}
 
-		r.fetchResults = fetchResult
+		r.results = fetchResult.Result
 	}
 
 	// don't assume the next row is the first row in the page
@@ -443,28 +424,26 @@ func (r *rows) getPageFetchDirection() cli_service.TFetchOrientation {
 // starting row number of the current result page, -1 is returned
 // if there is no result page
 func (r *rows) getPageStartRowNum() int64 {
-	if r == nil || r.fetchResults == nil || r.fetchResults.GetResults() == nil {
+	if r == nil || r.results == nil {
 		return 0
 	}
 
-	return r.fetchResults.GetResults().GetStartRowOffset()
+	return r.results.StartRowOffset
 }
 
 var dateTimeFormats map[string]string = map[string]string{
-	"TIMESTAMP": "2006-01-02 15:04:05.999999999",
-	"DATE":      "2006-01-02",
+	"TIMESTAMP_TYPE": "2006-01-02 15:04:05.999999999",
+	"DATE_TYPE":      "2006-01-02",
 }
 
-func value(tColumn *cli_service.TColumn, tColumnDesc *cli_service.TColumnDesc, rowNum int64, location *time.Location) (val any, err error) {
+func value(tColumn *cli_service.TColumn, tColumnDesc *client.ColumnInfo, rowNum int64, location *time.Location) (val any, err error) {
 	if location == nil {
 		location = time.UTC
 	}
 
-	entry := tColumnDesc.TypeDesc.Types[0].PrimitiveEntry
-	dbtype := strings.TrimSuffix(entry.Type.String(), "_TYPE")
 	if tVal := tColumn.GetStringVal(); tVal != nil && !isNull(tVal.Nulls, rowNum) {
 		val = tVal.Values[rowNum]
-		val, err = handleDateTime(val, dbtype, tColumnDesc.ColumnName, location)
+		val, err = handleDateTime(val, tColumnDesc.TypeName, tColumnDesc.Name, location)
 	} else if tVal := tColumn.GetByteVal(); tVal != nil && !isNull(tVal.Nulls, rowNum) {
 		val = tVal.Values[rowNum]
 	} else if tVal := tColumn.GetI16Val(); tVal != nil && !isNull(tVal.Nulls, rowNum) {
@@ -476,7 +455,7 @@ func value(tColumn *cli_service.TColumn, tColumnDesc *cli_service.TColumnDesc, r
 	} else if tVal := tColumn.GetBoolVal(); tVal != nil && !isNull(tVal.Nulls, rowNum) {
 		val = tVal.Values[rowNum]
 	} else if tVal := tColumn.GetDoubleVal(); tVal != nil && !isNull(tVal.Nulls, rowNum) {
-		if dbtype == "FLOAT" {
+		if tColumnDesc.TypeName == "FLOAT_TYPE" {
 			// database types FLOAT and DOUBLE are both returned as a float64
 			// convert to a float32 is valid because the FLOAT type would have
 			// only been four bytes on the server
@@ -516,7 +495,7 @@ func isNull(nulls []byte, position int64) bool {
 	return false
 }
 
-func getNRows(rs *cli_service.TRowSet) int64 {
+func getNRows(rs *client.ResultData) int64 {
 	if rs == nil {
 		return 0
 	}

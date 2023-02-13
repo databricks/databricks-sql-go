@@ -32,6 +32,7 @@ type Config struct {
 	ThriftTransport           string
 	ThriftProtocolVersion     cli_service.TProtocolVersion
 	ThriftDebugClientProtocol bool
+	ClientMode                string
 }
 
 // ToEndpointURL generates the endpoint URL from Config that a Thrift client will connect to
@@ -61,6 +62,7 @@ func (c *Config) DeepCopy() *Config {
 		ThriftTransport:           c.ThriftTransport,
 		ThriftProtocolVersion:     c.ThriftProtocolVersion,
 		ThriftDebugClientProtocol: c.ThriftDebugClientProtocol,
+		ClientMode:                c.ClientMode,
 	}
 }
 
@@ -171,6 +173,7 @@ func WithDefaults() *Config {
 		ThriftTransport:           "http",
 		ThriftProtocolVersion:     cli_service.TProtocolVersion_SPARK_CLI_SERVICE_PROTOCOL_V6,
 		ThriftDebugClientProtocol: false,
+		ClientMode:                "thrift", //"rest"
 	}
 
 }

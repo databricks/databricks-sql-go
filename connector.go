@@ -10,7 +10,6 @@ import (
 
 	"github.com/databricks/databricks-sql-go/auth/pat"
 	"github.com/databricks/databricks-sql-go/driverctx"
-	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/client"
 	"github.com/databricks/databricks-sql-go/internal/config"
 	"github.com/databricks/databricks-sql-go/logger"
@@ -23,29 +22,18 @@ type connector struct {
 
 // Connect returns a connection to the Databricks database from a connection pool.
 func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
-	var catalogName *cli_service.TIdentifier
-	var schemaName *cli_service.TIdentifier
-	if c.cfg.Catalog != "" {
-		catalogName = cli_service.TIdentifierPtr(cli_service.TIdentifier(c.cfg.Catalog))
+	var dbclient client.DatabricksClient
+	var err error
+	switch c.cfg.ClientMode {
+	case "thrift":
+		dbclient, err = client.InitThriftClient(c.cfg, c.client)
+		if err != nil {
+			return nil, wrapErr(err, "error initializing thrift client")
+		}
+	case "rest":
+		//todo
 	}
-	if c.cfg.Schema != "" {
-		schemaName = cli_service.TIdentifierPtr(cli_service.TIdentifier(c.cfg.Schema))
-	}
-
-	tclient, err := client.InitThriftClient(c.cfg, c.client)
-	if err != nil {
-		return nil, wrapErr(err, "error initializing thrift client")
-	}
-	protocolVersion := int64(c.cfg.ThriftProtocolVersion)
-	session, err := tclient.OpenSession(ctx, &cli_service.TOpenSessionReq{
-		ClientProtocolI64: &protocolVersion,
-		Configuration:     make(map[string]string),
-		InitialNamespace: &cli_service.TNamespace{
-			CatalogName: catalogName,
-			SchemaName:  schemaName,
-		},
-		CanUseMultipleCatalogs: &c.cfg.CanUseMultipleCatalogs,
-	})
+	session, err := dbclient.OpenSession(ctx, &client.OpenSessionReq{})
 
 	if err != nil {
 		return nil, wrapErrf(err, "error connecting: host=%s port=%d, httpPath=%s", c.cfg.Host, c.cfg.Port, c.cfg.HTTPPath)
@@ -54,7 +42,7 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 	conn := &conn{
 		id:      client.SprintGuid(session.SessionHandle.GetSessionId().GUID),
 		cfg:     c.cfg,
-		client:  tclient,
+		client:  dbclient,
 		session: session,
 	}
 	log := logger.WithContext(conn.id, driverctx.CorrelationIdFromContext(ctx), "")
