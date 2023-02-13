@@ -28,7 +28,7 @@ const (
 	ErrNoAuthenticationMethod = "no authentication method set"
 	ErrInvalidDSNFormat       = "invalid DSN: invalid format"
 	ErrInvalidDSNPort         = "invalid DSN: invalid DSN port"
-	ErrInvalidDSNTokenIsEmpty = "invalid DSN: empty token"
+	ErrInvalidDSNPATIsEmpty   = "invalid DSN: empty token"
 	ErrBasicAuthNotSupported  = "invalid DSN: basic auth not enabled"
 	ErrInvalidDSNMaxRows      = "invalid DSN: maxRows param is not an integer"
 	ErrInvalidDSNTimeout      = "invalid DSN: timeout param is not an integer"
