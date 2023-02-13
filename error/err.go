@@ -141,8 +141,8 @@ func NewRequestError(ctx context.Context, msg string, err error) *RequestError {
 type ExecutionError struct {
 	databricksError
 	queryId  string
-	errClass string
-	sqlState string
+	errClass *string
+	sqlState *string
 }
 
 func (q *ExecutionError) QueryId() string {
@@ -150,19 +150,19 @@ func (q *ExecutionError) QueryId() string {
 }
 
 func (q *ExecutionError) ErrorClass() string {
-	return q.errClass
+	return *(q.errClass)
 }
 
 func (q *ExecutionError) SqlState() string {
-	return q.sqlState
+	return *(q.sqlState)
 }
 
 func NewExecutionError(ctx context.Context, msg string, err error, opStatusResp *cli_service.TGetOperationStatusResp) *ExecutionError {
 	dbsqlErr := newDatabricksError(ctx, msg, err, Execution)
-	errClass := ""
-	sqlState := ""
+	errClassPtr := (*string)(nil)
+	sqlStatePtr := (*string)(nil)
 	if opStatusResp != nil {
-		sqlState = *opStatusResp.SqlState
+		sqlStatePtr = opStatusResp.SqlState
 	}
-	return &ExecutionError{dbsqlErr, driverctx.QueryIdFromContext(ctx), errClass, sqlState}
+	return &ExecutionError{dbsqlErr, driverctx.QueryIdFromContext(ctx), errClassPtr, sqlStatePtr}
 }
