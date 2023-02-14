@@ -74,7 +74,7 @@ func (rc *RestClient) ExecuteStatement(ctx context.Context, req *ExecuteStatemen
 				ErrorCode: resp.Status.Error.ErrorCode.String(),
 			},
 		},
-		// Schema: toSchemaFromManifest(),
+		Schema: toSchemaRest(resp.Manifest),
 		Result: nil,
 	}, nil
 }
@@ -101,6 +101,20 @@ func (h *RestHandle) Id() string {
 	return h.StatementId
 }
 
-// func toSchemaFromManifest() *ResultSchema {
-
-// }
+func toSchemaRest(s *sqlexec.ResultManifest) *ResultSchema {
+	cols := []*ColumnInfo{}
+	for _, c := range s.Schema.Columns {
+		cols = append(cols, &ColumnInfo{
+			Name:             c.Name,
+			Position:         c.Position,
+			TypeName:         string(c.TypeName),
+			TypeText:         c.TypeText,
+			TypePrecision:    c.TypePrecision,
+			TypeScale:        c.TypeScale,
+			TypeIntervalType: c.TypeIntervalType,
+		})
+	}
+	return &ResultSchema{
+		Columns: cols,
+	}
+}
