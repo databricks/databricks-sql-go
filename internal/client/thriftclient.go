@@ -149,7 +149,7 @@ func (tsc *ThriftServiceClient) ExecuteStatement(ctx context.Context, req *Execu
 	if !ok {
 		return nil, errors.New("invalid handle")
 	}
-	resp, err := tsc.TCLIServiceClient.ExecuteStatement(context.Background(), &cli_service.TExecuteStatementReq{
+	tReq := &cli_service.TExecuteStatementReq{
 		SessionHandle: tHandle.SessionHandle,
 		Statement:     req.Statement,
 		RunAsync:      tsc.cfg.RunAsync,
@@ -157,7 +157,17 @@ func (tsc *ThriftServiceClient) ExecuteStatement(ctx context.Context, req *Execu
 		GetDirectResults: &cli_service.TSparkGetDirectResults{
 			MaxRows: int64(tsc.cfg.MaxRows),
 		},
-	})
+	}
+	if tsc.cfg.UseArrowBatches {
+		tReq.CanReadArrowResult_ = &tsc.cfg.UseArrowBatches
+		tReq.UseArrowNativeTypes = &cli_service.TSparkArrowTypes{
+			DecimalAsArrow:       &tsc.cfg.UseArrowNativeDecimal,
+			TimestampAsArrow:     &tsc.cfg.UseArrowNativeTimestamp,
+			ComplexTypesAsArrow:  &tsc.cfg.UseArrowNativeComplexTypes,
+			IntervalTypesAsArrow: &tsc.cfg.UseArrowNativeIntervalTypes,
+		}
+	}
+	resp, err := tsc.TCLIServiceClient.ExecuteStatement(context.Background(), tReq)
 	if err != nil {
 		return nil, errors.Wrap(err, "execute statement request error")
 	}

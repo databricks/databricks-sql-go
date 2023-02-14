@@ -267,19 +267,6 @@ func (c *conn) executeStatement(ctx context.Context, query string, args []driver
 		Statement:     query,
 	})
 
-	if c.cfg.UseArrowBatches {
-		req.CanReadArrowResult_ = &c.cfg.UseArrowBatches
-		req.UseArrowNativeTypes = &cli_service.TSparkArrowTypes{
-			DecimalAsArrow:       &c.cfg.UseArrowNativeDecimal,
-			TimestampAsArrow:     &c.cfg.UseArrowNativeTimestamp,
-			ComplexTypesAsArrow:  &c.cfg.UseArrowNativeComplexTypes,
-			IntervalTypesAsArrow: &c.cfg.UseArrowNativeIntervalTypes,
-		}
-	}
-
-	ctx = driverctx.NewContextWithConnId(ctx, c.id)
-	resp, err := c.client.ExecuteStatement(ctx, &req)
-
 	var shouldCancel = func(resp *client.ExecuteStatementResp) bool {
 		if resp == nil {
 			return false

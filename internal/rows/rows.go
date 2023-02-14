@@ -33,9 +33,9 @@ type rows struct {
 	rowscanner.RowScanner
 
 	// Handle for the associated database operation.
-	opHandle *cli_service.TOperationHandle
+	opHandle client.Handle
 
-	client cli_service.TCLIService
+	client client.DatabricksClient
 
 	// Maximum number of rows to return from a single fetch operation
 	maxPageSize int64
@@ -87,15 +87,15 @@ var errRowsUnknowRowType = "databricks: unknown rows representation"
 func NewRows(
 	connId string,
 	correlationId string,
-	opHandle *cli_service.TOperationHandle,
-	client cli_service.TCLIService,
+	opHandle client.Handle,
+	client client.DatabricksClient,
 	config *config.Config,
-	directResults *cli_service.TSparkDirectResults,
+	stmtResp *client.ExecuteStatementResp,
 ) (driver.Rows, error) {
 
 	var logger *dbsqllog.DBSQLLogger
 	if opHandle != nil {
-		logger = dbsqllog.WithContext(connId, correlationId, dbsqlclient.SprintGuid(opHandle.OperationId.GUID))
+		logger = dbsqllog.WithContext(connId, correlationId, opHandle.Id())
 	} else {
 		logger = dbsqllog.WithContext(connId, correlationId, "")
 	}
@@ -130,23 +130,23 @@ func NewRows(
 	}
 
 	// if we already have results for the query do some additional initialization
-	if directResults != nil {
+	if stmtResp != nil {
 		logger.Debug().Msgf("databricks: creating Rows with direct results")
 		// set the result set metadata
-		if directResults.ResultSetMetadata != nil {
-			r.resultSetMetadata = directResults.ResultSetMetadata
-			r.schema = directResults.ResultSetMetadata.Schema
+		if stmtResp.Schema != nil {
+			r.resultSetMetadata = stmtResp.ResultSetMetadata
+			r.schema = stmtResp.ResultSetMetadata.Schema
 		}
 
 		// If the entire query result set fits in direct results the server closes
 		// the operations.
-		if directResults.CloseOperation != nil {
+		if stmtResp.CloseOperation != nil {
 			logger.Debug().Msgf("databricks: creating Rows with server operation closed")
 			r.closedOnServer = true
 		}
 
 		// initialize the row scanner
-		err := r.makeRowScanner(directResults.ResultSet)
+		err := r.makeRowScanner(stmtResp.ResultSet)
 		if err != nil {
 			return r, err
 		}

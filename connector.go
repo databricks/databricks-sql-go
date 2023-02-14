@@ -30,12 +30,12 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 	case "thrift":
 		dbclient, err = client.InitThriftClient(c.cfg, c.client)
 		if err != nil {
-			return nil, wrapErr(err, "error initializing thrift client")
+			return nil, dbsqlerr.WrapErr(err, "error initializing thrift client")
 		}
 	case "rest":
 		dbclient, err = client.InitRestClient(c.cfg, c.client)
 		if err != nil {
-			return nil, wrapErr(err, "error initializing rest client")
+			return nil, dbsqlerr.WrapErr(err, "error initializing rest client")
 		}
 	default:
 		return nil, errors.New("invalid client mode")
