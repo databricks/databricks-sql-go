@@ -45,7 +45,6 @@ type DatabricksError interface {
 }
 
 type databricksError struct {
-	msg     string
 	err     error
 	corrId  string
 	connId  string
@@ -54,8 +53,7 @@ type databricksError struct {
 
 func newDatabricksError(ctx context.Context, msg string, err error, errType dbsqlErrorType) databricksError {
 	return databricksError{
-		msg:     msg,
-		err:     errors.WithStack(err),
+		err:     errors.Wrap(err, msg),
 		corrId:  driverctx.CorrelationIdFromContext(ctx),
 		connId:  driverctx.ConnIdFromContext(ctx),
 		errType: errType,
@@ -90,15 +88,22 @@ type DatabricksErrorWithQuery interface {
 }
 
 func (e databricksError) Error() string {
-	return fmt.Sprintf("databricks: %s: %s: %v", e.errType.string(), e.msg, e.err)
+	return fmt.Sprintf("databricks: %s: %v", e.errType.string(), e.err.Error())
 }
 
-func (e databricksError) Unwrap() error {
+func (e databricksError) Cause() error {
 	return e.err
 }
 
-func (e databricksError) Message() string {
-	return e.msg
+func (e databricksError) StackTrace() errors.StackTrace {
+	type stackTracer interface {
+		StackTrace() errors.StackTrace
+	}
+
+	if err, ok := e.err.(stackTracer); ok {
+		return err.StackTrace()
+	}
+	return nil
 }
 
 func (e databricksError) CorrelationId() string {
@@ -141,8 +146,8 @@ func NewRequestError(ctx context.Context, msg string, err error) *RequestError {
 type ExecutionError struct {
 	databricksError
 	queryId  string
-	errClass *string
-	sqlState *string
+	errClass string
+	sqlState string
 }
 
 func (q *ExecutionError) QueryId() string {
@@ -150,19 +155,19 @@ func (q *ExecutionError) QueryId() string {
 }
 
 func (q *ExecutionError) ErrorClass() string {
-	return *(q.errClass)
+	return q.errClass
 }
 
 func (q *ExecutionError) SqlState() string {
-	return *(q.sqlState)
+	return q.sqlState
 }
 
 func NewExecutionError(ctx context.Context, msg string, err error, opStatusResp *cli_service.TGetOperationStatusResp) *ExecutionError {
 	dbsqlErr := newDatabricksError(ctx, msg, err, Execution)
-	errClassPtr := (*string)(nil)
-	sqlStatePtr := (*string)(nil)
-	if opStatusResp != nil {
-		sqlStatePtr = opStatusResp.SqlState
+	errClass := ""
+	sqlState := ""
+	if opStatusResp != nil && opStatusResp.SqlState != nil {
+		sqlState = *(opStatusResp.SqlState)
 	}
-	return &ExecutionError{dbsqlErr, driverctx.QueryIdFromContext(ctx), errClassPtr, sqlStatePtr}
+	return &ExecutionError{dbsqlErr, driverctx.QueryIdFromContext(ctx), errClass, sqlState}
 }
