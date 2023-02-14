@@ -9,11 +9,13 @@ import (
 	sdkcfg "github.com/databricks/databricks-sdk-go/config"
 	sqlexec "github.com/databricks/databricks-sdk-go/service/sql"
 	"github.com/databricks/databricks-sql-go/internal/config"
+	"github.com/pkg/errors"
 )
 
 type RestClient struct {
-	cfg *config.Config
-	api sqlexec.StatementExecutionService
+	cfg         *config.Config
+	api         sqlexec.StatementExecutionService
+	firstResult map[string]ExecutionResult
 }
 
 func InitRestClient(cfg *config.Config, httpclient *http.Client) (DatabricksClient, error) {
@@ -36,15 +38,48 @@ func (rc *RestClient) OpenSession(ctx context.Context, req *OpenSessionReq) (*Op
 }
 
 func (rc *RestClient) CloseSession(ctx context.Context, req *CloseSessionReq) (*CloseSessionResp, error) {
-	return nil, nil
+	return &CloseSessionResp{
+		Status: &RequestStatus{
+			StatusCode: "SUCCESS",
+		},
+	}, nil
 }
 
 func (rc *RestClient) FetchResults(ctx context.Context, req *FetchResultsReq) (*FetchResultsResp, error) {
-	return nil, nil
+	if rc.firstResult != nil {
+		res := rc.firstResult[req.ExecutionHandle.Id()]
+		defer func() {
+			rc.firstResult = nil
+		}()
+		return &FetchResultsResp{
+			Status: &RequestStatus{
+				StatusCode: "SUCCESS",
+			},
+			ExecutionResult: ExecutionResult{
+				Schema: res.Schema,
+				Result: res.Result,
+			},
+		}, nil
+	}
+	resp, err := rc.api.GetStatement(ctx, sqlexec.GetStatementRequest{
+		StatementId: req.ExecutionHandle.Id(),
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &FetchResultsResp{
+		Status: &RequestStatus{
+			StatusCode: "SUCCESS",
+		},
+		ExecutionResult: ExecutionResult{
+			Schema: toSchemaRest(resp.Manifest),
+			Result: nil,
+		},
+	}, nil
 }
 
 func (rc *RestClient) GetResultsMetadata(ctx context.Context, req *GetResultsMetadataReq) (*GetResultsMetadataResp, error) {
-	return nil, nil
+	return nil, errors.New("get results metadata is not available in REST API")
 }
 
 func (rc *RestClient) ExecuteStatement(ctx context.Context, req *ExecuteStatementReq) (*ExecuteStatementResp, error) {
@@ -74,21 +109,58 @@ func (rc *RestClient) ExecuteStatement(ctx context.Context, req *ExecuteStatemen
 				ErrorCode: resp.Status.Error.ErrorCode.String(),
 			},
 		},
-		Schema: toSchemaRest(resp.Manifest),
-		Result: nil,
+		ExecutionResult: ExecutionResult{
+			Schema: toSchemaRest(resp.Manifest),
+			// TODO
+			Result: nil,
+		},
 	}, nil
 }
 
 func (rc *RestClient) GetExecutionStatus(ctx context.Context, req *GetExecutionStatusReq) (*GetExecutionStatusResp, error) {
-	return nil, nil
+	resp, err := rc.api.GetStatement(ctx, sqlexec.GetStatementRequest{
+		StatementId: req.ExecutionHandle.Id(),
+	})
+	if err != nil {
+		return nil, err
+	}
+	if resp.Result != nil {
+		rc.firstResult[req.ExecutionHandle.Id()] = ExecutionResult{Result: nil, Schema: toSchemaRest(resp.Manifest)}
+	}
+	// TODO
+	return &GetExecutionStatusResp{
+		Status: &RequestStatus{
+			StatusCode: "SUCCESS",
+		},
+		ExecutionStatus: ExecutionStatus{
+			ExecutionState: string(resp.Status.State),
+			Error: &ExecutionError{
+				Message:   resp.Status.Error.Message,
+				ErrorCode: resp.Status.Error.ErrorCode.String(),
+			},
+		},
+	}, nil
 }
 
 func (rc *RestClient) CloseExecution(ctx context.Context, req *CloseExecutionReq) (*CloseExecutionResp, error) {
-	return nil, nil
+	// not implemented
+	return &CloseExecutionResp{
+		Status: &RequestStatus{
+			StatusCode: "SUCCESS",
+		},
+	}, nil
 }
 
 func (rc *RestClient) CancelExecution(ctx context.Context, req *CancelExecutionReq) (*CancelExecutionResp, error) {
-	return nil, nil
+	err := rc.api.CancelExecution(ctx, sqlexec.CancelExecutionRequest{})
+	if err != nil {
+		return nil, err
+	}
+	return &CancelExecutionResp{
+		Status: &RequestStatus{
+			StatusCode: "SUCCESS",
+		},
+	}, nil
 }
 
 var _ DatabricksClient = (*RestClient)(nil)

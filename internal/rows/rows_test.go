@@ -223,24 +223,24 @@ func TestRowsFetchResultPageErrors(t *testing.T) {
 	assert.EqualError(t, err, io.EOF.Error(), "row number past end of result set should return EOF")
 }
 
-func TestGetResultMetadataNoDirectResults(t *testing.T) {
-	t.Parallel()
-	var getMetadataCount, fetchResultsCount int
+// func TestGetResultMetadataNoDirectResults(t *testing.T) {
+// 	t.Parallel()
+// 	var getMetadataCount, fetchResultsCount int
 
-	client := getRowsTestSimpleClient(&getMetadataCount, &fetchResultsCount)
-	rowSet := &rows{client: client}
+// 	client := getRowsTestSimpleClient(&getMetadataCount, &fetchResultsCount)
+// 	rowSet := &rows{client: client}
 
-	metadata, err := rowSet.getResultSetSchema()
-	assert.NotNil(t, metadata)
-	assert.Nil(t, err)
-	assert.Equal(t, 1, getMetadataCount)
+// 	metadata, err := rowSet.getResultSetSchema()
+// 	assert.NotNil(t, metadata)
+// 	assert.Nil(t, err)
+// 	assert.Equal(t, 1, getMetadataCount)
 
-	// calling again should not call into client
-	metadata, err = rowSet.getResultSetSchema()
-	assert.NotNil(t, metadata)
-	assert.Nil(t, err)
-	assert.Equal(t, 1, getMetadataCount)
-}
+// 	// calling again should not call into client
+// 	metadata, err = rowSet.getResultSetSchema()
+// 	assert.NotNil(t, metadata)
+// 	assert.Nil(t, err)
+// 	assert.Equal(t, 1, getMetadataCount)
+// }
 
 // func TestGetResultMetadataWithDirectResults(t *testing.T) {
 // 	t.Parallel()

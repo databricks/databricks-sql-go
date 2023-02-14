@@ -11,6 +11,7 @@ import (
 
 	"github.com/databricks/databricks-sql-go/driverctx"
 	// "github.com/databricks/databricks-sql-go/internal/cli_service"
+	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/client"
 	dbsqlclient "github.com/databricks/databricks-sql-go/internal/client"
 	"github.com/databricks/databricks-sql-go/internal/config"
@@ -44,7 +45,7 @@ type rows struct {
 
 	// Metadata for result set
 	// resultSetMetadata *cli_service.TGetResultSetMetadataResp
-	schema            *client.ResultSchema
+	schema *client.ResultSchema
 
 	hasMoreRows bool
 
@@ -286,7 +287,6 @@ func (r *rows) ColumnTypeDatabaseTypeName(index int) string {
 		return ""
 	}
 
-	
 	return column.TypeName
 }
 

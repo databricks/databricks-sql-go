@@ -110,8 +110,10 @@ func (tsc *ThriftServiceClient) FetchResults(ctx context.Context, req *FetchResu
 	}
 	return &FetchResultsResp{
 		Status: toRequestStatus(resp.Status),
-		Schema: toSchema(resp.ResultSetMetadata),
-		Result: toResult(resp.Results, *resp.HasMoreRows),
+		ExecutionResult: ExecutionResult{
+			Schema: toSchema(resp.ResultSetMetadata),
+			Result: toResult(resp.Results, *resp.HasMoreRows),
+		},
 	}, CheckStatus(resp)
 }
 
@@ -213,8 +215,10 @@ func (tsc *ThriftServiceClient) ExecuteStatement(ctx context.Context, req *Execu
 	return &ExecuteStatementResp{
 		Status:          toRequestStatus(resp.Status),
 		ExecutionHandle: &ThriftHandle{OperationHandle: resp.OperationHandle},
-		Result:          result,
-		Schema:          schema,
+		ExecutionResult: ExecutionResult{
+			Result: result,
+			Schema: schema,
+		},
 		ExecutionStatus: ExecutionStatus{
 			SqlState:        sqlState,
 			NumModifiedRows: numModifiedRows,
