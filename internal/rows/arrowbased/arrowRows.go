@@ -12,7 +12,7 @@ import (
 	"github.com/apache/arrow/go/v11/arrow"
 	"github.com/apache/arrow/go/v11/arrow/array"
 	"github.com/apache/arrow/go/v11/arrow/ipc"
-	"github.com/databricks/databricks-sql-go/internal/cli_service"
+	"github.com/databricks/databricks-sql-go/internal/client"
 	"github.com/databricks/databricks-sql-go/internal/config"
 	dbsqlerr "github.com/databricks/databricks-sql-go/internal/err"
 	"github.com/databricks/databricks-sql-go/internal/rows/rowscanner"
@@ -57,7 +57,7 @@ type timeStampFn func(arrow.Timestamp) time.Time
 type colInfo struct {
 	name      string
 	arrowType arrow.DataType
-	dbType    cli_service.TTypeId
+	dbType    client.ColumnTypeId
 }
 
 // arrowRowScanner handles extracting values from arrow records
@@ -102,7 +102,7 @@ type arrowRowScanner struct {
 var _ rowscanner.RowScanner = (*arrowRowScanner)(nil)
 
 // NewArrowRowScanner returns an instance of RowScanner which handles arrow format results
-func NewArrowRowScanner(resultSetMetadata *cli_service.TGetResultSetMetadataResp, rowSet *cli_service.TRowSet, cfg *config.Config, logger *dbsqllog.DBSQLLogger) (rowscanner.RowScanner, error) {
+func NewArrowRowScanner(resultSetMetadata *client.ResultSchema, rowSet *client.ResultData, cfg *config.Config, logger *dbsqllog.DBSQLLogger) (rowscanner.RowScanner, error) {
 
 	// we take a passed in logger, rather than just using the global from dbsqllog, so that the containing rows
 	// instance can pass in a logger with context such as correlation ID and operation ID
@@ -118,11 +118,11 @@ func NewArrowRowScanner(resultSetMetadata *cli_service.TGetResultSetMetadataResp
 	}
 
 	var arrowSchema *arrow.Schema
-	schemaBytes := resultSetMetadata.ArrowSchema
+	schemaBytes := resultSetMetadata.ArrowSchemaBytes
 	if schemaBytes == nil {
 		var err error
 		// convert the TTableSchema to an arrow Schema
-		arrowSchema, err = tTableSchemaToArrowSchema(resultSetMetadata.Schema, &arrowConfig)
+		arrowSchema, err = resultSchemaToArrowSchema(resultSetMetadata, &arrowConfig)
 		if err != nil {
 			logger.Err(err).Msg("databricks: arrow row scanner failed to convert schema")
 			return nil, err
@@ -146,11 +146,11 @@ func NewArrowRowScanner(resultSetMetadata *cli_service.TGetResultSetMetadataResp
 	}
 
 	// get the database type names for each column
-	colInfos := make([]colInfo, len(resultSetMetadata.Schema.Columns))
-	for i := range resultSetMetadata.Schema.Columns {
-		col := resultSetMetadata.Schema.Columns[i]
+	colInfos := make([]colInfo, len(resultSetMetadata.Columns))
+	for i := range resultSetMetadata.Columns {
+		col := resultSetMetadata.Columns[i]
 		field := arrowSchema.Field(i)
-		colInfos[i] = colInfo{name: field.Name, arrowType: field.Type, dbType: rowscanner.GetDBType(col)}
+		colInfos[i] = colInfo{name: field.Name, arrowType: field.Type, dbType: col.Type}
 	}
 
 	// get the function for converting arrow timestamps to a time.Time
@@ -219,14 +219,14 @@ func (ars *arrowRowScanner) NRows() int64 {
 	return 0
 }
 
-var complexTypes map[cli_service.TTypeId]struct{} = map[cli_service.TTypeId]struct{}{
-	cli_service.TTypeId_ARRAY_TYPE:  {},
-	cli_service.TTypeId_MAP_TYPE:    {},
-	cli_service.TTypeId_STRUCT_TYPE: {}}
+var complexTypes map[client.ColumnTypeId]struct{} = map[client.ColumnTypeId]struct{}{
+	client.ARRAY_TYPE:  {},
+	client.MAP_TYPE:    {},
+	client.STRUCT_TYPE: {}}
 
-var intervalTypes map[cli_service.TTypeId]struct{} = map[cli_service.TTypeId]struct{}{
-	cli_service.TTypeId_INTERVAL_DAY_TIME_TYPE:   {},
-	cli_service.TTypeId_INTERVAL_YEAR_MONTH_TYPE: {}}
+var intervalTypes map[client.ColumnTypeId]struct{} = map[client.ColumnTypeId]struct{}{
+	client.INTERVAL_DAY_TIME_TYPE:   {},
+	client.INTERVAL_YEAR_MONTH_TYPE: {}}
 
 // ScanRow is called to populate the provided slice with the
 // content of the current row. The provided slice will be the same
@@ -265,7 +265,7 @@ func (ars *arrowRowScanner) ScanRow(
 			col := ars.colInfo[i]
 			dbType := col.dbType
 
-			if (dbType == cli_service.TTypeId_DECIMAL_TYPE && ars.UseArrowNativeDecimal) ||
+			if (dbType == client.DECIMAL_TYPE && ars.UseArrowNativeDecimal) ||
 				(isIntervalType(dbType) && ars.UseArrowNativeIntervalTypes) {
 				//	not yet fully supported
 				ars.Error().Msgf(errArrowRowsUnsupportedNativeType, dbType)
@@ -280,13 +280,13 @@ func (ars *arrowRowScanner) ScanRow(
 	return err
 }
 
-func isIntervalType(typeId cli_service.TTypeId) bool {
+func isIntervalType(typeId client.ColumnTypeId) bool {
 	_, ok := intervalTypes[typeId]
 	return ok
 }
 
 // countRows returns the number of rows in the TRowSet
-func countRows(rowSet *cli_service.TRowSet) int64 {
+func countRows(rowSet *client.ResultData) int64 {
 	if rowSet != nil && rowSet.ArrowBatches != nil {
 		batches := rowSet.ArrowBatches
 		var n int64
@@ -417,13 +417,13 @@ func (ars *arrowRowScanner) rowIndexToBatchIndex(rowIndex int64) (int, error) {
 	return -1, errors.Errorf(errArrowRowsInvalidRowIndex, rowIndex)
 }
 
-// tTableSchemaToArrowSchema convers the TTableSchema retrieved by the thrift server into an arrow.Schema instance
-func tTableSchemaToArrowSchema(schema *cli_service.TTableSchema, arrowConfig *config.ArrowConfig) (*arrow.Schema, error) {
-	columns := schema.GetColumns()
+// resultSchemaToArrowSchema convers the TTableSchema retrieved by the thrift server into an arrow.Schema instance
+func resultSchemaToArrowSchema(schema *client.ResultSchema, arrowConfig *config.ArrowConfig) (*arrow.Schema, error) {
+	columns := schema.Columns
 	fields := make([]arrow.Field, len(columns))
 
 	for i := range columns {
-		field, err := tColumnDescToArrowField(columns[i], arrowConfig)
+		field, err := columnInfoToArrowField(columns[i], arrowConfig)
 		if err != nil {
 			return nil, err
 		}
@@ -437,41 +437,39 @@ func tTableSchemaToArrowSchema(schema *cli_service.TTableSchema, arrowConfig *co
 }
 
 // map the thrift data types to the corresponding arrow data type
-var toArrowTypeMap map[cli_service.TTypeId]arrow.DataType = map[cli_service.TTypeId]arrow.DataType{
-	cli_service.TTypeId_BOOLEAN_TYPE:  arrow.FixedWidthTypes.Boolean,
-	cli_service.TTypeId_TINYINT_TYPE:  arrow.PrimitiveTypes.Int8,
-	cli_service.TTypeId_SMALLINT_TYPE: arrow.PrimitiveTypes.Int16,
-	cli_service.TTypeId_INT_TYPE:      arrow.PrimitiveTypes.Int32,
-	cli_service.TTypeId_BIGINT_TYPE:   arrow.PrimitiveTypes.Int64,
-	cli_service.TTypeId_FLOAT_TYPE:    arrow.PrimitiveTypes.Float32,
-	cli_service.TTypeId_DOUBLE_TYPE:   arrow.PrimitiveTypes.Float64,
-	cli_service.TTypeId_STRING_TYPE:   arrow.BinaryTypes.String,
-	// cli_service.TTypeId_TIMESTAMP_TYPE:    see tColumnDescToArrowDataType
-	cli_service.TTypeId_BINARY_TYPE: arrow.BinaryTypes.Binary,
-	// cli_service.TTypeId_ARRAY_TYPE:        see tColumnDescToArrowDataType
-	// cli_service.TTypeId_MAP_TYPE:          see tColumnDescToArrowDataType
-	// cli_service.TTypeId_STRUCT_TYPE:       see tColumnDescToArrowDataType
-	cli_service.TTypeId_UNION_TYPE:        arrow.BinaryTypes.String,
-	cli_service.TTypeId_USER_DEFINED_TYPE: arrow.BinaryTypes.String,
-	// cli_service.TTypeId_DECIMAL_TYPE:  see tColumnDescToArrowDataType
-	cli_service.TTypeId_NULL_TYPE:    arrow.Null,
-	cli_service.TTypeId_DATE_TYPE:    arrow.FixedWidthTypes.Date32,
-	cli_service.TTypeId_VARCHAR_TYPE: arrow.BinaryTypes.String,
-	cli_service.TTypeId_CHAR_TYPE:    arrow.BinaryTypes.String,
-	// cli_service.TTypeId_INTERVAL_YEAR_MONTH_TYPE: see tColumnDescToArrowDataType
-	// cli_service.TTypeId_INTERVAL_DAY_TIME_TYPE:   see tColumnDescToArrowDataType
+var toArrowTypeMap map[client.ColumnTypeId]arrow.DataType = map[client.ColumnTypeId]arrow.DataType{
+	client.BOOLEAN_TYPE:  arrow.FixedWidthTypes.Boolean,
+	client.TINYINT_TYPE:  arrow.PrimitiveTypes.Int8,
+	client.SMALLINT_TYPE: arrow.PrimitiveTypes.Int16,
+	client.INT_TYPE:      arrow.PrimitiveTypes.Int32,
+	client.BIGINT_TYPE:   arrow.PrimitiveTypes.Int64,
+	client.FLOAT_TYPE:    arrow.PrimitiveTypes.Float32,
+	client.DOUBLE_TYPE:   arrow.PrimitiveTypes.Float64,
+	client.STRING_TYPE:   arrow.BinaryTypes.String,
+	// client.TIMESTAMP_TYPE:    see tColumnDescToArrowDataType
+	client.BINARY_TYPE: arrow.BinaryTypes.Binary,
+	// client.ARRAY_TYPE:        see tColumnDescToArrowDataType
+	// client.MAP_TYPE:          see tColumnDescToArrowDataType
+	// client.STRUCT_TYPE:       see tColumnDescToArrowDataType
+	client.UNION_TYPE:        arrow.BinaryTypes.String,
+	client.USER_DEFINED_TYPE: arrow.BinaryTypes.String,
+	// client.DECIMAL_TYPE:  see tColumnDescToArrowDataType
+	client.NULL_TYPE:    arrow.Null,
+	client.DATE_TYPE:    arrow.FixedWidthTypes.Date32,
+	client.VARCHAR_TYPE: arrow.BinaryTypes.String,
+	client.CHAR_TYPE:    arrow.BinaryTypes.String,
+	// client.INTERVAL_YEAR_MONTH_TYPE: see tColumnDescToArrowDataType
+	// client.INTERVAL_DAY_TIME_TYPE:   see tColumnDescToArrowDataType
 }
 
-func tColumnDescToArrowDataType(tColumnDesc *cli_service.TColumnDesc, arrowConfig *config.ArrowConfig) (arrow.DataType, error) {
-	// get the thrift type id
-	tType := rowscanner.GetDBTypeID(tColumnDesc)
+func columnInfoToArrowDataType(columnInfo *client.ColumnInfo, arrowConfig *config.ArrowConfig) (arrow.DataType, error) {
 
-	if at, ok := toArrowTypeMap[tType]; ok {
+	if at, ok := toArrowTypeMap[columnInfo.Type]; ok {
 		// simple type mapping
 		return at, nil
 	} else {
 		// for some types there isn't a simple 1:1 correspondence to an arrow data type
-		if tType == cli_service.TTypeId_DECIMAL_TYPE {
+		if columnInfo.Type == client.DECIMAL_TYPE {
 			// if not using arrow native decimal type decimals are returned as strings
 			if !arrowConfig.UseArrowNativeDecimal {
 				return arrow.BinaryTypes.String, nil
@@ -479,19 +477,19 @@ func tColumnDescToArrowDataType(tColumnDesc *cli_service.TColumnDesc, arrowConfi
 
 			// Need to construct an instance of arrow DecimalType with the
 			// correct scale and precision
-			scale, precision, err := getDecimalScalePrecision(tColumnDesc)
+			scale, precision, err := getDecimalScalePrecision(columnInfo)
 			if err != nil {
 				return nil, err
 			}
 
-			decimalType, err := arrow.NewDecimalType(arrow.DECIMAL128, precision, scale)
+			decimalType, err := arrow.NewDecimalType(arrow.DECIMAL128, int32(precision), int32(scale))
 			if err != nil {
 				return nil, dbsqlerr.WrapErr(err, fmt.Sprintf(errArrowRowsUnableToCreateDecimalType, scale, precision))
 			}
 
 			return decimalType, nil
 
-		} else if tType == cli_service.TTypeId_TIMESTAMP_TYPE {
+		} else if columnInfo.Type == client.TIMESTAMP_TYPE {
 			// if not using arrow native timestamps thrift server returns strings
 			if !arrowConfig.UseArrowNativeTimestamp {
 				return arrow.BinaryTypes.String, nil
@@ -499,20 +497,20 @@ func tColumnDescToArrowDataType(tColumnDesc *cli_service.TColumnDesc, arrowConfi
 
 			// timestamp is UTC with microsecond precision
 			return arrow.FixedWidthTypes.Timestamp_us, nil
-		} else if _, ok := complexTypes[tType]; ok {
+		} else if _, ok := complexTypes[columnInfo.Type]; ok {
 			// if not using arrow native complex types thrift server returns strings
 			if !arrowConfig.UseArrowNativeComplexTypes {
 				return arrow.BinaryTypes.String, nil
 			}
 
-			return nil, errors.Errorf(errArrowRowsUnsupportedWithHiveSchema, rowscanner.GetDBTypeName(tColumnDesc))
-		} else if _, ok := intervalTypes[tType]; ok {
+			return nil, errors.Errorf(errArrowRowsUnsupportedWithHiveSchema, columnInfo.TypeName)
+		} else if _, ok := intervalTypes[columnInfo.Type]; ok {
 			// if not using arrow native complex types thrift server returns strings
 			if !arrowConfig.UseArrowNativeIntervalTypes {
 				return arrow.BinaryTypes.String, nil
 			}
 
-			return nil, errors.Errorf(errArrowRowsUnsupportedWithHiveSchema, rowscanner.GetDBTypeName(tColumnDesc))
+			return nil, errors.Errorf(errArrowRowsUnsupportedWithHiveSchema, columnInfo.TypeName)
 		} else {
 			return nil, errors.New(errArrowRowsUnknownDBType)
 		}
@@ -520,42 +518,18 @@ func tColumnDescToArrowDataType(tColumnDesc *cli_service.TColumnDesc, arrowConfi
 
 }
 
-func getDecimalScalePrecision(tColumnDesc *cli_service.TColumnDesc) (scale, precision int32, err error) {
-	fail := errors.New(errArrowRowsInvalidDecimalType)
-
-	typeQualifiers := rowscanner.GetDBTypeQualifiers(tColumnDesc)
-	if typeQualifiers == nil || typeQualifiers.Qualifiers == nil {
-		err = fail
-		return
-	}
-
-	scaleHolder, ok := typeQualifiers.Qualifiers["scale"]
-	if !ok || scaleHolder == nil || scaleHolder.I32Value == nil {
-		err = fail
-		return
-	} else {
-		scale = *scaleHolder.I32Value
-	}
-
-	precisionHolder, ok := typeQualifiers.Qualifiers["precision"]
-	if !ok || precisionHolder == nil || precisionHolder.I32Value == nil {
-		err = fail
-		return
-	} else {
-		precision = *precisionHolder.I32Value
-	}
-
-	return
+func getDecimalScalePrecision(columnInfo *client.ColumnInfo) (scale, precision int, err error) {
+	return columnInfo.TypeScale, columnInfo.TypePrecision, nil
 }
 
-func tColumnDescToArrowField(columnDesc *cli_service.TColumnDesc, arrowConfig *config.ArrowConfig) (arrow.Field, error) {
-	arrowDataType, err := tColumnDescToArrowDataType(columnDesc, arrowConfig)
+func columnInfoToArrowField(columnInfo *client.ColumnInfo, arrowConfig *config.ArrowConfig) (arrow.Field, error) {
+	arrowDataType, err := columnInfoToArrowDataType(columnInfo, arrowConfig)
 	if err != nil {
 		return arrow.Field{}, err
 	}
 
 	arrowField := arrow.Field{
-		Name: columnDesc.ColumnName,
+		Name: columnInfo.Name,
 		Type: arrowDataType,
 	}
 
@@ -744,7 +718,7 @@ func (vcm *arrowValueContainerMaker) makeColumnValueContainer(t arrow.DataType, 
 		return &columnValuesTyped[*array.Float64, float64]{}, nil
 
 	case *arrow.StringType:
-		if colInfo != nil && colInfo.dbType == cli_service.TTypeId_TIMESTAMP_TYPE {
+		if colInfo != nil && colInfo.dbType == client.TIMESTAMP_TYPE {
 			return &timestampStringValueContainer{location: location, fieldName: colInfo.name}, nil
 		} else {
 			return &columnValuesTyped[*array.String, string]{}, nil
@@ -1102,7 +1076,7 @@ type timestampStringValueContainer struct {
 
 func (tvc *timestampStringValueContainer) Value(i int) (any, error) {
 	sv := tvc.timeStringArray.Value(i)
-	val, err := rowscanner.HandleDateTime(sv, "TIMESTAMP", tvc.fieldName, tvc.location)
+	val, err := rowscanner.HandleDateTime(sv, client.TIMESTAMP_TYPE, tvc.fieldName, tvc.location)
 	if err != nil {
 		tvc.Err(err).Msg(errArrowRowsDateTimeParse)
 	}

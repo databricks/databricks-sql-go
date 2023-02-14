@@ -110,7 +110,7 @@ func (tsc *ThriftServiceClient) FetchResults(ctx context.Context, req *FetchResu
 	}
 	return &FetchResultsResp{
 		Status: toRequestStatus(resp.Status),
-		Schema: toSchema(resp.ResultSetMetadata.Schema),
+		Schema: toSchema(resp.ResultSetMetadata),
 		Result: toResult(resp.Results, *resp.HasMoreRows),
 	}, CheckStatus(resp)
 }
@@ -137,7 +137,7 @@ func (tsc *ThriftServiceClient) GetResultsMetadata(ctx context.Context, req *Get
 	}
 	return &GetResultsMetadataResp{
 		Status: toRequestStatus(resp.Status),
-		Schema: toSchema(resp.Schema),
+		Schema: toSchema(resp),
 	}, CheckStatus(resp)
 }
 
@@ -206,7 +206,7 @@ func (tsc *ThriftServiceClient) ExecuteStatement(ctx context.Context, req *Execu
 			result = toResult(resp.DirectResults.ResultSet.Results, *resp.DirectResults.ResultSet.HasMoreRows)
 		}
 		if resp.DirectResults.ResultSetMetadata != nil {
-			schema = toSchema(resp.DirectResults.ResultSetMetadata.Schema)
+			schema = toSchema(resp.DirectResults.ResultSetMetadata)
 		}
 	}
 
@@ -407,20 +407,73 @@ func toRequestStatus(s *cli_service.TStatus) *RequestStatus {
 	}
 }
 
-func toSchema(s *cli_service.TTableSchema) *ResultSchema {
+func toSchema(s *cli_service.TGetResultSetMetadataResp) *ResultSchema {
 	cols := []*ColumnInfo{}
-	for _, c := range s.Columns {
+	for _, c := range s.Schema.Columns {
 		entry := c.TypeDesc.Types[0].PrimitiveEntry
-		dbtype := entry.Type.String()
+		dbtype := toTypeId(entry.Type)
+
 		cols = append(cols, &ColumnInfo{
 			Name:     c.ColumnName,
 			Position: int(c.Position),
-			TypeName: dbtype,
+			Type:     dbtype,
+			TypeName: dbtype.String(),
 		})
 	}
 	return &ResultSchema{
-		Columns: cols,
+		Columns:          cols,
+		ArrowSchemaBytes: s.ArrowSchema,
 	}
+}
+
+func toTypeId(thriftType cli_service.TTypeId) ColumnTypeId {
+	switch thriftType {
+	case cli_service.TTypeId_BOOLEAN_TYPE:
+		return BOOLEAN_TYPE
+	case cli_service.TTypeId_TINYINT_TYPE:
+		return TINYINT_TYPE
+	case cli_service.TTypeId_SMALLINT_TYPE:
+		return SMALLINT_TYPE
+	case cli_service.TTypeId_INT_TYPE:
+		return INT_TYPE
+	case cli_service.TTypeId_BIGINT_TYPE:
+		return BIGINT_TYPE
+	case cli_service.TTypeId_FLOAT_TYPE:
+		return FLOAT_TYPE
+	case cli_service.TTypeId_DOUBLE_TYPE:
+		return DOUBLE_TYPE
+	case cli_service.TTypeId_STRING_TYPE:
+		return STRING_TYPE
+	case cli_service.TTypeId_TIMESTAMP_TYPE:
+		return TIMESTAMP_TYPE
+	case cli_service.TTypeId_BINARY_TYPE:
+		return BINARY_TYPE
+	case cli_service.TTypeId_ARRAY_TYPE:
+		return ARRAY_TYPE
+	case cli_service.TTypeId_MAP_TYPE:
+		return MAP_TYPE
+	case cli_service.TTypeId_STRUCT_TYPE:
+		return STRUCT_TYPE
+	case cli_service.TTypeId_UNION_TYPE:
+		return UNION_TYPE
+	case cli_service.TTypeId_USER_DEFINED_TYPE:
+		return USER_DEFINED_TYPE
+	case cli_service.TTypeId_DECIMAL_TYPE:
+		return DECIMAL_TYPE
+	case cli_service.TTypeId_NULL_TYPE:
+		return NULL_TYPE
+	case cli_service.TTypeId_DATE_TYPE:
+		return DATE_TYPE
+	case cli_service.TTypeId_VARCHAR_TYPE:
+		return VARCHAR_TYPE
+	case cli_service.TTypeId_CHAR_TYPE:
+		return CHAR_TYPE
+	case cli_service.TTypeId_INTERVAL_YEAR_MONTH_TYPE:
+		return INTERVAL_YEAR_MONTH_TYPE
+	case cli_service.TTypeId_INTERVAL_DAY_TIME_TYPE:
+		return INTERVAL_DAY_TIME_TYPE
+	}
+	return UNKNOWN_TYPE
 }
 
 func toResult(r *cli_service.TRowSet, hasMoreRows bool) *ResultData {

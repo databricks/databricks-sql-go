@@ -28,111 +28,111 @@ func TestArrowRowScanner(t *testing.T) {
 		var arrowType arrow.DataType
 		var err error
 
-		arrowType, err = tColumnDescToArrowDataType(schema.Columns[0], arrowConfig)
+		arrowType, err = columnInfoToArrowDataType(schema.Columns[0], arrowConfig)
 		assert.Nil(t, err)
 		assert.Equal(t, arrow.FixedWidthTypes.Boolean, arrowType)
 
-		arrowType, err = tColumnDescToArrowDataType(schema.Columns[1], arrowConfig)
+		arrowType, err = columnInfoToArrowDataType(schema.Columns[1], arrowConfig)
 		assert.Nil(t, err)
 		assert.Equal(t, arrow.PrimitiveTypes.Int8, arrowType)
 
-		arrowType, err = tColumnDescToArrowDataType(schema.Columns[2], arrowConfig)
+		arrowType, err = columnInfoToArrowDataType(schema.Columns[2], arrowConfig)
 		assert.Nil(t, err)
 		assert.Equal(t, arrow.PrimitiveTypes.Int16, arrowType)
 
-		arrowType, err = tColumnDescToArrowDataType(schema.Columns[3], arrowConfig)
+		arrowType, err = columnInfoToArrowDataType(schema.Columns[3], arrowConfig)
 		assert.Nil(t, err)
 		assert.Equal(t, arrow.PrimitiveTypes.Int32, arrowType)
 
-		arrowType, err = tColumnDescToArrowDataType(schema.Columns[4], arrowConfig)
+		arrowType, err = columnInfoToArrowDataType(schema.Columns[4], arrowConfig)
 		assert.Nil(t, err)
 		assert.Equal(t, arrow.PrimitiveTypes.Int64, arrowType)
 
-		arrowType, err = tColumnDescToArrowDataType(schema.Columns[5], arrowConfig)
+		arrowType, err = columnInfoToArrowDataType(schema.Columns[5], arrowConfig)
 		assert.Nil(t, err)
 		assert.Equal(t, arrow.PrimitiveTypes.Float32, arrowType)
 
-		arrowType, err = tColumnDescToArrowDataType(schema.Columns[6], arrowConfig)
+		arrowType, err = columnInfoToArrowDataType(schema.Columns[6], arrowConfig)
 		assert.Nil(t, err)
 		assert.Equal(t, arrow.PrimitiveTypes.Float64, arrowType)
 
-		arrowType, err = tColumnDescToArrowDataType(schema.Columns[7], arrowConfig)
+		arrowType, err = columnInfoToArrowDataType(schema.Columns[7], arrowConfig)
 		assert.Nil(t, err)
 		assert.Equal(t, arrow.BinaryTypes.String, arrowType)
 
-		arrowType, err = tColumnDescToArrowDataType(schema.Columns[8], arrowConfig)
+		arrowType, err = columnInfoToArrowDataType(schema.Columns[8], arrowConfig)
 		assert.Nil(t, err)
 		assert.Equal(t, arrow.BinaryTypes.String, arrowType)
 
 		arrowConfig.UseArrowNativeTimestamp = true
-		arrowType, err = tColumnDescToArrowDataType(schema.Columns[8], arrowConfig)
+		arrowType, err = columnInfoToArrowDataType(schema.Columns[8], arrowConfig)
 		assert.Nil(t, err)
 		assert.Equal(t, arrow.FixedWidthTypes.Timestamp_us, arrowType)
 
-		arrowType, err = tColumnDescToArrowDataType(schema.Columns[9], arrowConfig)
+		arrowType, err = columnInfoToArrowDataType(schema.Columns[9], arrowConfig)
 		assert.Nil(t, err)
 		assert.Equal(t, arrow.BinaryTypes.Binary, arrowType)
 
-		arrowType, err = tColumnDescToArrowDataType(schema.Columns[10], arrowConfig)
+		arrowType, err = columnInfoToArrowDataType(schema.Columns[10], arrowConfig)
 		assert.Nil(t, err)
 		assert.Equal(t, arrow.BinaryTypes.String, arrowType)
 
-		arrowType, err = tColumnDescToArrowDataType(schema.Columns[11], arrowConfig)
+		arrowType, err = columnInfoToArrowDataType(schema.Columns[11], arrowConfig)
 		assert.Nil(t, err)
 		assert.Equal(t, arrow.BinaryTypes.String, arrowType)
 
-		arrowType, err = tColumnDescToArrowDataType(schema.Columns[12], arrowConfig)
+		arrowType, err = columnInfoToArrowDataType(schema.Columns[12], arrowConfig)
 		assert.Nil(t, err)
 		assert.Equal(t, arrow.BinaryTypes.String, arrowType)
 
 		// native complext types are not supported with a thrift schema
 		arrowConfig.UseArrowNativeComplexTypes = true
-		_, err = tColumnDescToArrowDataType(schema.Columns[10], arrowConfig)
+		_, err = columnInfoToArrowDataType(schema.Columns[10], arrowConfig)
 		assert.NotNil(t, err)
 		assert.EqualError(t, err, fmt.Sprintf(errArrowRowsUnsupportedWithHiveSchema, "ARRAY"))
 
-		_, err = tColumnDescToArrowDataType(schema.Columns[11], arrowConfig)
+		_, err = columnInfoToArrowDataType(schema.Columns[11], arrowConfig)
 		assert.NotNil(t, err)
 		assert.EqualError(t, err, fmt.Sprintf(errArrowRowsUnsupportedWithHiveSchema, "MAP"))
 
-		_, err = tColumnDescToArrowDataType(schema.Columns[12], arrowConfig)
+		_, err = columnInfoToArrowDataType(schema.Columns[12], arrowConfig)
 		assert.NotNil(t, err)
 		assert.EqualError(t, err, fmt.Sprintf(errArrowRowsUnsupportedWithHiveSchema, "STRUCT"))
 
-		arrowType, err = tColumnDescToArrowDataType(schema.Columns[13], arrowConfig)
+		arrowType, err = columnInfoToArrowDataType(schema.Columns[13], arrowConfig)
 		assert.Nil(t, err)
 		assert.Equal(t, arrow.BinaryTypes.String, arrowType)
 
 		arrowConfig.UseArrowNativeDecimal = true
-		arrowType, err = tColumnDescToArrowDataType(schema.Columns[13], arrowConfig)
+		arrowType, err = columnInfoToArrowDataType(schema.Columns[13], arrowConfig)
 		assert.Nil(t, err)
 		dt, _ := arrow.NewDecimalType(arrow.DECIMAL128, 2, 10)
 		assert.Equal(t, dt, arrowType)
 
-		arrowType, err = tColumnDescToArrowDataType(schema.Columns[14], arrowConfig)
+		arrowType, err = columnInfoToArrowDataType(schema.Columns[14], arrowConfig)
 		assert.Nil(t, err)
 		assert.Equal(t, arrow.FixedWidthTypes.Date32, arrowType)
 
-		arrowType, err = tColumnDescToArrowDataType(schema.Columns[15], arrowConfig)
+		arrowType, err = columnInfoToArrowDataType(schema.Columns[15], arrowConfig)
 		assert.Nil(t, err)
 		assert.Equal(t, arrow.BinaryTypes.String, arrowType)
 
-		arrowType, err = tColumnDescToArrowDataType(schema.Columns[16], arrowConfig)
+		arrowType, err = columnInfoToArrowDataType(schema.Columns[16], arrowConfig)
 		assert.Nil(t, err)
 		assert.Equal(t, arrow.BinaryTypes.String, arrowType)
 
 		// native complext types are not supported with a thrift schema
 		arrowConfig.UseArrowNativeIntervalTypes = true
-		_, err = tColumnDescToArrowDataType(schema.Columns[15], arrowConfig)
+		_, err = columnInfoToArrowDataType(schema.Columns[15], arrowConfig)
 		assert.NotNil(t, err)
 		assert.EqualError(t, err, fmt.Sprintf(errArrowRowsUnsupportedWithHiveSchema, "INTERVAL_YEAR_MONTH"))
 
-		_, err = tColumnDescToArrowDataType(schema.Columns[16], arrowConfig)
+		_, err = columnInfoToArrowDataType(schema.Columns[16], arrowConfig)
 		assert.NotNil(t, err)
 		assert.EqualError(t, err, fmt.Sprintf(errArrowRowsUnsupportedWithHiveSchema, "INTERVAL_DAY_TIME"))
 
 		// unknown type
-		_, err = tColumnDescToArrowDataType(&cli_service.TColumnDesc{TypeDesc: &cli_service.TTypeDesc{Types: []*cli_service.TTypeEntry{{PrimitiveEntry: &cli_service.TPrimitiveTypeEntry{Type: cli_service.TTypeId(999)}}}}}, arrowConfig)
+		_, err = columnInfoToArrowDataType(&cli_service.TColumnDesc{TypeDesc: &cli_service.TTypeDesc{Types: []*cli_service.TTypeEntry{{PrimitiveEntry: &cli_service.TPrimitiveTypeEntry{Type: cli_service.TTypeId(999)}}}}}, arrowConfig)
 		assert.NotNil(t, err)
 		assert.EqualError(t, err, errArrowRowsUnknownDBType)
 
@@ -146,35 +146,35 @@ func TestArrowRowScanner(t *testing.T) {
 		var err error
 
 		arrowConfig.UseArrowNativeTimestamp = true
-		arrowType, err = tColumnDescToArrowDataType(schema.Columns[8], arrowConfig)
+		arrowType, err = columnInfoToArrowDataType(schema.Columns[8], arrowConfig)
 		assert.Nil(t, err)
 		assert.Equal(t, arrow.FixedWidthTypes.Timestamp_us, arrowType)
 
 		arrowConfig.UseArrowNativeComplexTypes = true
-		_, err = tColumnDescToArrowDataType(schema.Columns[10], arrowConfig)
+		_, err = columnInfoToArrowDataType(schema.Columns[10], arrowConfig)
 		assert.NotNil(t, err)
 		assert.EqualError(t, err, fmt.Sprintf(errArrowRowsUnsupportedWithHiveSchema, "ARRAY"))
 
-		_, err = tColumnDescToArrowDataType(schema.Columns[11], arrowConfig)
+		_, err = columnInfoToArrowDataType(schema.Columns[11], arrowConfig)
 		assert.NotNil(t, err)
 		assert.EqualError(t, err, fmt.Sprintf(errArrowRowsUnsupportedWithHiveSchema, "MAP"))
 
-		_, err = tColumnDescToArrowDataType(schema.Columns[12], arrowConfig)
+		_, err = columnInfoToArrowDataType(schema.Columns[12], arrowConfig)
 		assert.NotNil(t, err)
 		assert.EqualError(t, err, fmt.Sprintf(errArrowRowsUnsupportedWithHiveSchema, "STRUCT"))
 
 		arrowConfig.UseArrowNativeDecimal = true
-		arrowType, err = tColumnDescToArrowDataType(schema.Columns[13], arrowConfig)
+		arrowType, err = columnInfoToArrowDataType(schema.Columns[13], arrowConfig)
 		assert.Nil(t, err)
 		dt, _ := arrow.NewDecimalType(arrow.DECIMAL128, 2, 10)
 		assert.Equal(t, dt, arrowType)
 
 		arrowConfig.UseArrowNativeIntervalTypes = true
-		_, err = tColumnDescToArrowDataType(schema.Columns[15], arrowConfig)
+		_, err = columnInfoToArrowDataType(schema.Columns[15], arrowConfig)
 		assert.NotNil(t, err)
 		assert.EqualError(t, err, fmt.Sprintf(errArrowRowsUnsupportedWithHiveSchema, "INTERVAL_YEAR_MONTH"))
 
-		_, err = tColumnDescToArrowDataType(schema.Columns[16], arrowConfig)
+		_, err = columnInfoToArrowDataType(schema.Columns[16], arrowConfig)
 		assert.NotNil(t, err)
 		assert.EqualError(t, err, fmt.Sprintf(errArrowRowsUnsupportedWithHiveSchema, "INTERVAL_DAY_TIME"))
 	})
@@ -194,7 +194,7 @@ func TestArrowRowScanner(t *testing.T) {
 			},
 		}
 
-		_, err := tColumnDescToArrowDataType(columnDesc, arrowConfig)
+		_, err := columnInfoToArrowDataType(columnDesc, arrowConfig)
 		assert.NotNil(t, err)
 		assert.EqualError(t, err, errArrowRowsUnknownDBType)
 	})

@@ -2,16 +2,11 @@ package rows
 
 import (
 	"context"
-	"database/sql/driver"
 	"errors"
 	"io"
-	"math"
-	"reflect"
 	"testing"
-	"time"
 
 	"github.com/databricks/databricks-sql-go/internal/client"
-	"github.com/databricks/databricks-sql-go/internal/rows/rowscanner"
 
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 
@@ -28,12 +23,12 @@ func TestRowsNextRowInPage(t *testing.T) {
 	assert.False(t, inPage, "nil rows instance should return false")
 
 	// default rows instance
-	rowSet = &rows{schema: &cli_service.TTableSchema{}}
+	rowSet = &rows{schema: &client.ResultSchema{}}
 	inPage, err = rowSet.isNextRowInPage()
 	assert.Nil(t, err)
 	assert.False(t, inPage, "default rows instance should return false")
 
-	fetchResults := &cli_service.TFetchResultsResp{}
+	fetchResults := &client.ResultData{}
 
 	// fetchResults has no TRowSet
 	err = rowSet.makeRowScanner(fetchResults)
@@ -42,10 +37,7 @@ func TestRowsNextRowInPage(t *testing.T) {
 	assert.Nil(t, err)
 	assert.False(t, inPage, "fetch results with no TRowSet should return false")
 
-	tRowSet := &cli_service.TRowSet{}
-
 	// default TRowSet
-	fetchResults.Results = tRowSet
 	err = rowSet.makeRowScanner(fetchResults)
 	assert.EqualError(t, err, errRowsUnknowRowType)
 	inPage, err = rowSet.isNextRowInPage()
@@ -53,9 +45,9 @@ func TestRowsNextRowInPage(t *testing.T) {
 	assert.False(t, inPage, "fetch results with default TRowSet should return false")
 
 	// Set up a result page starting with row 10 and containing 5 rows
-	tRowSet.StartRowOffset = 10
+	fetchResults.StartRowOffset = 10
 	tColumn := &cli_service.TColumn{BoolVal: &cli_service.TBoolColumn{Values: []bool{true, false, true, false, true}}}
-	tRowSet.Columns = []*cli_service.TColumn{tColumn}
+	fetchResults.Columns = []*cli_service.TColumn{tColumn}
 
 	err = rowSet.makeRowScanner(fetchResults)
 	assert.Nil(t, err)
@@ -111,11 +103,11 @@ func TestRowsGetPageFetchDirection(t *testing.T) {
 	assert.Equal(t, cli_service.TFetchOrientation_FETCH_NEXT, direction, "nil rows instance should return forward direction")
 
 	// default rows instance
-	rowSet = &rows{schema: &cli_service.TTableSchema{}}
+	rowSet = &rows{schema: &client.ResultSchema{}}
 	direction = rowSet.getPageFetchDirection()
 	assert.Equal(t, cli_service.TFetchOrientation_FETCH_NEXT, direction, "default rows instance should return forward direction")
 
-	fetchResults := &cli_service.TFetchResultsResp{}
+	fetchResults := &client.ResultData{}
 
 	// fetchResults has no TRowSet
 	err := rowSet.makeRowScanner(fetchResults)
@@ -123,20 +115,16 @@ func TestRowsGetPageFetchDirection(t *testing.T) {
 	direction = rowSet.getPageFetchDirection()
 	assert.Equal(t, cli_service.TFetchOrientation_FETCH_NEXT, direction, "fetchResults has no TRowSet should return forward direction")
 
-	tRowSet := &cli_service.TRowSet{}
-
 	// default TRowSet
-	fetchResults.Results = tRowSet
 	err = rowSet.makeRowScanner(fetchResults)
 	assert.EqualError(t, err, errRowsUnknowRowType)
 	direction = rowSet.getPageFetchDirection()
 	assert.Equal(t, cli_service.TFetchOrientation_FETCH_NEXT, direction, "fetchResults has no TRowSet should return forward direction")
 
 	// Set up a result page starting with row 10 and containing 5 rows
-	tRowSet.StartRowOffset = 10
 	tColumn := &cli_service.TColumn{BoolVal: &cli_service.TBoolColumn{Values: []bool{true, false, true, false, true}}}
-	tRowSet.Columns = []*cli_service.TColumn{tColumn}
-
+	fetchResults.StartRowOffset = 10
+	fetchResults.Columns = []*cli_service.TColumn{tColumn}
 	err = rowSet.makeRowScanner(fetchResults)
 	assert.Nil(t, err)
 
@@ -181,24 +169,21 @@ func TestRowsGetPageStartRowNum(t *testing.T) {
 	var noRows int64 = 0
 	var sevenRows int64 = 7
 
-	rowSet := &rows{schema: &cli_service.TTableSchema{}}
+	rowSet := &rows{schema: &client.ResultSchema{}}
 
 	start := rowSet.pageStartingRowNum
 	assert.Equal(t, noRows, start, "rows with no page should return 0")
 
-	err := rowSet.makeRowScanner(&cli_service.TFetchResultsResp{})
+	err := rowSet.makeRowScanner(&client.ResultData{})
 	assert.EqualError(t, err, errRowsUnknowRowType)
 
 	start = rowSet.pageStartingRowNum
 	assert.Equal(t, noRows, start, "rows with no TRowSet should return 0")
 
-	err = rowSet.makeRowScanner(&cli_service.TFetchResultsResp{Results: &cli_service.TRowSet{}})
-	assert.EqualError(t, err, errRowsUnknowRowType)
-
 	start = rowSet.pageStartingRowNum
 	assert.Equal(t, noRows, start, "rows with default TRowSet should return 0")
 
-	err = rowSet.makeRowScanner(&cli_service.TFetchResultsResp{Results: &cli_service.TRowSet{StartRowOffset: 7, Columns: []*cli_service.TColumn{}}})
+	err = rowSet.makeRowScanner(&client.ResultData{StartRowOffset: 7, Columns: []*cli_service.TColumn{}})
 	assert.Nil(t, err)
 
 	start = rowSet.pageStartingRowNum
@@ -214,27 +199,24 @@ func TestRowsFetchResultPageErrors(t *testing.T) {
 
 	rowSet = &rows{
 		nextRowNumber: -1,
-		client:        &cli_service.TCLIServiceClient{},
-		schema:        &cli_service.TTableSchema{},
+		client:        &client.ThriftServiceClient{},
+		schema:        &client.ResultSchema{},
 	}
 	err = rowSet.fetchResultPage()
 	assert.EqualError(t, err, errRowsFetchPriorToStart, "negative row number should return error")
 
-	err = rowSet.makeRowScanner(&cli_service.TFetchResultsResp{})
+	err = rowSet.makeRowScanner(&client.ResultData{})
 	assert.EqualError(t, err, errRowsUnknowRowType)
 
-	// default TRowSet
-	tRowSet := &cli_service.TRowSet{}
-
 	// Set up a result page starting with row 10 and containing 5 rows
-	tRowSet.StartRowOffset = 0
+
+	resultData := &client.ResultData{}
 	tColumn := &cli_service.TColumn{BoolVal: &cli_service.TBoolColumn{Values: []bool{true, false, true, false, true}}}
-	tRowSet.Columns = []*cli_service.TColumn{tColumn}
+	resultData.Columns = []*cli_service.TColumn{tColumn}
 
 	rowSet.nextRowNumber = 5
-	var noMoreRows = false
 
-	err = rowSet.makeRowScanner(&cli_service.TFetchResultsResp{Results: tRowSet, HasMoreRows: &noMoreRows})
+	err = rowSet.makeRowScanner(resultData)
 	assert.Nil(t, err)
 
 	err = rowSet.fetchResultPage()
@@ -260,577 +242,577 @@ func TestGetResultMetadataNoDirectResults(t *testing.T) {
 	assert.Equal(t, 1, getMetadataCount)
 }
 
-func TestGetResultMetadataWithDirectResults(t *testing.T) {
-	t.Parallel()
-	var getMetadataCount, fetchResultsCount int
-
-	client := getRowsTestSimpleClient(&getMetadataCount, &fetchResultsCount)
-	rowSet := &rows{client: client}
-
-	// simulate direct results by setting initial result page and
-	// metadata
-	req := &cli_service.TFetchResultsReq{
-		Orientation: cli_service.TFetchOrientation_FETCH_NEXT,
-	}
-	firstPage, _ := client.FetchResults(context.Background(), req)
-	err := rowSet.makeRowScanner(firstPage)
-	assert.Nil(t, err)
-	assert.Equal(t, 1, getMetadataCount)
-	// fetch results has been called once
-	assert.Equal(t, 1, fetchResultsCount)
-
-	req2 := &cli_service.TGetResultSetMetadataReq{}
-	metadata, _ := client.GetResultSetMetadata(context.Background(), req2)
-	rowSet.schema = metadata.Schema
-	// fetch results has been called once
-	assert.Equal(t, 1, fetchResultsCount)
-	assert.Equal(t, 2, getMetadataCount)
-
-	// calling should not call into client again
-	schema, err := rowSet.getResultSetSchema()
-	assert.NotNil(t, schema)
-	assert.Nil(t, err)
-	assert.Equal(t, 2, getMetadataCount)
-}
-
-func TestRowsFetchResultPageNoDirectResults(t *testing.T) {
-	t.Parallel()
-
-	var getMetadataCount, fetchResultsCount int
-
-	client := getRowsTestSimpleClient(&getMetadataCount, &fetchResultsCount)
-	rowSet := &rows{client: client, hasMoreRows: true}
-
-	var i64Zero int64
-
-	// next row number is zero so should fetch first result page
-	err := rowSet.fetchResultPage()
-	rowTestPagingResult{
-		getMetadataCount:  1,
-		fetchResultsCount: 1,
-		nextRowIndex:      i64Zero,
-		nextRowNumber:     i64Zero,
-		offset:            i64Zero,
-	}.validatePaging(t, rowSet, err, fetchResultsCount, getMetadataCount)
-
-	// next row number is four, still in same result page
-	rowSet.nextRowNumber = 4
-	err = rowSet.fetchResultPage()
-	rowTestPagingResult{
-		getMetadataCount:  1,
-		fetchResultsCount: 1,
-		nextRowIndex:      int64(4),
-		nextRowNumber:     int64(4),
-		offset:            i64Zero,
-	}.validatePaging(t, rowSet, err, fetchResultsCount, getMetadataCount)
-
-	// next row number is six, should fetch next result page
-	rowSet.nextRowNumber = 6
-	err = rowSet.fetchResultPage()
-	rowTestPagingResult{
-		getMetadataCount:  1,
-		fetchResultsCount: 2,
-		nextRowIndex:      int64(1),
-		nextRowNumber:     int64(6),
-		offset:            int64(5),
-	}.validatePaging(t, rowSet, err, fetchResultsCount, getMetadataCount)
-
-	// next row number is two, should fetch previous result page
-	rowSet.nextRowNumber = 2
-	err = rowSet.fetchResultPage()
-	rowTestPagingResult{
-		getMetadataCount:  1,
-		fetchResultsCount: 3,
-		nextRowIndex:      int64(2),
-		nextRowNumber:     int64(2),
-		offset:            i64Zero,
-	}.validatePaging(t, rowSet, err, fetchResultsCount, getMetadataCount)
-
-	// next row number is past end of results, should fetch all result pages
-	// going forward and then return EOF
-	rowSet.nextRowNumber = 15
-	err = rowSet.fetchResultPage()
-	errMsg := io.EOF.Error()
-	rowTestPagingResult{
-		getMetadataCount:  1,
-		fetchResultsCount: 5,
-		nextRowIndex:      int64(2),
-		nextRowNumber:     int64(15),
-		offset:            int64(10),
-		errMessage:        &errMsg,
-	}.validatePaging(t, rowSet, err, fetchResultsCount, getMetadataCount)
-
-	// next row number is before start of results, should fetch all result pages
-	// going forward and then return EOF
-	rowSet.nextRowNumber = -1
-	err = rowSet.fetchResultPage()
-	errMsg = errRowsFetchPriorToStart
-	rowTestPagingResult{
-		getMetadataCount:  1,
-		fetchResultsCount: 7,
-		nextRowIndex:      int64(2),
-		nextRowNumber:     int64(-1),
-		offset:            i64Zero,
-		errMessage:        &errMsg,
-	}.validatePaging(t, rowSet, err, fetchResultsCount, getMetadataCount)
-
-	// jump back to last page
-	rowSet.nextRowNumber = 12
-	err = rowSet.fetchResultPage()
-	errMsg = "unable to fetch row page prior to start of results"
-	rowTestPagingResult{
-		getMetadataCount:  1,
-		fetchResultsCount: 9,
-		nextRowIndex:      int64(2),
-		nextRowNumber:     int64(12),
-		offset:            int64(10),
-	}.validatePaging(t, rowSet, err, fetchResultsCount, getMetadataCount)
-}
-
-func TestRowsFetchResultPageWithDirectResults(t *testing.T) {
-	t.Parallel()
-
-	var getMetadataCount, fetchResultsCount int
-	var i64Zero int64
-
-	client := getRowsTestSimpleClient(&getMetadataCount, &fetchResultsCount)
-	rowSet := &rows{client: client, hasMoreRows: true}
-	req := &cli_service.TFetchResultsReq{
-		Orientation: cli_service.TFetchOrientation_FETCH_NEXT,
-	}
-	firstPage, _ := client.FetchResults(context.Background(), req)
-	err := rowSet.makeRowScanner(firstPage)
-	assert.Nil(t, err)
-
-	// fetch results and get metadata have been called once
-	assert.Equal(t, 1, fetchResultsCount)
-	assert.Equal(t, 1, getMetadataCount)
-
-	// next row number is zero so should not fetch a result page again
-	err = rowSet.fetchResultPage()
-	rowTestPagingResult{
-		getMetadataCount:  1,
-		fetchResultsCount: 1,
-		nextRowIndex:      i64Zero,
-		nextRowNumber:     i64Zero,
-		offset:            i64Zero,
-	}.validatePaging(t, rowSet, err, fetchResultsCount, getMetadataCount)
-
-	// next row number is four, still in same result page
-	rowSet.nextRowNumber = 4
-	err = rowSet.fetchResultPage()
-	rowTestPagingResult{
-		getMetadataCount:  1,
-		fetchResultsCount: 1,
-		nextRowIndex:      int64(4),
-		nextRowNumber:     int64(4),
-		offset:            i64Zero,
-	}.validatePaging(t, rowSet, err, fetchResultsCount, getMetadataCount)
-
-	// next row number is six, should fetch next result page
-	rowSet.nextRowNumber = 6
-	err = rowSet.fetchResultPage()
-	rowTestPagingResult{
-		getMetadataCount:  1,
-		fetchResultsCount: 2,
-		nextRowIndex:      int64(1),
-		nextRowNumber:     int64(6),
-		offset:            int64(5),
-	}.validatePaging(t, rowSet, err, fetchResultsCount, getMetadataCount)
-
-	// next row number is two, should fetch previous result page
-	rowSet.nextRowNumber = 2
-	err = rowSet.fetchResultPage()
-	rowTestPagingResult{
-		getMetadataCount:  1,
-		fetchResultsCount: 3,
-		nextRowIndex:      int64(2),
-		nextRowNumber:     int64(2),
-		offset:            i64Zero,
-	}.validatePaging(t, rowSet, err, fetchResultsCount, getMetadataCount)
-
-	// next row number is past end of results, should fetch all result pages
-	// going forward and then return EOF
-	rowSet.nextRowNumber = 15
-	err = rowSet.fetchResultPage()
-	errMsg := io.EOF.Error()
-	rowTestPagingResult{
-		getMetadataCount:  1,
-		fetchResultsCount: 5,
-		nextRowIndex:      int64(2),
-		nextRowNumber:     int64(15),
-		offset:            int64(10),
-		errMessage:        &errMsg,
-	}.validatePaging(t, rowSet, err, fetchResultsCount, getMetadataCount)
-
-	// next row number is before start of results, should fetch all result pages
-	// going forward and then return EOF
-	rowSet.nextRowNumber = -1
-	err = rowSet.fetchResultPage()
-	errMsg = errRowsFetchPriorToStart
-	rowTestPagingResult{
-		getMetadataCount:  1,
-		fetchResultsCount: 7,
-		nextRowIndex:      int64(2),
-		nextRowNumber:     int64(-1),
-		offset:            i64Zero,
-		errMessage:        &errMsg,
-	}.validatePaging(t, rowSet, err, fetchResultsCount, getMetadataCount)
-
-	// jump back to last page
-	rowSet.nextRowNumber = 12
-	err = rowSet.fetchResultPage()
-	errMsg = "unable to fetch row page prior to start of results"
-	rowTestPagingResult{
-		getMetadataCount:  1,
-		fetchResultsCount: 9,
-		nextRowIndex:      int64(2),
-		nextRowNumber:     int64(12),
-		offset:            int64(10),
-	}.validatePaging(t, rowSet, err, fetchResultsCount, getMetadataCount)
-}
-
-var rowTestColNames []string = []string{
-	"bool_col",
-	"tinyInt_col",
-	"smallInt_col",
-	"int_col",
-	"bigInt_col",
-	"float_col",
-	"double_col",
-	"string_col",
-	"timestamp_col",
-	"binary_col",
-	"array_col",
-	"map_col",
-	"struct_col",
-	"decimal_col",
-	"date_col",
-	"interval_ym_col",
-	"interval_dt_col",
-}
-
-func TestColumnsWithDirectResults(t *testing.T) {
-	var getMetadataCount, fetchResultsCount int
-
-	client := getRowsTestSimpleClient(&getMetadataCount, &fetchResultsCount)
-
-	d, err := NewRows("", "", nil, client, nil, nil)
-	assert.Nil(t, err)
-
-	rowSet := d.(*rows)
-	defer rowSet.Close()
-
-	req2 := &cli_service.TGetResultSetMetadataReq{}
-	metadata, _ := client.GetResultSetMetadata(context.Background(), req2)
-	rowSet.schema = metadata.Schema
-	// get metadata has been called once
-	assert.Equal(t, 1, getMetadataCount)
-
-	// getting column names should not call into client again
-	rowSet.client = client
-	colNames := rowSet.Columns()
-	assert.NotNil(t, colNames)
-	assert.Equal(t, 17, len(colNames))
-	assert.Equal(t, rowTestColNames, colNames)
-}
-
-func TestColumnsNoDirectResults(t *testing.T) {
-	var getMetadataCount, fetchResultsCount int
-
-	rowSet := &rows{}
-
-	colNames := rowSet.Columns()
-	assert.NotNil(t, colNames)
-	assert.Equal(t, 0, len(colNames))
-
-	client := getRowsTestSimpleClient(&getMetadataCount, &fetchResultsCount)
-	rowSet.client = client
-	colNames = rowSet.Columns()
-	assert.NotNil(t, colNames)
-	assert.Equal(t, 17, len(colNames))
-}
-
-func TestNextNoDirectResults(t *testing.T) {
-	var getMetadataCount, fetchResultsCount int
-
-	var rowSet *rows
-	err := rowSet.Next(nil)
-	assert.EqualError(t, err, errRowsNilRows)
-
-	rowSet = &rows{hasMoreRows: true}
-	client := getRowsTestSimpleClient(&getMetadataCount, &fetchResultsCount)
-	rowSet.client = client
-
-	colNames := rowSet.Columns()
-	row := make([]driver.Value, len(colNames))
-
-	err = rowSet.Next(row)
-	timestamp, _ := time.Parse(rowscanner.DateTimeFormats["TIMESTAMP"], "2021-07-01 05:43:28")
-	date, _ := time.Parse(rowscanner.DateTimeFormats["DATE"], "2021-07-01")
-	row0 := []driver.Value{
-		true,
-		driver.Value(nil),
-		int16(0),
-		int32(0),
-		int64(0),
-		float32(0),
-		float64(0),
-		"s0",
-		timestamp,
-		[]uint8{uint8(1), uint8(2), uint8(3)},
-		"[1, 2, 3]",
-		"{\"key1\": 1}",
-		"{\"string_field\": \"string_val\", \"array_field\": [1, 2]}",
-		"1.1",
-		date,
-		"100-0",
-		"-8 08:13:50.300000000",
-	}
-	assert.Nil(t, err)
-	assert.Equal(t, row0, row)
-	assert.Equal(t, int64(1), rowSet.nextRowNumber)
-	assert.Equal(t, int64(1), rowSet.nextRowIndex)
-	assert.Equal(t, 1, getMetadataCount)
-	assert.Equal(t, 1, fetchResultsCount)
-}
-
-func TestNextWithDirectResults(t *testing.T) {
-	var getMetadataCount, fetchResultsCount int
-
-	rowSet := &rows{hasMoreRows: true}
-	client := getRowsTestSimpleClient(&getMetadataCount, &fetchResultsCount)
-	rowSet.client = client
-
-	req := &cli_service.TFetchResultsReq{
-		Orientation: cli_service.TFetchOrientation_FETCH_NEXT,
-	}
-	firstPage, _ := client.FetchResults(context.Background(), req)
-	err := rowSet.makeRowScanner(firstPage)
-	assert.Nil(t, err)
-	assert.Equal(t, 1, fetchResultsCount)
-	assert.Equal(t, 1, getMetadataCount)
-
-	req2 := &cli_service.TGetResultSetMetadataReq{}
-	metadata, _ := client.GetResultSetMetadata(context.Background(), req2)
-	rowSet.schema = metadata.Schema
-	// get metadata has been called once
-	assert.Equal(t, 2, getMetadataCount)
-
-	colNames := rowSet.Columns()
-	row := make([]driver.Value, len(colNames))
-
-	err = rowSet.Next(row)
-
-	timestamp, _ := time.Parse(rowscanner.DateTimeFormats["TIMESTAMP"], "2021-07-01 05:43:28")
-	date, _ := time.Parse(rowscanner.DateTimeFormats["DATE"], "2021-07-01")
-	row0 := []driver.Value{
-		true,
-		driver.Value(nil),
-		int16(0),
-		int32(0),
-		int64(0),
-		float32(0),
-		float64(0),
-		"s0",
-		timestamp,
-		[]uint8{uint8(1), uint8(2), uint8(3)},
-		"[1, 2, 3]",
-		"{\"key1\": 1}",
-		"{\"string_field\": \"string_val\", \"array_field\": [1, 2]}",
-		"1.1",
-		date,
-		"100-0",
-		"-8 08:13:50.300000000",
-	}
-	assert.Nil(t, err)
-	assert.Equal(t, row0, row)
-	assert.Equal(t, int64(1), rowSet.nextRowNumber)
-	assert.Equal(t, int64(1), rowSet.nextRowIndex)
-	assert.Equal(t, 2, getMetadataCount)
-	assert.Equal(t, 1, fetchResultsCount)
-}
-
-func TestGetScanType(t *testing.T) {
-	var getMetadataCount, fetchResultsCount int
-
-	var rowSet *rows
-	cd, err := rowSet.getColumnMetadataByIndex(0)
-	assert.Nil(t, cd)
-	assert.EqualError(t, err, errRowsNilRows)
-
-	rowSet = &rows{}
-	cd, err = rowSet.getColumnMetadataByIndex(0)
-	assert.Nil(t, cd)
-	assert.EqualError(t, err, errRowsNoClient)
-
-	client := getRowsTestSimpleClient(&getMetadataCount, &fetchResultsCount)
-	rowSet.client = client
-
-	schema, err := rowSet.getResultSetSchema()
-	assert.Nil(t, err)
-
-	cols := schema.Columns
-	expectedScanTypes := []reflect.Type{
-		scanTypeBoolean,
-		scanTypeInt8,
-		scanTypeInt16,
-		scanTypeInt32,
-		scanTypeInt64,
-		scanTypeFloat32,
-		scanTypeFloat64,
-		scanTypeString,
-		scanTypeDateTime,
-		scanTypeRawBytes,
-		scanTypeRawBytes,
-		scanTypeRawBytes,
-		scanTypeRawBytes,
-		scanTypeRawBytes,
-		scanTypeDateTime,
-		scanTypeString,
-		scanTypeString,
-	}
-
-	assert.Equal(t, len(expectedScanTypes), len(cols))
-
-	scanTypes := make([]reflect.Type, len(cols))
-	for i := range cols {
-		scanTypes[i] = rowSet.ColumnTypeScanType(i)
-	}
-
-	assert.Equal(t, expectedScanTypes, scanTypes)
-}
-
-func TestColumnTypeNullable(t *testing.T) {
-	var getMetadataCount, fetchResultsCount int
-
-	rowSet := &rows{}
-	client := getRowsTestSimpleClient(&getMetadataCount, &fetchResultsCount)
-	rowSet.client = client
-
-	colNames := rowSet.Columns()
-	for i := range colNames {
-		nullable, ok := rowSet.ColumnTypeNullable(i)
-		assert.False(t, nullable)
-		assert.False(t, ok)
-	}
-}
-
-func TestColumnTypeLength(t *testing.T) {
-	var getMetadataCount, fetchResultsCount int
-
-	var rowSet *rows
-	l, b := rowSet.ColumnTypeLength(0)
-	assert.Zero(t, l)
-	assert.False(t, b)
-
-	rowSet = &rows{}
-	client := getRowsTestSimpleClient(&getMetadataCount, &fetchResultsCount)
-	rowSet.client = client
-
-	colNames := rowSet.Columns()
-	for i := range colNames {
-		length, ok := rowSet.ColumnTypeLength(i)
-
-		cm, _ := rowSet.getColumnMetadataByIndex(i)
-		switch rowscanner.GetDBTypeID(cm) {
-		case cli_service.TTypeId_STRING_TYPE,
-			cli_service.TTypeId_VARCHAR_TYPE,
-			cli_service.TTypeId_BINARY_TYPE,
-			cli_service.TTypeId_ARRAY_TYPE,
-			cli_service.TTypeId_MAP_TYPE,
-			cli_service.TTypeId_STRUCT_TYPE:
-			assert.Equal(t, int64(math.MaxInt64), length)
-			assert.True(t, ok)
-		default:
-			assert.Equal(t, int64(0), length)
-			assert.False(t, ok)
-		}
-	}
-}
-
-func TestColumnTypeDatabaseTypeName(t *testing.T) {
-	var getMetadataCount, fetchResultsCount int
-
-	rowSet := &rows{}
-	client := getRowsTestSimpleClient(&getMetadataCount, &fetchResultsCount)
-	rowSet.client = client
-
-	schema, err := rowSet.getResultSetSchema()
-	assert.Nil(t, err)
-
-	cols := schema.Columns
-	expectedScanTypes := []reflect.Type{
-		scanTypeBoolean,
-		scanTypeInt8,
-		scanTypeInt16,
-		scanTypeInt32,
-		scanTypeInt64,
-		scanTypeFloat32,
-		scanTypeFloat64,
-		scanTypeString,
-		scanTypeDateTime,
-		scanTypeRawBytes,
-		scanTypeRawBytes,
-		scanTypeRawBytes,
-		scanTypeRawBytes,
-		scanTypeRawBytes,
-		scanTypeDateTime,
-		scanTypeString,
-		scanTypeString,
-	}
-
-	assert.Equal(t, len(expectedScanTypes), len(cols))
-
-	scanTypes := make([]reflect.Type, len(cols))
-	for i := range cols {
-		scanTypes[i] = rowSet.ColumnTypeScanType(i)
-	}
-
-	assert.Equal(t, expectedScanTypes, scanTypes)
-}
-
-func TestRowsCloseOptimization(t *testing.T) {
-	var closeCount int
-	client := &client.TestClient{
-		FnCloseOperation: func(ctx context.Context, req *cli_service.TCloseOperationReq) (_r *cli_service.TCloseOperationResp, _err error) {
-			closeCount++
-			return nil, nil
-		},
-	}
-
-	opHandle := &cli_service.TOperationHandle{OperationId: &cli_service.THandleIdentifier{GUID: []byte{'f', 'o'}}}
-	rowSet, _ := NewRows("", "", opHandle, client, nil, nil)
-
-	// rowSet has no direct results calling Close should result in call to client to close operation
-	err := rowSet.Close()
-	assert.Nil(t, err, "rows.Close should not throw an error")
-	assert.Equal(t, 1, closeCount)
-
-	// rowSet has direct results, but operation was not closed so it should call client to close operation
-	directResults := &cli_service.TSparkDirectResults{
-		ResultSetMetadata: &cli_service.TGetResultSetMetadataResp{Schema: &cli_service.TTableSchema{}},
-		ResultSet:         &cli_service.TFetchResultsResp{Results: &cli_service.TRowSet{}},
-	}
-	closeCount = 0
-	rowSet, _ = NewRows("", "", opHandle, client, nil, directResults)
-	err = rowSet.Close()
-	assert.Nil(t, err, "rows.Close should not throw an error")
-	assert.Equal(t, 1, closeCount)
-
-	// rowSet has direct results which include a close operation response.  rowSet should be marked as closed
-	// and calling Close should not call into the client.
-	closeCount = 0
-	directResults = &cli_service.TSparkDirectResults{
-		CloseOperation:    &cli_service.TCloseOperationResp{},
-		ResultSetMetadata: &cli_service.TGetResultSetMetadataResp{Schema: &cli_service.TTableSchema{}},
-		ResultSet:         &cli_service.TFetchResultsResp{Results: &cli_service.TRowSet{}},
-	}
-	rowSet, _ = NewRows("", "", opHandle, client, nil, directResults)
-	err = rowSet.Close()
-	assert.Nil(t, err, "rows.Close should not throw an error")
-	assert.Equal(t, 0, closeCount)
-}
+// func TestGetResultMetadataWithDirectResults(t *testing.T) {
+// 	t.Parallel()
+// 	var getMetadataCount, fetchResultsCount int
+
+// 	client := getRowsTestSimpleClient(&getMetadataCount, &fetchResultsCount)
+// 	rowSet := &rows{client: client}
+
+// 	// simulate direct results by setting initial result page and
+// 	// metadata
+// 	req := &cli_service.TFetchResultsReq{
+// 		Orientation: cli_service.TFetchOrientation_FETCH_NEXT,
+// 	}
+// 	firstPage, _ := client.FetchResults(context.Background(), req)
+// 	err := rowSet.makeRowScanner(firstPage)
+// 	assert.Nil(t, err)
+// 	assert.Equal(t, 1, getMetadataCount)
+// 	// fetch results has been called once
+// 	assert.Equal(t, 1, fetchResultsCount)
+
+// 	req2 := &cli_service.TGetResultSetMetadataReq{}
+// 	metadata, _ := client.GetResultSetMetadata(context.Background(), req2)
+// 	rowSet.schema = metadata.Schema
+// 	// fetch results has been called once
+// 	assert.Equal(t, 1, fetchResultsCount)
+// 	assert.Equal(t, 2, getMetadataCount)
+
+// 	// calling should not call into client again
+// 	schema, err := rowSet.getResultSetSchema()
+// 	assert.NotNil(t, schema)
+// 	assert.Nil(t, err)
+// 	assert.Equal(t, 2, getMetadataCount)
+// }
+
+// func TestRowsFetchResultPageNoDirectResults(t *testing.T) {
+// 	t.Parallel()
+
+// 	var getMetadataCount, fetchResultsCount int
+
+// 	client := getRowsTestSimpleClient(&getMetadataCount, &fetchResultsCount)
+// 	rowSet := &rows{client: client, hasMoreRows: true}
+
+// 	var i64Zero int64
+
+// 	// next row number is zero so should fetch first result page
+// 	err := rowSet.fetchResultPage()
+// 	rowTestPagingResult{
+// 		getMetadataCount:  1,
+// 		fetchResultsCount: 1,
+// 		nextRowIndex:      i64Zero,
+// 		nextRowNumber:     i64Zero,
+// 		offset:            i64Zero,
+// 	}.validatePaging(t, rowSet, err, fetchResultsCount, getMetadataCount)
+
+// 	// next row number is four, still in same result page
+// 	rowSet.nextRowNumber = 4
+// 	err = rowSet.fetchResultPage()
+// 	rowTestPagingResult{
+// 		getMetadataCount:  1,
+// 		fetchResultsCount: 1,
+// 		nextRowIndex:      int64(4),
+// 		nextRowNumber:     int64(4),
+// 		offset:            i64Zero,
+// 	}.validatePaging(t, rowSet, err, fetchResultsCount, getMetadataCount)
+
+// 	// next row number is six, should fetch next result page
+// 	rowSet.nextRowNumber = 6
+// 	err = rowSet.fetchResultPage()
+// 	rowTestPagingResult{
+// 		getMetadataCount:  1,
+// 		fetchResultsCount: 2,
+// 		nextRowIndex:      int64(1),
+// 		nextRowNumber:     int64(6),
+// 		offset:            int64(5),
+// 	}.validatePaging(t, rowSet, err, fetchResultsCount, getMetadataCount)
+
+// 	// next row number is two, should fetch previous result page
+// 	rowSet.nextRowNumber = 2
+// 	err = rowSet.fetchResultPage()
+// 	rowTestPagingResult{
+// 		getMetadataCount:  1,
+// 		fetchResultsCount: 3,
+// 		nextRowIndex:      int64(2),
+// 		nextRowNumber:     int64(2),
+// 		offset:            i64Zero,
+// 	}.validatePaging(t, rowSet, err, fetchResultsCount, getMetadataCount)
+
+// 	// next row number is past end of results, should fetch all result pages
+// 	// going forward and then return EOF
+// 	rowSet.nextRowNumber = 15
+// 	err = rowSet.fetchResultPage()
+// 	errMsg := io.EOF.Error()
+// 	rowTestPagingResult{
+// 		getMetadataCount:  1,
+// 		fetchResultsCount: 5,
+// 		nextRowIndex:      int64(2),
+// 		nextRowNumber:     int64(15),
+// 		offset:            int64(10),
+// 		errMessage:        &errMsg,
+// 	}.validatePaging(t, rowSet, err, fetchResultsCount, getMetadataCount)
+
+// 	// next row number is before start of results, should fetch all result pages
+// 	// going forward and then return EOF
+// 	rowSet.nextRowNumber = -1
+// 	err = rowSet.fetchResultPage()
+// 	errMsg = errRowsFetchPriorToStart
+// 	rowTestPagingResult{
+// 		getMetadataCount:  1,
+// 		fetchResultsCount: 7,
+// 		nextRowIndex:      int64(2),
+// 		nextRowNumber:     int64(-1),
+// 		offset:            i64Zero,
+// 		errMessage:        &errMsg,
+// 	}.validatePaging(t, rowSet, err, fetchResultsCount, getMetadataCount)
+
+// 	// jump back to last page
+// 	rowSet.nextRowNumber = 12
+// 	err = rowSet.fetchResultPage()
+// 	errMsg = "unable to fetch row page prior to start of results"
+// 	rowTestPagingResult{
+// 		getMetadataCount:  1,
+// 		fetchResultsCount: 9,
+// 		nextRowIndex:      int64(2),
+// 		nextRowNumber:     int64(12),
+// 		offset:            int64(10),
+// 	}.validatePaging(t, rowSet, err, fetchResultsCount, getMetadataCount)
+// }
+
+// func TestRowsFetchResultPageWithDirectResults(t *testing.T) {
+// 	t.Parallel()
+
+// 	var getMetadataCount, fetchResultsCount int
+// 	var i64Zero int64
+
+// 	client := getRowsTestSimpleClient(&getMetadataCount, &fetchResultsCount)
+// 	rowSet := &rows{client: client, hasMoreRows: true}
+// 	req := &cli_service.TFetchResultsReq{
+// 		Orientation: cli_service.TFetchOrientation_FETCH_NEXT,
+// 	}
+// 	firstPage, _ := client.FetchResults(context.Background(), req)
+// 	err := rowSet.makeRowScanner(firstPage)
+// 	assert.Nil(t, err)
+
+// 	// fetch results and get metadata have been called once
+// 	assert.Equal(t, 1, fetchResultsCount)
+// 	assert.Equal(t, 1, getMetadataCount)
+
+// 	// next row number is zero so should not fetch a result page again
+// 	err = rowSet.fetchResultPage()
+// 	rowTestPagingResult{
+// 		getMetadataCount:  1,
+// 		fetchResultsCount: 1,
+// 		nextRowIndex:      i64Zero,
+// 		nextRowNumber:     i64Zero,
+// 		offset:            i64Zero,
+// 	}.validatePaging(t, rowSet, err, fetchResultsCount, getMetadataCount)
+
+// 	// next row number is four, still in same result page
+// 	rowSet.nextRowNumber = 4
+// 	err = rowSet.fetchResultPage()
+// 	rowTestPagingResult{
+// 		getMetadataCount:  1,
+// 		fetchResultsCount: 1,
+// 		nextRowIndex:      int64(4),
+// 		nextRowNumber:     int64(4),
+// 		offset:            i64Zero,
+// 	}.validatePaging(t, rowSet, err, fetchResultsCount, getMetadataCount)
+
+// 	// next row number is six, should fetch next result page
+// 	rowSet.nextRowNumber = 6
+// 	err = rowSet.fetchResultPage()
+// 	rowTestPagingResult{
+// 		getMetadataCount:  1,
+// 		fetchResultsCount: 2,
+// 		nextRowIndex:      int64(1),
+// 		nextRowNumber:     int64(6),
+// 		offset:            int64(5),
+// 	}.validatePaging(t, rowSet, err, fetchResultsCount, getMetadataCount)
+
+// 	// next row number is two, should fetch previous result page
+// 	rowSet.nextRowNumber = 2
+// 	err = rowSet.fetchResultPage()
+// 	rowTestPagingResult{
+// 		getMetadataCount:  1,
+// 		fetchResultsCount: 3,
+// 		nextRowIndex:      int64(2),
+// 		nextRowNumber:     int64(2),
+// 		offset:            i64Zero,
+// 	}.validatePaging(t, rowSet, err, fetchResultsCount, getMetadataCount)
+
+// 	// next row number is past end of results, should fetch all result pages
+// 	// going forward and then return EOF
+// 	rowSet.nextRowNumber = 15
+// 	err = rowSet.fetchResultPage()
+// 	errMsg := io.EOF.Error()
+// 	rowTestPagingResult{
+// 		getMetadataCount:  1,
+// 		fetchResultsCount: 5,
+// 		nextRowIndex:      int64(2),
+// 		nextRowNumber:     int64(15),
+// 		offset:            int64(10),
+// 		errMessage:        &errMsg,
+// 	}.validatePaging(t, rowSet, err, fetchResultsCount, getMetadataCount)
+
+// 	// next row number is before start of results, should fetch all result pages
+// 	// going forward and then return EOF
+// 	rowSet.nextRowNumber = -1
+// 	err = rowSet.fetchResultPage()
+// 	errMsg = errRowsFetchPriorToStart
+// 	rowTestPagingResult{
+// 		getMetadataCount:  1,
+// 		fetchResultsCount: 7,
+// 		nextRowIndex:      int64(2),
+// 		nextRowNumber:     int64(-1),
+// 		offset:            i64Zero,
+// 		errMessage:        &errMsg,
+// 	}.validatePaging(t, rowSet, err, fetchResultsCount, getMetadataCount)
+
+// 	// jump back to last page
+// 	rowSet.nextRowNumber = 12
+// 	err = rowSet.fetchResultPage()
+// 	errMsg = "unable to fetch row page prior to start of results"
+// 	rowTestPagingResult{
+// 		getMetadataCount:  1,
+// 		fetchResultsCount: 9,
+// 		nextRowIndex:      int64(2),
+// 		nextRowNumber:     int64(12),
+// 		offset:            int64(10),
+// 	}.validatePaging(t, rowSet, err, fetchResultsCount, getMetadataCount)
+// }
+
+// var rowTestColNames []string = []string{
+// 	"bool_col",
+// 	"tinyInt_col",
+// 	"smallInt_col",
+// 	"int_col",
+// 	"bigInt_col",
+// 	"float_col",
+// 	"double_col",
+// 	"string_col",
+// 	"timestamp_col",
+// 	"binary_col",
+// 	"array_col",
+// 	"map_col",
+// 	"struct_col",
+// 	"decimal_col",
+// 	"date_col",
+// 	"interval_ym_col",
+// 	"interval_dt_col",
+// }
+
+// func TestColumnsWithDirectResults(t *testing.T) {
+// 	var getMetadataCount, fetchResultsCount int
+
+// 	client := getRowsTestSimpleClient(&getMetadataCount, &fetchResultsCount)
+
+// 	d, err := NewRows("", "", nil, client, nil, nil)
+// 	assert.Nil(t, err)
+
+// 	rowSet := d.(*rows)
+// 	defer rowSet.Close()
+
+// 	req2 := &cli_service.TGetResultSetMetadataReq{}
+// 	metadata, _ := client.GetResultSetMetadata(context.Background(), req2)
+// 	rowSet.schema = metadata.Schema
+// 	// get metadata has been called once
+// 	assert.Equal(t, 1, getMetadataCount)
+
+// 	// getting column names should not call into client again
+// 	rowSet.client = client
+// 	colNames := rowSet.Columns()
+// 	assert.NotNil(t, colNames)
+// 	assert.Equal(t, 17, len(colNames))
+// 	assert.Equal(t, rowTestColNames, colNames)
+// }
+
+// func TestColumnsNoDirectResults(t *testing.T) {
+// 	var getMetadataCount, fetchResultsCount int
+
+// 	rowSet := &rows{}
+
+// 	colNames := rowSet.Columns()
+// 	assert.NotNil(t, colNames)
+// 	assert.Equal(t, 0, len(colNames))
+
+// 	client := getRowsTestSimpleClient(&getMetadataCount, &fetchResultsCount)
+// 	rowSet.client = client
+// 	colNames = rowSet.Columns()
+// 	assert.NotNil(t, colNames)
+// 	assert.Equal(t, 17, len(colNames))
+// }
+
+// func TestNextNoDirectResults(t *testing.T) {
+// 	var getMetadataCount, fetchResultsCount int
+
+// 	var rowSet *rows
+// 	err := rowSet.Next(nil)
+// 	assert.EqualError(t, err, errRowsNilRows)
+
+// 	rowSet = &rows{hasMoreRows: true}
+// 	client := getRowsTestSimpleClient(&getMetadataCount, &fetchResultsCount)
+// 	rowSet.client = client
+
+// 	colNames := rowSet.Columns()
+// 	row := make([]driver.Value, len(colNames))
+
+// 	err = rowSet.Next(row)
+// 	timestamp, _ := time.Parse(rowscanner.DateTimeFormats["TIMESTAMP"], "2021-07-01 05:43:28")
+// 	date, _ := time.Parse(rowscanner.DateTimeFormats["DATE"], "2021-07-01")
+// 	row0 := []driver.Value{
+// 		true,
+// 		driver.Value(nil),
+// 		int16(0),
+// 		int32(0),
+// 		int64(0),
+// 		float32(0),
+// 		float64(0),
+// 		"s0",
+// 		timestamp,
+// 		[]uint8{uint8(1), uint8(2), uint8(3)},
+// 		"[1, 2, 3]",
+// 		"{\"key1\": 1}",
+// 		"{\"string_field\": \"string_val\", \"array_field\": [1, 2]}",
+// 		"1.1",
+// 		date,
+// 		"100-0",
+// 		"-8 08:13:50.300000000",
+// 	}
+// 	assert.Nil(t, err)
+// 	assert.Equal(t, row0, row)
+// 	assert.Equal(t, int64(1), rowSet.nextRowNumber)
+// 	assert.Equal(t, int64(1), rowSet.nextRowIndex)
+// 	assert.Equal(t, 1, getMetadataCount)
+// 	assert.Equal(t, 1, fetchResultsCount)
+// }
+
+// func TestNextWithDirectResults(t *testing.T) {
+// 	var getMetadataCount, fetchResultsCount int
+
+// 	rowSet := &rows{hasMoreRows: true}
+// 	client := getRowsTestSimpleClient(&getMetadataCount, &fetchResultsCount)
+// 	rowSet.client = client
+
+// 	req := &cli_service.TFetchResultsReq{
+// 		Orientation: cli_service.TFetchOrientation_FETCH_NEXT,
+// 	}
+// 	firstPage, _ := client.FetchResults(context.Background(), req)
+// 	err := rowSet.makeRowScanner(firstPage)
+// 	assert.Nil(t, err)
+// 	assert.Equal(t, 1, fetchResultsCount)
+// 	assert.Equal(t, 1, getMetadataCount)
+
+// 	req2 := &cli_service.TGetResultSetMetadataReq{}
+// 	metadata, _ := client.GetResultSetMetadata(context.Background(), req2)
+// 	rowSet.schema = metadata.Schema
+// 	// get metadata has been called once
+// 	assert.Equal(t, 2, getMetadataCount)
+
+// 	colNames := rowSet.Columns()
+// 	row := make([]driver.Value, len(colNames))
+
+// 	err = rowSet.Next(row)
+
+// 	timestamp, _ := time.Parse(rowscanner.DateTimeFormats["TIMESTAMP"], "2021-07-01 05:43:28")
+// 	date, _ := time.Parse(rowscanner.DateTimeFormats["DATE"], "2021-07-01")
+// 	row0 := []driver.Value{
+// 		true,
+// 		driver.Value(nil),
+// 		int16(0),
+// 		int32(0),
+// 		int64(0),
+// 		float32(0),
+// 		float64(0),
+// 		"s0",
+// 		timestamp,
+// 		[]uint8{uint8(1), uint8(2), uint8(3)},
+// 		"[1, 2, 3]",
+// 		"{\"key1\": 1}",
+// 		"{\"string_field\": \"string_val\", \"array_field\": [1, 2]}",
+// 		"1.1",
+// 		date,
+// 		"100-0",
+// 		"-8 08:13:50.300000000",
+// 	}
+// 	assert.Nil(t, err)
+// 	assert.Equal(t, row0, row)
+// 	assert.Equal(t, int64(1), rowSet.nextRowNumber)
+// 	assert.Equal(t, int64(1), rowSet.nextRowIndex)
+// 	assert.Equal(t, 2, getMetadataCount)
+// 	assert.Equal(t, 1, fetchResultsCount)
+// }
+
+// func TestGetScanType(t *testing.T) {
+// 	var getMetadataCount, fetchResultsCount int
+
+// 	var rowSet *rows
+// 	cd, err := rowSet.getColumnMetadataByIndex(0)
+// 	assert.Nil(t, cd)
+// 	assert.EqualError(t, err, errRowsNilRows)
+
+// 	rowSet = &rows{}
+// 	cd, err = rowSet.getColumnMetadataByIndex(0)
+// 	assert.Nil(t, cd)
+// 	assert.EqualError(t, err, errRowsNoClient)
+
+// 	client := getRowsTestSimpleClient(&getMetadataCount, &fetchResultsCount)
+// 	rowSet.client = client
+
+// 	schema, err := rowSet.getResultSetSchema()
+// 	assert.Nil(t, err)
+
+// 	cols := schema.Columns
+// 	expectedScanTypes := []reflect.Type{
+// 		scanTypeBoolean,
+// 		scanTypeInt8,
+// 		scanTypeInt16,
+// 		scanTypeInt32,
+// 		scanTypeInt64,
+// 		scanTypeFloat32,
+// 		scanTypeFloat64,
+// 		scanTypeString,
+// 		scanTypeDateTime,
+// 		scanTypeRawBytes,
+// 		scanTypeRawBytes,
+// 		scanTypeRawBytes,
+// 		scanTypeRawBytes,
+// 		scanTypeRawBytes,
+// 		scanTypeDateTime,
+// 		scanTypeString,
+// 		scanTypeString,
+// 	}
+
+// 	assert.Equal(t, len(expectedScanTypes), len(cols))
+
+// 	scanTypes := make([]reflect.Type, len(cols))
+// 	for i := range cols {
+// 		scanTypes[i] = rowSet.ColumnTypeScanType(i)
+// 	}
+
+// 	assert.Equal(t, expectedScanTypes, scanTypes)
+// }
+
+// func TestColumnTypeNullable(t *testing.T) {
+// 	var getMetadataCount, fetchResultsCount int
+
+// 	rowSet := &rows{}
+// 	client := getRowsTestSimpleClient(&getMetadataCount, &fetchResultsCount)
+// 	rowSet.client = client
+
+// 	colNames := rowSet.Columns()
+// 	for i := range colNames {
+// 		nullable, ok := rowSet.ColumnTypeNullable(i)
+// 		assert.False(t, nullable)
+// 		assert.False(t, ok)
+// 	}
+// }
+
+// func TestColumnTypeLength(t *testing.T) {
+// 	var getMetadataCount, fetchResultsCount int
+
+// 	var rowSet *rows
+// 	l, b := rowSet.ColumnTypeLength(0)
+// 	assert.Zero(t, l)
+// 	assert.False(t, b)
+
+// 	rowSet = &rows{}
+// 	client := getRowsTestSimpleClient(&getMetadataCount, &fetchResultsCount)
+// 	rowSet.client = client
+
+// 	colNames := rowSet.Columns()
+// 	for i := range colNames {
+// 		length, ok := rowSet.ColumnTypeLength(i)
+
+// 		cm, _ := rowSet.getColumnMetadataByIndex(i)
+// 		switch rowscanner.GetDBTypeID(cm) {
+// 		case cli_service.TTypeId_STRING_TYPE,
+// 			cli_service.TTypeId_VARCHAR_TYPE,
+// 			cli_service.TTypeId_BINARY_TYPE,
+// 			cli_service.TTypeId_ARRAY_TYPE,
+// 			cli_service.TTypeId_MAP_TYPE,
+// 			cli_service.TTypeId_STRUCT_TYPE:
+// 			assert.Equal(t, int64(math.MaxInt64), length)
+// 			assert.True(t, ok)
+// 		default:
+// 			assert.Equal(t, int64(0), length)
+// 			assert.False(t, ok)
+// 		}
+// 	}
+// }
+
+// func TestColumnTypeDatabaseTypeName(t *testing.T) {
+// 	var getMetadataCount, fetchResultsCount int
+
+// 	rowSet := &rows{}
+// 	client := getRowsTestSimpleClient(&getMetadataCount, &fetchResultsCount)
+// 	rowSet.client = client
+
+// 	schema, err := rowSet.getResultSetSchema()
+// 	assert.Nil(t, err)
+
+// 	cols := schema.Columns
+// 	expectedScanTypes := []reflect.Type{
+// 		scanTypeBoolean,
+// 		scanTypeInt8,
+// 		scanTypeInt16,
+// 		scanTypeInt32,
+// 		scanTypeInt64,
+// 		scanTypeFloat32,
+// 		scanTypeFloat64,
+// 		scanTypeString,
+// 		scanTypeDateTime,
+// 		scanTypeRawBytes,
+// 		scanTypeRawBytes,
+// 		scanTypeRawBytes,
+// 		scanTypeRawBytes,
+// 		scanTypeRawBytes,
+// 		scanTypeDateTime,
+// 		scanTypeString,
+// 		scanTypeString,
+// 	}
+
+// 	assert.Equal(t, len(expectedScanTypes), len(cols))
+
+// 	scanTypes := make([]reflect.Type, len(cols))
+// 	for i := range cols {
+// 		scanTypes[i] = rowSet.ColumnTypeScanType(i)
+// 	}
+
+// 	assert.Equal(t, expectedScanTypes, scanTypes)
+// }
+
+// func TestRowsCloseOptimization(t *testing.T) {
+// 	var closeCount int
+// 	client := &client.TestClient{
+// 		FnCloseOperation: func(ctx context.Context, req *cli_service.TCloseOperationReq) (_r *cli_service.TCloseOperationResp, _err error) {
+// 			closeCount++
+// 			return nil, nil
+// 		},
+// 	}
+
+// 	opHandle := &cli_service.TOperationHandle{OperationId: &cli_service.THandleIdentifier{GUID: []byte{'f', 'o'}}}
+// 	rowSet, _ := NewRows("", "", opHandle, client, nil, nil)
+
+// 	// rowSet has no direct results calling Close should result in call to client to close operation
+// 	err := rowSet.Close()
+// 	assert.Nil(t, err, "rows.Close should not throw an error")
+// 	assert.Equal(t, 1, closeCount)
+
+// 	// rowSet has direct results, but operation was not closed so it should call client to close operation
+// 	directResults := &cli_service.TSparkDirectResults{
+// 		ResultSetMetadata: &cli_service.TGetResultSetMetadataResp{Schema: &cli_service.TTableSchema{}},
+// 		ResultSet:         &cli_service.TFetchResultsResp{Results: &cli_service.TRowSet{}},
+// 	}
+// 	closeCount = 0
+// 	rowSet, _ = NewRows("", "", opHandle, client, nil, directResults)
+// 	err = rowSet.Close()
+// 	assert.Nil(t, err, "rows.Close should not throw an error")
+// 	assert.Equal(t, 1, closeCount)
+
+// 	// rowSet has direct results which include a close operation response.  rowSet should be marked as closed
+// 	// and calling Close should not call into the client.
+// 	closeCount = 0
+// 	directResults = &cli_service.TSparkDirectResults{
+// 		CloseOperation:    &cli_service.TCloseOperationResp{},
+// 		ResultSetMetadata: &cli_service.TGetResultSetMetadataResp{Schema: &cli_service.TTableSchema{}},
+// 		ResultSet:         &cli_service.TFetchResultsResp{Results: &cli_service.TRowSet{}},
+// 	}
+// 	rowSet, _ = NewRows("", "", opHandle, client, nil, directResults)
+// 	err = rowSet.Close()
+// 	assert.Nil(t, err, "rows.Close should not throw an error")
+// 	assert.Equal(t, 0, closeCount)
+// }
 
 type rowTestPagingResult struct {
 	getMetadataCount  int

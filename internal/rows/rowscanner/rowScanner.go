@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
+	"github.com/databricks/databricks-sql-go/internal/client"
 	dbsqlerr "github.com/databricks/databricks-sql-go/internal/err"
 )
 
@@ -28,9 +29,9 @@ type RowScanner interface {
 }
 
 // Expected formats for TIMESTAMP and DATE types when represented by a string value
-var DateTimeFormats map[string]string = map[string]string{
-	"TIMESTAMP": "2006-01-02 15:04:05.999999999",
-	"DATE":      "2006-01-02",
+var DateTimeFormats map[client.ColumnTypeId]string = map[client.ColumnTypeId]string{
+	client.TIMESTAMP_TYPE: "2006-01-02 15:04:05.999999999",
+	client.DATE_TYPE:      "2006-01-02",
 }
 
 // IsNull return true if the bit at the provided position is set
@@ -46,7 +47,7 @@ func IsNull(nulls []byte, position int64) bool {
 var ErrRowsParseValue = "databricks: unable to parse %s value '%v' from column %s"
 
 // handleDateTime will convert the passed val to a time.Time value if necessary
-func HandleDateTime(val any, dbType, columnName string, location *time.Location) (any, error) {
+func HandleDateTime(val any, dbType client.ColumnTypeId, columnName string, location *time.Location) (any, error) {
 	// if there is a date/time format corresponding to the column type we need to
 	// convert to time.Time
 	if format, ok := DateTimeFormats[dbType]; ok {
@@ -112,28 +113,6 @@ const (
 // a minus sign
 func dateStartsWithNegative(val string) bool {
 	return strings.HasPrefix(val, aMinus) || strings.HasPrefix(val, uMinus)
-}
-
-// GetDBTypeName returns the database type name from a TColumnDesc
-func GetDBTypeName(column *cli_service.TColumnDesc) string {
-	// TODO: handle non-primitive types
-	entry := column.TypeDesc.Types[0].PrimitiveEntry
-	dbtype := strings.TrimSuffix(entry.Type.String(), "_TYPE")
-
-	return dbtype
-}
-
-func GetDBType(column *cli_service.TColumnDesc) cli_service.TTypeId {
-	// TODO: handle non-primitive types
-	entry := column.TypeDesc.Types[0].PrimitiveEntry
-	return entry.Type
-}
-
-// GetDBTypeID returns the database type ID from a TColumnDesc
-func GetDBTypeID(column *cli_service.TColumnDesc) cli_service.TTypeId {
-	// currently the thrift server returns all types using the primitive entry
-	entry := column.TypeDesc.Types[0].PrimitiveEntry
-	return entry.Type
 }
 
 // GetDBTypeQualifiers returns the TTypeQualifiers from a TColumnDesc.

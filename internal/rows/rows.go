@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/databricks/databricks-sql-go/driverctx"
-	"github.com/databricks/databricks-sql-go/internal/cli_service"
+	// "github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/client"
 	dbsqlclient "github.com/databricks/databricks-sql-go/internal/client"
 	"github.com/databricks/databricks-sql-go/internal/config"
@@ -43,8 +43,8 @@ type rows struct {
 	location *time.Location
 
 	// Metadata for result set
-	resultSetMetadata *cli_service.TGetResultSetMetadataResp
-	schema            *cli_service.TTableSchema
+	// resultSetMetadata *cli_service.TGetResultSetMetadataResp
+	schema            *client.ResultSchema
 
 	hasMoreRows bool
 
@@ -134,19 +134,19 @@ func NewRows(
 		logger.Debug().Msgf("databricks: creating Rows with direct results")
 		// set the result set metadata
 		if stmtResp.Schema != nil {
-			r.resultSetMetadata = stmtResp.ResultSetMetadata
-			r.schema = stmtResp.ResultSetMetadata.Schema
+			// r.resultSetMetadata = stmtResp.ResultSetMetadata
+			r.schema = stmtResp.Schema
 		}
 
 		// If the entire query result set fits in direct results the server closes
 		// the operations.
-		if stmtResp.CloseOperation != nil {
+		if stmtResp.IsClosed {
 			logger.Debug().Msgf("databricks: creating Rows with server operation closed")
 			r.closedOnServer = true
 		}
 
 		// initialize the row scanner
-		err := r.makeRowScanner(stmtResp.ResultSet)
+		err := r.makeRowScanner(stmtResp.Result)
 		if err != nil {
 			return r, err
 		}
@@ -170,11 +170,10 @@ func (r *rows) Columns() []string {
 		return []string{}
 	}
 
-	tColumns := schema.GetColumns()
-	colNames := make([]string, len(tColumns))
+	colNames := make([]string, len(schema.Columns))
 
-	for i := range tColumns {
-		colNames[i] = tColumns[i].Name
+	for i := range colNames {
+		colNames[i] = schema.Columns[i].Name
 	}
 
 	return colNames
@@ -287,9 +286,8 @@ func (r *rows) ColumnTypeDatabaseTypeName(index int) string {
 		return ""
 	}
 
-	dbtype := rowscanner.GetDBTypeName(column)
-
-	return dbtype
+	
+	return column.TypeName
 }
 
 // ColumnTypeNullable returns a flag indicating whether the column is nullable
@@ -305,17 +303,13 @@ func (r *rows) ColumnTypeLength(index int) (length int64, ok bool) {
 		return 0, false
 	}
 
-	typeName := rowscanner.GetDBTypeID(columnInfo)
-	// TODO: figure out how to get better metadata about complex types
-	// currently map, array, and struct are returned as strings
-
-	switch typeName {
-	case cli_service.TTypeId_STRING_TYPE,
-		cli_service.TTypeId_VARCHAR_TYPE,
-		cli_service.TTypeId_BINARY_TYPE,
-		cli_service.TTypeId_ARRAY_TYPE,
-		cli_service.TTypeId_MAP_TYPE,
-		cli_service.TTypeId_STRUCT_TYPE:
+	switch columnInfo.TypeName {
+	case "STRING_TYPE",
+		"TTypeId_VARCHAR_TYPE",
+		"TTypeId_BINARY_TYPE",
+		"TTypeId_ARRAY_TYPE",
+		"TTypeId_MAP_TYPE",
+		"TTypeId_STRUCT_TYPE":
 		return math.MaxInt64, true
 	default:
 		return 0, false
@@ -338,42 +332,37 @@ var (
 )
 
 func getScanType(column *client.ColumnInfo) reflect.Type {
-
-	// Currently all types are returned from the thrift server using
-	// the primitive entry
-	entry := column.TypeDesc.Types[0].PrimitiveEntry
-
-	switch entry.Type {
-	case cli_service.TTypeId_BOOLEAN_TYPE:
+	switch column.Type {
+	case client.BOOLEAN_TYPE:
 		return scanTypeBoolean
-	case cli_service.TTypeId_TINYINT_TYPE.String():
+	case client.TINYINT_TYPE:
 		return scanTypeInt8
-	case cli_service.TTypeId_SMALLINT_TYPE.String():
+	case client.SMALLINT_TYPE:
 		return scanTypeInt16
-	case cli_service.TTypeId_INT_TYPE.String():
+	case client.INT_TYPE:
 		return scanTypeInt32
-	case cli_service.TTypeId_BIGINT_TYPE.String():
+	case client.BIGINT_TYPE:
 		return scanTypeInt64
-	case cli_service.TTypeId_FLOAT_TYPE.String():
+	case client.FLOAT_TYPE:
 		return scanTypeFloat32
-	case cli_service.TTypeId_DOUBLE_TYPE.String():
+	case client.DOUBLE_TYPE:
 		return scanTypeFloat64
-	case cli_service.TTypeId_NULL_TYPE.String():
+	case client.NULL_TYPE:
 		return scanTypeNull
-	case cli_service.TTypeId_STRING_TYPE.String():
+	case client.STRING_TYPE:
 		return scanTypeString
-	case cli_service.TTypeId_CHAR_TYPE.String():
+	case client.CHAR_TYPE:
 		return scanTypeString
-	case cli_service.TTypeId_VARCHAR_TYPE.String():
+	case client.VARCHAR_TYPE:
 		return scanTypeString
-	case cli_service.TTypeId_DATE_TYPE.String(), cli_service.TTypeId_TIMESTAMP_TYPE.String():
+	case client.TIMESTAMP_TYPE, client.DATE_TYPE:
 		return scanTypeDateTime
-	case cli_service.TTypeId_DECIMAL_TYPE.String(), cli_service.TTypeId_BINARY_TYPE.String(), cli_service.TTypeId_ARRAY_TYPE.String(),
-		cli_service.TTypeId_STRUCT_TYPE.String(), cli_service.TTypeId_MAP_TYPE.String(), cli_service.TTypeId_UNION_TYPE.String():
+	case client.DECIMAL_TYPE, client.BINARY_TYPE, client.ARRAY_TYPE,
+		client.STRUCT_TYPE, client.MAP_TYPE, client.UNION_TYPE:
 		return scanTypeRawBytes
-	case cli_service.TTypeId_USER_DEFINED_TYPE.String():
+	case client.USER_DEFINED_TYPE:
 		return scanTypeUnknown
-	case cli_service.TTypeId_INTERVAL_DAY_TIME_TYPE.String(), cli_service.TTypeId_INTERVAL_YEAR_MONTH_TYPE.String():
+	case client.INTERVAL_DAY_TIME_TYPE, client.INTERVAL_YEAR_MONTH_TYPE:
 		return scanTypeString
 	default:
 		return scanTypeUnknown
@@ -406,7 +395,7 @@ func (r *rows) getColumnMetadataByIndex(index int) (*client.ColumnInfo, error) {
 		return nil, err
 	}
 
-	columns := schema.GetColumns()
+	columns := schema.Columns
 	if index < 0 || index >= len(columns) {
 		return nil, errors.Errorf("invalid column index: %d", index)
 	}
@@ -431,7 +420,7 @@ func (r *rows) isNextRowInPage() (bool, error) {
 }
 
 // getResultMetadata does a one time fetch of the result set schema
-func (r *rows) getResultSetSchema() (*cli_service.TTableSchema, error) {
+func (r *rows) getResultSetSchema() (*client.ResultSchema, error) {
 	if r.schema == nil {
 		err := isValidRows(r)
 		if err != nil {
@@ -449,7 +438,7 @@ func (r *rows) getResultSetSchema() (*cli_service.TTableSchema, error) {
 			return nil, err
 		}
 
-		r.resultSetMetadata = resp
+		// r.resultSetMetadata = resp
 		r.schema = resp.Schema
 
 	}
@@ -490,8 +479,8 @@ func (r *rows) fetchResultPage() error {
 
 		r.logger().Debug().Msgf("fetching next batch of up to %d rows, %s", r.maxPageSize, direction.String())
 
-		req := cli_service.TFetchResultsReq{
-			OperationHandle: r.opHandle,
+		req := dbsqlclient.FetchResultsReq{
+			ExecutionHandle: r.opHandle,
 			MaxRows:         r.maxPageSize,
 			Orientation:     direction,
 		}
@@ -503,12 +492,12 @@ func (r *rows) fetchResultPage() error {
 			return err
 		}
 
-		err = r.makeRowScanner(fetchResult)
+		err = r.makeRowScanner(fetchResult.Result)
 		if err != nil {
 			return err
 		}
 
-		r.logger().Debug().Msgf("databricks: new result page startRow: %d, nRows: %v, hasMoreRows: %v", fetchResult.Results.StartRowOffset, r.NRows(), fetchResult.HasMoreRows)
+		r.logger().Debug().Msgf("databricks: new result page startRow: %d, nRows: %v, hasMoreRows: %v", fetchResult.Result.StartRowOffset, r.NRows(), fetchResult.Result.HasMoreRows)
 	}
 
 	if e != nil {
@@ -539,7 +528,7 @@ func (r *rows) getPageFetchDirection() cli_service.TFetchOrientation {
 
 // makeRowScanner creates the embedded RowScanner instance based on the format
 // of the returned query results
-func (r *rows) makeRowScanner(fetchResults *cli_service.TFetchResultsResp) error {
+func (r *rows) makeRowScanner(fetchResults *client.ResultData) error {
 
 	schema, err1 := r.getResultSetSchema()
 	if err1 != nil {
@@ -552,28 +541,20 @@ func (r *rows) makeRowScanner(fetchResults *cli_service.TFetchResultsResp) error
 
 	var rs rowscanner.RowScanner
 	var err error
-	if fetchResults.Results != nil {
-		if fetchResults.Results.Columns != nil {
-			rs, err = columnbased.NewColumnRowScanner(schema, fetchResults.Results, r.config, r.logger())
-		} else if fetchResults.Results.ArrowBatches != nil {
-			rs, err = arrowbased.NewArrowRowScanner(r.resultSetMetadata, fetchResults.Results, r.config, r.logger())
-		} else {
-			r.logger().Error().Msg(errRowsUnknowRowType)
-			err = errors.New(errRowsUnknowRowType)
-		}
 
-		r.pageStartingRowNum = fetchResults.Results.StartRowOffset
+	if fetchResults.Columns != nil {
+		rs, err = columnbased.NewColumnRowScanner(schema, fetchResults, r.config, r.logger())
+	} else if fetchResults.ArrowBatches != nil {
+		rs, err = arrowbased.NewArrowRowScanner(r.schema, fetchResults, r.config, r.logger())
 	} else {
 		r.logger().Error().Msg(errRowsUnknowRowType)
 		err = errors.New(errRowsUnknowRowType)
 	}
 
+	r.pageStartingRowNum = fetchResults.StartRowOffset
+
 	r.RowScanner = rs
-	if fetchResults.HasMoreRows != nil {
-		r.hasMoreRows = *fetchResults.HasMoreRows
-	} else {
-		r.hasMoreRows = false
-	}
+	r.hasMoreRows = fetchResults.HasMoreRows
 
 	return err
 }
@@ -581,7 +562,7 @@ func (r *rows) makeRowScanner(fetchResults *cli_service.TFetchResultsResp) error
 func (r *rows) logger() *dbsqllog.DBSQLLogger {
 	if r.logger_ == nil {
 		if r.opHandle != nil {
-			r.logger_ = dbsqllog.WithContext(r.connId, r.correlationId, dbsqlclient.SprintGuid(r.opHandle.OperationId.GUID))
+			r.logger_ = dbsqllog.WithContext(r.connId, r.correlationId, r.opHandle.Id())
 		} else {
 			r.logger_ = dbsqllog.WithContext(r.connId, r.correlationId, "")
 		}
