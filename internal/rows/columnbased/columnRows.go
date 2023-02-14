@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
+	"github.com/databricks/databricks-sql-go/internal/client"
 	"github.com/databricks/databricks-sql-go/internal/config"
 	"github.com/databricks/databricks-sql-go/internal/rows/rowscanner"
 	dbsqllog "github.com/databricks/databricks-sql-go/logger"
@@ -14,8 +15,8 @@ import (
 type columnRowScanner struct {
 	*dbsqllog.DBSQLLogger
 	// TRowSet with query results in column format
-	rowSet *cli_service.TRowSet
-	schema *cli_service.TTableSchema
+	rowSet *client.ResultData
+	schema *client.ResultSchema
 
 	// number of rows in the current TRowSet
 	nRows int64
@@ -27,7 +28,7 @@ var _ rowscanner.RowScanner = (*columnRowScanner)(nil)
 
 // NewColumnRowScanner returns a columnRowScanner initialized with the provided
 // values.
-func NewColumnRowScanner(schema *cli_service.TTableSchema, rowSet *cli_service.TRowSet, cfg *config.Config, logger *dbsqllog.DBSQLLogger) (rowscanner.RowScanner, error) {
+func NewColumnRowScanner(schema *client.ResultSchema, rowSet *client.ResultData, cfg *config.Config, logger *dbsqllog.DBSQLLogger) (rowscanner.RowScanner, error) {
 	if logger == nil {
 		logger = dbsqllog.Logger
 	}
@@ -87,19 +88,19 @@ func (crs *columnRowScanner) ScanRow(
 }
 
 // value retrieves the value for the specified colum/row
-func (crs *columnRowScanner) value(tColumn *cli_service.TColumn, tColumnDesc *cli_service.TColumnDesc, rowNum int64) (val interface{}, err error) {
+func (crs *columnRowScanner) value(tColumn *cli_service.TColumn, columnInfo *client.ColumnInfo, rowNum int64) (val interface{}, err error) {
 	// default to UTC time
 	if crs.location == nil {
 		crs.location = time.UTC
 	}
 
 	// Database type name
-	dbtype := rowscanner.GetDBTypeName(tColumnDesc)
+	dbtype := columnInfo.Type
 
 	if tVal := tColumn.GetStringVal(); tVal != nil && !rowscanner.IsNull(tVal.Nulls, rowNum) {
 		val = tVal.Values[rowNum]
 		// DATE and TIMESTAMP are returned as strings so we need to handle that possibility
-		val, err = rowscanner.HandleDateTime(val, dbtype, tColumnDesc.ColumnName, crs.location)
+		val, err = rowscanner.HandleDateTime(val, dbtype, columnInfo.Name, crs.location)
 		if err != nil {
 			crs.Err(err).Msg("databrics: column row scanner failed to parse date/time")
 		}
@@ -114,7 +115,7 @@ func (crs *columnRowScanner) value(tColumn *cli_service.TColumn, tColumnDesc *cl
 	} else if tVal := tColumn.GetBoolVal(); tVal != nil && !rowscanner.IsNull(tVal.Nulls, rowNum) {
 		val = tVal.Values[rowNum]
 	} else if tVal := tColumn.GetDoubleVal(); tVal != nil && !rowscanner.IsNull(tVal.Nulls, rowNum) {
-		if dbtype == "FLOAT" {
+		if dbtype == client.FLOAT_TYPE {
 			// database types FLOAT and DOUBLE are both returned as a float64
 			// convert to a float32 is valid because the FLOAT type would have
 			// only been four bytes on the server
@@ -130,7 +131,7 @@ func (crs *columnRowScanner) value(tColumn *cli_service.TColumn, tColumnDesc *cl
 }
 
 // countRows returns the number of rows in the TRowSet
-func countRows(rowSet *cli_service.TRowSet) int64 {
+func countRows(rowSet *client.ResultData) int64 {
 	if rowSet == nil || rowSet.Columns == nil {
 		return 0
 	}

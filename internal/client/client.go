@@ -135,17 +135,97 @@ type RequestError struct {
 }
 
 type ResultSchema struct {
-	Columns []*ColumnInfo
+	Columns          []*ColumnInfo
+	ArrowSchemaBytes []byte
 }
 
 type ColumnInfo struct {
 	Name             string
 	Position         int
+	Type             ColumnTypeId
 	TypeIntervalType string
 	TypeName         string
 	TypePrecision    int
 	TypeScale        int
 	TypeText         string
+}
+
+type ColumnTypeId int
+
+const (
+	BOOLEAN_TYPE             ColumnTypeId = 0
+	TINYINT_TYPE             ColumnTypeId = 1
+	SMALLINT_TYPE            ColumnTypeId = 2
+	INT_TYPE                 ColumnTypeId = 3
+	BIGINT_TYPE              ColumnTypeId = 4
+	FLOAT_TYPE               ColumnTypeId = 5
+	DOUBLE_TYPE              ColumnTypeId = 6
+	STRING_TYPE              ColumnTypeId = 7
+	TIMESTAMP_TYPE           ColumnTypeId = 8
+	BINARY_TYPE              ColumnTypeId = 9
+	ARRAY_TYPE               ColumnTypeId = 10
+	MAP_TYPE                 ColumnTypeId = 11
+	STRUCT_TYPE              ColumnTypeId = 12
+	UNION_TYPE               ColumnTypeId = 13
+	USER_DEFINED_TYPE        ColumnTypeId = 14
+	DECIMAL_TYPE             ColumnTypeId = 15
+	NULL_TYPE                ColumnTypeId = 16
+	DATE_TYPE                ColumnTypeId = 17
+	VARCHAR_TYPE             ColumnTypeId = 18
+	CHAR_TYPE                ColumnTypeId = 19
+	INTERVAL_YEAR_MONTH_TYPE ColumnTypeId = 20
+	INTERVAL_DAY_TIME_TYPE   ColumnTypeId = 21
+	UNKNOWN_TYPE             ColumnTypeId = 22
+)
+
+func (p ColumnTypeId) String() string {
+	switch p {
+	case BOOLEAN_TYPE:
+		return "BOOLEAN"
+	case TINYINT_TYPE:
+		return "TINYINT"
+	case SMALLINT_TYPE:
+		return "SMALLINT"
+	case INT_TYPE:
+		return "INT"
+	case BIGINT_TYPE:
+		return "BIGINT"
+	case FLOAT_TYPE:
+		return "FLOAT"
+	case DOUBLE_TYPE:
+		return "DOUBLE"
+	case STRING_TYPE:
+		return "STRING"
+	case TIMESTAMP_TYPE:
+		return "TIMESTAMP"
+	case BINARY_TYPE:
+		return "BINARY"
+	case ARRAY_TYPE:
+		return "ARRAY"
+	case MAP_TYPE:
+		return "MAP"
+	case STRUCT_TYPE:
+		return "STRUCT"
+	case UNION_TYPE:
+		return "UNION"
+	case USER_DEFINED_TYPE:
+		return "USER_DEFINED"
+	case DECIMAL_TYPE:
+		return "DECIMAL"
+	case NULL_TYPE:
+		return "NULL"
+	case DATE_TYPE:
+		return "DATE"
+	case VARCHAR_TYPE:
+		return "VARCHAR"
+	case CHAR_TYPE:
+		return "CHAR"
+	case INTERVAL_YEAR_MONTH_TYPE:
+		return "INTERVAL_YEAR_MONTH"
+	case INTERVAL_DAY_TIME_TYPE:
+		return "INTERVAL_DAY_TIME"
+	}
+	return "<UNSET>"
 }
 
 type ResultData struct {
