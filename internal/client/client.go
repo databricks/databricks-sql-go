@@ -102,6 +102,8 @@ type GetExecutionStatusReq struct {
 type GetExecutionStatusResp struct {
 	Status *RequestStatus
 	ExecutionStatus
+	Schema *ResultSchema
+	Result *ResultData // think about multi-statement
 }
 
 type CloseExecutionReq struct {

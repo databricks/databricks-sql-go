@@ -80,15 +80,40 @@ func (rc *RestClient) ExecuteStatement(ctx context.Context, req *ExecuteStatemen
 }
 
 func (rc *RestClient) GetExecutionStatus(ctx context.Context, req *GetExecutionStatusReq) (*GetExecutionStatusResp, error) {
-	return nil, nil
+	resp, err := rc.api.GetStatement(ctx, sqlexec.GetStatementRequest{
+		StatementId: req.ExecutionHandle.Id(),
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &GetExecutionStatusResp{
+		ExecutionStatus: ExecutionStatus{
+			ExecutionState: string(resp.Status.State),
+			Error: &ExecutionError{
+				Message:   resp.Status.Error.Message,
+				ErrorCode: resp.Status.Error.ErrorCode.String(),
+			},
+		},
+		Schema: toSchemaRest(resp.Manifest),
+		Result: nil,
+	}, nil
 }
 
 func (rc *RestClient) CloseExecution(ctx context.Context, req *CloseExecutionReq) (*CloseExecutionResp, error) {
+	// not implemented
 	return nil, nil
 }
 
 func (rc *RestClient) CancelExecution(ctx context.Context, req *CancelExecutionReq) (*CancelExecutionResp, error) {
-	return nil, nil
+	err := rc.api.CancelExecution(ctx, sqlexec.CancelExecutionRequest{})
+	if err != nil {
+		return nil, err
+	}
+	return &CancelExecutionResp{
+		Status: &RequestStatus{
+			StatusCode: "SUCCESS",
+		},
+	}, nil
 }
 
 var _ DatabricksClient = (*RestClient)(nil)
