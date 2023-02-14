@@ -39,24 +39,28 @@ type OpenSessionReq struct {
 }
 
 type OpenSessionResp struct {
-	SessionHandle *cli_service.TSessionHandle // for now
+	SessionHandle Handle // for now
 	Status        *RequestStatus
 }
 type CloseSessionReq struct {
-	SessionHandle *cli_service.TSessionHandle // for now
+	SessionHandle Handle // for now
 }
 type CloseSessionResp struct {
 	Status *RequestStatus
 }
 
+type Handle interface {
+	Id() string
+}
+
 type ExecuteStatementReq struct {
-	SessionHandle *cli_service.TSessionHandle // for now
+	SessionHandle Handle // for now
 	Statement     string
 }
 
 type ExecuteStatementResp struct {
 	Status          *RequestStatus
-	ExecutionHandle *cli_service.TOperationHandle
+	ExecutionHandle Handle // todo
 	ExecutionStatus
 	Schema   *ResultSchema
 	Result   *ResultData // think about multi-statement
@@ -70,7 +74,7 @@ type ExecutionStatus struct {
 	Error           *ExecutionError
 }
 type FetchResultsReq struct {
-	ExecutionHandle *cli_service.TOperationHandle
+	ExecutionHandle Handle // todo
 	MaxRows         int64
 	Orientation     cli_service.TFetchOrientation
 	ChunkIndex      int
@@ -83,7 +87,7 @@ type FetchResultsResp struct {
 }
 
 type GetResultsMetadataReq struct {
-	ExecutionHandle *cli_service.TOperationHandle
+	ExecutionHandle Handle // todo
 }
 
 type GetResultsMetadataResp struct {
@@ -92,7 +96,7 @@ type GetResultsMetadataResp struct {
 }
 
 type GetExecutionStatusReq struct {
-	ExecutionHandle *cli_service.TOperationHandle
+	ExecutionHandle Handle // todo
 }
 
 type GetExecutionStatusResp struct {
@@ -101,7 +105,7 @@ type GetExecutionStatusResp struct {
 }
 
 type CloseExecutionReq struct {
-	ExecutionHandle *cli_service.TOperationHandle
+	ExecutionHandle Handle // todo
 }
 
 type CloseExecutionResp struct {
@@ -109,7 +113,7 @@ type CloseExecutionResp struct {
 }
 
 type CancelExecutionReq struct {
-	ExecutionHandle *cli_service.TOperationHandle
+	ExecutionHandle Handle // todo
 }
 
 type CancelExecutionResp struct {
