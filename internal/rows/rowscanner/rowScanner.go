@@ -5,7 +5,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/client"
 	dbsqlerr "github.com/databricks/databricks-sql-go/internal/err"
 )
@@ -113,10 +112,4 @@ const (
 // a minus sign
 func dateStartsWithNegative(val string) bool {
 	return strings.HasPrefix(val, aMinus) || strings.HasPrefix(val, uMinus)
-}
-
-// GetDBTypeQualifiers returns the TTypeQualifiers from a TColumnDesc.
-// Return value may be nil.
-func GetDBTypeQualifiers(column *cli_service.TColumnDesc) *cli_service.TTypeQualifiers {
-	return column.TypeDesc.Types[0].PrimitiveEntry.TypeQualifiers
 }

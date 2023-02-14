@@ -62,8 +62,7 @@ type ExecuteStatementResp struct {
 	Status          *RequestStatus
 	ExecutionHandle Handle // todo
 	ExecutionStatus
-	Schema   *ResultSchema
-	Result   *ResultData // think about multi-statement
+	ExecutionResult
 	IsClosed bool
 }
 
@@ -82,8 +81,7 @@ type FetchResultsReq struct {
 }
 type FetchResultsResp struct {
 	Status *RequestStatus
-	Schema *ResultSchema
-	Result *ResultData // think about multi-statement
+	ExecutionResult
 }
 
 type GetResultsMetadataReq struct {
@@ -102,8 +100,6 @@ type GetExecutionStatusReq struct {
 type GetExecutionStatusResp struct {
 	Status *RequestStatus
 	ExecutionStatus
-	Schema *ResultSchema
-	Result *ResultData // think about multi-statement
 }
 
 type CloseExecutionReq struct {
@@ -125,6 +121,11 @@ type CancelExecutionResp struct {
 type RequestStatus struct {
 	StatusCode string
 	Error      *RequestError
+}
+
+type ExecutionResult struct {
+	Schema *ResultSchema
+	Result *ResultData // think about multi-statement
 }
 
 type ExecutionError struct {
