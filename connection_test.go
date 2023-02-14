@@ -1473,9 +1473,9 @@ import (
 // }
 
 func getTestSession() *client.OpenSessionResp {
-	return &client.OpenSessionResp{SessionHandle: &cli_service.TSessionHandle{
+	return &client.OpenSessionResp{SessionHandle: &client.ThriftHandle{SessionHandle: &cli_service.TSessionHandle{
 		SessionId: &cli_service.THandleIdentifier{
 			GUID: []byte{1, 2, 3, 4, 2, 23, 4, 2, 3, 2, 3, 4, 4, 223, 34, 54},
 		},
-	}}
+	}}}
 }

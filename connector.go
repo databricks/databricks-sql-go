@@ -3,6 +3,7 @@ package dbsql
 import (
 	"context"
 	"database/sql/driver"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -31,7 +32,12 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 			return nil, wrapErr(err, "error initializing thrift client")
 		}
 	case "rest":
-		//todo
+		dbclient, err = client.InitRestClient(c.cfg, c.client)
+		if err != nil {
+			return nil, wrapErr(err, "error initializing rest client")
+		}
+	default:
+		return nil, errors.New("invalid client mode")
 	}
 	session, err := dbclient.OpenSession(ctx, &client.OpenSessionReq{})
 
@@ -40,7 +46,7 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 	}
 
 	conn := &conn{
-		id:      client.SprintGuid(session.SessionHandle.GetSessionId().GUID),
+		id:      session.SessionHandle.Id(),
 		cfg:     c.cfg,
 		client:  dbclient,
 		session: session,

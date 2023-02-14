@@ -54,7 +54,7 @@ func (tsc *ThriftServiceClient) OpenSession(ctx context.Context, req *OpenSessio
 		resultIndex++
 	}
 	return &OpenSessionResp{
-		SessionHandle: resp.SessionHandle,
+		SessionHandle: &ThriftHandle{SessionHandle: resp.SessionHandle},
 		Status:        toRequestStatus(resp.Status),
 	}, CheckStatus(resp)
 }
@@ -64,8 +64,12 @@ func (tsc *ThriftServiceClient) OpenSession(ctx context.Context, req *OpenSessio
 func (tsc *ThriftServiceClient) CloseSession(ctx context.Context, req *CloseSessionReq) (*CloseSessionResp, error) {
 	log := logger.WithContext(driverctx.ConnIdFromContext(ctx), driverctx.CorrelationIdFromContext(ctx), "")
 	defer log.Duration(logger.Track("CloseSession"))
+	tHandle, ok := req.SessionHandle.(*ThriftHandle)
+	if !ok {
+		return nil, errors.New("invalid handle")
+	}
 	resp, err := tsc.TCLIServiceClient.CloseSession(ctx, &cli_service.TCloseSessionReq{
-		SessionHandle: req.SessionHandle,
+		SessionHandle: tHandle.SessionHandle,
 	})
 
 	if err != nil {
@@ -85,10 +89,14 @@ func (tsc *ThriftServiceClient) CloseSession(ctx context.Context, req *CloseSess
 // FetchResults is a wrapper around the thrift operation FetchResults
 // If RecordResults is true, the results will be marshalled to JSON format and written to FetchResults<index>.json
 func (tsc *ThriftServiceClient) FetchResults(ctx context.Context, req *FetchResultsReq) (*FetchResultsResp, error) {
-	log := logger.WithContext(driverctx.ConnIdFromContext(ctx), driverctx.CorrelationIdFromContext(ctx), SprintGuid(req.ExecutionHandle.OperationId.GUID))
+	log := logger.WithContext(driverctx.ConnIdFromContext(ctx), driverctx.CorrelationIdFromContext(ctx), req.ExecutionHandle.Id())
 	defer log.Duration(logger.Track("FetchResults"))
+	tHandle, ok := req.ExecutionHandle.(*ThriftHandle)
+	if !ok {
+		return nil, errors.New("invalid handle")
+	}
 	resp, err := tsc.TCLIServiceClient.FetchResults(ctx, &cli_service.TFetchResultsReq{
-		OperationHandle: req.ExecutionHandle,
+		OperationHandle: tHandle.OperationHandle,
 		MaxRows:         req.MaxRows,
 		Orientation:     req.Orientation,
 	})
@@ -110,10 +118,14 @@ func (tsc *ThriftServiceClient) FetchResults(ctx context.Context, req *FetchResu
 // GetResultSetMetadata is a wrapper around the thrift operation GetResultSetMetadata
 // If RecordResults is true, the results will be marshalled to JSON format and written to GetResultSetMetadata<index>.json
 func (tsc *ThriftServiceClient) GetResultsMetadata(ctx context.Context, req *GetResultsMetadataReq) (*GetResultsMetadataResp, error) {
-	log := logger.WithContext(driverctx.ConnIdFromContext(ctx), driverctx.CorrelationIdFromContext(ctx), SprintGuid(req.ExecutionHandle.OperationId.GUID))
+	log := logger.WithContext(driverctx.ConnIdFromContext(ctx), driverctx.CorrelationIdFromContext(ctx), req.ExecutionHandle.Id())
 	defer log.Duration(logger.Track("GetResultSetMetadata"))
+	tHandle, ok := req.ExecutionHandle.(*ThriftHandle)
+	if !ok {
+		return nil, errors.New("invalid handle")
+	}
 	resp, err := tsc.TCLIServiceClient.GetResultSetMetadata(ctx, &cli_service.TGetResultSetMetadataReq{
-		OperationHandle: req.ExecutionHandle,
+		OperationHandle: tHandle.OperationHandle,
 	})
 	if err != nil {
 		return nil, errors.Wrap(err, "get result set metadata request error")
@@ -133,8 +145,12 @@ func (tsc *ThriftServiceClient) GetResultsMetadata(ctx context.Context, req *Get
 // If RecordResults is true, the results will be marshalled to JSON format and written to ExecuteStatement<index>.json
 func (tsc *ThriftServiceClient) ExecuteStatement(ctx context.Context, req *ExecuteStatementReq) (*ExecuteStatementResp, error) {
 	msg, start := logger.Track("ExecuteStatement")
+	tHandle, ok := req.SessionHandle.(*ThriftHandle)
+	if !ok {
+		return nil, errors.New("invalid handle")
+	}
 	resp, err := tsc.TCLIServiceClient.ExecuteStatement(context.Background(), &cli_service.TExecuteStatementReq{
-		SessionHandle: req.SessionHandle,
+		SessionHandle: tHandle.SessionHandle,
 		Statement:     req.Statement,
 		RunAsync:      tsc.cfg.RunAsync,
 		QueryTimeout:  int64(tsc.cfg.QueryTimeout / time.Second),
@@ -186,7 +202,7 @@ func (tsc *ThriftServiceClient) ExecuteStatement(ctx context.Context, req *Execu
 
 	return &ExecuteStatementResp{
 		Status:          toRequestStatus(resp.Status),
-		ExecutionHandle: resp.OperationHandle,
+		ExecutionHandle: &ThriftHandle{OperationHandle: resp.OperationHandle},
 		Result:          result,
 		Schema:          schema,
 		ExecutionStatus: ExecutionStatus{
@@ -201,10 +217,14 @@ func (tsc *ThriftServiceClient) ExecuteStatement(ctx context.Context, req *Execu
 // GetOperationStatus is a wrapper around the thrift operation GetOperationStatus
 // If RecordResults is true, the results will be marshalled to JSON format and written to GetOperationStatus<index>.json
 func (tsc *ThriftServiceClient) GetExecutionStatus(ctx context.Context, req *GetExecutionStatusReq) (*GetExecutionStatusResp, error) {
-	log := logger.WithContext(driverctx.ConnIdFromContext(ctx), driverctx.CorrelationIdFromContext(ctx), SprintGuid(req.ExecutionHandle.OperationId.GUID))
+	log := logger.WithContext(driverctx.ConnIdFromContext(ctx), driverctx.CorrelationIdFromContext(ctx), req.ExecutionHandle.Id())
 	defer log.Duration(logger.Track("GetOperationStatus"))
+	tHandle, ok := req.ExecutionHandle.(*ThriftHandle)
+	if !ok {
+		return nil, errors.New("invalid handle")
+	}
 	resp, err := tsc.TCLIServiceClient.GetOperationStatus(ctx, &cli_service.TGetOperationStatusReq{
-		OperationHandle: req.ExecutionHandle,
+		OperationHandle: tHandle.OperationHandle,
 	})
 	if err != nil {
 		return nil, errors.Wrap(err, "get operation status request error")
@@ -228,10 +248,14 @@ func (tsc *ThriftServiceClient) GetExecutionStatus(ctx context.Context, req *Get
 // CloseOperation is a wrapper around the thrift operation CloseOperation
 // If RecordResults is true, the results will be marshalled to JSON format and written to CloseOperation<index>.json
 func (tsc *ThriftServiceClient) CloseExecution(ctx context.Context, req *CloseExecutionReq) (*CloseExecutionResp, error) {
-	log := logger.WithContext(driverctx.ConnIdFromContext(ctx), driverctx.CorrelationIdFromContext(ctx), SprintGuid(req.ExecutionHandle.OperationId.GUID))
+	log := logger.WithContext(driverctx.ConnIdFromContext(ctx), driverctx.CorrelationIdFromContext(ctx), req.ExecutionHandle.Id())
 	defer log.Duration(logger.Track("CloseOperation"))
+	tHandle, ok := req.ExecutionHandle.(*ThriftHandle)
+	if !ok {
+		return nil, errors.New("invalid handle")
+	}
 	resp, err := tsc.TCLIServiceClient.CloseOperation(ctx, &cli_service.TCloseOperationReq{
-		OperationHandle: req.ExecutionHandle,
+		OperationHandle: tHandle.OperationHandle,
 	})
 	if err != nil {
 		return nil, errors.Wrap(err, "close operation request error")
@@ -249,10 +273,14 @@ func (tsc *ThriftServiceClient) CloseExecution(ctx context.Context, req *CloseEx
 // CancelOperation is a wrapper around the thrift operation CancelOperation
 // If RecordResults is true, the results will be marshalled to JSON format and written to CancelOperation<index>.json
 func (tsc *ThriftServiceClient) CancelExecution(ctx context.Context, req *CancelExecutionReq) (*CancelExecutionResp, error) {
-	log := logger.WithContext(driverctx.ConnIdFromContext(ctx), driverctx.CorrelationIdFromContext(ctx), SprintGuid(req.ExecutionHandle.OperationId.GUID))
+	log := logger.WithContext(driverctx.ConnIdFromContext(ctx), driverctx.CorrelationIdFromContext(ctx), req.ExecutionHandle.Id())
 	defer log.Duration(logger.Track("CancelOperation"))
+	tHandle, ok := req.ExecutionHandle.(*ThriftHandle)
+	if !ok {
+		return nil, errors.New("invalid handle")
+	}
 	resp, err := tsc.TCLIServiceClient.CancelOperation(ctx, &cli_service.TCancelOperationReq{
-		OperationHandle: req.ExecutionHandle,
+		OperationHandle: tHandle.OperationHandle,
 	})
 	if err != nil {
 		return nil, errors.Wrap(err, "cancel operation request error")
@@ -407,4 +435,19 @@ func SprintGuid(bts []byte) string {
 	}
 	logger.Warn().Msgf("GUID not valid: %x", bts)
 	return fmt.Sprintf("%x", bts)
+}
+
+type ThriftHandle struct {
+	OperationHandle *cli_service.TOperationHandle
+	SessionHandle   *cli_service.TSessionHandle
+}
+
+func (h *ThriftHandle) Id() string {
+	if h.OperationHandle != nil {
+		return SprintGuid(h.OperationHandle.OperationId.GUID)
+	}
+	if h.SessionHandle != nil {
+		return SprintGuid(h.SessionHandle.SessionId.GUID)
+	}
+	return ""
 }

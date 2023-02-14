@@ -173,7 +173,7 @@ func WithDefaults() *Config {
 		ThriftTransport:           "http",
 		ThriftProtocolVersion:     cli_service.TProtocolVersion_SPARK_CLI_SERVICE_PROTOCOL_V6,
 		ThriftDebugClientProtocol: false,
-		ClientMode:                "thrift", //"rest"
+		ClientMode:/*"thrift",*/ "rest",
 	}
 
 }

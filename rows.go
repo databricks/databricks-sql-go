@@ -21,7 +21,7 @@ type rows struct {
 	client        client.DatabricksClient
 	connId        string
 	correlationId string
-	opHandle      *cli_service.TOperationHandle
+	opHandle      client.Handle
 	pageSize      int64
 	location      *time.Location
 	results       *client.ResultData
@@ -45,7 +45,7 @@ var errRowsParseValue = "databricks: unable to parse %s value '%s' from column %
 
 // NewRows generates a new rows object given the rows' fields.
 // NewRows will also parse directResults if it is available for some rows' fields.
-func NewRows(connID string, corrId string, client client.DatabricksClient, opHandle *cli_service.TOperationHandle, pageSize int64, location *time.Location, resp *client.ExecuteStatementResp) driver.Rows {
+func NewRows(connID string, corrId string, client client.DatabricksClient, opHandle client.Handle, pageSize int64, location *time.Location, resp *client.ExecuteStatementResp) driver.Rows {
 	r := &rows{
 		connId:        connID,
 		correlationId: corrId,
@@ -361,7 +361,7 @@ func (r *rows) fetchResultPage() error {
 	}
 	var log *logger.DBSQLLogger
 	if r.opHandle != nil {
-		log = logger.WithContext(r.connId, r.correlationId, client.SprintGuid(r.opHandle.OperationId.GUID))
+		log = logger.WithContext(r.connId, r.correlationId, r.opHandle.Id())
 	} else {
 		log = logger.WithContext(r.connId, r.correlationId, "")
 	}

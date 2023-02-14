@@ -103,7 +103,7 @@ func (c *conn) ExecContext(ctx context.Context, query string, args []driver.Name
 
 	if exStmtResp != nil && exStmtResp.ExecutionHandle != nil {
 		// we have an operation id so update the logger
-		log = logger.WithContext(c.id, corrId, client.SprintGuid(exStmtResp.ExecutionHandle.OperationId.GUID))
+		log = logger.WithContext(c.id, corrId, exStmtResp.ExecutionHandle.Id())
 
 		// since we have an operation handle we can close the operation if necessary
 		alreadyClosed := exStmtResp.Result != nil && exStmtResp.IsClosed
@@ -146,7 +146,7 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 	exStmtResp, _, err := c.runQuery(ctx, query, args)
 
 	if exStmtResp != nil && exStmtResp.ExecutionHandle != nil {
-		log = logger.WithContext(c.id, driverctx.CorrelationIdFromContext(ctx), client.SprintGuid(exStmtResp.ExecutionHandle.OperationId.GUID))
+		log = logger.WithContext(c.id, driverctx.CorrelationIdFromContext(ctx), exStmtResp.ExecutionHandle.Id())
 	}
 	defer log.Duration(msg, start)
 
@@ -173,10 +173,10 @@ func (c *conn) runQuery(ctx context.Context, query string, args []driver.NamedVa
 		return exStmtResp, nil, err
 	}
 	opHandle := exStmtResp.ExecutionHandle
-	if opHandle != nil && opHandle.OperationId != nil {
+	if opHandle != nil {
 		log = logger.WithContext(
 			c.id,
-			driverctx.CorrelationIdFromContext(ctx), client.SprintGuid(opHandle.OperationId.GUID),
+			driverctx.CorrelationIdFromContext(ctx), opHandle.Id(),
 		)
 	}
 
@@ -301,9 +301,9 @@ func (c *conn) executeStatement(ctx context.Context, query string, args []driver
 	return resp, err
 }
 
-func (c *conn) pollOperation(ctx context.Context, opHandle *cli_service.TOperationHandle) (*client.ExecutionStatus, error) {
+func (c *conn) pollOperation(ctx context.Context, opHandle client.Handle) (*client.ExecutionStatus, error) {
 	corrId := driverctx.CorrelationIdFromContext(ctx)
-	log := logger.WithContext(c.id, corrId, client.SprintGuid(opHandle.OperationId.GUID))
+	log := logger.WithContext(c.id, corrId, opHandle.Id())
 	ctx = driverctx.NewContextWithConnId(ctx, c.id)
 	newCtx := driverctx.NewContextWithCorrelationId(driverctx.NewContextWithConnId(context.Background(), c.id), corrId)
 	pollSentinel := sentinel.Sentinel{
