@@ -83,7 +83,7 @@ func (c *conn) ResetSession(ctx context.Context) error {
 
 // IsValid signals whether a connection is valid or if it should be discarded.
 func (c *conn) IsValid() bool {
-	return c.session.Status.StatusCode == cli_service.TStatusCode_SUCCESS_STATUS.String() // FIXME: need to standardize it
+	return c.session.Status == nil || c.session.Status.StatusCode == cli_service.TStatusCode_SUCCESS_STATUS.String() // FIXME: need to standardize it
 }
 
 // ExecContext executes a query that doesn't return rows, such
@@ -187,7 +187,7 @@ func (c *conn) runQuery(ctx context.Context, query string, args []driver.NamedVa
 		switch opStatus.ExecutionState {
 		// terminal states
 		// good
-		case cli_service.TOperationState_FINISHED_STATE.String():
+		case cli_service.TOperationState_FINISHED_STATE.String(), "SUCCEEDED":
 			return exStmtResp, opStatus, nil
 		// bad
 		case cli_service.TOperationState_CANCELED_STATE.String(),

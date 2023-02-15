@@ -481,12 +481,27 @@ func toTypeId(thriftType cli_service.TTypeId) ColumnTypeId {
 }
 
 func toResult(r *cli_service.TRowSet, hasMoreRows bool) *ResultData {
+	var resultLinks []*ResultLink
+	if len(r.ResultLinks) > 0 {
+		resultLinks = make([]*ResultLink, len(r.ResultLinks))
+		for i := range r.ResultLinks {
+			rl := r.ResultLinks[i]
+			resultLinks[i] = &ResultLink{
+				FileLink:       rl.FileLink,
+				ExpiryTime:     rl.ExpiryTime,
+				StartRowOffset: rl.StartRowOffset,
+				RowCount:       rl.RowCount,
+				BytesNum:       rl.BytesNum,
+			}
+		}
+	}
+
 	return &ResultData{
 		StartRowOffset: r.StartRowOffset,
 		Rows:           r.Rows,
 		Columns:        r.Columns,
 		ArrowBatches:   r.ArrowBatches,
-		ResultLinks:    r.ResultLinks,
+		ResultLinks:    resultLinks,
 		HasMoreRows:    hasMoreRows,
 	}
 }

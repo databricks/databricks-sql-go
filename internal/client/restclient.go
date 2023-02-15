@@ -73,7 +73,7 @@ func (rc *RestClient) FetchResults(ctx context.Context, req *FetchResultsReq) (*
 		},
 		ExecutionResult: ExecutionResult{
 			Schema: toSchemaRest(resp.Manifest),
-			Result: nil,
+			Result: toResultRest(resp.Result, false),
 		},
 	}, nil
 }
@@ -98,23 +98,50 @@ func (rc *RestClient) ExecuteStatement(ctx context.Context, req *ExecuteStatemen
 		return nil, err
 	}
 
+	var executionError *ExecutionError
+	if resp.Status.Error != nil {
+		executionError = &ExecutionError{
+			// Message:   resp.Status.Error.Message,
+			ErrorCode: resp.Status.Error.ErrorCode.String(),
+		}
+	}
 	return &ExecuteStatementResp{
 		ExecutionHandle: &RestHandle{
 			StatementId: resp.StatementId,
 		},
 		ExecutionStatus: ExecutionStatus{
 			ExecutionState: string(resp.Status.State),
-			Error: &ExecutionError{
-				Message:   resp.Status.Error.Message,
-				ErrorCode: resp.Status.Error.ErrorCode.String(),
-			},
+			Error:          executionError,
 		},
 		ExecutionResult: ExecutionResult{
 			Schema: toSchemaRest(resp.Manifest),
-			// TODO
-			Result: nil,
+			Result: toResultRest(resp.Result, false),
 		},
 	}, nil
+}
+
+func toResultRest(r *sqlexec.ResultData, hasMoreRows bool) *ResultData {
+	if r == nil {
+		return nil
+	}
+
+	var resultLinks []*ResultLink
+
+	ls := r.ExternalLinks
+	for i := range ls {
+		rl := &ResultLink{
+			FileLink:       ls[i].ExternalLink,
+			StartRowOffset: ls[i].RowOffset,
+			RowCount:       ls[i].RowCount,
+		}
+		resultLinks = append(resultLinks, rl)
+	}
+
+	return &ResultData{
+		StartRowOffset: r.RowOffset,
+		ResultLinks:    resultLinks,
+		HasMoreRows:    hasMoreRows,
+	}
 }
 
 func (rc *RestClient) GetExecutionStatus(ctx context.Context, req *GetExecutionStatusReq) (*GetExecutionStatusResp, error) {
@@ -125,7 +152,10 @@ func (rc *RestClient) GetExecutionStatus(ctx context.Context, req *GetExecutionS
 		return nil, err
 	}
 	if resp.Result != nil {
-		rc.firstResult[req.ExecutionHandle.Id()] = ExecutionResult{Result: nil, Schema: toSchemaRest(resp.Manifest)}
+		rc.firstResult[req.ExecutionHandle.Id()] = ExecutionResult{
+			Result: toResultRest(resp.Result, false),
+			Schema: toSchemaRest(resp.Manifest),
+		}
 	}
 	// TODO
 	return &GetExecutionStatusResp{
@@ -176,9 +206,15 @@ func (h *RestHandle) Id() string {
 func toSchemaRest(s *sqlexec.ResultManifest) *ResultSchema {
 	cols := []*ColumnInfo{}
 	for _, c := range s.Schema.Columns {
+		ti := columnTypeFromString(c.TypeText)
+		if ti == UNKNOWN_TYPE {
+			ti = columnTypeFromString(c.TypeName.String())
+		}
+
 		cols = append(cols, &ColumnInfo{
 			Name:             c.Name,
 			Position:         c.Position,
+			Type:             ti,
 			TypeName:         string(c.TypeName),
 			TypeText:         c.TypeText,
 			TypePrecision:    c.TypePrecision,
