@@ -544,7 +544,7 @@ func (r *rows) makeRowScanner(fetchResults *client.ResultData) error {
 
 	if fetchResults.Columns != nil {
 		rs, err = columnbased.NewColumnRowScanner(schema, fetchResults, r.config, r.logger())
-	} else if fetchResults.ArrowBatches != nil {
+	} else if fetchResults.ArrowBatches != nil || fetchResults.ResultLinks != nil {
 		rs, err = arrowbased.NewArrowRowScanner(r.schema, fetchResults, r.config, r.logger())
 	} else {
 		r.logger().Error().Msg(errRowsUnknowRowType)

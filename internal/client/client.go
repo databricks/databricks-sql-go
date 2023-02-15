@@ -231,13 +231,33 @@ func (p ColumnTypeId) String() string {
 	return "<UNSET>"
 }
 
+func columnTypeFromString(s string) ColumnTypeId {
+	for i := 0; i <= 22; i++ {
+		ti := ColumnTypeId(i)
+		if ti.String() == s {
+			return ti
+		}
+	}
+
+	return UNKNOWN_TYPE
+}
+
 type ResultData struct {
 	HasMoreRows    bool
 	StartRowOffset int64
 	Rows           []*cli_service.TRow
 	Columns        []*cli_service.TColumn
 	ArrowBatches   []*cli_service.TSparkArrowBatch
-	ResultLinks    []*cli_service.TSparkArrowResultLink
+	ArrowSchema    []byte
+	ResultLinks    []*ResultLink
+}
+
+type ResultLink struct {
+	FileLink       string
+	ExpiryTime     int64
+	StartRowOffset int64
+	RowCount       int64
+	BytesNum       int64
 }
 
 type Transport struct {

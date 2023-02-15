@@ -1,9 +1,11 @@
 package arrowbased
 
 import (
+	"bufio"
 	"bytes"
 	"database/sql/driver"
 	"encoding/json"
+	"net/http"
 	"strings"
 
 	"fmt"
@@ -28,7 +30,8 @@ var errArrowRowsUnableToReadBatch = "databricks: unable to read arrow batch"
 var errArrowRowsNilArrowSchema = "databricks: nil arrow.Schema"
 var errArrowRowsUnableToWriteArrowSchema = "databricks: unable to write arrow schema"
 var errArrowRowsInvalidRowIndex = "databricks: row index %d is not contained in any arrow batch"
-var errArrowRowsInvalidDecimalType = "databricks: decimal type with no scale/precision"
+
+// var errArrowRowsInvalidDecimalType = "databricks: decimal type with no scale/precision"
 var errArrowRowsUnableToCreateDecimalType = "databricks: unable to create decimal type scale: %d, precision: %d"
 var errArrowRowsUnknownDBType = "databricks: unknown data type when converting to arrow type"
 var errArrowRowsUnhandledArrowType = "databricks: arrow row scanner unhandled type %s"
@@ -46,6 +49,7 @@ type sparkArrowBatch struct {
 	rowCount, startRow, endRow int64
 	arrowRecordBytes           []byte
 	index                      int
+	hasSchema                  bool
 }
 
 func (sab *sparkArrowBatch) contains(rowIndex int64) bool {
@@ -118,31 +122,46 @@ func NewArrowRowScanner(resultSetMetadata *client.ResultSchema, rowSet *client.R
 	}
 
 	var arrowSchema *arrow.Schema
-	schemaBytes := resultSetMetadata.ArrowSchemaBytes
-	if schemaBytes == nil {
-		var err error
-		// convert the TTableSchema to an arrow Schema
-		arrowSchema, err = resultSchemaToArrowSchema(resultSetMetadata, &arrowConfig)
-		if err != nil {
-			logger.Err(err).Msg("databricks: arrow row scanner failed to convert schema")
-			return nil, err
-		}
+	var schemaBytes []byte
+	var arrowBatches []sparkArrowBatch
 
+	if len(rowSet.ResultLinks) > 0 {
+		arrowSchema, arrowBatches = toSparkArrowBatches(rowSet)
 		// serialize the arrow schema
+		var err error
 		schemaBytes, err = getArrowSchemaBytes(arrowSchema)
 		if err != nil {
 			logger.Err(err).Msg("databricks: arrow row scanner failed to serialize schema")
 			return nil, err
 		}
 	} else {
-		br := &chunkedByteReader{chunks: [][]byte{schemaBytes}}
-		rdr, err := ipc.NewReader(br)
-		if err != nil {
-			return nil, dbsqlerr.WrapErr(err, errArrowRowsUnableToReadBatch)
-		}
-		defer rdr.Release()
+		schemaBytes = resultSetMetadata.ArrowSchemaBytes
+		if schemaBytes == nil && len(rowSet.ResultLinks) <= 0 {
+			var err error
+			// convert the TTableSchema to an arrow Schema
+			arrowSchema, err = resultSchemaToArrowSchema(resultSetMetadata, &arrowConfig)
+			if err != nil {
+				logger.Err(err).Msg("databricks: arrow row scanner failed to convert schema")
+				return nil, err
+			}
 
-		arrowSchema = rdr.Schema()
+			// serialize the arrow schema
+			schemaBytes, err = getArrowSchemaBytes(arrowSchema)
+			if err != nil {
+				logger.Err(err).Msg("databricks: arrow row scanner failed to serialize schema")
+				return nil, err
+			}
+		} else if len(schemaBytes) > 0 {
+			br := &chunkedByteReader{chunks: [][]byte{schemaBytes}}
+			rdr, err := ipc.NewReader(br)
+			if err != nil {
+				return nil, dbsqlerr.WrapErr(err, errArrowRowsUnableToReadBatch)
+			}
+			defer rdr.Release()
+
+			arrowSchema = rdr.Schema()
+		}
+		_, arrowBatches = toSparkArrowBatches(rowSet)
 	}
 
 	// get the database type names for each column
@@ -160,20 +179,6 @@ func NewArrowRowScanner(resultSetMetadata *client.ResultSchema, rowSet *client.R
 		logger.Err(err).Msg("databricks: arrow row scanner failed getting toTimestamp function")
 		err = dbsqlerr.WrapErr(err, "databricks: arrow row scanner failed getting toTimestamp function")
 		return nil, err
-	}
-
-	arrowBatches := make([]sparkArrowBatch, len(rowSet.ArrowBatches))
-	var startRow int64 = 0
-	for i := range rowSet.ArrowBatches {
-		rsab := rowSet.ArrowBatches[i]
-		arrowBatches[i] = sparkArrowBatch{
-			rowCount:         rsab.RowCount,
-			startRow:         startRow,
-			endRow:           startRow + rsab.RowCount - 1,
-			arrowRecordBytes: rsab.Batch,
-			index:            i,
-		}
-		startRow = startRow + rsab.RowCount
 	}
 
 	var location *time.Location = time.UTC
@@ -198,6 +203,88 @@ func NewArrowRowScanner(resultSetMetadata *client.ResultSchema, rowSet *client.R
 	}
 
 	return rs, nil
+}
+
+func toSparkArrowBatches(rowSet *client.ResultData) (*arrow.Schema, []sparkArrowBatch) {
+	if rowSet.ArrowBatches != nil {
+
+		arrowBatches := make([]sparkArrowBatch, len(rowSet.ArrowBatches))
+		var startRow int64 = 0
+		for i := range rowSet.ArrowBatches {
+			rsab := rowSet.ArrowBatches[i]
+			arrowBatches[i] = sparkArrowBatch{
+				rowCount:         rsab.RowCount,
+				startRow:         startRow,
+				endRow:           startRow + rsab.RowCount - 1,
+				arrowRecordBytes: rsab.Batch,
+				index:            i,
+			}
+			startRow = startRow + rsab.RowCount
+		}
+
+		return nil, arrowBatches
+	} else if len(rowSet.ResultLinks) > 0 {
+		var arrowSchema *arrow.Schema
+		var arrowBatches []sparkArrowBatch
+		for i := range rowSet.ResultLinks {
+			rl := rowSet.ResultLinks[i]
+			x, err := http.Get(rl.FileLink)
+			if err != nil {
+				panic(err)
+			}
+
+			rdr, err := ipc.NewReader(bufio.NewReader(x.Body))
+			if err != nil {
+				panic(err)
+			}
+			startRow := rl.StartRowOffset
+
+			for rdr.Next() {
+				r := rdr.Record()
+				r.Retain()
+				if arrowSchema == nil {
+					arrowSchema = r.Schema()
+				}
+
+				var output bytes.Buffer
+				w := ipc.NewWriter(&output, ipc.WithSchema(r.Schema()))
+
+				err := w.Write(r)
+				if err != nil {
+					panic(err)
+				}
+				err = w.Close()
+				if err != nil {
+					panic(err)
+				}
+
+				recordBytes := output.Bytes()
+
+				arrowBatches = append(arrowBatches, sparkArrowBatch{
+					arrowRecordBytes: recordBytes,
+					hasSchema:        true,
+					rowCount:         r.NumRows(),
+					startRow:         startRow,
+					endRow:           startRow + r.NumRows() - 1,
+				})
+
+				startRow = startRow + r.NumRows()
+
+				r.Release()
+			}
+
+			if rdr.Err() != nil {
+				panic(rdr.Err())
+			}
+			rdr.Release()
+
+			x.Body.Close()
+		}
+
+		return arrowSchema, arrowBatches
+	}
+
+	return nil, nil
 }
 
 // Close is called when the Rows instance is closed.
@@ -287,14 +374,23 @@ func isIntervalType(typeId client.ColumnTypeId) bool {
 
 // countRows returns the number of rows in the TRowSet
 func countRows(rowSet *client.ResultData) int64 {
-	if rowSet != nil && rowSet.ArrowBatches != nil {
-		batches := rowSet.ArrowBatches
-		var n int64
-		for i := range batches {
-			n += batches[i].RowCount
-		}
+	if rowSet != nil {
+		if len(rowSet.ArrowBatches) > 0 {
+			batches := rowSet.ArrowBatches
+			var n int64
+			for i := range batches {
+				n += batches[i].RowCount
+			}
 
-		return n
+			return n
+		} else if len(rowSet.ResultLinks) > 0 {
+			var n int64
+			for i := range rowSet.ResultLinks {
+				n += rowSet.ResultLinks[i].RowCount
+			}
+
+			return n
+		}
 	}
 
 	return 0
@@ -651,7 +747,13 @@ func (srr sparkRecordReader) NewRecordFromBytes(arrowSchemaBytes []byte, sparkAr
 	// Use a chunked byte reader to concatenate the schema bytes and the record bytes without
 	// having to allocate/copy slices.
 
-	br := &chunkedByteReader{chunks: [][]byte{arrowSchemaBytes, sparkArrowBatch.arrowRecordBytes}}
+	var chunks [][]byte
+	if !sparkArrowBatch.hasSchema {
+		chunks = append(chunks, arrowSchemaBytes)
+	}
+
+	chunks = append(chunks, sparkArrowBatch.arrowRecordBytes)
+	br := &chunkedByteReader{chunks: chunks}
 	rdr, err := ipc.NewReader(br)
 	if err != nil {
 		return nil, dbsqlerr.WrapErr(err, errArrowRowsUnableToReadBatch)
