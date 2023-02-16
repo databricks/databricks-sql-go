@@ -9,6 +9,8 @@ import (
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/client"
 	"github.com/databricks/databricks-sql-go/internal/config"
+	dbsqlerr "github.com/databricks/databricks-sql-go/internal/err"
+	"github.com/databricks/databricks-sql-go/internal/rows"
 	"github.com/databricks/databricks-sql-go/internal/sentinel"
 	"github.com/databricks/databricks-sql-go/logger"
 	"github.com/pkg/errors"
@@ -44,19 +46,19 @@ func (c *conn) Close() error {
 
 	if err != nil {
 		log.Err(err).Msg("databricks: failed to close connection")
-		return wrapErr(err, "failed to close connection")
+		return dbsqlerr.WrapErr(err, "failed to close connection")
 	}
 	return nil
 }
 
 // Not supported in Databricks.
 func (c *conn) Begin() (driver.Tx, error) {
-	return nil, errors.New(ErrTransactionsNotSupported)
+	return nil, errors.New(dbsqlerr.ErrTransactionsNotSupported)
 }
 
 // Not supported in Databricks.
 func (c *conn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, error) {
-	return nil, errors.New(ErrTransactionsNotSupported)
+	return nil, errors.New(dbsqlerr.ErrTransactionsNotSupported)
 }
 
 // Ping attempts to verify that the server is accessible.
@@ -98,7 +100,7 @@ func (c *conn) ExecContext(ctx context.Context, query string, args []driver.Name
 
 	ctx = driverctx.NewContextWithConnId(ctx, c.id)
 	if len(args) > 0 {
-		return nil, errors.New(ErrParametersNotSupported)
+		return nil, errors.New(dbsqlerr.ErrParametersNotSupported)
 	}
 	exStmtResp, opStatusResp, err := c.runQuery(ctx, query, args)
 
@@ -120,7 +122,7 @@ func (c *conn) ExecContext(ctx context.Context, query string, args []driver.Name
 	}
 	if err != nil {
 		log.Err(err).Msgf("databricks: failed to execute query: query %s", query)
-		return nil, wrapErrf(err, "failed to execute query")
+		return nil, dbsqlerr.WrapErrf(err, "failed to execute query")
 	}
 
 	res := result{AffectedRows: opStatusResp.GetNumModifiedRows()}
@@ -140,7 +142,7 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 
 	ctx = driverctx.NewContextWithConnId(ctx, c.id)
 	if len(args) > 0 {
-		return nil, errors.New(ErrParametersNotSupported)
+		return nil, errors.New(dbsqlerr.ErrParametersNotSupported)
 	}
 	// first we try to get the results synchronously.
 	// at any point in time that the context is done we must cancel and return
@@ -153,14 +155,14 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 
 	if err != nil {
 		log.Err(err).Msg("databricks: failed to run query") // To log query we need to redact credentials
-		return nil, wrapErrf(err, "failed to run query")
+		return nil, dbsqlerr.WrapErrf(err, "failed to run query")
 	}
 	// hold on to the operation handle
 	opHandle := exStmtResp.OperationHandle
 
-	rows := NewRows(c.id, corrId, c.client, opHandle, int64(c.cfg.MaxRows), c.cfg.Location, exStmtResp.DirectResults)
+	rows, err := rows.NewRows(c.id, corrId, opHandle, c.client, c.cfg, exStmtResp.DirectResults)
 
-	return rows, nil
+	return rows, err
 
 }
 
@@ -271,6 +273,16 @@ func (c *conn) executeStatement(ctx context.Context, query string, args []driver
 		},
 	}
 
+	if c.cfg.UseArrowBatches {
+		req.CanReadArrowResult_ = &c.cfg.UseArrowBatches
+		req.UseArrowNativeTypes = &cli_service.TSparkArrowTypes{
+			DecimalAsArrow:       &c.cfg.UseArrowNativeDecimal,
+			TimestampAsArrow:     &c.cfg.UseArrowNativeTimestamp,
+			ComplexTypesAsArrow:  &c.cfg.UseArrowNativeComplexTypes,
+			IntervalTypesAsArrow: &c.cfg.UseArrowNativeIntervalTypes,
+		}
+	}
+
 	ctx = driverctx.NewContextWithConnId(ctx, c.id)
 	resp, err := c.client.ExecuteStatement(ctx, &req)
 
@@ -353,7 +365,7 @@ func (c *conn) pollOperation(ctx context.Context, opHandle *cli_service.TOperati
 	}
 	_, resp, err := pollSentinel.Watch(ctx, c.cfg.PollInterval, 0)
 	if err != nil {
-		return nil, wrapErr(err, "failed to poll query state")
+		return nil, dbsqlerr.WrapErr(err, "failed to poll query state")
 	}
 	statusResp, ok := resp.(*cli_service.TGetOperationStatusResp)
 	if !ok {

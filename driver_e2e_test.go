@@ -15,6 +15,7 @@ import (
 	"github.com/databricks/databricks-sql-go/driverctx"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/client"
+	dbsqlerr "github.com/databricks/databricks-sql-go/internal/err"
 	"github.com/databricks/databricks-sql-go/logger"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -282,9 +283,9 @@ func TestContextTimeoutExample(t *testing.T) {
 	rows, err := db.QueryContext(ctx1, `SELECT id FROM RANGE(100000000) ORDER BY RANDOM() + 2 asc`)
 	require.ErrorContains(t, err, context.DeadlineExceeded.Error())
 	require.Nil(t, rows)
-	_, ok := err.(causer)
+	_, ok := err.(dbsqlerr.Causer)
 	assert.True(t, ok)
-	_, ok = err.(stackTracer)
+	_, ok = err.(dbsqlerr.StackTracer)
 	assert.True(t, ok)
 	assert.Equal(t, 1, state.executeStatementCalls)
 	assert.GreaterOrEqual(t, state.getOperationStatusCalls, 1)
