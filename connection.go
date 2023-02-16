@@ -199,7 +199,7 @@ func (c *conn) runQuery(ctx context.Context, query string, args []driver.NamedVa
 		// live states
 		case cli_service.TOperationState_INITIALIZED_STATE.String(),
 			cli_service.TOperationState_PENDING_STATE.String(),
-			cli_service.TOperationState_RUNNING_STATE.String():
+			cli_service.TOperationState_RUNNING_STATE.String(), "PENDING":
 			statusResp, err := c.pollOperation(ctx, opHandle)
 			if err != nil {
 				return exStmtResp, statusResp, err

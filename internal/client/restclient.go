@@ -157,6 +157,20 @@ func (rc *RestClient) GetExecutionStatus(ctx context.Context, req *GetExecutionS
 			Schema: toSchemaRest(resp.Manifest),
 		}
 	}
+	if resp.Status.Error != nil {
+		return &GetExecutionStatusResp{
+			Status: &RequestStatus{
+				StatusCode: "ERROR",
+			},
+			ExecutionStatus: ExecutionStatus{
+				ExecutionState: string(resp.Status.State),
+				Error: &ExecutionError{
+					Message:   resp.Status.Error.Message,
+					ErrorCode: resp.Status.Error.ErrorCode.String(),
+				},
+			},
+		}, nil
+	}
 	// TODO
 	return &GetExecutionStatusResp{
 		Status: &RequestStatus{
@@ -164,10 +178,7 @@ func (rc *RestClient) GetExecutionStatus(ctx context.Context, req *GetExecutionS
 		},
 		ExecutionStatus: ExecutionStatus{
 			ExecutionState: string(resp.Status.State),
-			Error: &ExecutionError{
-				Message:   resp.Status.Error.Message,
-				ErrorCode: resp.Status.Error.ErrorCode.String(),
-			},
+			Error:          nil,
 		},
 	}, nil
 }
@@ -204,6 +215,9 @@ func (h *RestHandle) Id() string {
 }
 
 func toSchemaRest(s *sqlexec.ResultManifest) *ResultSchema {
+	if s == nil {
+		return nil
+	}
 	cols := []*ColumnInfo{}
 	for _, c := range s.Schema.Columns {
 		ti := columnTypeFromString(c.TypeText)
