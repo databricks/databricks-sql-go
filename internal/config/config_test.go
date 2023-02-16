@@ -17,11 +17,12 @@ func TestParseConfig(t *testing.T) {
 	}
 	tz, _ := time.LoadLocation("America/Vancouver")
 	tests := []struct {
-		name    string
-		args    args
-		wantCfg UserConfig
-		wantURL string
-		wantErr bool
+		name            string
+		args            args
+		wantCfg         UserConfig
+		wantURL         string
+		wantErr         bool
+		wantEndpointErr bool
 	}{
 		{
 			name: "base case",
@@ -253,11 +254,12 @@ func TestParseConfig(t *testing.T) {
 				RetryWaitMin:  1 * time.Second,
 				RetryWaitMax:  30 * time.Second,
 			},
-			wantURL: "https://example.cloud.databricks.com:443",
-			wantErr: false,
+			wantURL:         "https://example.cloud.databricks.com:443",
+			wantErr:         false,
+			wantEndpointErr: true,
 		},
 		{
-			name: "missing http path",
+			name: "missing http path 2",
 			args: args{dsn: "token:supersecret2@example.cloud.databricks.com:443?catalog=default&schema=system&timeout=100&maxRows=1000"},
 			wantCfg: UserConfig{
 				Protocol:      "https",
@@ -274,8 +276,9 @@ func TestParseConfig(t *testing.T) {
 				RetryWaitMin:  1 * time.Second,
 				RetryWaitMax:  30 * time.Second,
 			},
-			wantURL: "https://example.cloud.databricks.com:443",
-			wantErr: false,
+			wantURL:         "https://example.cloud.databricks.com:443",
+			wantErr:         false,
+			wantEndpointErr: true,
 		},
 		{
 			name:    "with wrong port",
@@ -331,8 +334,9 @@ func TestParseConfig(t *testing.T) {
 				RetryWaitMin:  1 * time.Second,
 				RetryWaitMax:  30 * time.Second,
 			},
-			wantURL: "https://:443",
-			wantErr: false,
+			wantURL:         "https://:443",
+			wantErr:         false,
+			wantEndpointErr: true,
 		},
 	}
 	for _, tt := range tests {
@@ -348,7 +352,11 @@ func TestParseConfig(t *testing.T) {
 			}
 			if err == nil {
 				cfg := &Config{UserConfig: got}
-				gotUrl := cfg.ToEndpointURL()
+				gotUrl, err := cfg.ToEndpointURL()
+				if (err != nil) != tt.wantEndpointErr {
+					t.Errorf("ParseConfig() error = %v, wantErr %v", err, tt.wantErr)
+					return
+				}
 				if gotUrl != tt.wantURL {
 					t.Errorf("ToEndpointURL() = %v, want %v", got, tt.wantErr)
 					return
