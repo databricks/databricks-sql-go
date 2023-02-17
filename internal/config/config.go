@@ -36,10 +36,19 @@ type Config struct {
 }
 
 // ToEndpointURL generates the endpoint URL from Config that a Thrift client will connect to
-func (c *Config) ToEndpointURL() string {
+func (c *Config) ToEndpointURL() (string, error) {
 	var userInfo string
 	endpointUrl := fmt.Sprintf("%s://%s%s:%d%s", c.Protocol, userInfo, c.Host, c.Port, c.HTTPPath)
-	return endpointUrl
+	if c.Host == "" {
+		return endpointUrl, errors.New("databricks: missing Hostname")
+	}
+	if c.Port == 0 {
+		return endpointUrl, errors.New("databricks: missing Port")
+	}
+	if c.HTTPPath == "" && c.Host != "localhost" {
+		return endpointUrl, errors.New("databricks: missing HTTP Path")
+	}
+	return endpointUrl, nil
 }
 
 // DeepCopy returns a true deep copy of Config

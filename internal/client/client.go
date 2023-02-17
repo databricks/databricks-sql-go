@@ -8,7 +8,9 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptrace"
+	"net/url"
 	"os"
+	"regexp"
 	"time"
 
 	"github.com/apache/thrift/lib/go/thrift"
@@ -175,7 +177,11 @@ func (tsc *ThriftServiceClient) CancelOperation(ctx context.Context, req *cli_se
 // InitThriftClient is a wrapper of the http transport, so we can have access to response code and headers.
 // It is important to know the code and headers to know if we need to retry or not
 func InitThriftClient(cfg *config.Config, httpclient *http.Client) (*ThriftServiceClient, error) {
-	endpoint := cfg.ToEndpointURL()
+	var err error
+	endpoint, err := cfg.ToEndpointURL()
+	if err != nil {
+		return nil, err
+	}
 	tcfg := &thrift.TConfiguration{
 		TLSConfig: cfg.TLSConfig,
 	}
@@ -200,7 +206,6 @@ func InitThriftClient(cfg *config.Config, httpclient *http.Client) (*ThriftServi
 	}
 
 	var tTrans thrift.TTransport
-	var err error
 
 	switch cfg.ThriftTransport {
 	case "http":
@@ -270,6 +275,8 @@ func SprintGuid(bts []byte) string {
 	return fmt.Sprintf("%x", bts)
 }
 
+var retryableStatusCode = []int{http.StatusTooManyRequests, http.StatusServiceUnavailable}
+
 type Transport struct {
 	Base  *http.Transport
 	Authr auth.Authenticator
@@ -309,6 +316,27 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if err != nil {
 		return nil, err
 	}
+	if resp.StatusCode != http.StatusOK {
+		reason := resp.Header.Get("X-Databricks-Reason-Phrase")
+		terrmsg := resp.Header.Get("X-Thriftserver-Error-Message")
+		for _, c := range retryableStatusCode {
+			if c == resp.StatusCode {
+				if terrmsg != "" {
+					logger.Warn().Msg(terrmsg)
+				}
+				return resp, nil
+			}
+		}
+		if reason != "" {
+			logger.Err(fmt.Errorf(reason)).Msg("non retryable error")
+			return nil, errors.New(reason)
+		}
+		if terrmsg != "" {
+			logger.Err(fmt.Errorf(terrmsg)).Msg("non retryable error")
+			return nil, errors.New(terrmsg)
+		}
+		return nil, errors.New(resp.Status)
+	}
 
 	return resp, nil
 }
@@ -322,7 +350,7 @@ func RetryableClient(cfg *config.Config) *http.Client {
 		RetryWaitMax: cfg.RetryWaitMax,
 		RetryMax:     cfg.RetryMax,
 		ErrorHandler: errorHandler,
-		CheckRetry:   retryablehttp.DefaultRetryPolicy,
+		CheckRetry:   RetryPolicy,
 		Backoff:      retryablehttp.DefaultBackoff,
 	}
 	return retryableClient.StandardClient()
@@ -411,4 +439,35 @@ func errorHandler(resp *http.Response, err error, numTries int) (*http.Response,
 	}
 
 	return resp, werr
+}
+
+func RetryPolicy(ctx context.Context, resp *http.Response, err error) (bool, error) {
+	var lostConn = regexp.MustCompile(`EOF`)
+
+	// do not retry on context.Canceled or context.DeadlineExceeded
+	if ctx.Err() != nil {
+		return false, ctx.Err()
+	}
+
+	if err != nil {
+		if v, ok := err.(*url.Error); ok {
+			if lostConn.MatchString(v.Error()) {
+				return true, v
+			}
+		}
+		return false, nil
+	}
+
+	// 429 Too Many Requests or 503 service unavailable is recoverable. Sometimes the server puts
+	// a Retry-After response header to indicate when the server is
+	// available to start processing request from client.
+
+	for _, c := range retryableStatusCode {
+		if c == resp.StatusCode {
+			return true, nil
+		}
+	}
+
+	return false, nil
+
 }

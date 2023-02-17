@@ -266,7 +266,7 @@ func TestContextTimeoutExample(t *testing.T) {
 
 	defer ts.Close()
 
-	db, err := sql.Open("databricks", ts.URL)
+	db, err := sql.Open("databricks", ts.URL+"/path")
 	require.NoError(t, err)
 	defer db.Close()
 
@@ -363,7 +363,7 @@ func TestRetries(t *testing.T) {
 
 		connector, err := NewConnector(
 			WithServerHostname("localhost"),
-			WithHTTPPath("/500-5-retries"),
+			WithHTTPPath("/503-5-retries"),
 			WithPort(port),
 			WithRetries(2, 10*time.Millisecond, 1*time.Second),
 		)
@@ -397,7 +397,7 @@ func TestRetries(t *testing.T) {
 
 		connector, err := NewConnector(
 			WithServerHostname("localhost"),
-			WithHTTPPath("/500-5-retries"),
+			WithHTTPPath("/429-2-retries"),
 			WithPort(port),
 			WithRetries(-1, 0, 0),
 		)
