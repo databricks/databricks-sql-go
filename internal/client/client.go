@@ -356,12 +356,12 @@ func RetryableClient(cfg *config.Config) *http.Client {
 	return retryableClient.StandardClient()
 }
 
-func PooledTransport() *http.Transport {
+func PooledTransport(timeout time.Duration) *http.Transport {
 	transport := &http.Transport{
 		Proxy: http.ProxyFromEnvironment,
 		DialContext: (&net.Dialer{
-			Timeout:   30 * time.Second,
-			KeepAlive: 30 * time.Second,
+			Timeout:   timeout,
+			KeepAlive: timeout,
 			DualStack: true,
 		}).DialContext,
 		ForceAttemptHTTP2:     true,
@@ -380,7 +380,7 @@ func PooledClient(cfg *config.Config) *http.Client {
 		return nil
 	}
 	tr := &Transport{
-		Base:  PooledTransport(),
+		Base:  PooledTransport(cfg.ClientTimeout),
 		Authr: cfg.Authenticator,
 	}
 	return &http.Client{
