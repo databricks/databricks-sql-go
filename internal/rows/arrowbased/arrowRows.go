@@ -13,7 +13,7 @@ import (
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/config"
-	dbsqlerr_int "github.com/databricks/databricks-sql-go/internal/errors"
+	dbsqlerrint "github.com/databricks/databricks-sql-go/internal/errors"
 	"github.com/databricks/databricks-sql-go/internal/rows/rowscanner"
 	dbsqllog "github.com/databricks/databricks-sql-go/logger"
 	"github.com/pkg/errors"
@@ -111,20 +111,20 @@ func NewArrowRowScanner(resultSetMetadata *cli_service.TGetResultSetMetadataResp
 		arrowSchema, err = tTableSchemaToArrowSchema(resultSetMetadata.Schema, &arrowConfig)
 		if err != nil {
 			logger.Err(err).Msg(errArrowRowsConvertSchema)
-			return nil, dbsqlerr_int.NewDriverError(ctx, errArrowRowsConvertSchema, err)
+			return nil, dbsqlerrint.NewDriverError(ctx, errArrowRowsConvertSchema, err)
 		}
 
 		// serialize the arrow schema
 		schemaBytes, err = getArrowSchemaBytes(arrowSchema, ctx)
 		if err != nil {
 			logger.Err(err).Msg(errArrowRowsSerializeSchema)
-			return nil, dbsqlerr_int.NewDriverError(ctx, errArrowRowsSerializeSchema, err)
+			return nil, dbsqlerrint.NewDriverError(ctx, errArrowRowsSerializeSchema, err)
 		}
 	} else {
 		br := &chunkedByteReader{chunks: [][]byte{schemaBytes}}
 		rdr, err := ipc.NewReader(br)
 		if err != nil {
-			return nil, dbsqlerr_int.NewDriverError(ctx, errArrowRowsUnableToReadBatch, err)
+			return nil, dbsqlerrint.NewDriverError(ctx, errArrowRowsUnableToReadBatch, err)
 		}
 		defer rdr.Release()
 
@@ -144,7 +144,7 @@ func NewArrowRowScanner(resultSetMetadata *cli_service.TGetResultSetMetadataResp
 	ttsf, err := arrow.FixedWidthTypes.Timestamp_us.(*arrow.TimestampType).GetToTimeFunc()
 	if err != nil {
 		logger.Err(err).Msg(errArrowRowsToTimestampFn)
-		return nil, dbsqlerr_int.NewDriverError(ctx, errArrowRowsToTimestampFn, err)
+		return nil, dbsqlerrint.NewDriverError(ctx, errArrowRowsToTimestampFn, err)
 	}
 
 	arrowBatches := make([]sparkArrowBatch, len(rowSet.ArrowBatches))
@@ -255,14 +255,14 @@ func (ars *arrowRowScanner) ScanRow(
 				(isIntervalType(dbType) && ars.UseArrowNativeIntervalTypes) {
 				//	not yet fully supported
 				ars.Error().Msgf(errArrowRowsUnsupportedNativeType(dbType.String()))
-				return dbsqlerr_int.NewDriverError(ars.ctx, errArrowRowsUnsupportedNativeType(dbType.String()), nil)
+				return dbsqlerrint.NewDriverError(ars.ctx, errArrowRowsUnsupportedNativeType(dbType.String()), nil)
 			}
 
 			// get the value from the column values holder
 			var err1 error
 			destination[i], err1 = ars.columnValues[i].Value(rowInBatchIndex)
 			if err1 != nil {
-				err = dbsqlerr_int.NewDriverError(ars.ctx, errArrowRowsColumnValue(col.name), err1)
+				err = dbsqlerrint.NewDriverError(ars.ctx, errArrowRowsColumnValue(col.name), err1)
 			}
 		}
 	}
@@ -317,9 +317,9 @@ func (ars *arrowRowScanner) loadBatch(batchIndex int) dbsqlerr.DBError {
 	if ars == nil || ars.arrowBatches == nil {
 		if ars != nil {
 			ars.Error().Msg(errArrowRowsNoArrowBatches)
-			return dbsqlerr_int.NewDriverError(ars.ctx, errArrowRowsNoArrowBatches, nil)
+			return dbsqlerrint.NewDriverError(ars.ctx, errArrowRowsNoArrowBatches, nil)
 		}
-		return dbsqlerr_int.NewDriverError(context.Background(), errArrowRowsNoArrowBatches, nil)
+		return dbsqlerrint.NewDriverError(context.Background(), errArrowRowsNoArrowBatches, nil)
 	}
 
 	// if the batch already loaded we can just return
@@ -329,21 +329,21 @@ func (ars *arrowRowScanner) loadBatch(batchIndex int) dbsqlerr.DBError {
 
 	if batchIndex < 0 || batchIndex >= len(ars.arrowBatches) {
 		ars.Error().Msg(errArrowRowsInvalidBatchIndex(batchIndex, len(ars.arrowBatches)))
-		return dbsqlerr_int.NewDriverError(ars.ctx, errArrowRowsInvalidBatchIndex(batchIndex, len(ars.arrowBatches)), nil)
+		return dbsqlerrint.NewDriverError(ars.ctx, errArrowRowsInvalidBatchIndex(batchIndex, len(ars.arrowBatches)), nil)
 	}
 
 	// set up the column values containers
 	if ars.columnValues == nil {
 		err := ars.makeColumnValuesContainers(ars)
 		if err != nil {
-			return dbsqlerr_int.NewDriverError(ars.ctx, errArrowRowsMakeColumnValueContainers, err)
+			return dbsqlerrint.NewDriverError(ars.ctx, errArrowRowsMakeColumnValueContainers, err)
 		}
 	}
 
 	r, err := ars.NewRecordFromBytes(ars.arrowSchemaBytes, ars.arrowBatches[batchIndex])
 	if err != nil {
 		ars.Err(err).Msg(errArrowRowsUnableToReadBatch)
-		return dbsqlerr_int.NewDriverError(ars.ctx, errArrowRowsUnableToReadBatch, err)
+		return dbsqlerrint.NewDriverError(ars.ctx, errArrowRowsUnableToReadBatch, err)
 	}
 
 	defer r.Release()
@@ -376,14 +376,14 @@ func (ars *arrowRowScanner) loadBatch(batchIndex int) dbsqlerr.DBError {
 // getArrowSchemaBytes returns the serialized schema in ipc format
 func getArrowSchemaBytes(schema *arrow.Schema, ctx context.Context) ([]byte, dbsqlerr.DBError) {
 	if schema == nil {
-		return nil, dbsqlerr_int.NewDriverError(ctx, errArrowRowsNilArrowSchema, nil)
+		return nil, dbsqlerrint.NewDriverError(ctx, errArrowRowsNilArrowSchema, nil)
 	}
 
 	var output bytes.Buffer
 	w := ipc.NewWriter(&output, ipc.WithSchema(schema))
 	err := w.Close()
 	if err != nil {
-		return nil, dbsqlerr_int.NewDriverError(ctx, errArrowRowsUnableToWriteArrowSchema, err)
+		return nil, dbsqlerrint.NewDriverError(ctx, errArrowRowsUnableToWriteArrowSchema, err)
 	}
 
 	arrowSchemaBytes := output.Bytes()
@@ -405,7 +405,7 @@ func (ars *arrowRowScanner) rowIndexToBatchIndex(rowIndex int64) (int, dbsqlerr.
 	}
 
 	ars.Error().Msg(errArrowRowsInvalidRowIndex(rowIndex))
-	return -1, dbsqlerr_int.NewDriverError(ars.ctx, errArrowRowsInvalidRowIndex(rowIndex), nil)
+	return -1, dbsqlerrint.NewDriverError(ars.ctx, errArrowRowsInvalidRowIndex(rowIndex), nil)
 }
 
 // tTableSchemaToArrowSchema convers the TTableSchema retrieved by the thrift server into an arrow.Schema instance
@@ -477,7 +477,7 @@ func tColumnDescToArrowDataType(tColumnDesc *cli_service.TColumnDesc, arrowConfi
 
 			decimalType, err := arrow.NewDecimalType(arrow.DECIMAL128, precision, scale)
 			if err != nil {
-				return nil, dbsqlerr_int.WrapErr(err, errArrowRowsUnableToCreateDecimalType(scale, precision))
+				return nil, dbsqlerrint.WrapErr(err, errArrowRowsUnableToCreateDecimalType(scale, precision))
 			}
 
 			return decimalType, nil

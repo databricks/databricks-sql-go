@@ -154,10 +154,6 @@ func TestDbSqlErrors(t *testing.T) {
 		assert.Equal(t, e, str)
 		assert.NotEqual(t, cause, str)
 	})
-
-	t.Run("", func(t *testing.T) {
-	})
-
 }
 
 type boringError struct{}
