@@ -15,8 +15,8 @@ import (
 	"github.com/databricks/databricks-sql-go/driverctx"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/client"
-	dbsqlerr "github.com/databricks/databricks-sql-go/internal/err"
 	"github.com/databricks/databricks-sql-go/logger"
+	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -281,14 +281,15 @@ func TestContextTimeoutExample(t *testing.T) {
 	ctx1, cancel := context.WithTimeout(ogCtx, 5*time.Second)
 	defer cancel()
 	rows, err := db.QueryContext(ctx1, `SELECT id FROM RANGE(100000000) ORDER BY RANDOM() + 2 asc`)
-	if err, ok := err.(dbsqlerr.StackTracer); ok {
+	if err, ok := err.(interface{ StackTrace() errors.StackTrace }); ok {
 		fmt.Printf("Stack trace: %v", err.StackTrace())
 	}
 	require.ErrorContains(t, err, context.DeadlineExceeded.Error())
 	require.Nil(t, rows)
-	_, ok := err.(dbsqlerr.Causer)
+
+	_, ok := err.(interface{ Cause() error })
 	assert.True(t, ok)
-	_, ok = err.(dbsqlerr.StackTracer)
+	_, ok = err.(interface{ StackTrace() errors.StackTrace })
 	assert.True(t, ok)
 	assert.Equal(t, 1, state.executeStatementCalls)
 	assert.GreaterOrEqual(t, state.getOperationStatusCalls, 1)

@@ -144,6 +144,52 @@ The result log may look like this:
 
 	{"level":"debug","connId":"01ed6545-5669-1ec7-8c7e-6d8a1ea0ab16","corrId":"workflow-example","queryId":"01ed6545-57cc-188a-bfc5-d9c0eaf8e189","time":1668558402,"message":"Run Main elapsed time: 1.298712292s"}
 
+# Errors
+
+There are three error types exposed via dbsql/errors
+
+	DBSystemFault - A fault caused by Databricks services
+
+	DBRequestError - An error that is caused by an invalid request. Example: permission denied, or the user tries to access a warehouse that doesn’t exist
+
+	DBExecutionError - Any error that occurs after the SQL statement has been accepted (e.g. SQL syntax error)
+
+Each type has a corresponding sentinel value which can be used with errors.Is() to determine if one of the types is present in an error chain.
+
+	SystemFault
+	RequestError
+	ExecutionError
+
+Example usage:
+
+	import (
+		fmt
+		errors
+		dbsqlerr "github.com/databricks/databricks-sql-go/errors"
+	)
+
+	func main() {
+		...
+		_, err := db.ExecContext(ogCtx, `Select id from range(100)`)
+		if err != nil {
+			if errors.Is(err, dbsqlerr.ExecutionError) {
+				var execErr dbsqlerr.DBExecutionError
+				if ok := errors.As(err, &execError); ok {
+						fmt.Printf("%s, corrId: %s, connId: %s, queryId: %s, sqlState: %s",
+						execErr.Error(),
+						execErr.CorrelationId(),
+						execErr.ConnectionId(),
+						execErr.QueryId(),
+						execErr.SqlState())
+				}
+			}
+			...
+		}
+		...
+	}
+
+See the documentation for dbsql/errors for more information.
+
 # Supported Data Types
 
 ==================================

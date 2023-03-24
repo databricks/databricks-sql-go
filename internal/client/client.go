@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	dbsqlerr "github.com/databricks/databricks-sql-go/internal/err"
 	"log"
 	"net"
 	"net/http"
@@ -13,6 +12,8 @@ import (
 	"os"
 	"regexp"
 	"time"
+
+	dbsqlerr "github.com/databricks/databricks-sql-go/internal/errors"
 
 	"github.com/apache/thrift/lib/go/thrift"
 	"github.com/databricks/databricks-sql-go/auth"

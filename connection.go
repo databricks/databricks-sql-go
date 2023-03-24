@@ -9,7 +9,7 @@ import (
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/client"
 	"github.com/databricks/databricks-sql-go/internal/config"
-	dbsqlerr "github.com/databricks/databricks-sql-go/internal/err"
+	dbsqlerr "github.com/databricks/databricks-sql-go/internal/errors"
 	"github.com/databricks/databricks-sql-go/internal/rows"
 	"github.com/databricks/databricks-sql-go/internal/sentinel"
 	"github.com/databricks/databricks-sql-go/logger"

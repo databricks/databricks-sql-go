@@ -3,7 +3,8 @@ package dbsql
 import (
 	"context"
 	"database/sql/driver"
-	dbsqlerr "github.com/databricks/databricks-sql-go/internal/err"
+
+	dbsqlerr "github.com/databricks/databricks-sql-go/internal/errors"
 )
 
 type stmt struct {

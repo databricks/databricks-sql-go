@@ -14,7 +14,7 @@ import (
 	"github.com/apache/arrow/go/v11/arrow/ipc"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/config"
-	dbsqlerr "github.com/databricks/databricks-sql-go/internal/err"
+	dbsqlerr "github.com/databricks/databricks-sql-go/internal/errors"
 	"github.com/databricks/databricks-sql-go/internal/rows/rowscanner"
 	dbsqllog "github.com/databricks/databricks-sql-go/logger"
 	"github.com/pkg/errors"
