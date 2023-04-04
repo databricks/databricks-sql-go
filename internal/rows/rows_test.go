@@ -28,7 +28,7 @@ func TestRowsNextRowInPage(t *testing.T) {
 	assert.False(t, inPage, "nil rows instance should return false")
 
 	// default rows instance
-	rowSet = &rows{schema: &cli_service.TTableSchema{}}
+	rowSet = &rows{schema: &cli_service.TTableSchema{}, ctx: context.Background()}
 	inPage, err = rowSet.isNextRowInPage()
 	assert.Nil(t, err)
 	assert.False(t, inPage, "default rows instance should return false")
@@ -37,7 +37,7 @@ func TestRowsNextRowInPage(t *testing.T) {
 
 	// fetchResults has no TRowSet
 	err = rowSet.makeRowScanner(fetchResults)
-	assert.EqualError(t, err, errRowsUnknowRowType)
+	assert.EqualError(t, err, "databricks: system fault: "+errRowsUnknowRowType)
 	inPage, err = rowSet.isNextRowInPage()
 	assert.Nil(t, err)
 	assert.False(t, inPage, "fetch results with no TRowSet should return false")
@@ -47,7 +47,7 @@ func TestRowsNextRowInPage(t *testing.T) {
 	// default TRowSet
 	fetchResults.Results = tRowSet
 	err = rowSet.makeRowScanner(fetchResults)
-	assert.EqualError(t, err, errRowsUnknowRowType)
+	assert.EqualError(t, err, "databricks: system fault: "+errRowsUnknowRowType)
 	inPage, err = rowSet.isNextRowInPage()
 	assert.Nil(t, err)
 	assert.False(t, inPage, "fetch results with default TRowSet should return false")
@@ -119,7 +119,7 @@ func TestRowsGetPageFetchDirection(t *testing.T) {
 
 	// fetchResults has no TRowSet
 	err := rowSet.makeRowScanner(fetchResults)
-	assert.EqualError(t, err, errRowsUnknowRowType)
+	assert.EqualError(t, err, "databricks: system fault: "+errRowsUnknowRowType)
 	direction = rowSet.getPageFetchDirection()
 	assert.Equal(t, cli_service.TFetchOrientation_FETCH_NEXT, direction, "fetchResults has no TRowSet should return forward direction")
 
@@ -128,7 +128,7 @@ func TestRowsGetPageFetchDirection(t *testing.T) {
 	// default TRowSet
 	fetchResults.Results = tRowSet
 	err = rowSet.makeRowScanner(fetchResults)
-	assert.EqualError(t, err, errRowsUnknowRowType)
+	assert.EqualError(t, err, "databricks: system fault: "+errRowsUnknowRowType)
 	direction = rowSet.getPageFetchDirection()
 	assert.Equal(t, cli_service.TFetchOrientation_FETCH_NEXT, direction, "fetchResults has no TRowSet should return forward direction")
 
@@ -187,13 +187,13 @@ func TestRowsGetPageStartRowNum(t *testing.T) {
 	assert.Equal(t, noRows, start, "rows with no page should return 0")
 
 	err := rowSet.makeRowScanner(&cli_service.TFetchResultsResp{})
-	assert.EqualError(t, err, errRowsUnknowRowType)
+	assert.EqualError(t, err, "databricks: system fault: "+errRowsUnknowRowType)
 
 	start = rowSet.pageStartingRowNum
 	assert.Equal(t, noRows, start, "rows with no TRowSet should return 0")
 
 	err = rowSet.makeRowScanner(&cli_service.TFetchResultsResp{Results: &cli_service.TRowSet{}})
-	assert.EqualError(t, err, errRowsUnknowRowType)
+	assert.EqualError(t, err, "databricks: system fault: "+errRowsUnknowRowType)
 
 	start = rowSet.pageStartingRowNum
 	assert.Equal(t, noRows, start, "rows with default TRowSet should return 0")
@@ -210,7 +210,7 @@ func TestRowsFetchResultPageErrors(t *testing.T) {
 	var rowSet *rows
 
 	err := rowSet.fetchResultPage()
-	assert.EqualError(t, err, errRowsNilRows)
+	assert.EqualError(t, err, "databricks: system fault: "+errRowsNilRows)
 
 	rowSet = &rows{
 		nextRowNumber: -1,
@@ -218,10 +218,10 @@ func TestRowsFetchResultPageErrors(t *testing.T) {
 		schema:        &cli_service.TTableSchema{},
 	}
 	err = rowSet.fetchResultPage()
-	assert.EqualError(t, err, errRowsFetchPriorToStart, "negative row number should return error")
+	assert.EqualError(t, err, "databricks: system fault: "+errRowsFetchPriorToStart, "negative row number should return error")
 
 	err = rowSet.makeRowScanner(&cli_service.TFetchResultsResp{})
-	assert.EqualError(t, err, errRowsUnknowRowType)
+	assert.EqualError(t, err, "databricks: system fault: "+errRowsUnknowRowType)
 
 	// default TRowSet
 	tRowSet := &cli_service.TRowSet{}
@@ -364,7 +364,7 @@ func TestRowsFetchResultPageNoDirectResults(t *testing.T) {
 	// going forward and then return EOF
 	rowSet.nextRowNumber = -1
 	err = rowSet.fetchResultPage()
-	errMsg = errRowsFetchPriorToStart
+	errMsg = "databricks: system fault: "+errRowsFetchPriorToStart
 	rowTestPagingResult{
 		getMetadataCount:  1,
 		fetchResultsCount: 7,
@@ -377,7 +377,7 @@ func TestRowsFetchResultPageNoDirectResults(t *testing.T) {
 	// jump back to last page
 	rowSet.nextRowNumber = 12
 	err = rowSet.fetchResultPage()
-	errMsg = "unable to fetch row page prior to start of results"
+	errMsg =  "databricks: system fault: "+errRowsFetchPriorToStart
 	rowTestPagingResult{
 		getMetadataCount:  1,
 		fetchResultsCount: 9,
@@ -399,15 +399,15 @@ func TestRowsFetchResultPageWithDirectResults(t *testing.T) {
 		Orientation: cli_service.TFetchOrientation_FETCH_NEXT,
 	}
 	firstPage, _ := client.FetchResults(context.Background(), req)
-	err := rowSet.makeRowScanner(firstPage)
-	assert.Nil(t, err)
+	err1 := rowSet.makeRowScanner(firstPage)
+	assert.Nil(t, err1)
 
 	// fetch results and get metadata have been called once
 	assert.Equal(t, 1, fetchResultsCount)
 	assert.Equal(t, 1, getMetadataCount)
 
 	// next row number is zero so should not fetch a result page again
-	err = rowSet.fetchResultPage()
+	err := rowSet.fetchResultPage()
 	rowTestPagingResult{
 		getMetadataCount:  1,
 		fetchResultsCount: 1,
@@ -467,7 +467,7 @@ func TestRowsFetchResultPageWithDirectResults(t *testing.T) {
 	// going forward and then return EOF
 	rowSet.nextRowNumber = -1
 	err = rowSet.fetchResultPage()
-	errMsg = errRowsFetchPriorToStart
+	errMsg =  "databricks: system fault: "+errRowsFetchPriorToStart
 	rowTestPagingResult{
 		getMetadataCount:  1,
 		fetchResultsCount: 7,
@@ -480,7 +480,7 @@ func TestRowsFetchResultPageWithDirectResults(t *testing.T) {
 	// jump back to last page
 	rowSet.nextRowNumber = 12
 	err = rowSet.fetchResultPage()
-	errMsg = "unable to fetch row page prior to start of results"
+	errMsg =  "databricks: system fault: "+errRowsFetchPriorToStart
 	rowTestPagingResult{
 		getMetadataCount:  1,
 		fetchResultsCount: 9,
@@ -556,7 +556,7 @@ func TestNextNoDirectResults(t *testing.T) {
 
 	var rowSet *rows
 	err := rowSet.Next(nil)
-	assert.EqualError(t, err, errRowsNilRows)
+	assert.EqualError(t, err,  "databricks: system fault: "+errRowsNilRows)
 
 	rowSet = &rows{hasMoreRows: true}
 	client := getRowsTestSimpleClient(&getMetadataCount, &fetchResultsCount)
@@ -606,7 +606,7 @@ func TestNextWithDirectResults(t *testing.T) {
 		Orientation: cli_service.TFetchOrientation_FETCH_NEXT,
 	}
 	firstPage, _ := client.FetchResults(context.Background(), req)
-	err := rowSet.makeRowScanner(firstPage)
+	var err error = rowSet.makeRowScanner(firstPage)
 	assert.Nil(t, err)
 	assert.Equal(t, 1, fetchResultsCount)
 	assert.Equal(t, 1, getMetadataCount)
@@ -657,12 +657,12 @@ func TestGetScanType(t *testing.T) {
 	var rowSet *rows
 	cd, err := rowSet.getColumnMetadataByIndex(0)
 	assert.Nil(t, cd)
-	assert.EqualError(t, err, errRowsNilRows)
+	assert.EqualError(t, err,  "databricks: system fault: "+errRowsNilRows)
 
 	rowSet = &rows{}
 	cd, err = rowSet.getColumnMetadataByIndex(0)
 	assert.Nil(t, cd)
-	assert.EqualError(t, err, errRowsNoClient)
+	assert.EqualError(t, err,  "databricks: system fault: "+errRowsNoClient)
 
 	client := getRowsTestSimpleClient(&getMetadataCount, &fetchResultsCount)
 	rowSet.client = client
@@ -850,7 +850,7 @@ func (rt rowTestPagingResult) validatePaging(t *testing.T, rowSet *rows, err err
 	if rt.errMessage == nil {
 		assert.Nil(t, err)
 	} else {
-		assert.EqualError(t, err, *rt.errMessage)
+		assert.EqualError(t, err,  *rt.errMessage)
 	}
 }
 

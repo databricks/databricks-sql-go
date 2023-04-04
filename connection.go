@@ -338,6 +338,7 @@ func (c *conn) pollOperation(ctx context.Context, opHandle *cli_service.TOperati
 			statusResp, err = c.client.GetOperationStatus(newCtx, &cli_service.TGetOperationStatusReq{
 				OperationHandle: opHandle,
 			})
+
 			if statusResp != nil && statusResp.OperationState != nil {
 				log.Debug().Msgf("databricks: status %s", statusResp.GetOperationState().String())
 			}
@@ -366,7 +367,7 @@ func (c *conn) pollOperation(ctx context.Context, opHandle *cli_service.TOperati
 	}
 	_, resp, err := pollSentinel.Watch(ctx, c.cfg.PollInterval, 0)
 	if err != nil {
-		return nil, dbsqlerr.WrapErr(err, "failed to poll query state") // TODO: figure out what error type this should be
+		return nil, dbsqlerr.NewSystemFault(ctx, "failed to poll query state", err)
 	}
 	statusResp, ok := resp.(*cli_service.TGetOperationStatusResp)
 	if !ok {

@@ -21,6 +21,10 @@ func NewContextWithCorrelationId(ctx context.Context, correlationId string) cont
 
 // CorrelationIdFromContext retrieves the correlationId stored in context.
 func CorrelationIdFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+
 	corrId, ok := ctx.Value(CorrelationIdContextKey).(string)
 	if !ok {
 		return ""
@@ -35,6 +39,10 @@ func NewContextWithConnId(ctx context.Context, connId string) context.Context {
 
 // ConnIdFromContext retrieves the connectionId stored in context.
 func ConnIdFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+
 	connId, ok := ctx.Value(ConnIdContextKey).(string)
 	if !ok {
 		return ""
@@ -49,6 +57,10 @@ func NewContextWithQueryId(ctx context.Context, queryId string) context.Context 
 
 // QueryIdFromContext retrieves the queryId stored in context.
 func QueryIdFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+
 	queryId, ok := ctx.Value(QueryIdContextKey).(string)
 	if !ok {
 		return ""

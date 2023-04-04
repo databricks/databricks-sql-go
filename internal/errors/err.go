@@ -51,12 +51,15 @@ type stackTracer interface {
 }
 
 func newDatabricksError(ctx context.Context, msg string, err error) databricksError {
+	// create an error with the new message
 	if err == nil {
 		err = errors.New(msg)
 	} else {
 		err = errors.WithMessage(err, msg)
 	}
 
+	// if the source error does not have a stack trace in its
+	// error chain add a stack trace
 	var st stackTracer
 	if ok := errors.As(err, &st); !ok {
 		err = errors.WithStack(err)

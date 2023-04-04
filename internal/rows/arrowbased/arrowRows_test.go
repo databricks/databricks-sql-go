@@ -1,6 +1,7 @@
 package arrowbased
 
 import (
+	"context"
 	"database/sql/driver"
 	"encoding/json"
 	"fmt"
@@ -89,15 +90,15 @@ func TestArrowRowScanner(t *testing.T) {
 		arrowConfig.UseArrowNativeComplexTypes = true
 		_, err = tColumnDescToArrowDataType(schema.Columns[10], arrowConfig)
 		assert.NotNil(t, err)
-		assert.EqualError(t, err, fmt.Sprintf(errArrowRowsUnsupportedWithHiveSchema, "ARRAY"))
+		assert.EqualError(t, err, errArrowRowsUnsupportedWithHiveSchema("ARRAY"))
 
 		_, err = tColumnDescToArrowDataType(schema.Columns[11], arrowConfig)
 		assert.NotNil(t, err)
-		assert.EqualError(t, err, fmt.Sprintf(errArrowRowsUnsupportedWithHiveSchema, "MAP"))
+		assert.EqualError(t, err, errArrowRowsUnsupportedWithHiveSchema("MAP"))
 
 		_, err = tColumnDescToArrowDataType(schema.Columns[12], arrowConfig)
 		assert.NotNil(t, err)
-		assert.EqualError(t, err, fmt.Sprintf(errArrowRowsUnsupportedWithHiveSchema, "STRUCT"))
+		assert.EqualError(t, err, errArrowRowsUnsupportedWithHiveSchema("STRUCT"))
 
 		arrowType, err = tColumnDescToArrowDataType(schema.Columns[13], arrowConfig)
 		assert.Nil(t, err)
@@ -125,11 +126,11 @@ func TestArrowRowScanner(t *testing.T) {
 		arrowConfig.UseArrowNativeIntervalTypes = true
 		_, err = tColumnDescToArrowDataType(schema.Columns[15], arrowConfig)
 		assert.NotNil(t, err)
-		assert.EqualError(t, err, fmt.Sprintf(errArrowRowsUnsupportedWithHiveSchema, "INTERVAL_YEAR_MONTH"))
+		assert.EqualError(t, err, errArrowRowsUnsupportedWithHiveSchema("INTERVAL_YEAR_MONTH"))
 
 		_, err = tColumnDescToArrowDataType(schema.Columns[16], arrowConfig)
 		assert.NotNil(t, err)
-		assert.EqualError(t, err, fmt.Sprintf(errArrowRowsUnsupportedWithHiveSchema, "INTERVAL_DAY_TIME"))
+		assert.EqualError(t, err, errArrowRowsUnsupportedWithHiveSchema("INTERVAL_DAY_TIME"))
 
 		// unknown type
 		_, err = tColumnDescToArrowDataType(&cli_service.TColumnDesc{TypeDesc: &cli_service.TTypeDesc{Types: []*cli_service.TTypeEntry{{PrimitiveEntry: &cli_service.TPrimitiveTypeEntry{Type: cli_service.TTypeId(999)}}}}}, arrowConfig)
@@ -153,15 +154,15 @@ func TestArrowRowScanner(t *testing.T) {
 		arrowConfig.UseArrowNativeComplexTypes = true
 		_, err = tColumnDescToArrowDataType(schema.Columns[10], arrowConfig)
 		assert.NotNil(t, err)
-		assert.EqualError(t, err, fmt.Sprintf(errArrowRowsUnsupportedWithHiveSchema, "ARRAY"))
+		assert.EqualError(t, err, errArrowRowsUnsupportedWithHiveSchema("ARRAY"))
 
 		_, err = tColumnDescToArrowDataType(schema.Columns[11], arrowConfig)
 		assert.NotNil(t, err)
-		assert.EqualError(t, err, fmt.Sprintf(errArrowRowsUnsupportedWithHiveSchema, "MAP"))
+		assert.EqualError(t, err, errArrowRowsUnsupportedWithHiveSchema("MAP"))
 
 		_, err = tColumnDescToArrowDataType(schema.Columns[12], arrowConfig)
 		assert.NotNil(t, err)
-		assert.EqualError(t, err, fmt.Sprintf(errArrowRowsUnsupportedWithHiveSchema, "STRUCT"))
+		assert.EqualError(t, err, errArrowRowsUnsupportedWithHiveSchema("STRUCT"))
 
 		arrowConfig.UseArrowNativeDecimal = true
 		arrowType, err = tColumnDescToArrowDataType(schema.Columns[13], arrowConfig)
@@ -172,11 +173,11 @@ func TestArrowRowScanner(t *testing.T) {
 		arrowConfig.UseArrowNativeIntervalTypes = true
 		_, err = tColumnDescToArrowDataType(schema.Columns[15], arrowConfig)
 		assert.NotNil(t, err)
-		assert.EqualError(t, err, fmt.Sprintf(errArrowRowsUnsupportedWithHiveSchema, "INTERVAL_YEAR_MONTH"))
+		assert.EqualError(t, err, errArrowRowsUnsupportedWithHiveSchema("INTERVAL_YEAR_MONTH"))
 
 		_, err = tColumnDescToArrowDataType(schema.Columns[16], arrowConfig)
 		assert.NotNil(t, err)
-		assert.EqualError(t, err, fmt.Sprintf(errArrowRowsUnsupportedWithHiveSchema, "INTERVAL_DAY_TIME"))
+		assert.EqualError(t, err, errArrowRowsUnsupportedWithHiveSchema("INTERVAL_DAY_TIME"))
 	})
 
 	t.Run("Convert unknown thrift db type to arrow type", func(t *testing.T) {
@@ -208,15 +209,15 @@ func TestArrowRowScanner(t *testing.T) {
 		schema := &cli_service.TTableSchema{}
 		metadataResp := &cli_service.TGetResultSetMetadataResp{Schema: schema}
 
-		ars, _ := NewArrowRowScanner(metadataResp, rowSet, nil, nil)
+		ars, _ := NewArrowRowScanner(metadataResp, rowSet, nil, nil, context.Background())
 		assert.Equal(t, int64(0), ars.NRows())
 
 		rowSet.ArrowBatches = []*cli_service.TSparkArrowBatch{}
-		ars, _ = NewArrowRowScanner(metadataResp, rowSet, nil, nil)
+		ars, _ = NewArrowRowScanner(metadataResp, rowSet, nil, nil, context.Background())
 		assert.Equal(t, int64(0), ars.NRows())
 
 		rowSet.ArrowBatches = []*cli_service.TSparkArrowBatch{{RowCount: 2}, {RowCount: 3}}
-		ars, _ = NewArrowRowScanner(metadataResp, rowSet, nil, nil)
+		ars, _ = NewArrowRowScanner(metadataResp, rowSet, nil, nil, context.Background())
 		assert.Equal(t, int64(5), ars.NRows())
 	})
 
@@ -227,7 +228,7 @@ func TestArrowRowScanner(t *testing.T) {
 		schema := getAllTypesSchema()
 		metadataResp := &cli_service.TGetResultSetMetadataResp{Schema: schema}
 
-		d, _ := NewArrowRowScanner(metadataResp, rowSet, nil, nil)
+		d, _ := NewArrowRowScanner(metadataResp, rowSet, nil, nil, context.Background())
 
 		var ars *arrowRowScanner = d.(*arrowRowScanner)
 
@@ -300,7 +301,7 @@ func TestArrowRowScanner(t *testing.T) {
 		cfg.UseArrowNativeTimestamp = true
 		cfg.UseArrowNativeDecimal = true
 
-		d, _ := NewArrowRowScanner(metadataResp, rowSet, &cfg, nil)
+		d, _ := NewArrowRowScanner(metadataResp, rowSet, &cfg, nil, context.Background())
 
 		var ars *arrowRowScanner = d.(*arrowRowScanner)
 
@@ -328,64 +329,66 @@ func TestArrowRowScanner(t *testing.T) {
 		cfg.UseArrowNativeTimestamp = true
 		cfg.UseArrowNativeDecimal = true
 
-		_, err := NewArrowRowScanner(metadataResp, rowSet, &cfg, nil)
+		_, err := NewArrowRowScanner(metadataResp, rowSet, &cfg, nil, context.Background())
 		require.Nil(t, err)
 
 		// missing type qualifiers
 		schema = getAllTypesSchema()
 		schema.Columns[13].TypeDesc.Types[0].PrimitiveEntry.TypeQualifiers = nil
 		metadataResp.Schema = schema
-		_, err = NewArrowRowScanner(metadataResp, rowSet, &cfg, nil)
+		_, err = NewArrowRowScanner(metadataResp, rowSet, &cfg, nil, context.Background())
 		require.NotNil(t, err)
-		assert.True(t, strings.HasPrefix(err.Error(), errArrowRowsInvalidDecimalType))
+		assert.True(t, strings.HasPrefix(err.Error(), "databricks: system fault: "+errArrowRowsConvertSchema+": "+errArrowRowsInvalidDecimalType))
 
 		// type qualifiers missing qualifiers
 		schema = getAllTypesSchema()
 		schema.Columns[13].TypeDesc.Types[0].PrimitiveEntry.TypeQualifiers.Qualifiers = nil
 		metadataResp.Schema = schema
-		_, err = NewArrowRowScanner(metadataResp, rowSet, &cfg, nil)
+		_, err = NewArrowRowScanner(metadataResp, rowSet, &cfg, nil, context.Background())
 		require.NotNil(t, err)
-		assert.True(t, strings.HasPrefix(err.Error(), errArrowRowsInvalidDecimalType))
+		assert.True(t, strings.HasPrefix(err.Error(), "databricks: system fault: "+errArrowRowsConvertSchema+": "+errArrowRowsInvalidDecimalType))
 
 		// empty qualifiers
 		schema = getAllTypesSchema()
 		schema.Columns[13].TypeDesc.Types[0].PrimitiveEntry.TypeQualifiers.Qualifiers = map[string]*cli_service.TTypeQualifierValue{}
 		metadataResp.Schema = schema
-		_, err = NewArrowRowScanner(metadataResp, rowSet, &cfg, nil)
+		_, err = NewArrowRowScanner(metadataResp, rowSet, &cfg, nil, context.Background())
 		require.NotNil(t, err)
-		assert.True(t, strings.HasPrefix(err.Error(), errArrowRowsInvalidDecimalType))
+		assert.True(t, strings.HasPrefix(err.Error(), "databricks: system fault: "+errArrowRowsConvertSchema+": "+errArrowRowsInvalidDecimalType))
 
 		// nil precision
 		schema = getAllTypesSchema()
 		schema.Columns[13].TypeDesc.Types[0].PrimitiveEntry.TypeQualifiers.Qualifiers["precision"] = nil
 		metadataResp.Schema = schema
-		_, err = NewArrowRowScanner(metadataResp, rowSet, &cfg, nil)
+		_, err = NewArrowRowScanner(metadataResp, rowSet, &cfg, nil, context.Background())
 		require.NotNil(t, err)
-		assert.True(t, strings.HasPrefix(err.Error(), errArrowRowsInvalidDecimalType))
+		assert.True(t, strings.HasPrefix(err.Error(), "databricks: system fault: "+errArrowRowsConvertSchema+": "+errArrowRowsInvalidDecimalType))
 
 		// precision missing value
 		schema = getAllTypesSchema()
 		schema.Columns[13].TypeDesc.Types[0].PrimitiveEntry.TypeQualifiers.Qualifiers["precision"].I32Value = nil
 		metadataResp.Schema = schema
-		_, err = NewArrowRowScanner(metadataResp, rowSet, &cfg, nil)
+		_, err = NewArrowRowScanner(metadataResp, rowSet, &cfg, nil, context.Background())
 		require.NotNil(t, err)
-		assert.True(t, strings.HasPrefix(err.Error(), errArrowRowsInvalidDecimalType))
+		assert.True(t, strings.HasPrefix(err.Error(), "databricks: system fault: "+errArrowRowsConvertSchema+": "+errArrowRowsInvalidDecimalType))
 
 		// nil scale
 		schema = getAllTypesSchema()
 		schema.Columns[13].TypeDesc.Types[0].PrimitiveEntry.TypeQualifiers.Qualifiers["scale"] = nil
 		metadataResp.Schema = schema
-		_, err = NewArrowRowScanner(metadataResp, rowSet, &cfg, nil)
+		_, err = NewArrowRowScanner(metadataResp, rowSet, &cfg, nil, context.Background())
 		require.NotNil(t, err)
-		assert.True(t, strings.HasPrefix(err.Error(), errArrowRowsInvalidDecimalType))
+		assert.True(t, strings.HasPrefix(err.Error(), "databricks: system fault: "+errArrowRowsConvertSchema+": "+errArrowRowsInvalidDecimalType))
 
 		// scale missing value
 		schema = getAllTypesSchema()
 		schema.Columns[13].TypeDesc.Types[0].PrimitiveEntry.TypeQualifiers.Qualifiers["scale"].I32Value = nil
 		metadataResp.Schema = schema
-		_, err = NewArrowRowScanner(metadataResp, rowSet, &cfg, nil)
+		_, err = NewArrowRowScanner(metadataResp, rowSet, &cfg, nil, context.Background())
 		require.NotNil(t, err)
-		assert.True(t, strings.HasPrefix(err.Error(), errArrowRowsInvalidDecimalType))
+		msg := err.Error()
+		pre := "databricks: system fault: " + errArrowRowsConvertSchema + ": " + errArrowRowsInvalidDecimalType
+		assert.True(t, strings.HasPrefix(msg, pre))
 
 	})
 
@@ -396,19 +399,18 @@ func TestArrowRowScanner(t *testing.T) {
 
 		cfg := config.Config{}
 		cfg.UseArrowBatches = true
-
-		d, err := NewArrowRowScanner(metadataResp, rowSet, &cfg, nil)
-		require.Nil(t, err)
+		d, err1 := NewArrowRowScanner(metadataResp, rowSet, &cfg, nil, context.Background())
+		require.Nil(t, err1)
 
 		var ars *arrowRowScanner = d.(*arrowRowScanner)
 
-		err = ars.makeColumnValuesContainers(ars)
+		err := ars.makeColumnValuesContainers(ars)
 		require.Nil(t, err)
 
 		dest := make([]driver.Value, 1)
 		err = ars.ScanRow(dest, 0)
 		require.NotNil(t, err)
-		assert.True(t, strings.HasPrefix(err.Error(), fmt.Sprintf(errArrowRowsInvalidRowIndex, 0)))
+		assert.True(t, strings.HasPrefix(err.Error(), "databricks: system fault: "+errArrowRowsInvalidRowIndex(0)))
 	})
 
 	t.Run("Close releases column values", func(t *testing.T) {
@@ -427,7 +429,7 @@ func TestArrowRowScanner(t *testing.T) {
 		cfg := config.Config{}
 		cfg.UseArrowBatches = true
 
-		d, err := NewArrowRowScanner(metadataResp, rowSet, &cfg, nil)
+		d, err := NewArrowRowScanner(metadataResp, rowSet, &cfg, nil, context.Background())
 		require.Nil(t, err)
 		d.Close()
 
@@ -450,7 +452,7 @@ func TestArrowRowScanner(t *testing.T) {
 		cfg := config.Config{}
 		cfg.UseArrowBatches = true
 
-		d, err := NewArrowRowScanner(metadataResp, rowSet, &cfg, nil)
+		d, err := NewArrowRowScanner(metadataResp, rowSet, &cfg, nil, context.Background())
 		require.Nil(t, err)
 
 		ars := d.(*arrowRowScanner)
@@ -479,12 +481,12 @@ func TestArrowRowScanner(t *testing.T) {
 
 		batchIndex, err = ars.rowIndexToBatchIndex(-1)
 		assert.NotNil(t, err)
-		assert.EqualError(t, err, fmt.Sprintf(errArrowRowsInvalidRowIndex, -1))
+		assert.EqualError(t, err, "databricks: system fault: "+errArrowRowsInvalidRowIndex(-1))
 		assert.Equal(t, -1, batchIndex)
 
 		batchIndex, err = ars.rowIndexToBatchIndex(15)
 		assert.NotNil(t, err)
-		assert.EqualError(t, err, fmt.Sprintf(errArrowRowsInvalidRowIndex, 15))
+		assert.EqualError(t, err, "databricks: system fault: "+errArrowRowsInvalidRowIndex(15))
 		assert.Equal(t, -1, batchIndex)
 
 	})
@@ -493,13 +495,13 @@ func TestArrowRowScanner(t *testing.T) {
 		var ars *arrowRowScanner
 		err := ars.loadBatch(0)
 		assert.NotNil(t, err)
-		assert.EqualError(t, err, errArrowRowsNoArrowBatches)
+		assert.EqualError(t, err, "databricks: system fault: "+errArrowRowsNoArrowBatches)
 
 		ars = &arrowRowScanner{}
 		ars.DBSQLLogger = dbsqllog.Logger
 		err = ars.loadBatch(0)
 		assert.NotNil(t, err)
-		assert.EqualError(t, err, errArrowRowsNoArrowBatches)
+		assert.EqualError(t, err, "databricks: system fault: "+errArrowRowsNoArrowBatches)
 	})
 
 	t.Run("Create column value holders on first batch load", func(t *testing.T) {
@@ -514,7 +516,7 @@ func TestArrowRowScanner(t *testing.T) {
 		schema := getAllTypesSchema()
 		metadataResp := &cli_service.TGetResultSetMetadataResp{Schema: schema}
 
-		d, _ := NewArrowRowScanner(metadataResp, rowSet, nil, nil)
+		d, _ := NewArrowRowScanner(metadataResp, rowSet, nil, nil, context.Background())
 
 		var ars *arrowRowScanner = d.(*arrowRowScanner)
 
@@ -557,7 +559,7 @@ func TestArrowRowScanner(t *testing.T) {
 		schema := getAllTypesSchema()
 		metadataResp := &cli_service.TGetResultSetMetadataResp{Schema: schema}
 
-		d, _ := NewArrowRowScanner(metadataResp, rowSet, nil, nil)
+		d, _ := NewArrowRowScanner(metadataResp, rowSet, nil, nil, context.Background())
 
 		var ars *arrowRowScanner = d.(*arrowRowScanner)
 
@@ -587,7 +589,7 @@ func TestArrowRowScanner(t *testing.T) {
 		schema := getAllTypesSchema()
 		metadataResp := &cli_service.TGetResultSetMetadataResp{Schema: schema}
 
-		d, _ := NewArrowRowScanner(metadataResp, rowSet, nil, nil)
+		d, _ := NewArrowRowScanner(metadataResp, rowSet, nil, nil, context.Background())
 
 		var ars *arrowRowScanner = d.(*arrowRowScanner)
 
@@ -599,11 +601,13 @@ func TestArrowRowScanner(t *testing.T) {
 
 		err := ars.loadBatch(-1)
 		assert.NotNil(t, err)
-		assert.EqualError(t, err, fmt.Sprintf(errArrowRowsInvalidBatchIndex, -1, len(ars.arrowBatches)))
+		fmt.Println(err.Error())
+		assert.EqualError(t, err, "databricks: system fault: "+errArrowRowsInvalidBatchIndex(-1, len(ars.arrowBatches)))
 
 		err = ars.loadBatch(3)
 		assert.NotNil(t, err)
-		assert.EqualError(t, err, fmt.Sprintf(errArrowRowsInvalidBatchIndex, 3, len(ars.arrowBatches)))
+		fmt.Println(err.Error())
+		assert.EqualError(t, err, "databricks: system fault: "+errArrowRowsInvalidBatchIndex(3, len(ars.arrowBatches)))
 	})
 
 	t.Run("loadBatch container failure", func(t *testing.T) {
@@ -618,7 +622,7 @@ func TestArrowRowScanner(t *testing.T) {
 		schema := getAllTypesSchema()
 		metadataResp := &cli_service.TGetResultSetMetadataResp{Schema: schema}
 
-		d, _ := NewArrowRowScanner(metadataResp, rowSet, nil, nil)
+		d, _ := NewArrowRowScanner(metadataResp, rowSet, nil, nil, context.Background())
 
 		var ars *arrowRowScanner = d.(*arrowRowScanner)
 		ars.recordReader = fakeRecordReader{fnNewRecord: func(arrowSchemaBytes []byte, sparkArrowBatch sparkArrowBatch) (arrow.Record, error) {
@@ -630,7 +634,7 @@ func TestArrowRowScanner(t *testing.T) {
 
 		err := ars.loadBatch(0)
 		assert.NotNil(t, err)
-		assert.EqualError(t, err, "error making containers")
+		assert.EqualError(t, err, "databricks: system fault: "+errArrowRowsMakeColumnValueContainers+": error making containers")
 
 	})
 
@@ -646,7 +650,7 @@ func TestArrowRowScanner(t *testing.T) {
 		schema := getAllTypesSchema()
 		metadataResp := &cli_service.TGetResultSetMetadataResp{Schema: schema}
 
-		d, _ := NewArrowRowScanner(metadataResp, rowSet, nil, nil)
+		d, _ := NewArrowRowScanner(metadataResp, rowSet, nil, nil, context.Background())
 
 		var ars *arrowRowScanner = d.(*arrowRowScanner)
 		ars.recordReader = fakeRecordReader{fnNewRecord: func(arrowSchemaBytes []byte, sparkArrowBatch sparkArrowBatch) (arrow.Record, error) {
@@ -655,7 +659,7 @@ func TestArrowRowScanner(t *testing.T) {
 
 		err := ars.loadBatch(0)
 		assert.NotNil(t, err)
-		assert.EqualError(t, err, "error reading record")
+		assert.EqualError(t, err, "databricks: system fault: "+errArrowRowsUnableToReadBatch+": error reading record")
 
 	})
 
@@ -670,7 +674,7 @@ func TestArrowRowScanner(t *testing.T) {
 		schema := getAllTypesSchema()
 		metadataResp := &cli_service.TGetResultSetMetadataResp{Schema: schema}
 
-		d, _ := NewArrowRowScanner(metadataResp, rowSet, nil, nil)
+		d, _ := NewArrowRowScanner(metadataResp, rowSet, nil, nil, context.Background())
 
 		var ars *arrowRowScanner = d.(*arrowRowScanner)
 
@@ -708,11 +712,11 @@ func TestArrowRowScanner(t *testing.T) {
 
 		err := ars.loadBatchFor(-1)
 		assert.NotNil(t, err)
-		assert.EqualError(t, err, fmt.Sprintf(errArrowRowsInvalidRowIndex, -1))
+		assert.EqualError(t, err, "databricks: system fault: "+errArrowRowsInvalidRowIndex(-1))
 
 		err = ars.loadBatchFor(15)
 		assert.NotNil(t, err)
-		assert.EqualError(t, err, fmt.Sprintf(errArrowRowsInvalidRowIndex, 15))
+		assert.EqualError(t, err, "databricks: system fault: "+errArrowRowsInvalidRowIndex(15))
 	})
 
 	t.Run("Error on retrieving not implemented native arrow types", func(t *testing.T) {
@@ -813,7 +817,7 @@ func TestArrowRowScanner(t *testing.T) {
 			}
 			metadataResp := &cli_service.TGetResultSetMetadataResp{Schema: schema}
 
-			d, _ := NewArrowRowScanner(metadataResp, rowSet, nil, nil)
+			d, _ := NewArrowRowScanner(metadataResp, rowSet, nil, nil, context.Background())
 
 			var ars *arrowRowScanner = d.(*arrowRowScanner)
 			ars.UseArrowNativeComplexTypes = true
@@ -880,7 +884,7 @@ func TestArrowRowScanner(t *testing.T) {
 			config.UseArrowNativeComplexTypes = false
 			config.UseArrowNativeDecimal = false
 			config.UseArrowNativeIntervalTypes = false
-			d, err := NewArrowRowScanner(executeStatementResp.DirectResults.ResultSetMetadata, executeStatementResp.DirectResults.ResultSet.Results, config, nil)
+			d, err := NewArrowRowScanner(executeStatementResp.DirectResults.ResultSetMetadata, executeStatementResp.DirectResults.ResultSet.Results, config, nil, context.Background())
 			assert.Nil(t, err)
 
 			ars := d.(*arrowRowScanner)
@@ -908,7 +912,7 @@ func TestArrowRowScanner(t *testing.T) {
 
 			config := config.WithDefaults()
 			config.UseArrowNativeComplexTypes = false
-			d, err := NewArrowRowScanner(executeStatementResp.DirectResults.ResultSetMetadata, executeStatementResp.DirectResults.ResultSet.Results, config, nil)
+			d, err := NewArrowRowScanner(executeStatementResp.DirectResults.ResultSetMetadata, executeStatementResp.DirectResults.ResultSet.Results, config, nil, context.Background())
 			assert.Nil(t, err)
 
 			ars := d.(*arrowRowScanner)
@@ -931,7 +935,7 @@ func TestArrowRowScanner(t *testing.T) {
 
 		config := config.WithDefaults()
 		config.UseArrowNativeComplexTypes = false
-		d, err := NewArrowRowScanner(executeStatementResp.DirectResults.ResultSetMetadata, executeStatementResp.DirectResults.ResultSet.Results, config, nil)
+		d, err := NewArrowRowScanner(executeStatementResp.DirectResults.ResultSetMetadata, executeStatementResp.DirectResults.ResultSet.Results, config, nil, context.Background())
 		assert.Nil(t, err)
 
 		ars := d.(*arrowRowScanner)
@@ -963,7 +967,7 @@ func TestArrowRowScanner(t *testing.T) {
 
 		config := config.WithDefaults()
 		config.UseArrowNativeComplexTypes = false
-		d, err := NewArrowRowScanner(executeStatementResp.DirectResults.ResultSetMetadata, executeStatementResp.DirectResults.ResultSet.Results, config, nil)
+		d, err := NewArrowRowScanner(executeStatementResp.DirectResults.ResultSetMetadata, executeStatementResp.DirectResults.ResultSet.Results, config, nil, context.Background())
 		assert.Nil(t, err)
 
 		ars := d.(*arrowRowScanner)
@@ -983,7 +987,7 @@ func TestArrowRowScanner(t *testing.T) {
 
 		config := config.WithDefaults()
 		config.UseArrowNativeComplexTypes = false
-		d, err := NewArrowRowScanner(executeStatementResp.DirectResults.ResultSetMetadata, executeStatementResp.DirectResults.ResultSet.Results, config, nil)
+		d, err := NewArrowRowScanner(executeStatementResp.DirectResults.ResultSetMetadata, executeStatementResp.DirectResults.ResultSet.Results, config, nil, context.Background())
 		assert.Nil(t, err)
 
 		ars := d.(*arrowRowScanner)
@@ -1054,7 +1058,7 @@ func TestArrowRowScanner(t *testing.T) {
 		config.UseArrowNativeComplexTypes = false
 		config.UseArrowNativeDecimal = false
 		config.UseArrowNativeIntervalTypes = false
-		d, err := NewArrowRowScanner(executeStatementResp.DirectResults.ResultSetMetadata, executeStatementResp.DirectResults.ResultSet.Results, config, nil)
+		d, err := NewArrowRowScanner(executeStatementResp.DirectResults.ResultSetMetadata, executeStatementResp.DirectResults.ResultSet.Results, config, nil, context.Background())
 		assert.Nil(t, err)
 
 		ars := d.(*arrowRowScanner)
@@ -1079,7 +1083,7 @@ func TestArrowRowScanner(t *testing.T) {
 		config.UseArrowNativeComplexTypes = false
 		config.UseArrowNativeDecimal = false
 		config.UseArrowNativeIntervalTypes = false
-		d, err := NewArrowRowScanner(executeStatementResp.DirectResults.ResultSetMetadata, executeStatementResp.DirectResults.ResultSet.Results, config, nil)
+		d, err := NewArrowRowScanner(executeStatementResp.DirectResults.ResultSetMetadata, executeStatementResp.DirectResults.ResultSet.Results, config, nil, context.Background())
 		assert.Nil(t, err)
 
 		ars := d.(*arrowRowScanner)
@@ -1131,14 +1135,14 @@ func TestArrowRowScanner(t *testing.T) {
 		config.UseArrowNativeComplexTypes = true
 		config.UseArrowNativeDecimal = false
 		config.UseArrowNativeIntervalTypes = false
-		d, err := NewArrowRowScanner(executeStatementResp.DirectResults.ResultSetMetadata, executeStatementResp.DirectResults.ResultSet.Results, config, nil)
-		assert.Nil(t, err)
+		d, err1 := NewArrowRowScanner(executeStatementResp.DirectResults.ResultSetMetadata, executeStatementResp.DirectResults.ResultSet.Results, config, nil, context.Background())
+		assert.Nil(t, err1)
 
 		ars := d.(*arrowRowScanner)
 
 		dest := make([]driver.Value, len(executeStatementResp.DirectResults.ResultSetMetadata.Schema.Columns))
-		err = ars.ScanRow(dest, 1)
-		assert.Nil(t, err)
+		err1 = ars.ScanRow(dest, 1)
+		assert.Nil(t, err1)
 
 		for i := range expected {
 			assert.Equal(t, expected[i], dest[i])
@@ -1148,7 +1152,7 @@ func TestArrowRowScanner(t *testing.T) {
 		// columns are valid json strings
 		var foo []any
 		var s string = dest[10].(string)
-		err = json.Unmarshal([]byte(s), &foo)
+		err := json.Unmarshal([]byte(s), &foo)
 		assert.Nil(t, err)
 
 		var foo2 map[string]any
@@ -1172,7 +1176,7 @@ func TestArrowRowScanner(t *testing.T) {
 		config.UseArrowNativeComplexTypes = true
 		config.UseArrowNativeDecimal = false
 		config.UseArrowNativeIntervalTypes = false
-		d, err := NewArrowRowScanner(executeStatementResp.DirectResults.ResultSetMetadata, executeStatementResp.DirectResults.ResultSet.Results, config, nil)
+		d, err := NewArrowRowScanner(executeStatementResp.DirectResults.ResultSetMetadata, executeStatementResp.DirectResults.ResultSet.Results, config, nil, context.Background())
 		assert.Nil(t, err)
 
 		ars := d.(*arrowRowScanner)
@@ -1231,7 +1235,7 @@ func TestArrowRowScanner(t *testing.T) {
 		config.UseArrowNativeComplexTypes = true
 		config.UseArrowNativeDecimal = false
 		config.UseArrowNativeIntervalTypes = false
-		d, err := NewArrowRowScanner(executeStatementResp.DirectResults.ResultSetMetadata, executeStatementResp.DirectResults.ResultSet.Results, config, nil)
+		d, err := NewArrowRowScanner(executeStatementResp.DirectResults.ResultSetMetadata, executeStatementResp.DirectResults.ResultSet.Results, config, nil, context.Background())
 		assert.Nil(t, err)
 
 		ars := d.(*arrowRowScanner)
@@ -1264,7 +1268,7 @@ func TestArrowRowScanner(t *testing.T) {
 		config.UseArrowNativeComplexTypes = true
 		config.UseArrowNativeDecimal = false
 		config.UseArrowNativeIntervalTypes = false
-		d, err := NewArrowRowScanner(executeStatementResp.DirectResults.ResultSetMetadata, executeStatementResp.DirectResults.ResultSet.Results, config, nil)
+		d, err := NewArrowRowScanner(executeStatementResp.DirectResults.ResultSetMetadata, executeStatementResp.DirectResults.ResultSet.Results, config, nil, context.Background())
 		assert.Nil(t, err)
 
 		ars := d.(*arrowRowScanner)
@@ -1296,7 +1300,7 @@ func TestArrowRowScanner(t *testing.T) {
 		config.UseArrowNativeComplexTypes = true
 		config.UseArrowNativeDecimal = false
 		config.UseArrowNativeIntervalTypes = false
-		d, err := NewArrowRowScanner(executeStatementResp.DirectResults.ResultSetMetadata, executeStatementResp.DirectResults.ResultSet.Results, config, nil)
+		d, err := NewArrowRowScanner(executeStatementResp.DirectResults.ResultSetMetadata, executeStatementResp.DirectResults.ResultSet.Results, config, nil, context.Background())
 		assert.Nil(t, err)
 
 		ars := d.(*arrowRowScanner)

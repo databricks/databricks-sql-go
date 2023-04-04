@@ -5,8 +5,9 @@ import (
 	"strings"
 	"time"
 
+	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
-	dbsqlerr "github.com/databricks/databricks-sql-go/internal/errors"
+	dbsqlerr_int "github.com/databricks/databricks-sql-go/internal/errors"
 )
 
 // RowScanner is an interface defining the behaviours that are specific to
@@ -18,7 +19,7 @@ type RowScanner interface {
 	// The dest should not be written to outside of ScanRow. Care
 	// should be taken when closing a RowScanner not to modify
 	// a buffer held in dest.
-	ScanRow(dest []driver.Value, rowIndex int64) error
+	ScanRow(dest []driver.Value, rowIndex int64) dbsqlerr.DatabricksError
 
 	// NRows returns the number of rows in the current result page
 	NRows() int64
@@ -46,18 +47,18 @@ func IsNull(nulls []byte, position int64) bool {
 var ErrRowsParseValue = "databricks: unable to parse %s value '%v' from column %s"
 
 // handleDateTime will convert the passed val to a time.Time value if necessary
-func HandleDateTime(val any, dbType, columnName string, location *time.Location) (any, error) {
+func HandleDateTime(val any, dbType, columnName string, location *time.Location) (result any, err error) {
+	result = val
 	// if there is a date/time format corresponding to the column type we need to
 	// convert to time.Time
 	if format, ok := DateTimeFormats[dbType]; ok {
-		t, err := parseInLocation(format, val.(string), location)
+		result, err = parseInLocation(format, val.(string), location)
 		if err != nil {
-			err = dbsqlerr.WrapErrf(err, ErrRowsParseValue, dbType, val, columnName)
+			err = dbsqlerr_int.WrapErrf(err, ErrRowsParseValue, dbType, val, columnName)
 		}
-		return t, err
 	}
 
-	return val, nil
+	return result, err
 }
 
 // parseInLocation parses a date/time string in the given format and using the provided
@@ -116,7 +117,6 @@ func dateStartsWithNegative(val string) bool {
 
 // GetDBTypeName returns the database type name from a TColumnDesc
 func GetDBTypeName(column *cli_service.TColumnDesc) string {
-	// TODO: handle non-primitive types
 	entry := column.TypeDesc.Types[0].PrimitiveEntry
 	dbtype := strings.TrimSuffix(entry.Type.String(), "_TYPE")
 
@@ -124,7 +124,6 @@ func GetDBTypeName(column *cli_service.TColumnDesc) string {
 }
 
 func GetDBType(column *cli_service.TColumnDesc) cli_service.TTypeId {
-	// TODO: handle non-primitive types
 	entry := column.TypeDesc.Types[0].PrimitiveEntry
 	return entry.Type
 }

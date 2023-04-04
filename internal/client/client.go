@@ -39,7 +39,7 @@ func (tsc *ThriftServiceClient) OpenSession(ctx context.Context, req *cli_servic
 	msg, start := logger.Track("OpenSession")
 	resp, err := tsc.TCLIServiceClient.OpenSession(ctx, req)
 	if err != nil {
-		return nil, dbsqlerr.WrapErr(err, "open session request error") // TODO: figure out what error type this should be
+		return nil, dbsqlerr.NewRequestError(ctx, "open session request error", err)
 	}
 	log := logger.WithContext(SprintGuid(resp.SessionHandle.SessionId.GUID), driverctx.CorrelationIdFromContext(ctx), "")
 	defer log.Duration(msg, start)
@@ -58,7 +58,7 @@ func (tsc *ThriftServiceClient) CloseSession(ctx context.Context, req *cli_servi
 	defer log.Duration(logger.Track("CloseSession"))
 	resp, err := tsc.TCLIServiceClient.CloseSession(ctx, req)
 	if err != nil {
-		return resp, dbsqlerr.WrapErr(err, "open session request error") // TODO: figure out what error type this should be
+		return resp, dbsqlerr.NewRequestError(ctx, "close session request error", err)
 	}
 	if RecordResults {
 		j, _ := json.MarshalIndent(resp, "", " ")
@@ -75,7 +75,7 @@ func (tsc *ThriftServiceClient) FetchResults(ctx context.Context, req *cli_servi
 	defer log.Duration(logger.Track("FetchResults"))
 	resp, err := tsc.TCLIServiceClient.FetchResults(ctx, req)
 	if err != nil {
-		return resp, dbsqlerr.WrapErr(err, "open session request error") // TODO: figure out what error type this should be
+		return resp, dbsqlerr.NewRequestError(ctx, "fetch results request error", err)
 	}
 	if RecordResults {
 		j, _ := json.MarshalIndent(resp, "", " ")
@@ -92,11 +92,11 @@ func (tsc *ThriftServiceClient) GetResultSetMetadata(ctx context.Context, req *c
 	defer log.Duration(logger.Track("GetResultSetMetadata"))
 	resp, err := tsc.TCLIServiceClient.GetResultSetMetadata(ctx, req)
 	if err != nil {
-		return resp, dbsqlerr.WrapErr(err, "open session request error") // TODO: figure out what error type this should be
+		return resp, dbsqlerr.NewRequestError(ctx, "get result set metadata request error", err)
 	}
 	if RecordResults {
 		j, _ := json.MarshalIndent(resp, "", " ")
-		_ = os.WriteFile(fmt.Sprintf("ExecuteStatement%d.json", resultIndex), j, 0600)
+		_ = os.WriteFile(fmt.Sprintf("GetResultSetMetadata%d.json", resultIndex), j, 0600)
 		resultIndex++
 	}
 	return resp, CheckStatus(resp)
@@ -108,7 +108,7 @@ func (tsc *ThriftServiceClient) ExecuteStatement(ctx context.Context, req *cli_s
 	msg, start := logger.Track("ExecuteStatement")
 	resp, err := tsc.TCLIServiceClient.ExecuteStatement(context.Background(), req)
 	if err != nil {
-		return resp, dbsqlerr.WrapErr(err, "open session request error") // TODO: figure out what error type this should be
+		return resp, dbsqlerr.NewRequestError(ctx, "execute statement request error", err)
 	}
 	if RecordResults {
 		j, _ := json.MarshalIndent(resp, "", " ")
@@ -132,7 +132,7 @@ func (tsc *ThriftServiceClient) GetOperationStatus(ctx context.Context, req *cli
 	defer log.Duration(logger.Track("GetOperationStatus"))
 	resp, err := tsc.TCLIServiceClient.GetOperationStatus(ctx, req)
 	if err != nil {
-		return resp, dbsqlerr.WrapErr(err, "open session request error") // TODO: figure out what error type this should be
+		return resp, dbsqlerr.NewRequestError(driverctx.NewContextWithQueryId(ctx, SprintGuid(req.OperationHandle.OperationId.GUID)), "databricks: get operation status request error", err)
 	}
 	if RecordResults {
 		j, _ := json.MarshalIndent(resp, "", " ")
@@ -149,7 +149,7 @@ func (tsc *ThriftServiceClient) CloseOperation(ctx context.Context, req *cli_ser
 	defer log.Duration(logger.Track("CloseOperation"))
 	resp, err := tsc.TCLIServiceClient.CloseOperation(ctx, req)
 	if err != nil {
-		return resp, dbsqlerr.WrapErr(err, "open session request error") // TODO: figure out what error type this should be
+		return resp, dbsqlerr.NewRequestError(ctx, "close operation request error", err)
 	}
 	if RecordResults {
 		j, _ := json.MarshalIndent(resp, "", " ")
@@ -166,7 +166,7 @@ func (tsc *ThriftServiceClient) CancelOperation(ctx context.Context, req *cli_se
 	defer log.Duration(logger.Track("CancelOperation"))
 	resp, err := tsc.TCLIServiceClient.CancelOperation(ctx, req)
 	if err != nil {
-		return resp, dbsqlerr.WrapErr(err, "open session request error") // TODO: figure out what error type this should be
+		return resp, dbsqlerr.NewRequestError(ctx, "cancel operation request error", err)
 	}
 	if RecordResults {
 		j, _ := json.MarshalIndent(resp, "", " ")
