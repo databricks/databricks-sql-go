@@ -355,7 +355,7 @@ func (ars *arrowRowScanner) loadBatch(batchIndex int) dbsqlerr.DBError {
 
 		colData := col.Data()
 		colData.Retain()
-		defer col.Release()
+		defer colData.Release()
 
 		colValsHolder := ars.columnValues[i]
 
