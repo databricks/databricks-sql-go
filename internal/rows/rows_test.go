@@ -364,7 +364,7 @@ func TestRowsFetchResultPageNoDirectResults(t *testing.T) {
 	// going forward and then return EOF
 	rowSet.nextRowNumber = -1
 	err = rowSet.fetchResultPage()
-	errMsg = "databricks: system fault: "+errRowsFetchPriorToStart
+	errMsg = "databricks: system fault: " + errRowsFetchPriorToStart
 	rowTestPagingResult{
 		getMetadataCount:  1,
 		fetchResultsCount: 7,
@@ -377,7 +377,7 @@ func TestRowsFetchResultPageNoDirectResults(t *testing.T) {
 	// jump back to last page
 	rowSet.nextRowNumber = 12
 	err = rowSet.fetchResultPage()
-	errMsg =  "databricks: system fault: "+errRowsFetchPriorToStart
+	errMsg = "databricks: system fault: " + errRowsFetchPriorToStart
 	rowTestPagingResult{
 		getMetadataCount:  1,
 		fetchResultsCount: 9,
@@ -467,7 +467,7 @@ func TestRowsFetchResultPageWithDirectResults(t *testing.T) {
 	// going forward and then return EOF
 	rowSet.nextRowNumber = -1
 	err = rowSet.fetchResultPage()
-	errMsg =  "databricks: system fault: "+errRowsFetchPriorToStart
+	errMsg = "databricks: system fault: " + errRowsFetchPriorToStart
 	rowTestPagingResult{
 		getMetadataCount:  1,
 		fetchResultsCount: 7,
@@ -480,7 +480,7 @@ func TestRowsFetchResultPageWithDirectResults(t *testing.T) {
 	// jump back to last page
 	rowSet.nextRowNumber = 12
 	err = rowSet.fetchResultPage()
-	errMsg =  "databricks: system fault: "+errRowsFetchPriorToStart
+	errMsg = "databricks: system fault: " + errRowsFetchPriorToStart
 	rowTestPagingResult{
 		getMetadataCount:  1,
 		fetchResultsCount: 9,
@@ -556,7 +556,7 @@ func TestNextNoDirectResults(t *testing.T) {
 
 	var rowSet *rows
 	err := rowSet.Next(nil)
-	assert.EqualError(t, err,  "databricks: system fault: "+errRowsNilRows)
+	assert.EqualError(t, err, "databricks: system fault: "+errRowsNilRows)
 
 	rowSet = &rows{hasMoreRows: true}
 	client := getRowsTestSimpleClient(&getMetadataCount, &fetchResultsCount)
@@ -657,12 +657,12 @@ func TestGetScanType(t *testing.T) {
 	var rowSet *rows
 	cd, err := rowSet.getColumnMetadataByIndex(0)
 	assert.Nil(t, cd)
-	assert.EqualError(t, err,  "databricks: system fault: "+errRowsNilRows)
+	assert.EqualError(t, err, "databricks: system fault: "+errRowsNilRows)
 
 	rowSet = &rows{}
 	cd, err = rowSet.getColumnMetadataByIndex(0)
 	assert.Nil(t, cd)
-	assert.EqualError(t, err,  "databricks: system fault: "+errRowsNoClient)
+	assert.EqualError(t, err, "databricks: system fault: "+errRowsNoClient)
 
 	client := getRowsTestSimpleClient(&getMetadataCount, &fetchResultsCount)
 	rowSet.client = client
@@ -850,7 +850,7 @@ func (rt rowTestPagingResult) validatePaging(t *testing.T, rowSet *rows, err err
 	if rt.errMessage == nil {
 		assert.Nil(t, err)
 	} else {
-		assert.EqualError(t, err,  *rt.errMessage)
+		assert.EqualError(t, err, *rt.errMessage)
 	}
 }
 
