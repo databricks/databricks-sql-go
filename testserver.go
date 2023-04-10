@@ -44,6 +44,15 @@ func (h *thriftHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		} else {
 			h.count503_5_retries = 0
 		}
+	case "/429-5-retries":
+		if h.count503_5_retries <= 5 {
+			w.Header().Set("Retry-After", "retry after header value")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			h.count503_5_retries++
+			return
+		} else {
+			h.count503_5_retries = 0
+		}
 	}
 
 	thriftHandler := thrift.NewThriftHandlerFunc(h.processor, h.inPfactory, h.outPfactory)

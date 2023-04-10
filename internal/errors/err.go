@@ -10,11 +10,18 @@ import (
 	"github.com/pkg/errors"
 )
 
+// value to use with errors.Is() to determine if an error
+// chain contains a retryable error
+var RetryableError error = errors.New("Retryable Error")
+
+// base databricks error
 type databricksError struct {
 	err           error
 	correlationId string
 	connectionId  string
 	errType       string
+	isRetryable   bool
+	retryAfter    string
 }
 
 var _ error = (*databricksError)(nil)
@@ -38,11 +45,25 @@ func newDatabricksError(ctx context.Context, msg string, err error) databricksEr
 		err = errors.WithStack(err)
 	}
 
+	// If the error chain contains an instance of retryableError
+	// set the flag and retryAfter value.
+	var retryable bool = false
+	var retryAfter string
+	if errors.Is(err, RetryableError) {
+		retryable = true
+		var re retryableError
+		if ok := errors.As(err, &re); ok {
+			retryAfter = re.retryAfter
+		}
+	}
+
 	return databricksError{
 		err:           err,
 		correlationId: driverctx.CorrelationIdFromContext(ctx),
 		connectionId:  driverctx.ConnIdFromContext(ctx),
 		errType:       "unknown",
+		isRetryable:   retryable,
+		retryAfter:    retryAfter,
 	}
 }
 
@@ -75,10 +96,17 @@ func (e databricksError) Is(err error) bool {
 	return err == dbsqlerr.DatabricksError
 }
 
+func (e databricksError) IsRetryable() bool {
+	return e.isRetryable
+}
+
+func (e databricksError) RetryAfter() string {
+	return e.retryAfter
+}
+
 // driverError are issues with the driver or server, e.g. not supported operations, driver specific non-recoverable failures
 type driverError struct {
 	databricksError
-	isRetryable bool
 }
 
 var _ dbsqlerr.DBDriverError = (*driverError)(nil)
@@ -91,14 +119,10 @@ func (e driverError) Unwrap() error {
 	return e.err
 }
 
-func (e driverError) IsRetryable() bool {
-	return e.isRetryable
-}
-
 func NewDriverError(ctx context.Context, msg string, err error) *driverError {
 	dbErr := newDatabricksError(ctx, msg, err)
 	dbErr.errType = "driver error"
-	return &driverError{databricksError: dbErr, isRetryable: false}
+	return &driverError{databricksError: dbErr}
 }
 
 // requestError are errors caused by invalid requests, e.g. permission denied, warehouse not found
@@ -180,4 +204,38 @@ func WrapErrf(err error, format string, args ...interface{}) error {
 
 	// wrap passed in error in errors with the formatted message and a stack trace
 	return errors.Wrapf(err, format, args...)
+}
+
+type retryableError struct {
+	err        error
+	retryAfter string
+}
+
+func (e retryableError) Is(err error) bool {
+	return err == RetryableError
+}
+
+func (e retryableError) Unwrap() error {
+	return e.err
+}
+
+func (e retryableError) Error() string {
+	return fmt.Sprintf("databricks: retryableError: %s", e.err.Error())
+}
+
+func (e retryableError) RetryAfter() string {
+	return e.retryAfter
+}
+
+func NewRetryableError(err error, retryAfter string) error {
+	if err == nil {
+		err = errors.New("")
+	}
+
+	var st stackTracer
+	if ok := errors.As(err, &st); !ok {
+		err = errors.WithStack(err)
+	}
+
+	return retryableError{err: err, retryAfter: retryAfter}
 }

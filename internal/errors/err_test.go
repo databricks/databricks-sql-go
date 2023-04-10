@@ -95,10 +95,13 @@ func TestDbSqlErrors(t *testing.T) {
 		st := requestError.StackTrace()
 		assert.NotNil(t, st)
 
+		// Get the underlying stackTracer instance, it should be
+		// the original cause
 		var str stackTracer
 		ok := errors.As(requestError.Cause(), &str)
 		assert.True(t, ok)
-		assert.NotEqual(t, requestError, str)
+		ss := str.StackTrace()
+		assert.NotNil(t, ss)
 		assert.Equal(t, cause, str)
 
 		cause = &boringError{}
@@ -107,9 +110,12 @@ func TestDbSqlErrors(t *testing.T) {
 		st = requestError.StackTrace()
 		assert.NotNil(t, st)
 
+		// Get the underlying stackTracer instance, it should not be
+		// the original cause
 		ok = errors.As(requestError.Cause(), &str)
 		assert.True(t, ok)
-		assert.NotEqual(t, requestError, str)
+		ss = str.StackTrace()
+		assert.NotNil(t, ss)
 		assert.NotEqual(t, cause, str)
 	})
 

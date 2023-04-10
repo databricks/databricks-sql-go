@@ -421,6 +421,74 @@ func TestRetries(t *testing.T) {
 		require.ErrorContains(t, err, "after 1 attempt(s)")
 	})
 
+	t.Run("a 429 or 503 should result in a retryable error", func(t *testing.T) {
+
+		_ = logger.SetLogLevel("debug")
+		state := &callState{}
+		// load basic responses
+		loadTestData(t, "OpenSessionSuccess.json", &state.openSessionResp)
+		loadTestData(t, "CloseSessionSuccess.json", &state.closeSessionResp)
+		loadTestData(t, "CloseOperationSuccess.json", &state.closeOperationResp)
+
+		ts := getServer(state)
+
+		defer ts.Close()
+		r, err := url.Parse(ts.URL)
+		require.NoError(t, err)
+		port, err := strconv.Atoi(r.Port())
+		require.NoError(t, err)
+
+		connector, err := NewConnector(
+			WithServerHostname("localhost"),
+			WithHTTPPath("/429-5-retries"),
+			WithPort(port),
+			WithRetries(2, 10*time.Millisecond, 1*time.Second),
+		)
+		require.NoError(t, err)
+		db := sql.OpenDB(connector)
+		defer db.Close()
+
+		state.executeStatementResp = cli_service.TExecuteStatementResp{}
+		loadTestData(t, "ExecuteStatement1.json", &state.executeStatementResp)
+
+		err = db.Ping()
+		require.ErrorContains(t, err, "after 3 attempt(s)")
+
+		// The error chain should contain a databricks request error
+		b := errors.Is(err, dbsqlerr.RequestError)
+		require.True(t, b)
+		var re dbsqlerr.DBRequestError
+		b = errors.As(err, &re)
+		require.True(t, b)
+		require.NotNil(t, re)
+		require.True(t, re.IsRetryable())
+		require.Equal(t, "retry after header value", re.RetryAfter())
+
+		connector2, err := NewConnector(
+			WithServerHostname("localhost"),
+			WithHTTPPath("/503-5-retries"),
+			WithPort(port),
+			WithRetries(2, 10*time.Millisecond, 1*time.Second),
+		)
+		require.NoError(t, err)
+		db2 := sql.OpenDB(connector2)
+		defer db.Close()
+
+		state.executeStatementResp = cli_service.TExecuteStatementResp{}
+		loadTestData(t, "ExecuteStatement1.json", &state.executeStatementResp)
+
+		err = db2.Ping()
+		require.ErrorContains(t, err, "after 3 attempt(s)")
+
+		// The error chain should contain a databricks request error
+		b = errors.Is(err, dbsqlerr.RequestError)
+		require.True(t, b)
+		b = errors.As(err, &re)
+		require.True(t, b)
+		require.NotNil(t, re)
+		require.True(t, re.IsRetryable())
+	})
+
 }
 
 // TODO: add tests for x-databricks headers
