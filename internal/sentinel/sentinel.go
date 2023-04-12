@@ -84,7 +84,7 @@ func (s Sentinel) Watch(ctx context.Context, interval, timeout time.Duration) (W
 		}
 	}
 
-	// If the watch times out or is cancelled this function 
+	// If the watch times out or is cancelled this function
 	// will stop the interval timer and call the cancel function
 	// if necessary.
 	timeoutOrCancel := func() {
