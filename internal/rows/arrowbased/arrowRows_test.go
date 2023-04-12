@@ -338,7 +338,7 @@ func TestArrowRowScanner(t *testing.T) {
 		metadataResp.Schema = schema
 		_, err = NewArrowRowScanner(metadataResp, rowSet, &cfg, nil, context.Background())
 		require.NotNil(t, err)
-		assert.True(t, strings.HasPrefix(err.Error(), "databricks: system fault: "+errArrowRowsConvertSchema+": "+errArrowRowsInvalidDecimalType))
+		assert.True(t, strings.HasPrefix(err.Error(), "databricks: driver error: "+errArrowRowsConvertSchema+": "+errArrowRowsInvalidDecimalType))
 
 		// type qualifiers missing qualifiers
 		schema = getAllTypesSchema()
@@ -346,7 +346,7 @@ func TestArrowRowScanner(t *testing.T) {
 		metadataResp.Schema = schema
 		_, err = NewArrowRowScanner(metadataResp, rowSet, &cfg, nil, context.Background())
 		require.NotNil(t, err)
-		assert.True(t, strings.HasPrefix(err.Error(), "databricks: system fault: "+errArrowRowsConvertSchema+": "+errArrowRowsInvalidDecimalType))
+		assert.True(t, strings.HasPrefix(err.Error(), "databricks: driver error: "+errArrowRowsConvertSchema+": "+errArrowRowsInvalidDecimalType))
 
 		// empty qualifiers
 		schema = getAllTypesSchema()
@@ -354,7 +354,7 @@ func TestArrowRowScanner(t *testing.T) {
 		metadataResp.Schema = schema
 		_, err = NewArrowRowScanner(metadataResp, rowSet, &cfg, nil, context.Background())
 		require.NotNil(t, err)
-		assert.True(t, strings.HasPrefix(err.Error(), "databricks: system fault: "+errArrowRowsConvertSchema+": "+errArrowRowsInvalidDecimalType))
+		assert.True(t, strings.HasPrefix(err.Error(), "databricks: driver error: "+errArrowRowsConvertSchema+": "+errArrowRowsInvalidDecimalType))
 
 		// nil precision
 		schema = getAllTypesSchema()
@@ -362,7 +362,7 @@ func TestArrowRowScanner(t *testing.T) {
 		metadataResp.Schema = schema
 		_, err = NewArrowRowScanner(metadataResp, rowSet, &cfg, nil, context.Background())
 		require.NotNil(t, err)
-		assert.True(t, strings.HasPrefix(err.Error(), "databricks: system fault: "+errArrowRowsConvertSchema+": "+errArrowRowsInvalidDecimalType))
+		assert.True(t, strings.HasPrefix(err.Error(), "databricks: driver error: "+errArrowRowsConvertSchema+": "+errArrowRowsInvalidDecimalType))
 
 		// precision missing value
 		schema = getAllTypesSchema()
@@ -370,7 +370,7 @@ func TestArrowRowScanner(t *testing.T) {
 		metadataResp.Schema = schema
 		_, err = NewArrowRowScanner(metadataResp, rowSet, &cfg, nil, context.Background())
 		require.NotNil(t, err)
-		assert.True(t, strings.HasPrefix(err.Error(), "databricks: system fault: "+errArrowRowsConvertSchema+": "+errArrowRowsInvalidDecimalType))
+		assert.True(t, strings.HasPrefix(err.Error(), "databricks: driver error: "+errArrowRowsConvertSchema+": "+errArrowRowsInvalidDecimalType))
 
 		// nil scale
 		schema = getAllTypesSchema()
@@ -378,7 +378,7 @@ func TestArrowRowScanner(t *testing.T) {
 		metadataResp.Schema = schema
 		_, err = NewArrowRowScanner(metadataResp, rowSet, &cfg, nil, context.Background())
 		require.NotNil(t, err)
-		assert.True(t, strings.HasPrefix(err.Error(), "databricks: system fault: "+errArrowRowsConvertSchema+": "+errArrowRowsInvalidDecimalType))
+		assert.True(t, strings.HasPrefix(err.Error(), "databricks: driver error: "+errArrowRowsConvertSchema+": "+errArrowRowsInvalidDecimalType))
 
 		// scale missing value
 		schema = getAllTypesSchema()
@@ -387,7 +387,7 @@ func TestArrowRowScanner(t *testing.T) {
 		_, err = NewArrowRowScanner(metadataResp, rowSet, &cfg, nil, context.Background())
 		require.NotNil(t, err)
 		msg := err.Error()
-		pre := "databricks: system fault: " + errArrowRowsConvertSchema + ": " + errArrowRowsInvalidDecimalType
+		pre := "databricks: driver error: " + errArrowRowsConvertSchema + ": " + errArrowRowsInvalidDecimalType
 		assert.True(t, strings.HasPrefix(msg, pre))
 
 	})
@@ -410,7 +410,7 @@ func TestArrowRowScanner(t *testing.T) {
 		dest := make([]driver.Value, 1)
 		err = ars.ScanRow(dest, 0)
 		require.NotNil(t, err)
-		assert.True(t, strings.HasPrefix(err.Error(), "databricks: system fault: "+errArrowRowsInvalidRowIndex(0)))
+		assert.True(t, strings.HasPrefix(err.Error(), "databricks: driver error: "+errArrowRowsInvalidRowIndex(0)))
 	})
 
 	t.Run("Close releases column values", func(t *testing.T) {
@@ -481,12 +481,12 @@ func TestArrowRowScanner(t *testing.T) {
 
 		batchIndex, err = ars.rowIndexToBatchIndex(-1)
 		assert.NotNil(t, err)
-		assert.EqualError(t, err, "databricks: system fault: "+errArrowRowsInvalidRowIndex(-1))
+		assert.EqualError(t, err, "databricks: driver error: "+errArrowRowsInvalidRowIndex(-1))
 		assert.Equal(t, -1, batchIndex)
 
 		batchIndex, err = ars.rowIndexToBatchIndex(15)
 		assert.NotNil(t, err)
-		assert.EqualError(t, err, "databricks: system fault: "+errArrowRowsInvalidRowIndex(15))
+		assert.EqualError(t, err, "databricks: driver error: "+errArrowRowsInvalidRowIndex(15))
 		assert.Equal(t, -1, batchIndex)
 
 	})
@@ -495,13 +495,13 @@ func TestArrowRowScanner(t *testing.T) {
 		var ars *arrowRowScanner
 		err := ars.loadBatch(0)
 		assert.NotNil(t, err)
-		assert.EqualError(t, err, "databricks: system fault: "+errArrowRowsNoArrowBatches)
+		assert.EqualError(t, err, "databricks: driver error: "+errArrowRowsNoArrowBatches)
 
 		ars = &arrowRowScanner{}
 		ars.DBSQLLogger = dbsqllog.Logger
 		err = ars.loadBatch(0)
 		assert.NotNil(t, err)
-		assert.EqualError(t, err, "databricks: system fault: "+errArrowRowsNoArrowBatches)
+		assert.EqualError(t, err, "databricks: driver error: "+errArrowRowsNoArrowBatches)
 	})
 
 	t.Run("Create column value holders on first batch load", func(t *testing.T) {
@@ -602,12 +602,12 @@ func TestArrowRowScanner(t *testing.T) {
 		err := ars.loadBatch(-1)
 		assert.NotNil(t, err)
 		fmt.Println(err.Error())
-		assert.EqualError(t, err, "databricks: system fault: "+errArrowRowsInvalidBatchIndex(-1, len(ars.arrowBatches)))
+		assert.EqualError(t, err, "databricks: driver error: "+errArrowRowsInvalidBatchIndex(-1, len(ars.arrowBatches)))
 
 		err = ars.loadBatch(3)
 		assert.NotNil(t, err)
 		fmt.Println(err.Error())
-		assert.EqualError(t, err, "databricks: system fault: "+errArrowRowsInvalidBatchIndex(3, len(ars.arrowBatches)))
+		assert.EqualError(t, err, "databricks: driver error: "+errArrowRowsInvalidBatchIndex(3, len(ars.arrowBatches)))
 	})
 
 	t.Run("loadBatch container failure", func(t *testing.T) {
@@ -634,7 +634,7 @@ func TestArrowRowScanner(t *testing.T) {
 
 		err := ars.loadBatch(0)
 		assert.NotNil(t, err)
-		assert.EqualError(t, err, "databricks: system fault: "+errArrowRowsMakeColumnValueContainers+": error making containers")
+		assert.EqualError(t, err, "databricks: driver error: "+errArrowRowsMakeColumnValueContainers+": error making containers")
 
 	})
 
@@ -659,7 +659,7 @@ func TestArrowRowScanner(t *testing.T) {
 
 		err := ars.loadBatch(0)
 		assert.NotNil(t, err)
-		assert.EqualError(t, err, "databricks: system fault: "+errArrowRowsUnableToReadBatch+": error reading record")
+		assert.EqualError(t, err, "databricks: driver error: "+errArrowRowsUnableToReadBatch+": error reading record")
 
 	})
 
@@ -712,11 +712,11 @@ func TestArrowRowScanner(t *testing.T) {
 
 		err := ars.loadBatchFor(-1)
 		assert.NotNil(t, err)
-		assert.EqualError(t, err, "databricks: system fault: "+errArrowRowsInvalidRowIndex(-1))
+		assert.EqualError(t, err, "databricks: driver error: "+errArrowRowsInvalidRowIndex(-1))
 
 		err = ars.loadBatchFor(15)
 		assert.NotNil(t, err)
-		assert.EqualError(t, err, "databricks: system fault: "+errArrowRowsInvalidRowIndex(15))
+		assert.EqualError(t, err, "databricks: driver error: "+errArrowRowsInvalidRowIndex(15))
 	})
 
 	t.Run("Error on retrieving not implemented native arrow types", func(t *testing.T) {

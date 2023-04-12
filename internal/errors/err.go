@@ -93,7 +93,7 @@ func (e driverError) IsRetryable() bool {
 
 func NewDriverError(ctx context.Context, msg string, err error) *driverError {
 	dbErr := newDatabricksError(ctx, msg, err)
-	dbErr.errType = "system fault"
+	dbErr.errType = "driver error"
 	return &driverError{databricksError: dbErr, isRetryable: false}
 }
 

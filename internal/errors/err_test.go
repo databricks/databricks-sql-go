@@ -36,29 +36,29 @@ func TestDbSqlErrors(t *testing.T) {
 		assert.Equal(t, ee, execError)
 	})
 
-	t.Run("errors.Is/As works with system fault values", func(t *testing.T) {
-		// Create a system fault and wrap it in a regular error
+	t.Run("errors.Is/As works with driver error values", func(t *testing.T) {
+		// Create a driver error and wrap it in a regular error
 		cause := errors.New("cause")
-		var systemFault error = NewDriverError(context.TODO(), "system fault", cause)
-		e := errors.Wrap(systemFault, "is wrapped")
+		var driverError error = NewDriverError(context.TODO(), "driver error", cause)
+		e := errors.Wrap(driverError, "is wrapped")
 
 		m := e.Error()
 		assert.NotNil(t, m)
-		assert.Equal(t, m, "is wrapped: databricks: system fault: system fault: cause")
+		assert.Equal(t, "is wrapped: databricks: driver error: driver error: cause", m)
 
-		// Should return true for is sentinel value
+		// Should return true for its sentinel value
 		assert.True(t, errors.Is(e, dbsqlerr.DriverError))
 
-		// should return true for actual system fault
-		assert.True(t, errors.Is(e, systemFault))
+		// should return true for actual driver error
+		assert.True(t, errors.Is(e, driverError))
 
-		// should return true for cause if system fault is unwrapping correctly
+		// should return true for cause if driver error is unwrapping correctly
 		assert.True(t, errors.Is(e, cause))
 
 		// should succesfully retrieve systemFault as an instance of DBSystemFault
 		var ee dbsqlerr.DBDriverError
 		assert.True(t, errors.As(e, &ee))
-		assert.Equal(t, ee, systemFault)
+		assert.Equal(t, ee, driverError)
 	})
 
 	t.Run("errors.Is/As works with request error values", func(t *testing.T) {

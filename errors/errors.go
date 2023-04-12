@@ -32,7 +32,7 @@ const (
 // value to be used with errors.Is() to determine if an error chain contains a request error
 var RequestError error = errors.New("Request Error")
 
-// value to be used with errors.Is() to determine if an error chain contains a system fault
+// value to be used with errors.Is() to determine if an error chain contains a driver error
 var DriverError error = errors.New("Driver Error")
 
 // value to be used with errors.Is() to determine if an error chain contains an execution error

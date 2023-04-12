@@ -37,7 +37,7 @@ func TestRowsNextRowInPage(t *testing.T) {
 
 	// fetchResults has no TRowSet
 	err = rowSet.makeRowScanner(fetchResults)
-	assert.EqualError(t, err, "databricks: system fault: "+errRowsUnknowRowType)
+	assert.EqualError(t, err, "databricks: driver error: "+errRowsUnknowRowType)
 	inPage, err = rowSet.isNextRowInPage()
 	assert.Nil(t, err)
 	assert.False(t, inPage, "fetch results with no TRowSet should return false")
@@ -47,7 +47,7 @@ func TestRowsNextRowInPage(t *testing.T) {
 	// default TRowSet
 	fetchResults.Results = tRowSet
 	err = rowSet.makeRowScanner(fetchResults)
-	assert.EqualError(t, err, "databricks: system fault: "+errRowsUnknowRowType)
+	assert.EqualError(t, err, "databricks: driver error: "+errRowsUnknowRowType)
 	inPage, err = rowSet.isNextRowInPage()
 	assert.Nil(t, err)
 	assert.False(t, inPage, "fetch results with default TRowSet should return false")
@@ -119,7 +119,7 @@ func TestRowsGetPageFetchDirection(t *testing.T) {
 
 	// fetchResults has no TRowSet
 	err := rowSet.makeRowScanner(fetchResults)
-	assert.EqualError(t, err, "databricks: system fault: "+errRowsUnknowRowType)
+	assert.EqualError(t, err, "databricks: driver error: "+errRowsUnknowRowType)
 	direction = rowSet.getPageFetchDirection()
 	assert.Equal(t, cli_service.TFetchOrientation_FETCH_NEXT, direction, "fetchResults has no TRowSet should return forward direction")
 
@@ -128,7 +128,7 @@ func TestRowsGetPageFetchDirection(t *testing.T) {
 	// default TRowSet
 	fetchResults.Results = tRowSet
 	err = rowSet.makeRowScanner(fetchResults)
-	assert.EqualError(t, err, "databricks: system fault: "+errRowsUnknowRowType)
+	assert.EqualError(t, err, "databricks: driver error: "+errRowsUnknowRowType)
 	direction = rowSet.getPageFetchDirection()
 	assert.Equal(t, cli_service.TFetchOrientation_FETCH_NEXT, direction, "fetchResults has no TRowSet should return forward direction")
 
@@ -187,13 +187,13 @@ func TestRowsGetPageStartRowNum(t *testing.T) {
 	assert.Equal(t, noRows, start, "rows with no page should return 0")
 
 	err := rowSet.makeRowScanner(&cli_service.TFetchResultsResp{})
-	assert.EqualError(t, err, "databricks: system fault: "+errRowsUnknowRowType)
+	assert.EqualError(t, err, "databricks: driver error: "+errRowsUnknowRowType)
 
 	start = rowSet.pageStartingRowNum
 	assert.Equal(t, noRows, start, "rows with no TRowSet should return 0")
 
 	err = rowSet.makeRowScanner(&cli_service.TFetchResultsResp{Results: &cli_service.TRowSet{}})
-	assert.EqualError(t, err, "databricks: system fault: "+errRowsUnknowRowType)
+	assert.EqualError(t, err, "databricks: driver error: "+errRowsUnknowRowType)
 
 	start = rowSet.pageStartingRowNum
 	assert.Equal(t, noRows, start, "rows with default TRowSet should return 0")
@@ -210,7 +210,7 @@ func TestRowsFetchResultPageErrors(t *testing.T) {
 	var rowSet *rows
 
 	err := rowSet.fetchResultPage()
-	assert.EqualError(t, err, "databricks: system fault: "+errRowsNilRows)
+	assert.EqualError(t, err, "databricks: driver error: "+errRowsNilRows)
 
 	rowSet = &rows{
 		nextRowNumber: -1,
@@ -218,10 +218,10 @@ func TestRowsFetchResultPageErrors(t *testing.T) {
 		schema:        &cli_service.TTableSchema{},
 	}
 	err = rowSet.fetchResultPage()
-	assert.EqualError(t, err, "databricks: system fault: "+errRowsFetchPriorToStart, "negative row number should return error")
+	assert.EqualError(t, err, "databricks: driver error: "+errRowsFetchPriorToStart, "negative row number should return error")
 
 	err = rowSet.makeRowScanner(&cli_service.TFetchResultsResp{})
-	assert.EqualError(t, err, "databricks: system fault: "+errRowsUnknowRowType)
+	assert.EqualError(t, err, "databricks: driver error: "+errRowsUnknowRowType)
 
 	// default TRowSet
 	tRowSet := &cli_service.TRowSet{}
@@ -364,7 +364,7 @@ func TestRowsFetchResultPageNoDirectResults(t *testing.T) {
 	// going forward and then return EOF
 	rowSet.nextRowNumber = -1
 	err = rowSet.fetchResultPage()
-	errMsg = "databricks: system fault: " + errRowsFetchPriorToStart
+	errMsg = "databricks: driver error: " + errRowsFetchPriorToStart
 	rowTestPagingResult{
 		getMetadataCount:  1,
 		fetchResultsCount: 7,
@@ -377,7 +377,7 @@ func TestRowsFetchResultPageNoDirectResults(t *testing.T) {
 	// jump back to last page
 	rowSet.nextRowNumber = 12
 	err = rowSet.fetchResultPage()
-	errMsg = "databricks: system fault: " + errRowsFetchPriorToStart
+	errMsg = "databricks: driver error: " + errRowsFetchPriorToStart
 	rowTestPagingResult{
 		getMetadataCount:  1,
 		fetchResultsCount: 9,
@@ -467,7 +467,7 @@ func TestRowsFetchResultPageWithDirectResults(t *testing.T) {
 	// going forward and then return EOF
 	rowSet.nextRowNumber = -1
 	err = rowSet.fetchResultPage()
-	errMsg = "databricks: system fault: " + errRowsFetchPriorToStart
+	errMsg = "databricks: driver error: " + errRowsFetchPriorToStart
 	rowTestPagingResult{
 		getMetadataCount:  1,
 		fetchResultsCount: 7,
@@ -480,7 +480,7 @@ func TestRowsFetchResultPageWithDirectResults(t *testing.T) {
 	// jump back to last page
 	rowSet.nextRowNumber = 12
 	err = rowSet.fetchResultPage()
-	errMsg = "databricks: system fault: " + errRowsFetchPriorToStart
+	errMsg = "databricks: driver error: " + errRowsFetchPriorToStart
 	rowTestPagingResult{
 		getMetadataCount:  1,
 		fetchResultsCount: 9,
@@ -556,7 +556,7 @@ func TestNextNoDirectResults(t *testing.T) {
 
 	var rowSet *rows
 	err := rowSet.Next(nil)
-	assert.EqualError(t, err, "databricks: system fault: "+errRowsNilRows)
+	assert.EqualError(t, err, "databricks: driver error: "+errRowsNilRows)
 
 	rowSet = &rows{hasMoreRows: true}
 	client := getRowsTestSimpleClient(&getMetadataCount, &fetchResultsCount)
@@ -657,12 +657,12 @@ func TestGetScanType(t *testing.T) {
 	var rowSet *rows
 	cd, err := rowSet.getColumnMetadataByIndex(0)
 	assert.Nil(t, cd)
-	assert.EqualError(t, err, "databricks: system fault: "+errRowsNilRows)
+	assert.EqualError(t, err, "databricks: driver error: "+errRowsNilRows)
 
 	rowSet = &rows{}
 	cd, err = rowSet.getColumnMetadataByIndex(0)
 	assert.Nil(t, cd)
-	assert.EqualError(t, err, "databricks: system fault: "+errRowsNoClient)
+	assert.EqualError(t, err, "databricks: driver error: "+errRowsNoClient)
 
 	client := getRowsTestSimpleClient(&getMetadataCount, &fetchResultsCount)
 	rowSet.client = client
