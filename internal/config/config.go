@@ -15,7 +15,6 @@ import (
 	"github.com/databricks/databricks-sql-go/auth"
 	"github.com/databricks/databricks-sql-go/auth/noop"
 	"github.com/databricks/databricks-sql-go/auth/pat"
-
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	dbsqlerrint "github.com/databricks/databricks-sql-go/internal/errors"
 	"github.com/databricks/databricks-sql-go/logger"
