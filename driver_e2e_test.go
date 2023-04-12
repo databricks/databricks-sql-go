@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/databricks/databricks-sql-go/driverctx"
+	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/client"
 	"github.com/databricks/databricks-sql-go/logger"
@@ -284,7 +285,11 @@ func TestContextTimeoutExample(t *testing.T) {
 	if err, ok := err.(interface{ StackTrace() errors.StackTrace }); ok {
 		fmt.Printf("Stack trace: %v", err.StackTrace())
 	}
-	require.ErrorContains(t, err, context.DeadlineExceeded.Error())
+	require.True(t, errors.Is(err, context.DeadlineExceeded))
+	require.True(t, errors.Is(err, dbsqlerr.ExecutionError))
+	var ee dbsqlerr.DBExecutionError
+	require.True(t, errors.As(err, &ee))
+	require.Equal(t, "context-timeout-example", ee.CorrelationId())
 	require.Nil(t, rows)
 
 	_, ok := err.(interface{ Cause() error })

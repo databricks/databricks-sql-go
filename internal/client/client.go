@@ -13,7 +13,8 @@ import (
 	"regexp"
 	"time"
 
-	dbsqlerr "github.com/databricks/databricks-sql-go/internal/errors"
+	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
+	dbsqlerrint "github.com/databricks/databricks-sql-go/internal/errors"
 
 	"github.com/apache/thrift/lib/go/thrift"
 	"github.com/databricks/databricks-sql-go/auth"
@@ -39,7 +40,7 @@ func (tsc *ThriftServiceClient) OpenSession(ctx context.Context, req *cli_servic
 	msg, start := logger.Track("OpenSession")
 	resp, err := tsc.TCLIServiceClient.OpenSession(ctx, req)
 	if err != nil {
-		return nil, dbsqlerr.NewRequestError(ctx, "open session request error", err)
+		return nil, dbsqlerrint.NewRequestError(ctx, "open session request error", err)
 	}
 	log := logger.WithContext(SprintGuid(resp.SessionHandle.SessionId.GUID), driverctx.CorrelationIdFromContext(ctx), "")
 	defer log.Duration(msg, start)
@@ -58,7 +59,7 @@ func (tsc *ThriftServiceClient) CloseSession(ctx context.Context, req *cli_servi
 	defer log.Duration(logger.Track("CloseSession"))
 	resp, err := tsc.TCLIServiceClient.CloseSession(ctx, req)
 	if err != nil {
-		return resp, dbsqlerr.NewRequestError(ctx, "close session request error", err)
+		return resp, dbsqlerrint.NewRequestError(ctx, "close session request error", err)
 	}
 	if RecordResults {
 		j, _ := json.MarshalIndent(resp, "", " ")
@@ -75,7 +76,7 @@ func (tsc *ThriftServiceClient) FetchResults(ctx context.Context, req *cli_servi
 	defer log.Duration(logger.Track("FetchResults"))
 	resp, err := tsc.TCLIServiceClient.FetchResults(ctx, req)
 	if err != nil {
-		return resp, dbsqlerr.NewRequestError(ctx, "fetch results request error", err)
+		return resp, dbsqlerrint.NewRequestError(ctx, "fetch results request error", err)
 	}
 	if RecordResults {
 		j, _ := json.MarshalIndent(resp, "", " ")
@@ -92,7 +93,7 @@ func (tsc *ThriftServiceClient) GetResultSetMetadata(ctx context.Context, req *c
 	defer log.Duration(logger.Track("GetResultSetMetadata"))
 	resp, err := tsc.TCLIServiceClient.GetResultSetMetadata(ctx, req)
 	if err != nil {
-		return resp, dbsqlerr.NewRequestError(ctx, "get result set metadata request error", err)
+		return resp, dbsqlerrint.NewRequestError(ctx, "get result set metadata request error", err)
 	}
 	if RecordResults {
 		j, _ := json.MarshalIndent(resp, "", " ")
@@ -108,7 +109,7 @@ func (tsc *ThriftServiceClient) ExecuteStatement(ctx context.Context, req *cli_s
 	msg, start := logger.Track("ExecuteStatement")
 	resp, err := tsc.TCLIServiceClient.ExecuteStatement(context.Background(), req)
 	if err != nil {
-		return resp, dbsqlerr.NewRequestError(ctx, "execute statement request error", err)
+		return resp, dbsqlerrint.NewRequestError(ctx, "execute statement request error", err)
 	}
 	if RecordResults {
 		j, _ := json.MarshalIndent(resp, "", " ")
@@ -132,7 +133,7 @@ func (tsc *ThriftServiceClient) GetOperationStatus(ctx context.Context, req *cli
 	defer log.Duration(logger.Track("GetOperationStatus"))
 	resp, err := tsc.TCLIServiceClient.GetOperationStatus(ctx, req)
 	if err != nil {
-		return resp, dbsqlerr.NewRequestError(driverctx.NewContextWithQueryId(ctx, SprintGuid(req.OperationHandle.OperationId.GUID)), "databricks: get operation status request error", err)
+		return resp, dbsqlerrint.NewRequestError(driverctx.NewContextWithQueryId(ctx, SprintGuid(req.OperationHandle.OperationId.GUID)), "databricks: get operation status request error", err)
 	}
 	if RecordResults {
 		j, _ := json.MarshalIndent(resp, "", " ")
@@ -149,7 +150,7 @@ func (tsc *ThriftServiceClient) CloseOperation(ctx context.Context, req *cli_ser
 	defer log.Duration(logger.Track("CloseOperation"))
 	resp, err := tsc.TCLIServiceClient.CloseOperation(ctx, req)
 	if err != nil {
-		return resp, dbsqlerr.NewRequestError(ctx, "close operation request error", err)
+		return resp, dbsqlerrint.NewRequestError(ctx, "close operation request error", err)
 	}
 	if RecordResults {
 		j, _ := json.MarshalIndent(resp, "", " ")
@@ -166,7 +167,7 @@ func (tsc *ThriftServiceClient) CancelOperation(ctx context.Context, req *cli_se
 	defer log.Duration(logger.Track("CancelOperation"))
 	resp, err := tsc.TCLIServiceClient.CancelOperation(ctx, req)
 	if err != nil {
-		return resp, dbsqlerr.NewRequestError(ctx, "cancel operation request error", err)
+		return resp, dbsqlerrint.NewRequestError(ctx, "cancel operation request error", err)
 	}
 	if RecordResults {
 		j, _ := json.MarshalIndent(resp, "", " ")
@@ -201,7 +202,7 @@ func InitThriftClient(cfg *config.Config, httpclient *http.Client) (*ThriftServi
 	case "header":
 		protocolFactory = thrift.NewTHeaderProtocolFactoryConf(tcfg)
 	default:
-		return nil, dbsqlerr.NewRequestError(context.TODO(), fmt.Sprintf("invalid protocol specified %s", cfg.ThriftProtocol), nil)
+		return nil, dbsqlerrint.NewRequestError(context.TODO(), fmt.Sprintf("invalid protocol specified %s", cfg.ThriftProtocol), nil)
 	}
 	if cfg.ThriftDebugClientProtocol {
 		protocolFactory = thrift.NewTDebugProtocolFactoryWithLogger(protocolFactory, "client:", thrift.StdLogger(nil))
@@ -213,7 +214,7 @@ func InitThriftClient(cfg *config.Config, httpclient *http.Client) (*ThriftServi
 	case "http":
 		if httpclient == nil {
 			if cfg.Authenticator == nil {
-				return nil, dbsqlerr.NewRequestError(context.TODO(), dbsqlerr.ErrNoAuthenticationMethod, nil)
+				return nil, dbsqlerrint.NewRequestError(context.TODO(), dbsqlerr.ErrNoAuthenticationMethod, nil)
 			}
 			httpclient = RetryableClient(cfg)
 		}
@@ -228,13 +229,13 @@ func InitThriftClient(cfg *config.Config, httpclient *http.Client) (*ThriftServi
 		thriftHttpClient.SetHeader("User-Agent", userAgent)
 
 	default:
-		return nil, dbsqlerr.NewSystemFault(context.TODO(), fmt.Sprintf("unsupported transport `%s`", cfg.ThriftTransport), nil)
+		return nil, dbsqlerrint.NewDriverError(context.TODO(), fmt.Sprintf("unsupported transport `%s`", cfg.ThriftTransport), nil)
 	}
 	if err != nil {
-		return nil, dbsqlerr.NewRequestError(context.TODO(), dbsqlerr.ErrInvalidURL, err)
+		return nil, dbsqlerrint.NewRequestError(context.TODO(), dbsqlerr.ErrInvalidURL, err)
 	}
 	if err = tTrans.Open(); err != nil {
-		return nil, dbsqlerr.NewRequestError(context.TODO(), fmt.Sprintf("failed to open http transport for endpoint %s", endpoint), err)
+		return nil, dbsqlerrint.NewRequestError(context.TODO(), fmt.Sprintf("failed to open http transport for endpoint %s", endpoint), err)
 	}
 	iprot := protocolFactory.GetProtocol(tTrans)
 	oprot := protocolFactory.GetProtocol(tTrans)

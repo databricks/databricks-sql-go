@@ -110,7 +110,7 @@ func (crs *columnRowScanner) value(tColumn *cli_service.TColumn, tColumnDesc *cl
 		val, err1 = rowscanner.HandleDateTime(val, dbtype, tColumnDesc.ColumnName, crs.location)
 		if err1 != nil {
 			crs.Err(err).Msg("databrics: column row scanner failed to parse date/time")
-			err = dbsqlerr_int.NewSystemFault(crs.ctx, errRowsParseDateTime, err1)
+			err = dbsqlerr_int.NewDriverError(crs.ctx, errRowsParseDateTime, err1)
 		}
 	} else if tVal := tColumn.GetByteVal(); tVal != nil && !rowscanner.IsNull(tVal.Nulls, rowNum) {
 		val = tVal.Values[rowNum]

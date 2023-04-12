@@ -101,7 +101,7 @@ func NewRows(
 
 	if client == nil {
 		logger.Error().Msg(errRowsNoClient)
-		return nil, dbsqlerr_int.NewSystemFault(ctx, errRowsNoClient, nil)
+		return nil, dbsqlerr_int.NewDriverError(ctx, errRowsNoClient, nil)
 	}
 
 	var pageSize int64 = 10000
@@ -378,9 +378,9 @@ func getScanType(column *cli_service.TColumnDesc) reflect.Type {
 func isValidRows(r *rows) dbsqlerr.DatabricksError {
 	var err dbsqlerr.DatabricksError
 	if r == nil {
-		err = dbsqlerr_int.NewSystemFault(context.Background(), errRowsNilRows, nil)
+		err = dbsqlerr_int.NewDriverError(context.Background(), errRowsNilRows, nil)
 	} else if r.client == nil {
-		err = dbsqlerr_int.NewSystemFault(r.ctx, errRowsNoClient, nil)
+		err = dbsqlerr_int.NewDriverError(r.ctx, errRowsNoClient, nil)
 		r.logger().Err(err).Msg(errRowsNoClient)
 	}
 
@@ -400,7 +400,7 @@ func (r *rows) getColumnMetadataByIndex(index int) (*cli_service.TColumnDesc, db
 
 	columns := schema.GetColumns()
 	if index < 0 || index >= len(columns) {
-		err = dbsqlerr_int.NewSystemFault(r.ctx, errRowsInvalidColumnIndex(index), nil)
+		err = dbsqlerr_int.NewDriverError(r.ctx, errRowsInvalidColumnIndex(index), nil)
 		r.logger().Err(err).Msg(err.Error())
 		return nil, err
 	}
@@ -470,7 +470,7 @@ func (r *rows) fetchResultPage() error {
 		if direction == cli_service.TFetchOrientation_FETCH_PRIOR {
 			// can't fetch rows previous to the start
 			if r.pageStartingRowNum == 0 {
-				return dbsqlerr_int.NewSystemFault(r.ctx, errRowsFetchPriorToStart, nil)
+				return dbsqlerr_int.NewDriverError(r.ctx, errRowsFetchPriorToStart, nil)
 			}
 		} else if direction == cli_service.TFetchOrientation_FETCH_NEXT {
 			// can't fetch past the end of the query results
@@ -479,7 +479,7 @@ func (r *rows) fetchResultPage() error {
 			}
 		} else {
 			r.logger().Error().Msgf(errRowsUnandledFetchDirection(direction.String()))
-			return dbsqlerr_int.NewSystemFault(r.ctx, errRowsUnandledFetchDirection(direction.String()), nil)
+			return dbsqlerr_int.NewDriverError(r.ctx, errRowsUnandledFetchDirection(direction.String()), nil)
 		}
 
 		r.logger().Debug().Msgf("fetching next batch of up to %d rows, %s", r.maxPageSize, direction.String())
@@ -553,13 +553,13 @@ func (r *rows) makeRowScanner(fetchResults *cli_service.TFetchResultsResp) dbsql
 			rs, err = arrowbased.NewArrowRowScanner(r.resultSetMetadata, fetchResults.Results, r.config, r.logger(), r.ctx)
 		} else {
 			r.logger().Error().Msg(errRowsUnknowRowType)
-			err = dbsqlerr_int.NewSystemFault(r.ctx, errRowsUnknowRowType, nil)
+			err = dbsqlerr_int.NewDriverError(r.ctx, errRowsUnknowRowType, nil)
 		}
 
 		r.pageStartingRowNum = fetchResults.Results.StartRowOffset
 	} else {
 		r.logger().Error().Msg(errRowsUnknowRowType)
-		err = dbsqlerr_int.NewSystemFault(r.ctx, errRowsUnknowRowType, nil)
+		err = dbsqlerr_int.NewDriverError(r.ctx, errRowsUnknowRowType, nil)
 	}
 
 	r.RowScanner = rs

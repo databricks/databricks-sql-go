@@ -2,6 +2,7 @@ package sentinel
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/databricks/databricks-sql-go/logger"
@@ -82,6 +83,23 @@ func (s Sentinel) Watch(ctx context.Context, interval, timeout time.Duration) (W
 			resCh <- ret
 		}
 	}
+
+	// If the watch times out or is cancelled this function 
+	// will stop the interval timer and call the cancel function
+	// if necessary.
+	timeoutOrCancel := func() {
+		_ = intervalTimer.Stop()
+		if s.OnCancelFn != nil && !s.onCancelFnCalled {
+			s.onCancelFnCalled = true
+			_, err := s.OnCancelFn()
+			if err != nil {
+				logger.Err(err).Msg("databricks: cancel failed")
+			} else {
+				logger.Debug().Msgf("databricks: cancel success")
+			}
+		}
+	}
+
 	for {
 		select {
 		case <-intervalTimer.C:
@@ -104,31 +122,13 @@ func (s Sentinel) Watch(ctx context.Context, interval, timeout time.Duration) (W
 		case res := <-resCh:
 			return WatchSuccess, res, nil
 		case <-ctx.Done():
-			_ = intervalTimer.Stop()
-			if s.OnCancelFn != nil && !s.onCancelFnCalled {
-				s.onCancelFnCalled = true
-				_, err := s.OnCancelFn()
-				if err != nil {
-					logger.Err(err).Msg("databricks: cancel failed")
-					return WatchCanceled, nil, errors.Wrap(err, ctx.Err().Error())
-				}
-				logger.Debug().Msgf("databricks: cancel success")
-			}
-			return WatchCanceled, nil, errors.Wrap(ctx.Err(), "sentinel context done")
+			timeoutOrCancel()
+			return WatchCanceled, nil, ctx.Err()
 		case <-timeoutTimerCh:
-			logger.Info().Msgf("wait timed out after %s", timeout.String())
-			err := errors.New("sentinel timed out")
-			_ = intervalTimer.Stop()
-			if s.OnCancelFn != nil && !s.onCancelFnCalled {
-				s.onCancelFnCalled = true
-				_, err := s.OnCancelFn()
-				if err != nil {
-					logger.Err(err).Msg("databricks: cancel failed")
-					return WatchCanceled, nil, errors.Wrap(err, ctx.Err().Error())
-				}
-				logger.Debug().Msgf("databricks: cancel success")
-			}
-
+			msg := fmt.Sprintf("wait timed out after %s", timeout.String())
+			logger.Info().Msg(msg)
+			timeoutOrCancel()
+			err := errors.New(msg)
 			return WatchTimeout, nil, err
 		}
 	}

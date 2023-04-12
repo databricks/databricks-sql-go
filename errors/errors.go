@@ -2,11 +2,38 @@ package errors
 
 import "github.com/pkg/errors"
 
+// Error messages
+const (
+	// Driver errors
+	ErrNotImplemented           = "not implemented"
+	ErrTransactionsNotSupported = "transactions are not supported"
+	ErrParametersNotSupported   = "query parameters are not supported"
+	ErrInvalidOperationState    = "invalid operation state. This should not have happened"
+	ErrReadQueryStatus          = "could not read query status"
+	ErrSentinelTimeout          = "sentinel timed out waiting for operation to complete"
+
+	// Request error messages (connection, authentication, network error)
+	ErrCloseConnection = "failed to close connection"
+	ErrThriftClient    = "error initializing thrift client"
+	ErrInvalidURL      = "invalid URL"
+
+	ErrNoAuthenticationMethod = "no authentication method set"
+	ErrInvalidDSNFormat       = "invalid DSN: invalid format"
+	ErrInvalidDSNPort         = "invalid DSN: invalid DSN port"
+	ErrInvalidDSNPATIsEmpty   = "invalid DSN: empty token"
+	ErrBasicAuthNotSupported  = "invalid DSN: basic auth not enabled"
+	ErrInvalidDSNMaxRows      = "invalid DSN: maxRows param is not an integer"
+	ErrInvalidDSNTimeout      = "invalid DSN: timeout param is not an integer"
+
+	// Execution error messages (query failure)
+	ErrQueryExecution = "failed to execute query"
+)
+
 // value to be used with errors.Is() to determine if an error chain contains a request error
 var RequestError error = errors.New("Request Error")
 
 // value to be used with errors.Is() to determine if an error chain contains a system fault
-var SystemFault error = errors.New("System Fault")
+var DriverError error = errors.New("Driver Error")
 
 // value to be used with errors.Is() to determine if an error chain contains an execution error
 var ExecutionError error = errors.New("Execution Error")
@@ -15,8 +42,6 @@ var ExecutionError error = errors.New("Execution Error")
 type DatabricksError interface {
 	// Descriptive message describing the error
 	Error() string
-
-	// ErrorType() DBsqlErrorType
 
 	// User specified id to track what happens under a request. Useful to track multiple connections in the same request.
 	// Appears in log messages as field corrId.  See driverctx.NewContextWithCorrelationId()
@@ -40,7 +65,7 @@ type DBRequestError interface {
 }
 
 // A fault that is caused by Databricks services
-type DBSystemFault interface {
+type DBDriverError interface {
 	DatabricksError
 
 	IsRetryable() bool

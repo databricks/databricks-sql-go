@@ -39,7 +39,7 @@ func TestDbSqlErrors(t *testing.T) {
 	t.Run("errors.Is/As works with system fault values", func(t *testing.T) {
 		// Create a system fault and wrap it in a regular error
 		cause := errors.New("cause")
-		var systemFault error = NewSystemFault(context.TODO(), "system fault", cause)
+		var systemFault error = NewDriverError(context.TODO(), "system fault", cause)
 		e := errors.Wrap(systemFault, "is wrapped")
 
 		m := e.Error()
@@ -47,7 +47,7 @@ func TestDbSqlErrors(t *testing.T) {
 		assert.Equal(t, m, "is wrapped: databricks: system fault: system fault: cause")
 
 		// Should return true for is sentinel value
-		assert.True(t, errors.Is(e, dbsqlerr.SystemFault))
+		assert.True(t, errors.Is(e, dbsqlerr.DriverError))
 
 		// should return true for actual system fault
 		assert.True(t, errors.Is(e, systemFault))
@@ -56,7 +56,7 @@ func TestDbSqlErrors(t *testing.T) {
 		assert.True(t, errors.Is(e, cause))
 
 		// should succesfully retrieve systemFault as an instance of DBSystemFault
-		var ee dbsqlerr.DBSystemFault
+		var ee dbsqlerr.DBDriverError
 		assert.True(t, errors.As(e, &ee))
 		assert.Equal(t, ee, systemFault)
 	})
@@ -154,6 +154,10 @@ func TestDbSqlErrors(t *testing.T) {
 		assert.Equal(t, e, str)
 		assert.NotEqual(t, cause, str)
 	})
+
+	t.Run("", func(t *testing.T) {
+	})
+
 }
 
 type boringError struct{}

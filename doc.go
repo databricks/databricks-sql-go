@@ -148,15 +148,15 @@ The result log may look like this:
 
 There are three error types exposed via dbsql/errors
 
-	DBSystemFault - A fault caused by Databricks services
+	DBDriverError - An error in the go driver. Example: unimplemented functionality, invalid driver state, errors processing a server response, etc.
 
-	DBRequestError - An error that is caused by an invalid request. Example: permission denied, or the user tries to access a warehouse that doesn’t exist
+	DBRequestError - An error that is caused by an invalid request. Example: permission denied, invalid http path or other connection parameter, resource not available, etc.
 
-	DBExecutionError - Any error that occurs after the SQL statement has been accepted (e.g. SQL syntax error)
+	DBExecutionError - Any error that occurs after the SQL statement has been accepted such as a SQL syntax error, missing table, etc.
 
 Each type has a corresponding sentinel value which can be used with errors.Is() to determine if one of the types is present in an error chain.
 
-	SystemFault
+	DriverError
 	RequestError
 	ExecutionError
 

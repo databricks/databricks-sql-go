@@ -4,7 +4,8 @@ import (
 	"context"
 	"database/sql/driver"
 
-	dbsqlerr "github.com/databricks/databricks-sql-go/internal/errors"
+	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
+	dbsqlerrint "github.com/databricks/databricks-sql-go/internal/errors"
 )
 
 type stmt struct {
@@ -27,14 +28,14 @@ func (s *stmt) NumInput() int {
 //
 // Deprecated: Use StmtExecContext instead.
 func (s *stmt) Exec(args []driver.Value) (driver.Result, error) {
-	return nil, dbsqlerr.NewSystemFault(context.TODO(), dbsqlerr.ErrNotImplemented, nil)
+	return nil, dbsqlerrint.NewDriverError(context.TODO(), dbsqlerr.ErrNotImplemented, nil)
 }
 
 // Query is not implemented.
 //
 // Deprecated: Use StmtQueryContext instead.
 func (s *stmt) Query(args []driver.Value) (driver.Rows, error) {
-	return nil, dbsqlerr.NewSystemFault(context.TODO(), dbsqlerr.ErrNotImplemented, nil)
+	return nil, dbsqlerrint.NewDriverError(context.TODO(), dbsqlerr.ErrNotImplemented, nil)
 }
 
 // ExecContext executes a query that doesn't return rows, such
