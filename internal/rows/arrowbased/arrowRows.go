@@ -88,7 +88,7 @@ type arrowRowScanner struct {
 var _ rowscanner.RowScanner = (*arrowRowScanner)(nil)
 
 // NewArrowRowScanner returns an instance of RowScanner which handles arrow format results
-func NewArrowRowScanner(resultSetMetadata *cli_service.TGetResultSetMetadataResp, rowSet *cli_service.TRowSet, cfg *config.Config, logger *dbsqllog.DBSQLLogger, ctx context.Context) (rowscanner.RowScanner, dbsqlerr.DatabricksError) {
+func NewArrowRowScanner(resultSetMetadata *cli_service.TGetResultSetMetadataResp, rowSet *cli_service.TRowSet, cfg *config.Config, logger *dbsqllog.DBSQLLogger, ctx context.Context) (rowscanner.RowScanner, dbsqlerr.DBError) {
 
 	// we take a passed in logger, rather than just using the global from dbsqllog, so that the containing rows
 	// instance can pass in a logger with context such as correlation ID and operation ID
@@ -222,7 +222,7 @@ var intervalTypes map[cli_service.TTypeId]struct{} = map[cli_service.TTypeId]str
 // a buffer held in dest.
 func (ars *arrowRowScanner) ScanRow(
 	destination []driver.Value,
-	rowIndex int64) dbsqlerr.DatabricksError {
+	rowIndex int64) dbsqlerr.DBError {
 
 	// load the error batch for the specified row, if necessary
 	err := ars.loadBatchFor(rowIndex)
@@ -291,7 +291,7 @@ func countRows(rowSet *cli_service.TRowSet) int64 {
 }
 
 // loadBatchFor loads the batch containing the specified row if necessary
-func (ars *arrowRowScanner) loadBatchFor(rowIndex int64) dbsqlerr.DatabricksError {
+func (ars *arrowRowScanner) loadBatchFor(rowIndex int64) dbsqlerr.DBError {
 
 	// if we haven't loaded the initial batch or the row is not in the current batch
 	// we need to load a different batch
@@ -313,7 +313,7 @@ func (ars *arrowRowScanner) loadBatchFor(rowIndex int64) dbsqlerr.DatabricksErro
 }
 
 // loadBatch loads the arrow batch at the specified index
-func (ars *arrowRowScanner) loadBatch(batchIndex int) dbsqlerr.DatabricksError {
+func (ars *arrowRowScanner) loadBatch(batchIndex int) dbsqlerr.DBError {
 	if ars == nil || ars.arrowBatches == nil {
 		if ars != nil {
 			ars.Error().Msg(errArrowRowsNoArrowBatches)
@@ -374,7 +374,7 @@ func (ars *arrowRowScanner) loadBatch(batchIndex int) dbsqlerr.DatabricksError {
 }
 
 // getArrowSchemaBytes returns the serialized schema in ipc format
-func getArrowSchemaBytes(schema *arrow.Schema, ctx context.Context) ([]byte, dbsqlerr.DatabricksError) {
+func getArrowSchemaBytes(schema *arrow.Schema, ctx context.Context) ([]byte, dbsqlerr.DBError) {
 	if schema == nil {
 		return nil, dbsqlerr_int.NewDriverError(ctx, errArrowRowsNilArrowSchema, nil)
 	}
@@ -396,7 +396,7 @@ func getArrowSchemaBytes(schema *arrow.Schema, ctx context.Context) ([]byte, dbs
 }
 
 // rowIndexToBatchIndex returns the index of the batch containing the specified row
-func (ars *arrowRowScanner) rowIndexToBatchIndex(rowIndex int64) (int, dbsqlerr.DatabricksError) {
+func (ars *arrowRowScanner) rowIndexToBatchIndex(rowIndex int64) (int, dbsqlerr.DBError) {
 
 	for i := range ars.arrowBatches {
 		if ars.arrowBatches[i].contains(rowIndex) {

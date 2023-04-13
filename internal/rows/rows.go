@@ -87,7 +87,7 @@ func NewRows(
 	client cli_service.TCLIService,
 	config *config.Config,
 	directResults *cli_service.TSparkDirectResults,
-) (driver.Rows, dbsqlerr.DatabricksError) {
+) (driver.Rows, dbsqlerr.DBError) {
 
 	var logger *dbsqllog.DBSQLLogger
 	var ctx context.Context
@@ -375,8 +375,8 @@ func getScanType(column *cli_service.TColumnDesc) reflect.Type {
 
 // isValidRows checks that the row instance is not nil
 // and that it has a client
-func isValidRows(r *rows) dbsqlerr.DatabricksError {
-	var err dbsqlerr.DatabricksError
+func isValidRows(r *rows) dbsqlerr.DBError {
+	var err dbsqlerr.DBError
 	if r == nil {
 		err = dbsqlerr_int.NewDriverError(context.Background(), errRowsNilRows, nil)
 	} else if r.client == nil {
@@ -387,7 +387,7 @@ func isValidRows(r *rows) dbsqlerr.DatabricksError {
 	return err
 }
 
-func (r *rows) getColumnMetadataByIndex(index int) (*cli_service.TColumnDesc, dbsqlerr.DatabricksError) {
+func (r *rows) getColumnMetadataByIndex(index int) (*cli_service.TColumnDesc, dbsqlerr.DBError) {
 	err := isValidRows(r)
 	if err != nil {
 		return nil, err
@@ -410,7 +410,7 @@ func (r *rows) getColumnMetadataByIndex(index int) (*cli_service.TColumnDesc, db
 
 // isNextRowInPage returns a boolean flag indicating whether
 // the next result set row is in the current result set page
-func (r *rows) isNextRowInPage() (bool, dbsqlerr.DatabricksError) {
+func (r *rows) isNextRowInPage() (bool, dbsqlerr.DBError) {
 	if r == nil || r.RowScanner == nil {
 		return false, nil
 	}
@@ -425,7 +425,7 @@ func (r *rows) isNextRowInPage() (bool, dbsqlerr.DatabricksError) {
 }
 
 // getResultMetadata does a one time fetch of the result set schema
-func (r *rows) getResultSetSchema() (*cli_service.TTableSchema, dbsqlerr.DatabricksError) {
+func (r *rows) getResultSetSchema() (*cli_service.TTableSchema, dbsqlerr.DBError) {
 	if r.schema == nil {
 		err := isValidRows(r)
 		if err != nil {
@@ -453,7 +453,7 @@ func (r *rows) getResultSetSchema() (*cli_service.TTableSchema, dbsqlerr.Databri
 
 // fetchResultPage will fetch the result page containing the next row, if necessary
 func (r *rows) fetchResultPage() error {
-	var err dbsqlerr.DatabricksError = isValidRows(r)
+	var err dbsqlerr.DBError = isValidRows(r)
 	if err != nil {
 		return err
 	}
@@ -461,7 +461,7 @@ func (r *rows) fetchResultPage() error {
 	r.logger().Debug().Msgf("databricks: fetching result page for row %d", r.nextRowNumber)
 
 	var b bool
-	var e dbsqlerr.DatabricksError
+	var e dbsqlerr.DBError
 	for b, e = r.isNextRowInPage(); !b && e == nil; b, e = r.isNextRowInPage() {
 
 		// determine the direction of page fetching. Currently we only handle
@@ -533,7 +533,7 @@ func (r *rows) getPageFetchDirection() cli_service.TFetchOrientation {
 
 // makeRowScanner creates the embedded RowScanner instance based on the format
 // of the returned query results
-func (r *rows) makeRowScanner(fetchResults *cli_service.TFetchResultsResp) dbsqlerr.DatabricksError {
+func (r *rows) makeRowScanner(fetchResults *cli_service.TFetchResultsResp) dbsqlerr.DBError {
 
 	schema, err1 := r.getResultSetSchema()
 	if err1 != nil {
@@ -545,7 +545,7 @@ func (r *rows) makeRowScanner(fetchResults *cli_service.TFetchResultsResp) dbsql
 	}
 
 	var rs rowscanner.RowScanner
-	var err dbsqlerr.DatabricksError
+	var err dbsqlerr.DBError
 	if fetchResults.Results != nil {
 		if fetchResults.Results.Columns != nil {
 			rs, err = columnbased.NewColumnRowScanner(schema, fetchResults.Results, r.config, r.logger(), r.ctx)

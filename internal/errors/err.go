@@ -71,6 +71,10 @@ func (e databricksError) ConnectionId() string {
 	return e.connectionId
 }
 
+func (e databricksError) Is(err error) bool {
+	return err == dbsqlerr.DatabricksError
+}
+
 // driverError are issues with the driver or server, e.g. not supported operations, driver specific non-recoverable failures
 type driverError struct {
 	databricksError
@@ -80,7 +84,7 @@ type driverError struct {
 var _ dbsqlerr.DBDriverError = (*driverError)(nil)
 
 func (e driverError) Is(err error) bool {
-	return err == dbsqlerr.DriverError
+	return err == dbsqlerr.DriverError || e.databricksError.Is(err)
 }
 
 func (e driverError) Unwrap() error {
@@ -105,7 +109,7 @@ type requestError struct {
 var _ dbsqlerr.DBRequestError = (*requestError)(nil)
 
 func (e requestError) Is(err error) bool {
-	return err == dbsqlerr.RequestError
+	return err == dbsqlerr.RequestError || e.databricksError.Is(err)
 }
 
 func (e requestError) Unwrap() error {
@@ -128,7 +132,7 @@ type executionError struct {
 var _ dbsqlerr.DBExecutionError = (*executionError)(nil)
 
 func (e executionError) Is(err error) bool {
-	return err == dbsqlerr.ExecutionError
+	return err == dbsqlerr.ExecutionError || e.databricksError.Is(err)
 }
 
 func (e executionError) Unwrap() error {

@@ -38,8 +38,11 @@ var DriverError error = errors.New("Driver Error")
 // value to be used with errors.Is() to determine if an error chain contains an execution error
 var ExecutionError error = errors.New("Execution Error")
 
+// value to be used with errors.Is() to determine if an error chain contains any databricks error
+var DatabricksError error = errors.New("Databricks Error")
+
 // Base interface for driver errors
-type DatabricksError interface {
+type DBError interface {
 	// Descriptive message describing the error
 	Error() string
 
@@ -61,19 +64,19 @@ type DatabricksError interface {
 // An error that is caused by an invalid request.
 // Example: permission denied, or the user tries to access a warehouse that doesn’t exist
 type DBRequestError interface {
-	DatabricksError
+	DBError
 }
 
 // A fault that is caused by Databricks services
 type DBDriverError interface {
-	DatabricksError
+	DBError
 
 	IsRetryable() bool
 }
 
 // Any error that occurs after the SQL statement has been accepted (e.g. SQL syntax error).
 type DBExecutionError interface {
-	DatabricksError
+	DBError
 
 	// Internal id to track what happens under a query.
 	// Appears in log messages as field queryId.

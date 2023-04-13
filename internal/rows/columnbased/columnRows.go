@@ -33,7 +33,7 @@ var _ rowscanner.RowScanner = (*columnRowScanner)(nil)
 
 // NewColumnRowScanner returns a columnRowScanner initialized with the provided
 // values.
-func NewColumnRowScanner(schema *cli_service.TTableSchema, rowSet *cli_service.TRowSet, cfg *config.Config, logger *dbsqllog.DBSQLLogger, ctx context.Context) (rowscanner.RowScanner, dbsqlerr.DatabricksError) {
+func NewColumnRowScanner(schema *cli_service.TTableSchema, rowSet *cli_service.TRowSet, cfg *config.Config, logger *dbsqllog.DBSQLLogger, ctx context.Context) (rowscanner.RowScanner, dbsqlerr.DBError) {
 	if logger == nil {
 		logger = dbsqllog.Logger
 	}
@@ -77,7 +77,7 @@ func (crs *columnRowScanner) NRows() int64 {
 // a buffer held in dest.
 func (crs *columnRowScanner) ScanRow(
 	dest []driver.Value,
-	rowIndex int64) dbsqlerr.DatabricksError {
+	rowIndex int64) dbsqlerr.DBError {
 
 	// populate the destinatino slice
 	for i := range dest {
@@ -94,7 +94,7 @@ func (crs *columnRowScanner) ScanRow(
 }
 
 // value retrieves the value for the specified colum/row
-func (crs *columnRowScanner) value(tColumn *cli_service.TColumn, tColumnDesc *cli_service.TColumnDesc, rowNum int64) (val interface{}, err dbsqlerr.DatabricksError) {
+func (crs *columnRowScanner) value(tColumn *cli_service.TColumn, tColumnDesc *cli_service.TColumnDesc, rowNum int64) (val interface{}, err dbsqlerr.DBError) {
 	// default to UTC time
 	if crs.location == nil {
 		crs.location = time.UTC
