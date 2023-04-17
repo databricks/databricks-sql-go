@@ -2,6 +2,7 @@ package sentinel
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -54,6 +55,7 @@ func TestWatch(t *testing.T) {
 				return false
 			}, nil, nil
 		}
+
 		s := Sentinel{
 			StatusFn: statusFn,
 		}
@@ -80,6 +82,7 @@ func TestWatch(t *testing.T) {
 		assert.Equal(t, WatchCanceled, status)
 		assert.Nil(t, res)
 		assert.Error(t, err)
+		assert.True(t, errors.Is(err, context.DeadlineExceeded))
 	})
 	t.Run("it should cancel with timeout", func(t *testing.T) {
 		statusFnCalls := 0
@@ -124,6 +127,7 @@ func TestWatch(t *testing.T) {
 		assert.Nil(t, res)
 		assert.Greater(t, statusFnCalls, 1)
 		assert.Error(t, err)
+		assert.True(t, errors.Is(err, context.Canceled))
 	})
 	t.Run("it should cancel with canceled context", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
@@ -142,6 +146,7 @@ func TestWatch(t *testing.T) {
 		assert.Equal(t, WatchCanceled, status)
 		assert.Nil(t, res)
 		assert.Error(t, err)
+		assert.True(t, errors.Is(err, context.Canceled))
 	})
 	t.Run("it should call cancelFn upon cancellation while polling", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
@@ -169,6 +174,7 @@ func TestWatch(t *testing.T) {
 		assert.Equal(t, cancelFnCalls, 1)
 		assert.Nil(t, res)
 		assert.Error(t, err)
+		assert.True(t, errors.Is(err, context.Canceled))
 	})
 	t.Run("it should timeout even when calling cancelFn", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
@@ -195,6 +201,7 @@ func TestWatch(t *testing.T) {
 		assert.Equal(t, cancelFnCalls, 1)
 		assert.Nil(t, res)
 		assert.Error(t, err)
+		assert.True(t, errors.Is(err, context.DeadlineExceeded))
 	})
 	t.Run("it should call processFn upon Done", func(t *testing.T) {
 		statusFnCalls := 0

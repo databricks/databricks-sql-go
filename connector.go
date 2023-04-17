@@ -10,10 +10,11 @@ import (
 
 	"github.com/databricks/databricks-sql-go/auth/pat"
 	"github.com/databricks/databricks-sql-go/driverctx"
+	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/client"
 	"github.com/databricks/databricks-sql-go/internal/config"
-	dbsqlerr "github.com/databricks/databricks-sql-go/internal/err"
+	dbsqlerrint "github.com/databricks/databricks-sql-go/internal/errors"
 	"github.com/databricks/databricks-sql-go/logger"
 )
 
@@ -35,7 +36,7 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 
 	tclient, err := client.InitThriftClient(c.cfg, c.client)
 	if err != nil {
-		return nil, dbsqlerr.WrapErr(err, "error initializing thrift client")
+		return nil, dbsqlerrint.NewDriverError(ctx, dbsqlerr.ErrThriftClient, err)
 	}
 	protocolVersion := int64(c.cfg.ThriftProtocolVersion)
 	session, err := tclient.OpenSession(ctx, &cli_service.TOpenSessionReq{
@@ -49,7 +50,7 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 	})
 
 	if err != nil {
-		return nil, dbsqlerr.WrapErrf(err, "error connecting: host=%s port=%d, httpPath=%s", c.cfg.Host, c.cfg.Port, c.cfg.HTTPPath)
+		return nil, dbsqlerrint.NewRequestError(ctx, fmt.Sprintf("error connecting: host=%s port=%d, httpPath=%s", c.cfg.Host, c.cfg.Port, c.cfg.HTTPPath), err)
 	}
 
 	conn := &conn{

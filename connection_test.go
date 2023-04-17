@@ -161,7 +161,7 @@ func TestConn_executeStatement(t *testing.T) {
 			if opTest.err == "" {
 				assert.NoError(t, err)
 			} else {
-				assert.EqualError(t, err, opTest.err)
+				assert.EqualError(t, err, "databricks: execution error: failed to execute query: "+opTest.err)
 			}
 			assert.Equal(t, 1, executeStatementCount)
 			assert.Equal(t, opTest.closeOperationCount, closeOperationCount)
@@ -539,6 +539,7 @@ func TestConn_pollOperation(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 		defer cancel()
 		res, err := testConn.pollOperation(ctx, &cli_service.TOperationHandle{
+
 			OperationId: &cli_service.THandleIdentifier{
 				GUID:   []byte{1, 2, 3, 4, 2, 23, 4, 2, 3, 1, 2, 4, 4, 223, 34, 54},
 				Secret: []byte("b"),
