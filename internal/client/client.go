@@ -279,6 +279,15 @@ func SprintGuid(bts []byte) string {
 
 var retryableStatusCode = []int{http.StatusTooManyRequests, http.StatusServiceUnavailable}
 
+func isRetryable(statusCode int) bool {
+	for _, c := range retryableStatusCode {
+		if c == statusCode {
+			return true
+		}
+	}
+	return false
+}
+
 type Transport struct {
 	Base  *http.Transport
 	Authr auth.Authenticator
@@ -321,14 +330,13 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if resp.StatusCode != http.StatusOK {
 		reason := resp.Header.Get("X-Databricks-Reason-Phrase")
 		terrmsg := resp.Header.Get("X-Thriftserver-Error-Message")
-		for _, c := range retryableStatusCode {
-			if c == resp.StatusCode {
-				if terrmsg != "" {
-					logger.Warn().Msg(terrmsg)
-				}
-				return resp, nil
+		if isRetryable(resp.StatusCode) {
+			if terrmsg != "" {
+				logger.Warn().Msg(terrmsg)
 			}
+			return resp, nil
 		}
+
 		if reason != "" {
 			logger.Err(fmt.Errorf(reason)).Msg("non retryable error")
 			return nil, errors.New(reason)
@@ -426,17 +434,25 @@ func errorHandler(resp *http.Response, err error, numTries int) (*http.Response,
 	if err == nil {
 		err = errors.New(fmt.Sprintf("request error after %d attempt(s)", numTries))
 	}
-	if resp != nil && resp.Header != nil {
 
+	if resp != nil {
+		var orgid, reason, terrmsg, errmsg, retryAfter string
 		// TODO @mattdeekay: convert these to specific error types
+		if resp.Header != nil {
+			orgid = resp.Header.Get("X-Databricks-Org-Id")
+			reason = resp.Header.Get("X-Databricks-Reason-Phrase") // TODO note: shown on notebook
+			terrmsg = resp.Header.Get("X-Thriftserver-Error-Message")
+			errmsg = resp.Header.Get("x-databricks-error-or-redirect-message")
+			retryAfter = resp.Header.Get("Retry-After")
+			// TODO note: need to see if there's other headers
+		}
+		msg := fmt.Sprintf("orgId: %s, reason: %s, thriftErr: %s, err: %s", orgid, reason, terrmsg, errmsg)
 
-		orgid := resp.Header.Get("X-Databricks-Org-Id")
-		reason := resp.Header.Get("X-Databricks-Reason-Phrase") // TODO note: shown on notebook
-		terrmsg := resp.Header.Get("X-Thriftserver-Error-Message")
-		errmsg := resp.Header.Get("x-databricks-error-or-redirect-message")
-		// TODO note: need to see if there's other headers
+		if isRetryable(resp.StatusCode) {
+			err = dbsqlerrint.NewRetryableError(err, retryAfter)
+		}
 
-		werr = errors.Wrapf(err, fmt.Sprintf("orgId: %s, reason: %s, thriftErr: %s, err: %s", orgid, reason, terrmsg, errmsg))
+		werr = dbsqlerrint.WrapErr(err, msg)
 	} else {
 		werr = err
 	}
@@ -464,11 +480,8 @@ func RetryPolicy(ctx context.Context, resp *http.Response, err error) (bool, err
 	// 429 Too Many Requests or 503 service unavailable is recoverable. Sometimes the server puts
 	// a Retry-After response header to indicate when the server is
 	// available to start processing request from client.
-
-	for _, c := range retryableStatusCode {
-		if c == resp.StatusCode {
-			return true, nil
-		}
+	if isRetryable(resp.StatusCode) {
+		return true, nil
 	}
 
 	return false, nil

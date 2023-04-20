@@ -71,11 +71,33 @@ func main() {
 	}
 	ctx = driverctx.NewContextWithQueryIdCallback(ctx, queryIdCallback)
 
-	rows, err1 := db.QueryContext(ctx, `select * from default.intervals`)
-	fmt.Printf("conn Id: %s, query Id: %s\n", connId, queryId)
+	var rows *sql.Rows
+	maxRetries := 3
+	shouldTry := true
 
-	handleErr(err1)
+	// We want to retry running the query if an error is returned where IsRetryable() is true up
+	// to the maximum number of retries.
+	for i := 0; i < maxRetries && shouldTry; i++ {
+		var err1 error
+		var wait time.Duration
+
+		rows, err1 = db.QueryContext(ctx, `select * from default.Intervals`)
+
+		// Check if the error is retryable and if there is a wait before
+		// trying again.
+		if shouldTry, wait = isRetryable(err1); shouldTry {
+			fmt.Printf("query failed, retrying after %f seconds", wait.Seconds())
+			time.Sleep(wait)
+		} else {
+			// handle the error, which may be nil
+			handleErr(err1)
+		}
+	}
+
+	// At this point the query completed successfully
 	defer rows.Close()
+
+	fmt.Printf("conn Id: %s, query Id: %s\n", connId, queryId)
 
 	colNames, _ := rows.Columns()
 	for i := range colNames {
@@ -91,6 +113,8 @@ func main() {
 
 }
 
+// If the error is not nil extract/ databricks specific error information and then
+// terminate the program.
 func handleErr(err error) {
 	if err == nil {
 		return
@@ -153,5 +177,16 @@ func getQueryIdAndSQLState(err error) (queryId, sqlState string) {
 		sqlState = dbExecErr.SqlState()
 	}
 
+	return
+}
+
+// Use errors.As to extract a DBError from the error chain and return the associated
+// values for isRetryable and retryAfter
+func isRetryable(err error) (isRetryable bool, retryAfter time.Duration) {
+	var dbErr dbsqlerr.DBError
+	if errors.As(err, &dbErr) {
+		isRetryable = dbErr.IsRetryable()
+		retryAfter = dbErr.RetryAfter()
+	}
 	return
 }

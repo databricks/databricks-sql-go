@@ -1,6 +1,10 @@
 package errors
 
-import "github.com/pkg/errors"
+import (
+	"time"
+
+	"github.com/pkg/errors"
+)
 
 // Error messages
 const (
@@ -59,6 +63,10 @@ type DBError interface {
 
 	// Underlying causative error. May be nil.
 	Cause() error
+
+	IsRetryable() bool
+
+	RetryAfter() time.Duration
 }
 
 // An error that is caused by an invalid request.
@@ -70,8 +78,6 @@ type DBRequestError interface {
 // A fault that is caused by Databricks services
 type DBDriverError interface {
 	DBError
-
-	IsRetryable() bool
 }
 
 // Any error that occurs after the SQL statement has been accepted (e.g. SQL syntax error).

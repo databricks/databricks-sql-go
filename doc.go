@@ -175,12 +175,15 @@ Example usage:
 			if errors.Is(err, dbsqlerr.ExecutionError) {
 				var execErr dbsqlerr.DBExecutionError
 				if ok := errors.As(err, &execError); ok {
-						fmt.Printf("%s, corrId: %s, connId: %s, queryId: %s, sqlState: %s",
+						fmt.Printf("%s, corrId: %s, connId: %s, queryId: %s, sqlState: %s, isRetryable: %t, retryAfter: %f seconds",
 						execErr.Error(),
 						execErr.CorrelationId(),
 						execErr.ConnectionId(),
 						execErr.QueryId(),
-						execErr.SqlState())
+						execErr.SqlState(),
+					    execErr.IsRetryable(),
+						execErr.RetryAfter().Seconds(),
+					)
 				}
 			}
 			...
