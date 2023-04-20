@@ -3,6 +3,8 @@ package errors
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"time"
 
 	"github.com/databricks/databricks-sql-go/driverctx"
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
@@ -21,7 +23,7 @@ type databricksError struct {
 	connectionId  string
 	errType       string
 	isRetryable   bool
-	retryAfter    string
+	retryAfter    time.Duration
 }
 
 var _ error = (*databricksError)(nil)
@@ -48,12 +50,12 @@ func newDatabricksError(ctx context.Context, msg string, err error) databricksEr
 	// If the error chain contains an instance of retryableError
 	// set the flag and retryAfter value.
 	var retryable bool = false
-	var retryAfter string
+	var retryAfter time.Duration
 	if errors.Is(err, RetryableError) {
 		retryable = true
 		var re retryableError
 		if ok := errors.As(err, &re); ok {
-			retryAfter = re.retryAfter
+			retryAfter = re.RetryAfter()
 		}
 	}
 
@@ -100,7 +102,7 @@ func (e databricksError) IsRetryable() bool {
 	return e.isRetryable
 }
 
-func (e databricksError) RetryAfter() string {
+func (e databricksError) RetryAfter() time.Duration {
 	return e.retryAfter
 }
 
@@ -208,7 +210,7 @@ func WrapErrf(err error, format string, args ...interface{}) error {
 
 type retryableError struct {
 	err        error
-	retryAfter string
+	retryAfter time.Duration
 }
 
 func (e retryableError) Is(err error) bool {
@@ -223,11 +225,11 @@ func (e retryableError) Error() string {
 	return fmt.Sprintf("databricks: retryableError: %s", e.err.Error())
 }
 
-func (e retryableError) RetryAfter() string {
+func (e retryableError) RetryAfter() time.Duration {
 	return e.retryAfter
 }
 
-func NewRetryableError(err error, retryAfter string) error {
+func NewRetryableError(err error, retryAfterHdr string) error {
 	if err == nil {
 		err = errors.New("")
 	}
@@ -235,6 +237,11 @@ func NewRetryableError(err error, retryAfter string) error {
 	var st stackTracer
 	if ok := errors.As(err, &st); !ok {
 		err = errors.WithStack(err)
+	}
+
+	var retryAfter time.Duration
+	if nSeconds, err := strconv.ParseInt(retryAfterHdr, 10, 64); err == nil {
+		retryAfter = time.Second * time.Duration(nSeconds)
 	}
 
 	return retryableError{err: err, retryAfter: retryAfter}

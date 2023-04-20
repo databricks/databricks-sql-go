@@ -462,7 +462,7 @@ func TestRetries(t *testing.T) {
 		require.True(t, b)
 		require.NotNil(t, re)
 		require.True(t, re.IsRetryable())
-		require.Equal(t, "retry after header value", re.RetryAfter())
+		require.Equal(t, 12*time.Second, re.RetryAfter())
 
 		connector2, err := NewConnector(
 			WithServerHostname("localhost"),

@@ -1,6 +1,10 @@
 package errors
 
-import "github.com/pkg/errors"
+import (
+	"time"
+
+	"github.com/pkg/errors"
+)
 
 // Error messages
 const (
@@ -62,7 +66,7 @@ type DBError interface {
 
 	IsRetryable() bool
 
-	RetryAfter() string
+	RetryAfter() time.Duration
 }
 
 // An error that is caused by an invalid request.
