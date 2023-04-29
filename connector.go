@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/databricks/databricks-sql-go/auth"
 	"github.com/databricks/databricks-sql-go/auth/pat"
 	"github.com/databricks/databricks-sql-go/driverctx"
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
@@ -204,5 +205,12 @@ func WithSessionParams(params map[string]string) connOption {
 			}
 		}
 		c.SessionParams = params
+	}
+}
+
+// WithAuthenticator sets up the Authentication. Mandatory if access token is not provided.
+func WithAuthenticator(authr auth.Authenticator) connOption {
+	return func(c *config.Config) {
+		c.Authenticator = authr
 	}
 }
