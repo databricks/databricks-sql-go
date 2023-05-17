@@ -47,7 +47,7 @@ func (h *thriftHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "/429-5-retries":
 		if h.count503_5_retries <= 5 {
 			w.Header().Set("Retry-After", "12")
-			w.WriteHeader(http.StatusServiceUnavailable)
+			w.WriteHeader(http.StatusTooManyRequests)
 			h.count503_5_retries++
 			return
 		} else {
