@@ -56,16 +56,7 @@ const (
 	cancelOperation
 )
 
-var idempotentClientMethods map[clientMethod]any = map[clientMethod]any{
-	closeSession:         struct{}{},
-	getResultSetMetadata: struct{}{},
-	getOperationStatus:   struct{}{},
-	closeOperation:       struct{}{},
-	cancelOperation:      struct{}{},
-	// fetchResults is treated as idempotent because the drivers fetching logic is robust enoug
-	// to fetch results in correct order
-	fetchResults: struct{}{},
-}
+var nonRetryableClientMethods map[clientMethod]any = map[clientMethod]any{executeStatement: struct{}{}}
 
 // OpenSession is a wrapper around the thrift operation OpenSession
 // If RecordResults is true, the results will be marshalled to JSON format and written to OpenSession<index>.json
@@ -449,27 +440,24 @@ func errorHandler(resp *http.Response, err error, numTries int) (*http.Response,
 	var werr error
 	msg := fmt.Sprintf("request error after %d attempt(s)", numTries)
 	if err == nil {
-		err = errors.New(msg)
+		werr = errors.New(msg)
 	} else {
-		err = errors.Wrap(err, msg)
+		werr = errors.Wrap(err, msg)
 	}
 
 	if resp != nil {
-		var orgid, reason, terrmsg, errmsg string
-		// TODO @mattdeekay: convert these to specific error types
 		if resp.Header != nil {
-			orgid = resp.Header.Get("X-Databricks-Org-Id")
-			reason = resp.Header.Get("X-Databricks-Reason-Phrase") // TODO note: shown on notebook
-			terrmsg = resp.Header.Get("X-Thriftserver-Error-Message")
-			errmsg = resp.Header.Get("x-databricks-error-or-redirect-message")
-			// TODO note: need to see if there's other headers
-		}
-		msg := fmt.Sprintf("orgId: %s, reason: %s, thriftErr: %s, err: %s", orgid, reason, terrmsg, errmsg)
+			reason := resp.Header.Get("X-Databricks-Reason-Phrase")
+			terrmsg := resp.Header.Get("X-Thriftserver-Error-Message")
 
-		werr = dbsqlerrint.WrapErr(err, msg)
+			if reason != "" {
+				werr = dbsqlerrint.WrapErr(werr, reason)
+			} else if terrmsg != "" {
+				werr = dbsqlerrint.WrapErr(werr, terrmsg)
+			}
+		}
+
 		logger.Err(werr).Msg(resp.Status)
-	} else {
-		werr = err
 	}
 
 	return resp, werr
@@ -526,7 +514,7 @@ func RetryPolicy(ctx context.Context, resp *http.Response, err error) (bool, err
 	// 429 Too Many Requests or 503 service unavailable is recoverable. Sometimes the server puts
 	// a Retry-After response header to indicate when the server is
 	// available to start processing request from client.
-	if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusServiceUnavailable {
+	if isRetryableServerResponse(resp) {
 		var retryAfter string
 		if resp.Header != nil {
 			retryAfter = resp.Header.Get("Retry-After")
@@ -538,7 +526,7 @@ func RetryPolicy(ctx context.Context, resp *http.Response, err error) (bool, err
 	if resp.StatusCode == 0 || (resp.StatusCode >= 500 && resp.StatusCode != http.StatusNotImplemented) {
 		callerAny := ctx.Value(ClientMethod)
 		if caller, ok := callerAny.(clientMethod); ok {
-			if _, ok := idempotentClientMethods[caller]; ok {
+			if _, noRetry := nonRetryableClientMethods[caller]; !noRetry {
 				return true, checkErr
 			}
 		}
@@ -550,7 +538,8 @@ func RetryPolicy(ctx context.Context, resp *http.Response, err error) (bool, err
 }
 
 func backoff(min, max time.Duration, attemptNum int, resp *http.Response) time.Duration {
-	if resp != nil && isRetryableServerResponse(resp) {
+	// honour the Retry-After header
+	if resp != nil && resp.Header != nil {
 		if s, ok := resp.Header["Retry-After"]; ok {
 			if sleep, err := strconv.ParseInt(s[0], 10, 64); err == nil {
 				return time.Second * time.Duration(sleep)
@@ -558,6 +547,7 @@ func backoff(min, max time.Duration, attemptNum int, resp *http.Response) time.D
 		}
 	}
 
+	// exponential backoff
 	mult := math.Pow(2, float64(attemptNum)) * float64(min)
 	sleep := time.Duration(mult)
 	if float64(sleep) != mult || sleep > max {

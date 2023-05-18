@@ -84,14 +84,23 @@ func TestRetryPolicy(t *testing.T) {
 
 		nonRetryableCodes := []int{200, 300, 400, 501}
 
-		idempotentOps := []clientMethod{closeSession, getResultSetMetadata, getOperationStatus, closeOperation, cancelOperation, fetchResults}
-		nonIdempotentOps := []clientMethod{openSession, executeStatement}
+		retryableOps := []clientMethod{
+			closeSession,
+			getResultSetMetadata,
+			getOperationStatus,
+			closeOperation,
+			cancelOperation,
+			fetchResults,
+			openSession,
+		}
+
+		nonRetryableOps := []clientMethod{executeStatement}
 
 		cancelled, cancel := context.WithCancel(context.Background())
 		cancel()
 
 		for _, code := range retryableCodes {
-			for _, op := range idempotentOps {
+			for _, op := range retryableOps {
 				resp.StatusCode = code
 				ctx := context.WithValue(context.Background(), ClientMethod, op)
 				retry, _ := RetryPolicy(ctx, resp, nil)
@@ -102,7 +111,7 @@ func TestRetryPolicy(t *testing.T) {
 				require.False(t, retry)
 			}
 
-			for _, op := range nonIdempotentOps {
+			for _, op := range nonRetryableOps {
 				resp.StatusCode = code
 				ctx := context.WithValue(context.Background(), ClientMethod, op)
 				retry, _ := RetryPolicy(ctx, resp, nil)
@@ -115,7 +124,7 @@ func TestRetryPolicy(t *testing.T) {
 		}
 
 		for _, code := range maybeRetryableCodes {
-			for _, op := range idempotentOps {
+			for _, op := range retryableOps {
 				resp.StatusCode = code
 				ctx := context.WithValue(context.Background(), ClientMethod, op)
 				retry, _ := RetryPolicy(ctx, resp, nil)
@@ -126,7 +135,7 @@ func TestRetryPolicy(t *testing.T) {
 				require.False(t, retry)
 			}
 
-			for _, op := range nonIdempotentOps {
+			for _, op := range nonRetryableOps {
 				resp.StatusCode = code
 				ctx := context.WithValue(context.Background(), ClientMethod, op)
 				retry, _ := RetryPolicy(ctx, resp, nil)
@@ -139,7 +148,7 @@ func TestRetryPolicy(t *testing.T) {
 		}
 
 		for _, code := range nonRetryableCodes {
-			for _, op := range idempotentOps {
+			for _, op := range retryableOps {
 				resp.StatusCode = code
 				ctx := context.WithValue(context.Background(), ClientMethod, op)
 				retry, _ := RetryPolicy(ctx, resp, nil)
@@ -150,7 +159,7 @@ func TestRetryPolicy(t *testing.T) {
 				require.False(t, retry)
 			}
 
-			for _, op := range nonIdempotentOps {
+			for _, op := range nonRetryableOps {
 				resp.StatusCode = code
 				ctx := context.WithValue(context.Background(), ClientMethod, op)
 				retry, _ := RetryPolicy(ctx, resp, nil)
