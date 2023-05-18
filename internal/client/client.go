@@ -62,6 +62,9 @@ var idempotentClientMethods map[clientMethod]any = map[clientMethod]any{
 	getOperationStatus:   struct{}{},
 	closeOperation:       struct{}{},
 	cancelOperation:      struct{}{},
+	// fetchResults is treated as idempotent because the drivers fetching logic is robust enoug
+	// to fetch results in correct order
+	fetchResults: struct{}{},
 }
 
 // OpenSession is a wrapper around the thrift operation OpenSession
@@ -360,23 +363,8 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	// req.Body is assumed to be closed by the base RoundTripper.
 	reqBodyClosed = true
 	resp, err := t.Base.RoundTrip(req2)
-	if err != nil {
-		return resp, err
-	}
 
-	if resp.StatusCode != http.StatusOK {
-		reason := resp.Header.Get("X-Databricks-Reason-Phrase")
-		terrmsg := resp.Header.Get("X-Thriftserver-Error-Message")
-
-		if reason != "" {
-			logger.Err(fmt.Errorf(reason)).Msg(resp.Status)
-		}
-		if terrmsg != "" {
-			logger.Err(fmt.Errorf(terrmsg)).Msg(resp.Status)
-		}
-	}
-
-	return resp, nil
+	return resp, err
 }
 
 func RetryableClient(cfg *config.Config) *http.Client {
@@ -459,28 +447,27 @@ func (l *leveledLogger) Warn(msg string, keysAndValues ...interface{}) {
 
 func errorHandler(resp *http.Response, err error, numTries int) (*http.Response, error) {
 	var werr error
+	msg := fmt.Sprintf("request error after %d attempt(s)", numTries)
 	if err == nil {
-		err = errors.New(fmt.Sprintf("request error after %d attempt(s)", numTries))
+		err = errors.New(msg)
+	} else {
+		err = errors.Wrap(err, msg)
 	}
 
 	if resp != nil {
-		var orgid, reason, terrmsg, errmsg, retryAfter string
+		var orgid, reason, terrmsg, errmsg string
 		// TODO @mattdeekay: convert these to specific error types
 		if resp.Header != nil {
 			orgid = resp.Header.Get("X-Databricks-Org-Id")
 			reason = resp.Header.Get("X-Databricks-Reason-Phrase") // TODO note: shown on notebook
 			terrmsg = resp.Header.Get("X-Thriftserver-Error-Message")
 			errmsg = resp.Header.Get("x-databricks-error-or-redirect-message")
-			retryAfter = resp.Header.Get("Retry-After")
 			// TODO note: need to see if there's other headers
 		}
 		msg := fmt.Sprintf("orgId: %s, reason: %s, thriftErr: %s, err: %s", orgid, reason, terrmsg, errmsg)
 
-		if isRetryableServerResponse(resp) {
-			err = dbsqlerrint.NewRetryableError(err, retryAfter)
-		}
-
 		werr = dbsqlerrint.WrapErr(err, msg)
+		logger.Err(werr).Msg(resp.Status)
 	} else {
 		werr = err
 	}
@@ -508,7 +495,6 @@ var (
 )
 
 func RetryPolicy(ctx context.Context, resp *http.Response, err error) (bool, error) {
-
 	// do not retry on context.Canceled or context.DeadlineExceeded
 	if ctx.Err() != nil {
 		return false, ctx.Err()
@@ -532,24 +518,35 @@ func RetryPolicy(ctx context.Context, resp *http.Response, err error) (bool, err
 		return true, nil
 	}
 
+	var checkErr error
+	if resp.StatusCode != http.StatusOK {
+		checkErr = fmt.Errorf("unexpected HTTP status %s", resp.Status)
+	}
+
 	// 429 Too Many Requests or 503 service unavailable is recoverable. Sometimes the server puts
 	// a Retry-After response header to indicate when the server is
 	// available to start processing request from client.
 	if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusServiceUnavailable {
-		return true, nil
+		var retryAfter string
+		if resp.Header != nil {
+			retryAfter = resp.Header.Get("Retry-After")
+		}
+
+		return true, dbsqlerrint.NewRetryableError(checkErr, retryAfter)
 	}
 
 	if resp.StatusCode == 0 || (resp.StatusCode >= 500 && resp.StatusCode != http.StatusNotImplemented) {
 		callerAny := ctx.Value(ClientMethod)
 		if caller, ok := callerAny.(clientMethod); ok {
 			if _, ok := idempotentClientMethods[caller]; ok {
-				return true, fmt.Errorf("unexpected HTTP status %s", resp.Status)
+				return true, checkErr
 			}
 		}
 	}
 
-	return false, nil
-
+	// checkErr will be non-nil if the response code was not StatusOK.
+	// Returning it here ensures that the error handler will be called.
+	return false, checkErr
 }
 
 func backoff(min, max time.Duration, attemptNum int, resp *http.Response) time.Duration {

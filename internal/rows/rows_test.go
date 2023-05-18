@@ -832,6 +832,40 @@ func TestRowsCloseOptimization(t *testing.T) {
 	assert.Equal(t, 0, closeCount)
 }
 
+type fetch struct {
+	direction      cli_service.TFetchOrientation
+	resultStartRec int
+}
+
+func TestFetchResultsWithRetries(t *testing.T) {
+	t.Parallel()
+
+	// Simulate a scenario where network issues and retries cause unexpected jumps
+	// across multiple result pages.
+	fetches := []fetch{}
+
+	client := getRowsTestSimpleClient2(&fetches)
+	rowSet := &rows{client: client, hasMoreRows: true}
+
+	// next row number is zero so should fetch first result page
+	err := rowSet.fetchResultPage()
+	assert.Nil(t, err)
+	assert.Len(t, fetches, 1)
+	assert.Equal(t, fetches[0].direction, cli_service.TFetchOrientation_FETCH_NEXT)
+
+	// row number four is still in the first page so there should be no calls to fetch
+	rowSet.nextRowNumber = 4
+	err = rowSet.fetchResultPage()
+	assert.Nil(t, err)
+	assert.Len(t, fetches, 1)
+
+	rowSet.nextRowNumber = 5
+	err = rowSet.fetchResultPage()
+	assert.Nil(t, err)
+	assert.Len(t, fetches, 5)
+
+}
+
 type rowTestPagingResult struct {
 	getMetadataCount  int
 	fetchResultsCount int
@@ -1236,6 +1270,105 @@ func getRowsTestSimpleClient(getMetadataCount, fetchResultsCount *int) cli_servi
 		}
 
 		return pages[pageIndex], nil
+	}
+
+	client := &client.TestClient{
+		FnGetResultSetMetadata: getMetadata,
+		FnFetchResults:         fetchResults,
+	}
+
+	return client
+}
+
+// Build a simple test client
+func getRowsTestSimpleClient2(fetches *[]fetch) cli_service.TCLIService {
+	// Metadata for the different types is based on the results returned when querying a table with
+	// all the different types which was created in a test shard.
+	metadata := &cli_service.TGetResultSetMetadataResp{
+		Status: &cli_service.TStatus{
+			StatusCode: cli_service.TStatusCode_SUCCESS_STATUS,
+		},
+		Schema: &cli_service.TTableSchema{
+			Columns: []*cli_service.TColumnDesc{
+				{
+					ColumnName: "bool_col",
+					TypeDesc: &cli_service.TTypeDesc{
+						Types: []*cli_service.TTypeEntry{
+							{
+								PrimitiveEntry: &cli_service.TPrimitiveTypeEntry{
+									Type: cli_service.TTypeId_BOOLEAN_TYPE,
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	getMetadata := func(ctx context.Context, req *cli_service.TGetResultSetMetadataReq) (_r *cli_service.TGetResultSetMetadataResp, _err error) {
+		return metadata, nil
+	}
+
+	moreRows := true
+	noMoreRows := false
+	colVals := []*cli_service.TColumn{{BoolVal: &cli_service.TBoolColumn{Values: []bool{true, false, true, false, true}}}}
+
+	pages := []*cli_service.TFetchResultsResp{
+		{
+			Status: &cli_service.TStatus{
+				StatusCode: cli_service.TStatusCode_SUCCESS_STATUS,
+			},
+			HasMoreRows: &moreRows,
+			Results: &cli_service.TRowSet{
+				StartRowOffset: 0,
+				Columns:        colVals,
+			},
+		},
+		{
+			Status: &cli_service.TStatus{
+				StatusCode: cli_service.TStatusCode_SUCCESS_STATUS,
+			},
+			HasMoreRows: &moreRows,
+			Results: &cli_service.TRowSet{
+				StartRowOffset: 5,
+				Columns:        colVals,
+			},
+		},
+		{
+			Status: &cli_service.TStatus{
+				StatusCode: cli_service.TStatusCode_SUCCESS_STATUS,
+			},
+			HasMoreRows: &noMoreRows,
+			Results: &cli_service.TRowSet{
+				StartRowOffset: 10,
+				Columns:        colVals,
+			},
+		},
+		{
+			Status: &cli_service.TStatus{
+				StatusCode: cli_service.TStatusCode_SUCCESS_STATUS,
+			},
+			HasMoreRows: &noMoreRows,
+			Results: &cli_service.TRowSet{
+				StartRowOffset: 15,
+				Columns:        []*cli_service.TColumn{},
+			},
+		},
+	}
+
+	// We are simulating the scenario where network errors and retry behaviour cause the fetch
+	// result request to be sent multiple times, resulting in jumping past the next/previous result
+	// page. Behaviour should be robust enough to handle this by changing the fetch orientation.
+	pageSequence := []int{0, 3, 2, 0, 1, 2}
+	pageIndex := -1
+
+	fetchResults := func(ctx context.Context, req *cli_service.TFetchResultsReq) (_r *cli_service.TFetchResultsResp, _err error) {
+		pageIndex++
+
+		p := pages[pageSequence[pageIndex]]
+		*fetches = append(*fetches, fetch{direction: req.Orientation, resultStartRec: int(p.Results.StartRowOffset)})
+		return p, nil
 	}
 
 	client := &client.TestClient{

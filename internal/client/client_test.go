@@ -84,8 +84,8 @@ func TestRetryPolicy(t *testing.T) {
 
 		nonRetryableCodes := []int{200, 300, 400, 501}
 
-		idempotentOps := []clientMethod{closeSession, getResultSetMetadata, getOperationStatus, closeOperation, cancelOperation}
-		nonIdempotentOps := []clientMethod{openSession, fetchResults, executeStatement}
+		idempotentOps := []clientMethod{closeSession, getResultSetMetadata, getOperationStatus, closeOperation, cancelOperation, fetchResults}
+		nonIdempotentOps := []clientMethod{openSession, executeStatement}
 
 		cancelled, cancel := context.WithCancel(context.Background())
 		cancel()
