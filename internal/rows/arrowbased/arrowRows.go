@@ -701,6 +701,9 @@ func (vcm *arrowValueContainerMaker) makeColumnValueContainer(t arrow.DataType, 
 
 		return svc, nil
 
+	case *arrow.NullType:
+		return nullContainer, nil
+
 	default:
 		return nil, errors.Errorf(errArrowRowsUnhandledArrowType(t.String()))
 	}

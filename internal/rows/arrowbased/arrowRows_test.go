@@ -1210,21 +1210,21 @@ func TestArrowRowScanner(t *testing.T) {
 		// array_interval_ym array<interval year>,
 		// array_interval_dt array<interval day>
 		expected := []driver.Value{
-			"[true,false,false]",
-			"[1,2,0,3]",
-			"[4,5,0,6]",
-			"[7,8,0,9]",
-			"[10,11,0,12]",
-			"[0,1.1,2.2]",
-			"[3.3,0,4.4]",
-			"[\"s1\",\"s2\",\"\"]",
-			"[\"2021-07-01 05:43:28 +0000 UTC\",\"-2022-08-13 14:01:01 +0000 UTC\",\"1970-01-01 00:00:00 +0000 UTC\"]",
-			"[\"Gr8=\",\"D/8=\",\"\"]",
-			"[[1,2,3],[4,5,6],[]]",
-			"[{\"key1\":1,\"key2\":2},{\"key1\":1,\"key2\":2},{}]",
-			"[{\"Field1\":77,\"Field2\":\"2020-12-31 00:00:00 +0000 UTC\"},{\"Field1\":13,\"Field2\":\"-2020-12-31 00:00:00 +0000 UTC\"},{\"Field1\":0,\"Field2\":\"1970-01-01 00:00:00 +0000 UTC\"}]",
-			"[5.15,123.45,0]",
-			"[\"2020-12-31 00:00:00 +0000 UTC\",\"-2020-12-31 00:00:00 +0000 UTC\",\"1970-01-01 00:00:00 +0000 UTC\"]",
+			"[true,false,null]",
+			"[1,2,null,3]",
+			"[4,5,null,6]",
+			"[7,8,null,9]",
+			"[10,11,null,12]",
+			"[null,1.1,2.2]",
+			"[3.3,null,4.4]",
+			"[\"s1\",\"s2\",null]",
+			"[\"2021-07-01 05:43:28 +0000 UTC\",\"-2022-08-13 14:01:01 +0000 UTC\",null]",
+			"[\"Gr8=\",\"D/8=\",null]",
+			"[[1,2,3],[4,5,6],null]",
+			"[{\"key1\":1,\"key2\":2},{\"key1\":1,\"key2\":2},null]",
+			"[{\"Field1\":77,\"Field2\":\"2020-12-31 00:00:00 +0000 UTC\"},{\"Field1\":13,\"Field2\":\"-2020-12-31 00:00:00 +0000 UTC\"},{\"Field1\":null,\"Field2\":null}]",
+			"[5.15,123.45,null]",
+			"[\"2020-12-31 00:00:00 +0000 UTC\",\"-2020-12-31 00:00:00 +0000 UTC\",null]",
 		}
 
 		executeStatementResp := cli_service.TExecuteStatementResp{}
@@ -1319,6 +1319,36 @@ func TestArrowRowScanner(t *testing.T) {
 
 	})
 
+	t.Run("Retrieve null values in complex types", func(t *testing.T) {
+		// results of executing query:
+		// "select map('red', NULL, 'green', NULL) as sample_map, named_struct('Field1', NULL, 'Field2', NULL) as sample_struct, ARRAY(NULL, NULL, NULL) as sample_list"
+		executeStatementResp := cli_service.TExecuteStatementResp{}
+		loadTestData(t, "nullsInComplexTypes.json", &executeStatementResp)
+
+		expected := []driver.Value{
+			"{\"red\":null,\"green\":null}",
+			"{\"Field1\":null,\"Field2\":null}",
+			"[null,null,null]",
+		}
+
+		config := config.WithDefaults()
+		config.UseArrowNativeTimestamp = true
+		config.UseArrowNativeComplexTypes = true
+		config.UseArrowNativeDecimal = false
+		config.UseArrowNativeIntervalTypes = false
+		d, err := NewArrowRowScanner(executeStatementResp.DirectResults.ResultSetMetadata, executeStatementResp.DirectResults.ResultSet.Results, config, nil, context.Background())
+		assert.Nil(t, err)
+
+		ars := d.(*arrowRowScanner)
+
+		dest := make([]driver.Value, len(executeStatementResp.DirectResults.ResultSetMetadata.Schema.Columns))
+		err = ars.ScanRow(dest, 0)
+		assert.Nil(t, err)
+
+		for i := range expected {
+			assert.Equal(t, expected[i], dest[i])
+		}
+	})
 }
 
 type fakeColumnValues struct {

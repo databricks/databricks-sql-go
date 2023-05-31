@@ -1,0 +1,106 @@
+{
+ "status": {
+  "statusCode": "SUCCESS_STATUS"
+ },
+ "operationHandle": {
+  "operationId": {
+   "guid": "Ae3/5kgLHHCdBXUYvmHrVA==",
+   "secret": "M41SnYJyRuuEgstBlGaDnQ=="
+  },
+  "operationType": "EXECUTE_STATEMENT",
+  "hasResultSet": true
+ },
+ "directResults": {
+  "operationStatus": {
+   "status": {
+    "statusCode": "SUCCESS_STATUS"
+   },
+   "operationState": "FINISHED_STATE",
+   "operationStarted": 1685560003513,
+   "operationCompleted": 1685560003570
+  },
+  "resultSetMetadata": {
+   "status": {
+    "statusCode": "SUCCESS_STATUS"
+   },
+   "schema": {
+    "columns": [
+     {
+      "columnName": "sample_map",
+      "typeDesc": {
+       "types": [
+        {
+         "primitiveEntry": {
+          "type": "MAP_TYPE"
+         }
+        }
+       ]
+      },
+      "position": 1,
+      "comment": ""
+     },
+     {
+      "columnName": "sample_struct",
+      "typeDesc": {
+       "types": [
+        {
+         "primitiveEntry": {
+          "type": "STRUCT_TYPE"
+         }
+        }
+       ]
+      },
+      "position": 2,
+      "comment": ""
+     },
+     {
+      "columnName": "sample_list",
+      "typeDesc": {
+       "types": [
+        {
+         "primitiveEntry": {
+          "type": "ARRAY_TYPE"
+         }
+        }
+       ]
+      },
+      "position": 3,
+      "comment": ""
+     }
+    ]
+   },
+   "resultFormat": "ARROW_BASED_SET",
+   "lz4Compressed": false,
+   "arrowSchema": "/////9gEAAAQAAAAAAAKAA4ABgANAAgACgAAAAAABAAQAAAAAAEKAAwAAAAIAAQACgAAAAgAAAAIAAAAAAAAAAMAAADcAgAAGAEAAAQAAADW+///FAAAALwAAADwAAAAAAAADOwAAAACAAAAcAAAAAQAAAC0/P//CAAAAEQAAAA5AAAAeyJ0eXBlIjoiYXJyYXkiLCJlbGVtZW50VHlwZSI6InZvaWQiLCJjb250YWluc051bGwiOnRydWV9AAAAFwAAAFNwYXJrOkRhdGFUeXBlOkpzb25UeXBlABz9//8IAAAAFAAAAAsAAABBUlJBWTxWT0lEPgAWAAAAU3Bhcms6RGF0YVR5cGU6U3FsTmFtZQAAAQAAAAQAAADi/P//FAAAABQAAAAUAAAAAAABARAAAAAAAAAAAAAAAHT8//8HAAAAZWxlbWVudACE/P//CwAAAHNhbXBsZV9saXN0AOb8//8UAAAANAEAAJwBAAAAAAANmAEAAAIAAADQAAAABAAAAMT9//8IAAAApAAAAJgAAAB7InR5cGUiOiJzdHJ1Y3QiLCJmaWVsZHMiOlt7Im5hbWUiOiJGaWVsZDEiLCJ0eXBlIjoidm9pZCIsIm51bGxhYmxlIjp0cnVlLCJtZXRhZGF0YSI6e319LHsibmFtZSI6IkZpZWxkMiIsInR5cGUiOiJ2b2lkIiwibnVsbGFibGUiOnRydWUsIm1ldGFkYXRhIjp7fX1dfQAAAAAXAAAAU3Bhcms6RGF0YVR5cGU6SnNvblR5cGUAjP7//wgAAAAsAAAAIgAAAFNUUlVDVDxGaWVsZDE6IFZPSUQsIEZpZWxkMjogVk9JRD4AABYAAABTcGFyazpEYXRhVHlwZTpTcWxOYW1lAAACAAAAOAAAAAQAAABu/v//FAAAABQAAAAUAAAAAAABARAAAAAAAAAAAAAAAAD+//8GAAAARmllbGQyAACe/v//FAAAABQAAAAUAAAAAAABARAAAAAAAAAAAAAAADD+//8GAAAARmllbGQxAABA/v//DQAAAHNhbXBsZV9zdHJ1Y3QAAACm/v//FAAAAOAAAACgAQAAAAAAEZwBAAACAAAAjAAAAAQAAACE////CAAAAFgAAABNAAAAeyJ0eXBlIjoibWFwIiwia2V5VHlwZSI6InN0cmluZyIsInZhbHVlVHlwZSI6InZvaWQiLCJ2YWx1ZUNvbnRhaW5zTnVsbCI6dHJ1ZX0AAAAXAAAAU3Bhcms6RGF0YVR5cGU6SnNvblR5cGUACAAMAAgABAAIAAAACAAAABwAAAARAAAATUFQPFNUUklORywgVk9JRD4AAAAWAAAAU3Bhcms6RGF0YVR5cGU6U3FsTmFtZQAAAQAAAAQAAACW////FAAAABQAAACcAAAAAAAADZgAAAAAAAAAAgAAAFwAAAAYAAAAAAASABgAFAATABIADAAAAAgABAASAAAAFAAAABQAAAAUAAAAAAABARAAAAAAAAAAAAAAAKT///8FAAAAdmFsdWUAEgAYABQAAAATAAwAAAAIAAQAEgAAABQAAAAUAAAAFAAAAAAAAAUQAAAAAAAAAAAAAADk////AwAAAGtleQDw////BwAAAGVudHJpZXMABAAEAAQAAAAKAAAAc2FtcGxlX21hcAAA",
+   "cacheLookupResult": "CACHE_INELIGIBLE",
+   "uncompressedBytes": 464,
+   "compressedBytes": 464
+  },
+  "resultSet": {
+   "status": {
+    "statusCode": "SUCCESS_STATUS"
+   },
+   "hasMoreRows": false,
+   "results": {
+    "startRowOffset": 0,
+    "rows": [],
+    "arrowBatches": [
+     {
+      "batch": "/////3gBAAAUAAAAAAAAAAwAFgAOABUAEAAEAAwAAABQAAAAAAAAAAAABAAQAAAAAAMKABgADAAIAAQACgAAABQAAACoAAAAAQAAAAAAAAAAAAAACQAAAAAAAAAAAAAAAQAAAAAAAAAIAAAAAAAAAAgAAAAAAAAAEAAAAAAAAAABAAAAAAAAABgAAAAAAAAAAQAAAAAAAAAgAAAAAAAAAAwAAAAAAAAAMAAAAAAAAAAIAAAAAAAAADgAAAAAAAAAAQAAAAAAAABAAAAAAAAAAAEAAAAAAAAASAAAAAAAAAAIAAAAAAAAAAAAAAAJAAAAAQAAAAAAAAAAAAAAAAAAAAIAAAAAAAAAAAAAAAAAAAACAAAAAAAAAAAAAAAAAAAAAgAAAAAAAAACAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAEAAAAAAAAAAQAAAAAAAAABAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAADAAAAAAAAAAMAAAAAAAAAAQAAAAAAAAAAAAAAAgAAAAMAAAAAAAAAAwAAAAAAAAAAAAAAAwAAAAgAAAAAAAAAcmVkZ3JlZW4BAAAAAAAAAAEAAAAAAAAAAAAAAAMAAAA=",
+      "rowCount": 1
+     }
+    ]
+   }
+  },
+  "closeOperation": {
+   "status": {
+    "statusCode": "SUCCESS_STATUS"
+   }
+  }
+ },
+ "executionRejected": false,
+ "maxClusterCapacity": 280,
+ "queryCost": 0.5,
+ "currentClusterLoad": 1,
+ "idempotencyType": "IDEMPOTENT"
+}
