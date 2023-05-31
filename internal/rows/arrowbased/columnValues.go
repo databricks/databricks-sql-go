@@ -135,19 +135,24 @@ func (lvc *listValueContainer) Value(i int) (any, error) {
 		len := int(e - s)
 
 		for i := 0; i < len; i++ {
-			val, err := lvc.values.Value(i + int(s))
-			if err != nil {
-				return nil, err
-			}
+			if lvc.values.IsNull(i + int(s)) {
+				r = r + "null"
+			} else {
 
-			if !lvc.complexValue {
-				vb, err := marshal(val)
+				val, err := lvc.values.Value(i + int(s))
 				if err != nil {
 					return nil, err
 				}
-				r = r + string(vb)
-			} else {
-				r = r + val.(string)
+
+				if !lvc.complexValue {
+					vb, err := marshal(val)
+					if err != nil {
+						return nil, err
+					}
+					r = r + string(vb)
+				} else {
+					r = r + val.(string)
+				}
 			}
 
 			if i < len-1 {
@@ -204,18 +209,20 @@ func (mvc *mapValueContainer) Value(i int) (any, error) {
 				return nil, err
 			}
 
-			v, err := mvc.values.Value(int(i))
-			if err != nil {
-				return nil, err
-			}
-
 			key, err := marshal(k)
 			if err != nil {
 				return nil, err
 			}
 
+			v, err := mvc.values.Value(int(i))
+			if err != nil {
+				return nil, err
+			}
+
 			var b string
-			if mvc.complexValue {
+			if mvc.values.IsNull(int(i)) {
+				b = "null"
+			} else if mvc.complexValue {
 				b = v.(string)
 			} else {
 				vb, err := marshal(v)
@@ -288,23 +295,27 @@ func (svc *structValueContainer) Value(i int) (any, error) {
 		for j := range svc.fieldValues {
 			r = r + "\"" + svc.fieldNames[j] + "\":"
 
-			v, err := svc.fieldValues[j].Value(int(i))
-			if err != nil {
-				return nil, err
-			}
-
-			var b string
-			if svc.complexValue[j] {
-				b = v.(string)
+			if svc.fieldValues[j].IsNull(int(i)) {
+				r = r + "null"
 			} else {
-				vb, err := marshal(v)
+				v, err := svc.fieldValues[j].Value(int(i))
 				if err != nil {
 					return nil, err
 				}
-				b = string(vb)
-			}
 
-			r = r + b
+				var b string
+				if svc.complexValue[j] {
+					b = v.(string)
+				} else {
+					vb, err := marshal(v)
+					if err != nil {
+						return nil, err
+					}
+					b = string(vb)
+				}
+
+				r = r + b
+			}
 			if j < len(svc.fieldValues)-1 {
 				r = r + ","
 			}
@@ -472,4 +483,26 @@ func marshal(val any) ([]byte, error) {
 	}
 	vb, err := json.Marshal(val)
 	return vb, err
+}
+
+var nullContainer *nullContainer_ = &nullContainer_{}
+
+type nullContainer_ struct {
+}
+
+var _ columnValues = (*nullContainer_)(nil)
+
+func (tvc *nullContainer_) Value(i int) (any, error) {
+	return nil, nil
+}
+
+func (tvc *nullContainer_) IsNull(i int) bool {
+	return true
+}
+
+func (tvc *nullContainer_) Release() {
+}
+
+func (tvc *nullContainer_) SetValueArray(colData arrow.ArrayData) error {
+	return nil
 }
