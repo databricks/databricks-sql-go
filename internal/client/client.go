@@ -319,7 +319,7 @@ func isRetryableServerResponse(resp *http.Response) bool {
 }
 
 type Transport struct {
-	Base  *http.Transport
+	Base  http.RoundTripper
 	Authr auth.Authenticator
 	trace bool
 }
@@ -396,10 +396,20 @@ func PooledClient(cfg *config.Config) *http.Client {
 	if cfg.Authenticator == nil {
 		return nil
 	}
-	tr := &Transport{
-		Base:  PooledTransport(),
-		Authr: cfg.Authenticator,
+
+	var tr *Transport
+	if cfg.Transport != nil {
+		tr = &Transport{
+			Base:  cfg.Transport,
+			Authr: cfg.Authenticator,
+		}
+	} else {
+		tr = &Transport{
+			Base:  PooledTransport(),
+			Authr: cfg.Authenticator,
+		}
 	}
+
 	return &http.Client{
 		Transport: tr,
 		Timeout:   cfg.ClientTimeout,

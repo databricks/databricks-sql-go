@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
@@ -97,6 +98,7 @@ type UserConfig struct {
 	RetryWaitMin   time.Duration
 	RetryWaitMax   time.Duration
 	RetryMax       int
+	Transport      http.RoundTripper
 }
 
 // DeepCopy returns a true deep copy of UserConfig
@@ -135,6 +137,7 @@ func (ucfg UserConfig) DeepCopy() UserConfig {
 		RetryWaitMin:   ucfg.RetryWaitMin,
 		RetryWaitMax:   ucfg.RetryWaitMax,
 		RetryMax:       ucfg.RetryMax,
+		Transport:      ucfg.Transport,
 	}
 }
 

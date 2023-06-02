@@ -214,3 +214,10 @@ func WithAuthenticator(authr auth.Authenticator) connOption {
 		c.Authenticator = authr
 	}
 }
+
+// WithTransport sets up the transport configuration to be used by the httpclient.
+func WithTransport(t http.RoundTripper) connOption {
+	return func(c *config.Config) {
+		c.Transport = t
+	}
+}
