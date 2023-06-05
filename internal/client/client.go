@@ -45,8 +45,11 @@ const (
 
 type clientMethod int
 
+//go:generate go run golang.org/x/tools/cmd/stringer -type=clientMethod
+
 const (
-	openSession clientMethod = iota
+	unknown clientMethod = iota
+	openSession
 	closeSession
 	fetchResults
 	getResultSetMetadata
@@ -56,7 +59,9 @@ const (
 	cancelOperation
 )
 
-var nonRetryableClientMethods map[clientMethod]any = map[clientMethod]any{executeStatement: struct{}{}}
+var nonRetryableClientMethods map[clientMethod]any = map[clientMethod]any{
+	executeStatement: struct{}{},
+	unknown:          struct{}{}}
 
 // OpenSession is a wrapper around the thrift operation OpenSession
 // If RecordResults is true, the results will be marshalled to JSON format and written to OpenSession<index>.json
@@ -314,6 +319,10 @@ func SprintGuid(bts []byte) string {
 var retryableStatusCodes = map[int]any{http.StatusTooManyRequests: struct{}{}, http.StatusServiceUnavailable: struct{}{}}
 
 func isRetryableServerResponse(resp *http.Response) bool {
+	if resp == nil {
+		return false
+	}
+
 	_, ok := retryableStatusCodes[resp.StatusCode]
 	return ok
 }
@@ -488,28 +497,23 @@ func RetryPolicy(ctx context.Context, resp *http.Response, err error) (bool, err
 		return false, ctx.Err()
 	}
 
-	if err != nil {
-		if v, ok := err.(*url.Error); ok {
-			s := v.Error()
-			for _, re := range errorRes {
-				if re.MatchString(s) {
-					return false, v
-				}
-			}
+	caller, _ := ctx.Value(ClientMethod).(clientMethod)
+	_, nonRetryableClientMethod := nonRetryableClientMethods[caller]
 
-			if _, ok := v.Err.(x509.UnknownAuthorityError); ok {
-				return false, v
-			}
+	if err != nil {
+		if isRetryableError(err) && !nonRetryableClientMethod {
+			return true, nil
 		}
 
-		// The error is likely recoverable so retry.
-		return true, nil
+		return false, err
 	}
 
-	var checkErr error
-	if resp.StatusCode != http.StatusOK {
-		checkErr = fmt.Errorf("unexpected HTTP status %s", resp.Status)
+	// shouldn't retry on no response or success
+	if resp == nil || resp.StatusCode == http.StatusOK {
+		return false, nil
 	}
+
+	checkErr := fmt.Errorf("unexpected HTTP status %s", resp.Status)
 
 	// 429 Too Many Requests or 503 service unavailable is recoverable. Sometimes the server puts
 	// a Retry-After response header to indicate when the server is
@@ -523,18 +527,35 @@ func RetryPolicy(ctx context.Context, resp *http.Response, err error) (bool, err
 		return true, dbsqlerrint.NewRetryableError(checkErr, retryAfter)
 	}
 
-	if resp.StatusCode == 0 || (resp.StatusCode >= 500 && resp.StatusCode != http.StatusNotImplemented) {
-		callerAny := ctx.Value(ClientMethod)
-		if caller, ok := callerAny.(clientMethod); ok {
-			if _, noRetry := nonRetryableClientMethods[caller]; !noRetry {
-				return true, checkErr
-			}
-		}
+	if !nonRetryableClientMethod && (resp.StatusCode == 0 || (resp.StatusCode >= 500 && resp.StatusCode != http.StatusNotImplemented)) {
+		return true, checkErr
 	}
 
 	// checkErr will be non-nil if the response code was not StatusOK.
 	// Returning it here ensures that the error handler will be called.
 	return false, checkErr
+}
+
+func isRetryableError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	if v, ok := err.(*url.Error); ok {
+		s := v.Error()
+		for _, re := range errorRes {
+			if re.MatchString(s) {
+				return false
+			}
+		}
+
+		if _, ok := v.Err.(x509.UnknownAuthorityError); ok {
+			return false
+		}
+	}
+
+	// The error is likely recoverable so retry.
+	return true
 }
 
 func backoff(min, max time.Duration, attemptNum int, resp *http.Response) time.Duration {
