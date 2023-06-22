@@ -103,41 +103,13 @@ func NewArrowRowScanner(resultSetMetadata *cli_service.TGetResultSetMetadataResp
 		arrowConfig = cfg.ArrowConfig
 	}
 
-	var arrowSchema *arrow.Schema
-	schemaBytes := resultSetMetadata.ArrowSchema
-	if schemaBytes == nil {
-		var err error
-		// convert the TTableSchema to an arrow Schema
-		arrowSchema, err = tTableSchemaToArrowSchema(resultSetMetadata.Schema, &arrowConfig)
-		if err != nil {
-			logger.Err(err).Msg(errArrowRowsConvertSchema)
-			return nil, dbsqlerrint.NewDriverError(ctx, errArrowRowsConvertSchema, err)
-		}
-
-		// serialize the arrow schema
-		schemaBytes, err = getArrowSchemaBytes(arrowSchema, ctx)
-		if err != nil {
-			logger.Err(err).Msg(errArrowRowsSerializeSchema)
-			return nil, dbsqlerrint.NewDriverError(ctx, errArrowRowsSerializeSchema, err)
-		}
-	} else {
-		br := &chunkedByteReader{chunks: [][]byte{schemaBytes}}
-		rdr, err := ipc.NewReader(br)
-		if err != nil {
-			return nil, dbsqlerrint.NewDriverError(ctx, errArrowRowsUnableToReadBatch, err)
-		}
-		defer rdr.Release()
-
-		arrowSchema = rdr.Schema()
+	schemaBytes, arrowSchema, metadataErr := tGetResultSetMetadataRespToArrowSchema(resultSetMetadata, arrowConfig, ctx, logger)
+	if metadataErr != nil {
+		return nil, metadataErr
 	}
 
-	// get the database type names for each column
-	colInfos := make([]colInfo, len(resultSetMetadata.Schema.Columns))
-	for i := range resultSetMetadata.Schema.Columns {
-		col := resultSetMetadata.Schema.Columns[i]
-		field := arrowSchema.Field(i)
-		colInfos[i] = colInfo{name: field.Name, arrowType: field.Type, dbType: rowscanner.GetDBType(col)}
-	}
+	// Create column info
+	colInfos := getColumnInfo(arrowSchema, resultSetMetadata.Schema)
 
 	// get the function for converting arrow timestamps to a time.Time
 	// time values from the server are returned as UTC with microsecond precision
@@ -551,6 +523,61 @@ func tColumnDescToArrowField(columnDesc *cli_service.TColumnDesc, arrowConfig *c
 	}
 
 	return arrowField, nil
+}
+
+// Build a slice of columnInfo using the arrow schema and the thrift schema
+func getColumnInfo(arrowSchema *arrow.Schema, schema *cli_service.TTableSchema) []colInfo {
+	if arrowSchema == nil || schema == nil {
+		return []colInfo{}
+	}
+
+	nFields := len(arrowSchema.Fields())
+	if len(schema.Columns) < nFields {
+		nFields = len(schema.Columns)
+	}
+
+	colInfos := make([]colInfo, nFields)
+	for i := 0; i < nFields; i++ {
+		col := schema.Columns[i]
+		field := arrowSchema.Field(i)
+		colInfos[i] = colInfo{name: field.Name, arrowType: field.Type, dbType: rowscanner.GetDBType(col)}
+	}
+
+	return colInfos
+}
+
+// Derive an arrow.Schema object and the corresponding serialized bytes from TGetResultSetMetadataResp
+func tGetResultSetMetadataRespToArrowSchema(resultSetMetadata *cli_service.TGetResultSetMetadataResp, arrowConfig config.ArrowConfig, ctx context.Context, logger *dbsqllog.DBSQLLogger) ([]byte, *arrow.Schema, dbsqlerr.DBError) {
+
+	var arrowSchema *arrow.Schema
+	schemaBytes := resultSetMetadata.ArrowSchema
+	if schemaBytes == nil {
+		var err error
+		// convert the TTableSchema to an arrow Schema
+		arrowSchema, err = tTableSchemaToArrowSchema(resultSetMetadata.Schema, &arrowConfig)
+		if err != nil {
+			logger.Err(err).Msg(errArrowRowsConvertSchema)
+			return nil, nil, dbsqlerrint.NewDriverError(ctx, errArrowRowsConvertSchema, err)
+		}
+
+		// serialize the arrow schema
+		schemaBytes, err = getArrowSchemaBytes(arrowSchema, ctx)
+		if err != nil {
+			logger.Err(err).Msg(errArrowRowsSerializeSchema)
+			return nil, nil, dbsqlerrint.NewDriverError(ctx, errArrowRowsSerializeSchema, err)
+		}
+	} else {
+		br := &chunkedByteReader{chunks: [][]byte{schemaBytes}}
+		rdr, err := ipc.NewReader(br)
+		if err != nil {
+			return nil, nil, dbsqlerrint.NewDriverError(ctx, errArrowRowsUnableToReadBatch, err)
+		}
+		defer rdr.Release()
+
+		arrowSchema = rdr.Schema()
+	}
+
+	return schemaBytes, arrowSchema, nil
 }
 
 type sparkRecordReader struct{}

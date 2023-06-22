@@ -1349,6 +1349,75 @@ func TestArrowRowScanner(t *testing.T) {
 			assert.Equal(t, expected[i], dest[i])
 		}
 	})
+
+	t.Run("Mismatched schemas", func(t *testing.T) {
+		// Test for
+		var arrowSchema *arrow.Schema
+		var schema *cli_service.TTableSchema
+		colInfos := getColumnInfo(arrowSchema, schema)
+		assert.NotNil(t, colInfos)
+		assert.Zero(t, len(colInfos))
+
+		arrowSchema = &arrow.Schema{}
+		colInfos = getColumnInfo(arrowSchema, schema)
+		assert.NotNil(t, colInfos)
+		assert.Zero(t, len(colInfos))
+
+		arrowSchema = nil
+		schema = &cli_service.TTableSchema{}
+		colInfos = getColumnInfo(arrowSchema, schema)
+		assert.NotNil(t, colInfos)
+		assert.Zero(t, len(colInfos))
+
+		arrowSchema = &arrow.Schema{}
+		schema.Columns = []*cli_service.TColumnDesc{{ColumnName: "Result"}}
+		colInfos = getColumnInfo(arrowSchema, schema)
+		assert.NotNil(t, colInfos)
+		assert.Zero(t, len(colInfos))
+
+		schema.Columns = nil
+		arrowSchema = arrow.NewSchema([]arrow.Field{{Name: "Result", Type: arrow.PrimitiveTypes.Int16}}, nil)
+		colInfos = getColumnInfo(arrowSchema, schema)
+		assert.NotNil(t, colInfos)
+		assert.Zero(t, len(colInfos))
+
+		schema.Columns = []*cli_service.TColumnDesc{
+			{
+				ColumnName: "Result",
+				TypeDesc: &cli_service.TTypeDesc{
+					Types: []*cli_service.TTypeEntry{
+						{
+							PrimitiveEntry: &cli_service.TPrimitiveTypeEntry{
+								Type: cli_service.TTypeId_BOOLEAN_TYPE,
+							},
+						},
+					},
+				},
+			},
+			{
+				ColumnName: "Result2",
+			},
+		}
+		colInfos = getColumnInfo(arrowSchema, schema)
+		assert.NotNil(t, colInfos)
+		assert.Equal(t, 1, len(colInfos))
+		assert.Equal(t, "Result", colInfos[0].name)
+		assert.Equal(t, cli_service.TTypeId_BOOLEAN_TYPE, colInfos[0].dbType)
+		assert.Equal(t, arrow.PrimitiveTypes.Int16, colInfos[0].arrowType)
+
+		// results of executing query:
+		// "create or replace view hive_metastore.databricks_sql_go.test as select 1"
+		// using DB.Query() instead of DB.Exec()
+		executeStatementResp := cli_service.TExecuteStatementResp{}
+		loadTestData(t, "queryVExec.json", &executeStatementResp)
+		config := config.WithDefaults()
+		config.UseArrowNativeTimestamp = true
+		config.UseArrowNativeComplexTypes = true
+		config.UseArrowNativeDecimal = false
+		config.UseArrowNativeIntervalTypes = false
+		_, err := NewArrowRowScanner(executeStatementResp.DirectResults.ResultSetMetadata, executeStatementResp.DirectResults.ResultSet.Results, config, nil, context.Background())
+		assert.Nil(t, err)
+	})
 }
 
 type fakeColumnValues struct {
