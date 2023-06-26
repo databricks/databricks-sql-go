@@ -1,0 +1,72 @@
+{
+ "status": {
+  "statusCode": "SUCCESS_STATUS"
+ },
+ "operationHandle": {
+  "operationId": {
+   "guid": "Ae4RVsJdEj6Egpavp/LAJA==",
+   "secret": "M41SnYJyRuuEgstBlGaDnQ=="
+  },
+  "operationType": "EXECUTE_STATEMENT",
+  "hasResultSet": true
+ },
+ "directResults": {
+  "operationStatus": {
+   "status": {
+    "statusCode": "SUCCESS_STATUS"
+   },
+   "operationState": "FINISHED_STATE",
+   "operationStarted": 1687477482139,
+   "operationCompleted": 1687477484937
+  },
+  "resultSetMetadata": {
+   "status": {
+    "statusCode": "SUCCESS_STATUS"
+   },
+   "schema": {
+    "columns": [
+     {
+      "columnName": "Result",
+      "typeDesc": {
+       "types": [
+        {
+         "primitiveEntry": {
+          "type": "STRING_TYPE"
+         }
+        }
+       ]
+      },
+      "position": 1,
+      "comment": ""
+     }
+    ]
+   },
+   "resultFormat": "ARROW_BASED_SET",
+   "lz4Compressed": false,
+   "arrowSchema": "/////0AAAAAQAAAAAAAKAA4ABgANAAgACgAAAAAABAAQAAAAAAEKAAwAAAAIAAQACgAAAAgAAAAIAAAAAAAAAAAAAAAAAAAA",
+   "cacheLookupResult": "CACHE_INELIGIBLE",
+   "uncompressedBytes": 0,
+   "compressedBytes": 0
+  },
+  "resultSet": {
+   "status": {
+    "statusCode": "SUCCESS_STATUS"
+   },
+   "hasMoreRows": false,
+   "results": {
+    "startRowOffset": 0,
+    "rows": []
+   }
+  },
+  "closeOperation": {
+   "status": {
+    "statusCode": "SUCCESS_STATUS"
+   }
+  }
+ },
+ "executionRejected": false,
+ "maxClusterCapacity": 10,
+ "queryCost": 0,
+ "currentClusterLoad": 0,
+ "idempotencyType": "NON_IDEMPOTENT"
+}
