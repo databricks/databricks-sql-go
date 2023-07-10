@@ -14,6 +14,7 @@ const (
 	QueryIdContextKey
 	QueryIdCallbackKey
 	ConnIdCallbackKey
+	UseLz4CompressionContextKey
 )
 
 type IdCallbackFunc func(string)
@@ -85,4 +86,21 @@ func NewContextWithQueryIdCallback(ctx context.Context, callback IdCallbackFunc)
 
 func NewContextWithConnIdCallback(ctx context.Context, callback IdCallbackFunc) context.Context {
 	return context.WithValue(ctx, ConnIdCallbackKey, callback)
+}
+
+// NewContextWithUseLz4Compression creates a new context with bool useLz4Compression value.
+func NewContextWithUseLz4Compression(ctx context.Context, useLz4Compression bool) context.Context {
+	return context.WithValue(ctx, UseLz4CompressionContextKey, useLz4Compression)
+}
+
+func UseLz4CompressionFromContext(ctx context.Context) bool {
+	if ctx == nil {
+		return false
+	}
+
+	useLz4Compression, ok := ctx.Value(UseLz4CompressionContextKey).(bool)
+	if !ok {
+		return false
+	}
+	return useLz4Compression
 }

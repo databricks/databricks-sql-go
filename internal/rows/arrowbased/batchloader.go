@@ -4,6 +4,9 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"github.com/databricks/databricks-sql-go/driverctx"
+	"github.com/pierrec/lz4/v4"
+	"io"
 
 	"net/http"
 
@@ -13,6 +16,10 @@ import (
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	dbsqlerrint "github.com/databricks/databricks-sql-go/internal/errors"
 	"github.com/databricks/databricks-sql-go/internal/fetcher"
+)
+
+const (
+	UseLz4CompressionKey string = "useLz4Compression"
 )
 
 type cloudURL struct {
@@ -36,7 +43,8 @@ func (cu *cloudURL) Fetch(ctx context.Context) ([]*sparkArrowBatch, error) {
 	var arrowSchema *arrow.Schema
 	var arrowBatches []*sparkArrowBatch
 
-	rdr, err := ipc.NewReader(bufio.NewReader(res.Body))
+	rdr, err := getArrowReader(ctx, res.Body)
+
 	if err != nil {
 		return nil, err
 	}
@@ -85,6 +93,29 @@ func (cu *cloudURL) Fetch(ctx context.Context) ([]*sparkArrowBatch, error) {
 	return arrowBatches, nil
 }
 
+func getArrowReader(ctx context.Context, rd io.Reader) (*ipc.Reader, error) {
+	if driverctx.UseLz4CompressionFromContext(ctx) {
+		return ipc.NewReader(lz4.NewReader(rd))
+	}
+	return ipc.NewReader(bufio.NewReader(rd))
+}
+
+func getArrowBatch(ctx context.Context, src []byte) ([]byte, error) {
+	if driverctx.UseLz4CompressionFromContext(ctx) {
+		srcBuffer := bytes.NewBuffer(src)
+		dstBuffer := bytes.NewBuffer(nil)
+
+		r := lz4.NewReader(srcBuffer)
+		_, err := io.Copy(dstBuffer, r)
+		if err != nil {
+			return nil, err
+		}
+
+		return dstBuffer.Bytes(), nil
+	}
+	return src, nil
+}
+
 var _ fetcher.FetchableItems[*sparkArrowBatch] = (*cloudURL)(nil)
 
 type localBatch struct {
@@ -95,11 +126,15 @@ type localBatch struct {
 var _ fetcher.FetchableItems[*sparkArrowBatch] = (*localBatch)(nil)
 
 func (lb *localBatch) Fetch(ctx context.Context) ([]*sparkArrowBatch, error) {
+	arrowBatchBytes, err := getArrowBatch(ctx, lb.Batch)
+	if err != nil {
+		return nil, err
+	}
 	batch := &sparkArrowBatch{
 		rowCount:         lb.RowCount,
 		startRow:         lb.startRow,
 		endRow:           lb.startRow + lb.RowCount - 1,
-		arrowRecordBytes: lb.Batch,
+		arrowRecordBytes: arrowBatchBytes,
 	}
 
 	return []*sparkArrowBatch{batch}, nil
