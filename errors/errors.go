@@ -1,6 +1,7 @@
 package errors
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/pkg/errors"
@@ -12,7 +13,6 @@ const (
 	ErrNotImplemented           = "not implemented"
 	ErrTransactionsNotSupported = "transactions are not supported"
 	ErrParametersNotSupported   = "query parameters are not supported"
-	ErrInvalidOperationState    = "invalid operation state. This should not have happened"
 	ErrReadQueryStatus          = "could not read query status"
 	ErrSentinelTimeout          = "sentinel timed out waiting for operation to complete"
 
@@ -32,6 +32,14 @@ const (
 	// Execution error messages (query failure)
 	ErrQueryExecution = "failed to execute query"
 )
+
+func ErrInvalidOperationState(state string) string {
+	return fmt.Sprintf("invalid operation state %s. This should not have happened", state)
+}
+
+func ErrUnexpectedOperationState(state string) string {
+	return fmt.Sprintf("unexpected operation state %s", state)
+}
 
 // value to be used with errors.Is() to determine if an error chain contains a request error
 var RequestError error = errors.New("Request Error")

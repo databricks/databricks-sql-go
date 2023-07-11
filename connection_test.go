@@ -161,7 +161,7 @@ func TestConn_executeStatement(t *testing.T) {
 			if opTest.err == "" {
 				assert.NoError(t, err)
 			} else {
-				assert.EqualError(t, err, "databricks: execution error: failed to execute query: "+opTest.err)
+				assert.EqualError(t, err, "databricks: execution error: failed to execute query: unexpected operation state "+opTest.state.String()+": "+opTest.err)
 			}
 			assert.Equal(t, 1, executeStatementCount)
 			assert.Equal(t, opTest.closeOperationCount, closeOperationCount)
