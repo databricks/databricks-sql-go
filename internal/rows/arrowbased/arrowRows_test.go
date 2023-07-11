@@ -211,16 +211,19 @@ func TestArrowRowScanner(t *testing.T) {
 		metadataResp := &cli_service.TGetResultSetMetadataResp{Schema: schema}
 
 		ars, err := NewArrowRowScanner(metadataResp, rowSet, nil, nil, context.Background())
-		assert.Nil(t, ars)
-		assert.ErrorContains(t, err, errArrowRowsNoArrowBatches)
+		assert.NotNil(t, ars)
+		assert.Nil(t, err)
+		assert.Equal(t, int64(0), ars.NRows())
 
 		rowSet.ArrowBatches = []*cli_service.TSparkArrowBatch{}
 		ars, err = NewArrowRowScanner(metadataResp, rowSet, nil, nil, context.Background())
-		assert.Nil(t, ars)
-		assert.ErrorContains(t, err, errArrowRowsNoArrowBatches)
+		assert.NotNil(t, ars)
+		assert.Nil(t, err)
+		assert.Equal(t, int64(0), ars.NRows())
 
 		rowSet.ArrowBatches = []*cli_service.TSparkArrowBatch{{RowCount: 2}, {RowCount: 3}}
 		ars, _ = NewArrowRowScanner(metadataResp, rowSet, nil, nil, context.Background())
+		assert.NotNil(t, ars)
 		assert.Equal(t, int64(5), ars.NRows())
 	})
 
@@ -395,15 +398,25 @@ func TestArrowRowScanner(t *testing.T) {
 
 	})
 
-	t.Run("Fail to create scanner when no batches are present", func(t *testing.T) {
+	t.Run("Fail to scan row when no batches are present", func(t *testing.T) {
 		rowSet := &cli_service.TRowSet{}
 		schema := getAllTypesSchema()
 		metadataResp := &cli_service.TGetResultSetMetadataResp{Schema: schema}
 
 		cfg := config.Config{}
 		cfg.UseArrowBatches = true
-		_, err1 := NewArrowRowScanner(metadataResp, rowSet, &cfg, nil, context.Background())
-		require.ErrorContains(t, err1, errArrowRowsNoArrowBatches)
+		d, err1 := NewArrowRowScanner(metadataResp, rowSet, &cfg, nil, context.Background())
+		require.Nil(t, err1)
+
+		var ars *arrowRowScanner = d.(*arrowRowScanner)
+
+		err := ars.makeColumnValuesContainers(ars)
+		require.Nil(t, err)
+
+		dest := make([]driver.Value, 1)
+		err = ars.ScanRow(dest, 0)
+		require.NotNil(t, err)
+		assert.True(t, strings.HasPrefix(err.Error(), "databricks: driver error: "+errArrowRowsInvalidRowIndex(0)))
 	})
 
 	t.Run("Close releases column values", func(t *testing.T) {

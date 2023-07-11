@@ -123,11 +123,9 @@ func NewArrowRowScanner(resultSetMetadata *cli_service.TGetResultSetMetadataResp
 	var err2 dbsqlerr.DBError
 	if len(rowSet.ResultLinks) > 0 {
 		bl, err2 = NewCloudBatchLoader(context.Background(), rowSet.ResultLinks)
-	} else if len(rowSet.ArrowBatches) > 0 {
-		bl, err2 = NewLocalBatchLoader(context.Background(), rowSet.ArrowBatches)
 	} else {
-		err2 = dbsqlerrint.NewDriverError(ctx, errArrowRowsNoArrowBatches, nil)
-	}
+		bl, err2 = NewLocalBatchLoader(context.Background(), rowSet.ArrowBatches)
+	} 
 
 	if err2 != nil {
 		return nil, err2
