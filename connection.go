@@ -200,7 +200,7 @@ func (c *conn) runQuery(ctx context.Context, query string, args []driver.NamedVa
 			cli_service.TOperationState_ERROR_STATE,
 			cli_service.TOperationState_TIMEDOUT_STATE:
 			logBadQueryState(log, opStatus)
-			return exStmtResp, opStatus, errors.New(opStatus.GetDisplayMessage())
+			return exStmtResp, opStatus, unexpectedOperationState(opStatus)
 		// live states
 		case cli_service.TOperationState_INITIALIZED_STATE,
 			cli_service.TOperationState_PENDING_STATE,
@@ -220,16 +220,16 @@ func (c *conn) runQuery(ctx context.Context, query string, args []driver.NamedVa
 				cli_service.TOperationState_ERROR_STATE,
 				cli_service.TOperationState_TIMEDOUT_STATE:
 				logBadQueryState(log, statusResp)
-				return exStmtResp, statusResp, dbsqlerrint.NewRequestError(ctx, dbsqlerr.ErrInvalidOperationState, nil)
+				return exStmtResp, statusResp, unexpectedOperationState(statusResp)
 				// live states
 			default:
 				logBadQueryState(log, statusResp)
-				return exStmtResp, statusResp, dbsqlerrint.NewDriverError(ctx, dbsqlerr.ErrInvalidOperationState, nil)
+				return exStmtResp, statusResp, invalidOperationState(ctx, statusResp)
 			}
 		// weird states
 		default:
 			logBadQueryState(log, opStatus)
-			return exStmtResp, opStatus, dbsqlerrint.NewDriverError(ctx, dbsqlerr.ErrInvalidOperationState, nil)
+			return exStmtResp, opStatus, invalidOperationState(ctx, opStatus)
 		}
 
 	} else {
@@ -248,18 +248,27 @@ func (c *conn) runQuery(ctx context.Context, query string, args []driver.NamedVa
 			cli_service.TOperationState_ERROR_STATE,
 			cli_service.TOperationState_TIMEDOUT_STATE:
 			logBadQueryState(log, statusResp)
-			return exStmtResp, statusResp, dbsqlerrint.NewDriverError(ctx, dbsqlerr.ErrInvalidOperationState, nil)
+			return exStmtResp, statusResp, unexpectedOperationState(statusResp)
 			// live states
 		default:
 			logBadQueryState(log, statusResp)
-			return exStmtResp, statusResp, dbsqlerrint.NewDriverError(ctx, dbsqlerr.ErrInvalidOperationState, nil)
+			return exStmtResp, statusResp, invalidOperationState(ctx, statusResp)
 		}
 	}
 }
 
 func logBadQueryState(log *logger.DBSQLLogger, opStatus *cli_service.TGetOperationStatusResp) {
 	log.Error().Msgf("databricks: query state: %s", opStatus.GetOperationState())
-	log.Error().Msg(opStatus.GetErrorMessage())
+	log.Error().Msg(opStatus.GetDisplayMessage())
+	log.Debug().Msg(opStatus.GetDiagnosticInfo())
+}
+
+func unexpectedOperationState(opStatus *cli_service.TGetOperationStatusResp) error {
+	return errors.WithMessage(errors.New(opStatus.GetDisplayMessage()), dbsqlerr.ErrUnexpectedOperationState(opStatus.GetOperationState().String()))
+}
+
+func invalidOperationState(ctx context.Context, opStatus *cli_service.TGetOperationStatusResp) error {
+	return dbsqlerrint.NewDriverError(ctx, dbsqlerr.ErrInvalidOperationState(opStatus.GetOperationState().String()), nil)
 }
 
 func (c *conn) executeStatement(ctx context.Context, query string, args []driver.NamedValue) (*cli_service.TExecuteStatementResp, error) {
