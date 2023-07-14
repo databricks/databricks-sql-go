@@ -17,9 +17,6 @@ var errArrowRowsMakeColumnValueContainers = "databricks: failed creating column 
 func errArrowRowsUnsupportedNativeType(t string) string {
 	return fmt.Sprintf("databricks: arrow native values not yet supported for %s", t)
 }
-func errArrowRowsInvalidBatchIndex(index, count int) string {
-	return fmt.Sprintf("databricks: invalid arrow batch index. index = %d, nbatches = %d", index, count)
-}
 func errArrowRowsUnsupportedWithHiveSchema(t string) string {
 	return fmt.Sprintf("databricks: arrow native values for %s require arrow schema", t)
 }
