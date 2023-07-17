@@ -484,10 +484,12 @@ func (r *rows) fetchResultPage() error {
 
 		r.logger().Debug().Msgf("fetching next batch of up to %d rows, %s", r.maxPageSize, direction.String())
 
+		var includeResultSetMetadata = true
 		req := cli_service.TFetchResultsReq{
-			OperationHandle: r.opHandle,
-			MaxRows:         r.maxPageSize,
-			Orientation:     direction,
+			OperationHandle:          r.opHandle,
+			MaxRows:                  r.maxPageSize,
+			Orientation:              direction,
+			IncludeResultSetMetadata: &includeResultSetMetadata,
 		}
 		ctx := driverctx.NewContextWithCorrelationId(driverctx.NewContextWithConnId(context.Background(), r.connId), r.correlationId)
 
