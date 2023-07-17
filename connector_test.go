@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/databricks/databricks-sql-go/auth/pat"
+	"github.com/databricks/databricks-sql-go/internal/auth/pat"
 	"github.com/databricks/databricks-sql-go/internal/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

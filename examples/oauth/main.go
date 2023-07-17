@@ -9,7 +9,6 @@ import (
 	"time"
 
 	dbsql "github.com/databricks/databricks-sql-go"
-	"github.com/databricks/databricks-sql-go/auth/oauth/dev"
 	"github.com/joho/godotenv"
 )
 
@@ -19,22 +18,24 @@ func main() {
 	if err != nil {
 		log.Fatal(err.Error())
 	}
-	// devAuthenticator := m2m.NewClient(
+	// authenticator := m2m.NewClient(
 	// 	os.Getenv("DATABRICKS_CLIENT_ID"),
 	// 	os.Getenv("DATABRICKS_CLIENT_SECRET"),
 	// 	fmt.Sprintf("https://%s/oidc", os.Getenv("DATABRICKS_HOST")),
 	// 	[]string{"sql", "offline_access"},
 	// )
-	devAuthenticator := dev.NewDevAuthenticator(
-		os.Getenv("DATABRICKS_CLIENT_ID"),
-		os.Getenv("DATABRICKS_HOST"),
-		"offline_access",
-	)
+	// authenticator, err := defauth.NewDefaultAuthenticator(
+	// 	os.Getenv("DATABRICKS_HOST"),
+	// )
 
+	if err != nil {
+		log.Fatal(err.Error())
+	}
 	connector, err := dbsql.NewConnector(
 		dbsql.WithServerHostname(os.Getenv("DATABRICKS_HOST")),
 		dbsql.WithHTTPPath(os.Getenv("DATABRICKS_HTTPPATH")),
-		dbsql.WithAuthenticator(devAuthenticator),
+		// dbsql.WithDefaultOAUTH(),
+		// dbsql.WithAuthenticator(authenticator),
 	)
 	if err != nil {
 		log.Fatal(err)
@@ -57,15 +58,15 @@ func main() {
 	}
 	fmt.Println(res)
 
-	err1 = db.QueryRowContext(ctx, `select 1`).Scan(&res)
+	// err1 = db.QueryRowContext(ctx, `select 1`).Scan(&res)
 
-	if err1 != nil {
-		if err1 == sql.ErrNoRows {
-			fmt.Println("not found")
-			return
-		} else {
-			fmt.Printf("err: %v\n", err1)
-		}
-	}
-	fmt.Println(res)
+	// if err1 != nil {
+	// 	if err1 == sql.ErrNoRows {
+	// 		fmt.Println("not found")
+	// 		return
+	// 	} else {
+	// 		fmt.Printf("err: %v\n", err1)
+	// 	}
+	// }
+	// fmt.Println(res)
 }

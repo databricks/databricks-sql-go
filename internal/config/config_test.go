@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/databricks/databricks-sql-go/auth/noop"
-	"github.com/databricks/databricks-sql-go/auth/pat"
+	"github.com/databricks/databricks-sql-go/internal/auth/pat"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 )
 

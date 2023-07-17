@@ -16,12 +16,13 @@ import (
 	"golang.org/x/oauth2/clientcredentials"
 )
 
-func NewClient(clientID, clientSecret, hostName string, scopes []string) auth.Authenticator {
+func NewClient(clientID, clientSecret, hostName string) auth.Authenticator {
+	scopes := oauth.GetScopes(hostName, []string{})
 	return &authClient{
 		clientID:     clientID,
 		clientSecret: clientSecret,
 		hostName:     hostName,
-		scopes:       append([]string{}, scopes...),
+		scopes:       scopes,
 	}
 }
 
@@ -73,7 +74,7 @@ func GetTokenSource(config clientcredentials.Config) oauth2.TokenSource {
 }
 
 func GetConfig(ctx context.Context, issuerURL, clientID, clientSecret string, scopes []string) (clientcredentials.Config, error) {
-
+	// Get the endpoint based on the host name
 	endpoint, err := oauth.GetEndpoint(ctx, issuerURL)
 	if err != nil {
 		return clientcredentials.Config{}, fmt.Errorf("could not lookup provider details: %w", err)

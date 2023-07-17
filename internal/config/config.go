@@ -15,7 +15,8 @@ import (
 
 	"github.com/databricks/databricks-sql-go/auth"
 	"github.com/databricks/databricks-sql-go/auth/noop"
-	"github.com/databricks/databricks-sql-go/auth/pat"
+	"github.com/databricks/databricks-sql-go/internal/auth/oauth/defauth"
+	"github.com/databricks/databricks-sql-go/internal/auth/pat"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	dbsqlerrint "github.com/databricks/databricks-sql-go/internal/errors"
 	"github.com/databricks/databricks-sql-go/logger"
@@ -236,6 +237,7 @@ func ParseDSN(dsn string) (UserConfig, error) {
 			return UserConfig{}, dbsqlerrint.NewRequestError(context.TODO(), dbsqlerr.ErrBasicAuthNotSupported, err)
 		}
 	}
+
 	ucfg.HTTPPath = parsedURL.Path
 	params := parsedURL.Query()
 	maxRowsStr := params.Get("maxRows")
@@ -302,6 +304,10 @@ func ParseDSN(dsn string) (UserConfig, error) {
 			sessionParams[k] = params.Get(k)
 		}
 		ucfg.SessionParams = sessionParams
+	}
+
+	if ucfg.Authenticator == nil {
+		ucfg.Authenticator, err = defauth.NewDefaultAuthenticator(ucfg.Host, 0)
 	}
 
 	return ucfg, err

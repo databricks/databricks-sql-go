@@ -22,6 +22,7 @@ const (
 	ErrInvalidURL      = "invalid URL"
 
 	ErrNoAuthenticationMethod = "no authentication method set"
+	ErrNoDefaultAuthenticator = "unable to create default authenticator"
 	ErrInvalidDSNFormat       = "invalid DSN: invalid format"
 	ErrInvalidDSNPort         = "invalid DSN: invalid DSN port"
 	ErrInvalidDSNPATIsEmpty   = "invalid DSN: empty token"

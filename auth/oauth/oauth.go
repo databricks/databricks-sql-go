@@ -20,11 +20,12 @@ func GetEndpoint(ctx context.Context, hostName string) (oauth2.Endpoint, error) 
 	}
 
 	cloud := InferCloudFromHost(hostName)
-	if cloud == unknown {
+
+	if cloud == Unknown {
 		return oauth2.Endpoint{}, errors.New("unsupported cloud type")
 	}
 
-	if cloud == azure {
+	if cloud == Azure {
 		authURL := fmt.Sprintf("https://%s/oidc/oauth2/v2.0/authorize", hostName)
 		tokenURL := fmt.Sprintf("https://%s/oidc/oauth2/v2.0/token", hostName)
 		return oauth2.Endpoint{AuthURL: authURL, TokenURL: tokenURL}, nil
@@ -50,7 +51,7 @@ func GetScopes(hostName string, scopes []string) []string {
 	}
 
 	cloudType := InferCloudFromHost(hostName)
-	if cloudType == azure {
+	if cloudType == Azure {
 		userImpersonationScope := fmt.Sprintf("%s/user_impersonation", azureEnterpriseAppId)
 		if !hasScope(scopes, userImpersonationScope) {
 			scopes = append(scopes, userImpersonationScope)
@@ -86,34 +87,47 @@ var databricksAzureDomains []string = []string{
 
 var databricksGCPDomains []string = []string{".gcp.databricks.com"}
 
-type cloudType int
+type CloudType int
 
 const (
-	aws = iota
-	azure
-	gcp
-	unknown
+	AWS = iota
+	Azure
+	GCP
+	Unknown
 )
 
-func InferCloudFromHost(hostname string) cloudType {
+func (cl CloudType) String() string {
+	switch cl {
+	case AWS:
+		return "AWS"
+	case Azure:
+		return "Azure"
+	case GCP:
+		return "GCP"
+	}
+
+	return "Unknown"
+}
+
+func InferCloudFromHost(hostname string) CloudType {
 
 	for _, d := range databricksAzureDomains {
 		if strings.Contains(hostname, d) {
-			return azure
+			return Azure
 		}
 	}
 
 	for _, d := range databricksAWSDomains {
 		if strings.Contains(hostname, d) {
-			return aws
+			return AWS
 		}
 	}
 
 	for _, d := range databricksGCPDomains {
 		if strings.Contains(hostname, d) {
-			return gcp
+			return GCP
 		}
 	}
 
-	return unknown
+	return Unknown
 }

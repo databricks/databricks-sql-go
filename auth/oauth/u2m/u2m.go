@@ -6,13 +6,15 @@ import (
 	"strings"
 
 	"github.com/databricks/databricks-sql-go/auth/oauth"
-	"github.com/databricks/databricks-sql-go/auth/oauth/pkce"
+	"github.com/databricks/databricks-sql-go/internal/auth/oauth/pkce"
 	"golang.org/x/oauth2"
 )
 
 func GetConfig(ctx context.Context, hostName, clientID, clientSecret, callbackURL string, scopes []string) (oauth2.Config, error) {
+	// Add necessary scopes for AWS or Azure
 	scopes = oauth.GetScopes(hostName, scopes)
 
+	// Get the endpoint based on the host name
 	endpoint, err := oauth.GetEndpoint(ctx, hostName)
 	if err != nil {
 		return oauth2.Config{}, fmt.Errorf("could not lookup provider details: %w", err)
