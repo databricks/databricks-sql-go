@@ -45,11 +45,6 @@ func init() {
 	// for tty terminal enable pretty logs
 	if isatty.IsTerminal(os.Stdout.Fd()) && runtime.GOOS != "windows" {
 		Logger = &DBSQLLogger{Logger.Output(zerolog.ConsoleWriter{Out: os.Stderr})}
-	} else {
-		// UNIX Time is faster and smaller than most timestamps
-		// If you set zerolog.TimeFieldFormat to an empty string,
-		// logs will write with UNIX time.
-		zerolog.TimeFieldFormat = ""
 	}
 	// by default only log warns or above
 	loglvl := zerolog.WarnLevel
