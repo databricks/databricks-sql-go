@@ -3,10 +3,10 @@ module github.com/databricks/databricks-sql-go
 go 1.19
 
 require (
-	github.com/apache/arrow/go/v11 v11.0.0-20221220213742-09453f9258f3
+	github.com/apache/arrow/go/v12 v12.0.1
 	github.com/apache/thrift v0.17.0
 	github.com/joho/godotenv v1.4.0
-	github.com/mattn/go-isatty v0.0.16
+	github.com/mattn/go-isatty v0.0.19
 	github.com/stretchr/testify v1.8.1
 	gotest.tools/gotestsum v1.8.2
 )
@@ -32,10 +32,10 @@ require (
 	github.com/pierrec/lz4/v4 v4.1.15 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/zeebo/xxh3 v1.0.2 // indirect
-	golang.org/x/mod v0.6.0-dev.0.20220419223038-86c51ed26bb4 // indirect
-	golang.org/x/sync v0.0.0-20220819030929-7fc1605a5dde // indirect
+	golang.org/x/mod v0.8.0 // indirect
+	golang.org/x/sync v0.1.0 // indirect
 	golang.org/x/term v0.0.0-20220526004731-065cf7ba2467 // indirect
-	golang.org/x/tools v0.1.12 // indirect
+	golang.org/x/tools v0.6.0 // indirect
 	golang.org/x/xerrors v0.0.0-20220609144429-65e65417b02f // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
@@ -44,5 +44,5 @@ require (
 	github.com/hashicorp/go-retryablehttp v0.7.1
 	github.com/pkg/errors v0.9.1
 	github.com/rs/zerolog v1.28.0
-	golang.org/x/sys v0.0.0-20220829200755-d48e67d00261 // indirect
+	golang.org/x/sys v0.6.0 // indirect
 )

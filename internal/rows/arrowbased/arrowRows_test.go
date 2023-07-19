@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/apache/arrow/go/v11/arrow"
-	"github.com/apache/arrow/go/v11/arrow/array"
+	"github.com/apache/arrow/go/v12/arrow"
+	"github.com/apache/arrow/go/v12/arrow/array"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/config"
 	dbsqllog "github.com/databricks/databricks-sql-go/logger"
@@ -1402,6 +1402,7 @@ type fakeRecord struct {
 	fnColumn     func(i int) arrow.Array
 	fnColumnName func(i int) string
 	fnNewSlice   func(i, j int64) arrow.Record
+	fnSetColumn  func(int, arrow.Array) (arrow.Record, error)
 }
 
 func (fr fakeRecord) Release() {
@@ -1462,6 +1463,13 @@ func (fr fakeRecord) NewSlice(i, j int64) arrow.Record {
 }
 
 func (fr fakeRecord) MarshalJSON() ([]byte, error) { return nil, nil }
+
+func (fr fakeRecord) SetColumn(i int, arr arrow.Array) (arrow.Record, error) {
+	if fr.fnSetColumn != nil {
+		return fr.fnSetColumn(i, arr)
+	}
+	return nil, nil
+}
 
 func getAllTypesSchema() *cli_service.TTableSchema {
 	var scale int32 = 10
