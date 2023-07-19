@@ -1,6 +1,7 @@
 package dbsql
 
 import (
+	"net/http"
 	"testing"
 	"time"
 
@@ -22,6 +23,7 @@ func TestNewConnector(t *testing.T) {
 		schema := "schema-string"
 		userAgentEntry := "user-agent"
 		sessionParams := map[string]string{"key": "value"}
+		roundTripper := mockRoundTripper{}
 		con, err := NewConnector(
 			WithServerHostname(host),
 			WithPort(port),
@@ -33,6 +35,7 @@ func TestNewConnector(t *testing.T) {
 			WithUserAgentEntry(userAgentEntry),
 			WithSessionParams(sessionParams),
 			WithRetries(10, 3*time.Second, 60*time.Second),
+			WithTransport(roundTripper),
 		)
 		expectedUserConfig := config.UserConfig{
 			Host:           host,
@@ -50,6 +53,7 @@ func TestNewConnector(t *testing.T) {
 			RetryMax:       10,
 			RetryWaitMin:   3 * time.Second,
 			RetryWaitMax:   60 * time.Second,
+			Transport:      roundTripper,
 		}
 		expectedCfg := config.WithDefaults()
 		expectedCfg.DriverVersion = DriverVersion
@@ -126,4 +130,12 @@ func TestNewConnector(t *testing.T) {
 		assert.Nil(t, err)
 		assert.Equal(t, expectedCfg, coni.cfg)
 	})
+}
+
+type mockRoundTripper struct{}
+
+var _ http.RoundTripper = mockRoundTripper{}
+
+func (m mockRoundTripper) RoundTrip(*http.Request) (*http.Response, error) {
+	return &http.Response{StatusCode: 200}, nil
 }
