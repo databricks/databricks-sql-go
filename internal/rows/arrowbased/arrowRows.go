@@ -122,10 +122,10 @@ func NewArrowRowScanner(resultSetMetadata *cli_service.TGetResultSetMetadataResp
 	var bl BatchLoader
 	var err2 dbsqlerr.DBError
 	if len(rowSet.ResultLinks) > 0 {
-		bl, err2 = NewCloudBatchLoader(context.Background(), rowSet.ResultLinks)
+		bl, err2 = NewCloudBatchLoader(context.Background(), rowSet.ResultLinks, cfg)
 	} else {
 		bl, err2 = NewLocalBatchLoader(context.Background(), rowSet.ArrowBatches)
-	} 
+	}
 
 	if err2 != nil {
 		return nil, err2

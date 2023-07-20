@@ -99,7 +99,6 @@ func (c *conn) ExecContext(ctx context.Context, query string, args []driver.Name
 	msg, start := logger.Track("ExecContext")
 	defer log.Duration(msg, start)
 
-	ctx = driverctx.NewContextWithUseLz4Compression(ctx, c.cfg.UseLz4Compression)
 	ctx = driverctx.NewContextWithConnId(ctx, c.id)
 	if len(args) > 0 {
 		return nil, dbsqlerrint.NewDriverError(ctx, dbsqlerr.ErrParametersNotSupported, nil)
@@ -142,7 +141,6 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 	log := logger.WithContext(c.id, corrId, "")
 	msg, start := log.Track("QueryContext")
 
-	ctx = driverctx.NewContextWithUseLz4Compression(ctx, c.cfg.UseLz4Compression)
 	ctx = driverctx.NewContextWithConnId(ctx, c.id)
 	if len(args) > 0 {
 		return nil, dbsqlerrint.NewDriverError(ctx, dbsqlerr.ErrParametersNotSupported, nil)
