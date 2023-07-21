@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"database/sql/driver"
-
 	"time"
 
 	"github.com/apache/arrow/go/v11/arrow"
@@ -81,6 +80,8 @@ type arrowRowScanner struct {
 
 	ctx context.Context
 
+	resultFormat cli_service.TSparkRowSetType
+
 	BatchLoader
 }
 
@@ -151,6 +152,7 @@ func NewArrowRowScanner(resultSetMetadata *cli_service.TGetResultSetMetadataResp
 		colInfo:             colInfos,
 		DBSQLLogger:         logger,
 		location:            location,
+		resultFormat:        *resultSetMetadata.ResultFormat,
 		BatchLoader:         bl,
 	}
 
@@ -248,13 +250,25 @@ func isIntervalType(typeId cli_service.TTypeId) bool {
 
 // countRows returns the number of rows in the TRowSet
 func countRows(rowSet *cli_service.TRowSet) int64 {
-	if rowSet != nil && rowSet.ArrowBatches != nil {
+	if rowSet == nil {
+		return 0
+	}
+
+	if rowSet.ArrowBatches != nil {
 		batches := rowSet.ArrowBatches
 		var n int64
 		for i := range batches {
 			n += batches[i].RowCount
 		}
+		return n
+	}
 
+	if rowSet.ResultLinks != nil {
+		links := rowSet.ResultLinks
+		var n int64
+		for i := range links {
+			n += links[i].RowCount
+		}
 		return n
 	}
 
@@ -284,8 +298,13 @@ func (ars *arrowRowScanner) loadBatchFor(rowIndex int64) dbsqlerr.DBError {
 			return dbsqlerrint.NewDriverError(ars.ctx, errArrowRowsMakeColumnValueContainers, err)
 		}
 	}
+	var r arrow.Record
+	if ars.resultFormat == cli_service.TSparkRowSetType_ARROW_BASED_SET {
+		r, err = ars.NewRecordFromBytes(ars.arrowSchemaBytes, *batch)
+	} else if ars.resultFormat == cli_service.TSparkRowSetType_URL_BASED_SET {
+		r, err = ars.NewRecordFromBytes(nil, *batch)
+	}
 
-	r, err := ars.NewRecordFromBytes(ars.arrowSchemaBytes, *batch)
 	if err != nil {
 		ars.Err(err).Msg(errArrowRowsUnableToReadBatch)
 		return dbsqlerrint.NewDriverError(ars.ctx, errArrowRowsUnableToReadBatch, err)
@@ -553,7 +572,12 @@ func (srr sparkRecordReader) NewRecordFromBytes(arrowSchemaBytes []byte, sparkAr
 	// Use a chunked byte reader to concatenate the schema bytes and the record bytes without
 	// having to allocate/copy slices.
 
-	br := &chunkedByteReader{chunks: [][]byte{arrowSchemaBytes, sparkArrowBatch.arrowRecordBytes}}
+	var br *chunkedByteReader
+	if arrowSchemaBytes == nil {
+		br = &chunkedByteReader{chunks: [][]byte{sparkArrowBatch.arrowRecordBytes}}
+	} else {
+		br = &chunkedByteReader{chunks: [][]byte{arrowSchemaBytes, sparkArrowBatch.arrowRecordBytes}}
+	}
 	rdr, err := ipc.NewReader(br)
 	if err != nil {
 		return nil, dbsqlerrint.NewDriverError(srr.ctx, errArrowRowsUnableToReadBatch, err)

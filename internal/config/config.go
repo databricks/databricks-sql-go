@@ -98,6 +98,7 @@ type UserConfig struct {
 	RetryWaitMax      time.Duration
 	RetryMax          int
 	UseLz4Compression bool
+	EnableCloudFetch  bool
 }
 
 // DeepCopy returns a true deep copy of UserConfig
@@ -120,22 +121,24 @@ func (ucfg UserConfig) DeepCopy() UserConfig {
 	}
 
 	return UserConfig{
-		Protocol:       ucfg.Protocol,
-		Host:           ucfg.Host,
-		Port:           ucfg.Port,
-		HTTPPath:       ucfg.HTTPPath,
-		Catalog:        ucfg.Catalog,
-		Schema:         ucfg.Schema,
-		Authenticator:  ucfg.Authenticator,
-		AccessToken:    ucfg.AccessToken,
-		MaxRows:        ucfg.MaxRows,
-		QueryTimeout:   ucfg.QueryTimeout,
-		UserAgentEntry: ucfg.UserAgentEntry,
-		Location:       loccp,
-		SessionParams:  sessionParams,
-		RetryWaitMin:   ucfg.RetryWaitMin,
-		RetryWaitMax:   ucfg.RetryWaitMax,
-		RetryMax:       ucfg.RetryMax,
+		Protocol:          ucfg.Protocol,
+		Host:              ucfg.Host,
+		Port:              ucfg.Port,
+		HTTPPath:          ucfg.HTTPPath,
+		Catalog:           ucfg.Catalog,
+		Schema:            ucfg.Schema,
+		Authenticator:     ucfg.Authenticator,
+		AccessToken:       ucfg.AccessToken,
+		MaxRows:           ucfg.MaxRows,
+		QueryTimeout:      ucfg.QueryTimeout,
+		UserAgentEntry:    ucfg.UserAgentEntry,
+		Location:          loccp,
+		SessionParams:     sessionParams,
+		RetryWaitMin:      ucfg.RetryWaitMin,
+		RetryWaitMax:      ucfg.RetryWaitMax,
+		RetryMax:          ucfg.RetryMax,
+		UseLz4Compression: ucfg.UseLz4Compression,
+		EnableCloudFetch:  ucfg.EnableCloudFetch,
 	}
 }
 
@@ -169,6 +172,7 @@ func (ucfg UserConfig) WithDefaults() UserConfig {
 		ucfg.RetryWaitMax = 30 * time.Second
 	}
 	ucfg.UseLz4Compression = false
+	ucfg.EnableCloudFetch = false
 
 	return ucfg
 }
