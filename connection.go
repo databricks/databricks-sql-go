@@ -274,6 +274,7 @@ func (c *conn) executeStatement(ctx context.Context, query string, args []driver
 		GetDirectResults: &cli_service.TSparkGetDirectResults{
 			MaxRows: int64(c.cfg.MaxRows),
 		},
+		CanDecompressLZ4Result_: &c.cfg.UseLz4Compression,
 	}
 
 	if c.cfg.UseArrowBatches {

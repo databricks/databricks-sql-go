@@ -4,6 +4,9 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"github.com/databricks/databricks-sql-go/internal/config"
+	"github.com/pierrec/lz4/v4"
+	"io"
 
 	"net/http"
 
@@ -19,7 +22,7 @@ type cloudURL struct {
 	*cli_service.TSparkArrowResultLink
 }
 
-func (cu *cloudURL) Fetch(ctx context.Context) ([]*sparkArrowBatch, error) {
+func (cu *cloudURL) Fetch(ctx context.Context, cfg *config.Config) ([]*sparkArrowBatch, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", cu.FileLink, nil)
 	if err != nil {
 		return nil, err
@@ -36,7 +39,8 @@ func (cu *cloudURL) Fetch(ctx context.Context) ([]*sparkArrowBatch, error) {
 	var arrowSchema *arrow.Schema
 	var arrowBatches []*sparkArrowBatch
 
-	rdr, err := ipc.NewReader(bufio.NewReader(res.Body))
+	rdr, err := getArrowReader(res.Body, cfg.UseLz4Compression)
+
 	if err != nil {
 		return nil, err
 	}
@@ -85,6 +89,29 @@ func (cu *cloudURL) Fetch(ctx context.Context) ([]*sparkArrowBatch, error) {
 	return arrowBatches, nil
 }
 
+func getArrowReader(rd io.Reader, useLz4Compression bool) (*ipc.Reader, error) {
+	if useLz4Compression {
+		return ipc.NewReader(lz4.NewReader(rd))
+	}
+	return ipc.NewReader(bufio.NewReader(rd))
+}
+
+func getArrowBatch(useLz4Compression bool, src []byte) ([]byte, error) {
+	if useLz4Compression {
+		srcBuffer := bytes.NewBuffer(src)
+		dstBuffer := bytes.NewBuffer(nil)
+
+		r := lz4.NewReader(srcBuffer)
+		_, err := io.Copy(dstBuffer, r)
+		if err != nil {
+			return nil, err
+		}
+
+		return dstBuffer.Bytes(), nil
+	}
+	return src, nil
+}
+
 var _ fetcher.FetchableItems[*sparkArrowBatch] = (*cloudURL)(nil)
 
 type localBatch struct {
@@ -94,12 +121,16 @@ type localBatch struct {
 
 var _ fetcher.FetchableItems[*sparkArrowBatch] = (*localBatch)(nil)
 
-func (lb *localBatch) Fetch(ctx context.Context) ([]*sparkArrowBatch, error) {
+func (lb *localBatch) Fetch(ctx context.Context, cfg *config.Config) ([]*sparkArrowBatch, error) {
+	arrowBatchBytes, err := getArrowBatch(cfg.UseLz4Compression, lb.Batch)
+	if err != nil {
+		return nil, err
+	}
 	batch := &sparkArrowBatch{
 		rowCount:         lb.RowCount,
 		startRow:         lb.startRow,
 		endRow:           lb.startRow + lb.RowCount - 1,
-		arrowRecordBytes: lb.Batch,
+		arrowRecordBytes: arrowBatchBytes,
 	}
 
 	return []*sparkArrowBatch{batch}, nil
@@ -117,7 +148,7 @@ type batchLoader[T interface {
 	ctx          context.Context
 }
 
-func NewCloudBatchLoader(ctx context.Context, files []*cli_service.TSparkArrowResultLink) (*batchLoader[*cloudURL], dbsqlerr.DBError) {
+func NewCloudBatchLoader(ctx context.Context, files []*cli_service.TSparkArrowResultLink, cfg *config.Config) (*batchLoader[*cloudURL], dbsqlerr.DBError) {
 	inputChan := make(chan fetcher.FetchableItems[*sparkArrowBatch], len(files))
 
 	for i := range files {
@@ -128,7 +159,7 @@ func NewCloudBatchLoader(ctx context.Context, files []*cli_service.TSparkArrowRe
 	// make sure to close input channel or fetcher will block waiting for more inputs
 	close(inputChan)
 
-	f, _ := fetcher.NewConcurrentFetcher[*cloudURL](ctx, 3, inputChan)
+	f, _ := fetcher.NewConcurrentFetcher[*cloudURL](ctx, 3, cfg, inputChan)
 	cbl := &batchLoader[*cloudURL]{
 		Fetcher: f,
 		ctx:     ctx,
@@ -150,7 +181,7 @@ func NewLocalBatchLoader(ctx context.Context, batches []*cli_service.TSparkArrow
 	}
 	close(inputChan)
 
-	f, _ := fetcher.NewConcurrentFetcher[*localBatch](ctx, 3, inputChan)
+	f, _ := fetcher.NewConcurrentFetcher[*localBatch](ctx, 3, cfg, inputChan)
 	cbl := &batchLoader[*localBatch]{
 		Fetcher: f,
 		ctx:     ctx,
