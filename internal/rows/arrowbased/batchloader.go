@@ -6,7 +6,9 @@ import (
 	"context"
 	"github.com/databricks/databricks-sql-go/internal/config"
 	"github.com/pierrec/lz4/v4"
+	"github.com/pkg/errors"
 	"io"
+	"time"
 
 	"net/http"
 
@@ -23,6 +25,10 @@ type cloudURL struct {
 }
 
 func (cu *cloudURL) Fetch(ctx context.Context, cfg *config.Config) ([]*sparkArrowBatch, error) {
+	if isLinkExpired(cu.ExpiryTime) {
+		return nil, errors.New(dbsqlerr.ErrLinkExpired)
+	}
+
 	req, err := http.NewRequestWithContext(ctx, "GET", cu.FileLink, nil)
 	if err != nil {
 		return nil, err
@@ -87,6 +93,10 @@ func (cu *cloudURL) Fetch(ctx context.Context, cfg *config.Config) ([]*sparkArro
 	rdr.Release()
 
 	return arrowBatches, nil
+}
+
+func isLinkExpired(expiryTime int64) bool {
+	return expiryTime < time.Now().Unix()
 }
 
 func getArrowReader(rd io.Reader, useLz4Compression bool) (*ipc.Reader, error) {
