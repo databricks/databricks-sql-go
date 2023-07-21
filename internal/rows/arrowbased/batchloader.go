@@ -25,7 +25,7 @@ type cloudURL struct {
 }
 
 func (cu *cloudURL) Fetch(ctx context.Context, cfg *config.Config) ([]*sparkArrowBatch, error) {
-	if isLinkExpired(cu.ExpiryTime) {
+	if isLinkExpired(cu.ExpiryTime, cfg.LinkExpiryBuffer) {
 		return nil, errors.New(dbsqlerr.ErrLinkExpired)
 	}
 
@@ -95,8 +95,9 @@ func (cu *cloudURL) Fetch(ctx context.Context, cfg *config.Config) ([]*sparkArro
 	return arrowBatches, nil
 }
 
-func isLinkExpired(expiryTime int64) bool {
-	return expiryTime < time.Now().Unix()
+func isLinkExpired(expiryTime int64, linkExpiryBuffer time.Duration) bool {
+	bufferSecs := int64(linkExpiryBuffer.Seconds())
+	return expiryTime-bufferSecs < time.Now().Unix()
 }
 
 func getArrowReader(rd io.Reader, useLz4Compression bool) (*ipc.Reader, error) {

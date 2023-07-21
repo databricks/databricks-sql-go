@@ -99,6 +99,7 @@ type UserConfig struct {
 	RetryMax          int
 	UseLz4Compression bool
 	EnableCloudFetch  bool
+	LinkExpiryBuffer  time.Duration
 }
 
 // DeepCopy returns a true deep copy of UserConfig
@@ -139,6 +140,7 @@ func (ucfg UserConfig) DeepCopy() UserConfig {
 		RetryMax:          ucfg.RetryMax,
 		UseLz4Compression: ucfg.UseLz4Compression,
 		EnableCloudFetch:  ucfg.EnableCloudFetch,
+		LinkExpiryBuffer: ucfg.LinkExpiryBuffer,
 	}
 }
 
@@ -173,6 +175,7 @@ func (ucfg UserConfig) WithDefaults() UserConfig {
 	}
 	ucfg.UseLz4Compression = false
 	ucfg.EnableCloudFetch = false
+	ucfg.LinkExpiryBuffer = 0 * time.Second
 
 	return ucfg
 }
