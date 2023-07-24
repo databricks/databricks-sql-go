@@ -31,6 +31,7 @@ const (
 
 	// Execution error messages (query failure)
 	ErrQueryExecution = "failed to execute query"
+	ErrLinkExpired    = "link expired"
 )
 
 // value to be used with errors.Is() to determine if an error chain contains a request error

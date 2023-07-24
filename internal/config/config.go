@@ -26,6 +26,7 @@ type Config struct {
 	UserConfig
 	TLSConfig *tls.Config // nil disables TLS
 	ArrowConfig
+	CloudFetchConfig
 	RunAsync                  bool // TODO
 	PollInterval              time.Duration
 	ClientTimeout             time.Duration // max time the http request can last
@@ -98,7 +99,6 @@ type UserConfig struct {
 	RetryWaitMax      time.Duration
 	RetryMax          int
 	UseLz4Compression bool
-	EnableCloudFetch  bool
 }
 
 // DeepCopy returns a true deep copy of UserConfig
@@ -138,7 +138,6 @@ func (ucfg UserConfig) DeepCopy() UserConfig {
 		RetryWaitMax:      ucfg.RetryWaitMax,
 		RetryMax:          ucfg.RetryMax,
 		UseLz4Compression: ucfg.UseLz4Compression,
-		EnableCloudFetch:  ucfg.EnableCloudFetch,
 	}
 }
 
@@ -172,7 +171,6 @@ func (ucfg UserConfig) WithDefaults() UserConfig {
 		ucfg.RetryWaitMax = 30 * time.Second
 	}
 	ucfg.UseLz4Compression = false
-	ucfg.EnableCloudFetch = false
 
 	return ucfg
 }
@@ -183,6 +181,7 @@ func WithDefaults() *Config {
 		UserConfig:                UserConfig{}.WithDefaults(),
 		TLSConfig:                 &tls.Config{MinVersion: tls.VersionTLS12},
 		ArrowConfig:               ArrowConfig{}.WithDefaults(),
+		CloudFetchConfig:          CloudFetchConfig{}.WithDefaults(),
 		RunAsync:                  true,
 		PollInterval:              1 * time.Second,
 		ClientTimeout:             900 * time.Second,
@@ -311,5 +310,39 @@ func (arrowConfig ArrowConfig) DeepCopy() ArrowConfig {
 		UseArrowNativeTimestamp:     arrowConfig.UseArrowNativeTimestamp,
 		UseArrowNativeComplexTypes:  arrowConfig.UseArrowNativeComplexTypes,
 		UseArrowNativeIntervalTypes: arrowConfig.UseArrowNativeIntervalTypes,
+	}
+}
+
+type CloudFetchConfig struct {
+	UseCloudFetch      bool
+	MaxDownloadThreads int
+	MaxFilesInMemory   int
+	MinTimeToExpiry    time.Duration
+}
+
+func (cfg CloudFetchConfig) WithDefaults() CloudFetchConfig {
+	cfg.UseCloudFetch = false
+
+	if cfg.MaxDownloadThreads <= 0 {
+		cfg.MaxDownloadThreads = 10
+	}
+
+	if cfg.MaxFilesInMemory < 1 {
+		cfg.MaxFilesInMemory = 10
+	}
+
+	if cfg.MinTimeToExpiry < 0 {
+		cfg.MinTimeToExpiry = 0 * time.Second
+	}
+
+	return cfg
+}
+
+func (cfg CloudFetchConfig) DeepCopy() CloudFetchConfig {
+	return CloudFetchConfig{
+		UseCloudFetch:      cfg.UseCloudFetch,
+		MaxDownloadThreads: cfg.MaxDownloadThreads,
+		MaxFilesInMemory:   cfg.MaxFilesInMemory,
+		MinTimeToExpiry:    cfg.MinTimeToExpiry,
 	}
 }
