@@ -25,7 +25,7 @@ type cloudURL struct {
 }
 
 func (cu *cloudURL) Fetch(ctx context.Context, cfg *config.Config) ([]*sparkArrowBatch, error) {
-	if isLinkExpired(cu.ExpiryTime, cfg.LinkExpiryBuffer) {
+	if isLinkExpired(cu.ExpiryTime, cfg.MinTimeToExpiry) {
 		return nil, errors.New(dbsqlerr.ErrLinkExpired)
 	}
 
