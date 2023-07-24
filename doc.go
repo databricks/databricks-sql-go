@@ -144,6 +144,36 @@ The result log may look like this:
 
 	{"level":"debug","connId":"01ed6545-5669-1ec7-8c7e-6d8a1ea0ab16","corrId":"workflow-example","queryId":"01ed6545-57cc-188a-bfc5-d9c0eaf8e189","time":1668558402,"message":"Run Main elapsed time: 1.298712292s"}
 
+# Programmatically Retrieving Connection and Query Id
+
+Use the driverctx package under driverctx/ctx.go to add callbacks to the query context to receive the connection id and query id.
+
+	import (
+		"github.com/databricks/databricks-sql-go/driverctx"
+	)
+
+	func main() {
+
+		...
+
+		qidCallback := func(id string) {
+			fmt.Println("query id: " + id)
+		}
+
+		connIdCallback := func(id string) {
+			fmt.Println("connection id: " + id)
+		}
+
+		ctx := context.Background()
+		ctx = driverctx.NewContextWithQueryIdCallback(ctx, qidCallback)
+		ctx = driverctx.NewContextWithConnIdCallback(ctx, connIdCallback)
+
+		rows, err1 := db.QueryContext(ctx, `select * from sometable`)
+
+		...
+
+	}
+
 # Errors
 
 There are three error types exposed via dbsql/errors
