@@ -314,14 +314,14 @@ func (arrowConfig ArrowConfig) DeepCopy() ArrowConfig {
 }
 
 type CloudFetchConfig struct {
-	EnableCloudFetch   bool
+	UseCloudFetch      bool
 	MaxDownloadThreads int
 	MaxFilesInMemory   int
 	MinTimeToExpiry    time.Duration
 }
 
 func (cfg CloudFetchConfig) WithDefaults() CloudFetchConfig {
-	cfg.EnableCloudFetch = false
+	cfg.UseCloudFetch = false
 
 	if cfg.MaxDownloadThreads <= 0 {
 		cfg.MaxDownloadThreads = 10
@@ -340,7 +340,7 @@ func (cfg CloudFetchConfig) WithDefaults() CloudFetchConfig {
 
 func (cfg CloudFetchConfig) DeepCopy() CloudFetchConfig {
 	return CloudFetchConfig{
-		EnableCloudFetch:   cfg.EnableCloudFetch,
+		UseCloudFetch:      cfg.UseCloudFetch,
 		MaxDownloadThreads: cfg.MaxDownloadThreads,
 		MaxFilesInMemory:   cfg.MaxFilesInMemory,
 		MinTimeToExpiry:    cfg.MinTimeToExpiry,

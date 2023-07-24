@@ -287,8 +287,8 @@ func (c *conn) executeStatement(ctx context.Context, query string, args []driver
 		}
 	}
 
-	if c.cfg.EnableCloudFetch {
-		req.CanDownloadResult_ = &c.cfg.EnableCloudFetch
+	if c.cfg.UseCloudFetch {
+		req.CanDownloadResult_ = &c.cfg.UseCloudFetch
 	}
 
 	ctx = driverctx.NewContextWithConnId(ctx, c.id)
