@@ -204,7 +204,7 @@ func (mvc *mapValueContainer) Value(i int) (any, error) {
 		len := e - s
 		r := "{"
 		for i := int64(0); i < len; i++ {
-			k, err := mvc.keys.Value(int(i))
+			k, err := mvc.keys.Value(int(i + s))
 			if err != nil {
 				return nil, err
 			}
@@ -214,13 +214,13 @@ func (mvc *mapValueContainer) Value(i int) (any, error) {
 				return nil, err
 			}
 
-			v, err := mvc.values.Value(int(i))
+			v, err := mvc.values.Value(int(i + s))
 			if err != nil {
 				return nil, err
 			}
 
 			var b string
-			if mvc.values.IsNull(int(i)) {
+			if mvc.values.IsNull(int(i + s)) {
 				b = "null"
 			} else if mvc.complexValue {
 				b = v.(string)

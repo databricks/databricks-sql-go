@@ -1,0 +1,92 @@
+{
+ "status": {
+  "statusCode": "SUCCESS_STATUS"
+ },
+ "operationHandle": {
+  "operationId": {
+   "guid": "Ae4qWOAZGPWte+TeoMZC2w==",
+   "secret": "M41SnYJyRuuEgstBlGaDnQ=="
+  },
+  "operationType": "EXECUTE_STATEMENT",
+  "hasResultSet": true
+ },
+ "directResults": {
+  "operationStatus": {
+   "status": {
+    "statusCode": "SUCCESS_STATUS"
+   },
+   "operationState": "FINISHED_STATE",
+   "operationStarted": 1690227170051,
+   "operationCompleted": 1690227170417
+  },
+  "resultSetMetadata": {
+   "status": {
+    "statusCode": "SUCCESS_STATUS"
+   },
+   "schema": {
+    "columns": [
+     {
+      "columnName": "id",
+      "typeDesc": {
+       "types": [
+        {
+         "primitiveEntry": {
+          "type": "STRING_TYPE"
+         }
+        }
+       ]
+      },
+      "position": 1,
+      "comment": ""
+     },
+     {
+      "columnName": "myMap",
+      "typeDesc": {
+       "types": [
+        {
+         "primitiveEntry": {
+          "type": "MAP_TYPE"
+         }
+        }
+       ]
+      },
+      "position": 2,
+      "comment": ""
+     }
+    ]
+   },
+   "resultFormat": "ARROW_BASED_SET",
+   "lz4Compressed": false,
+   "arrowSchema": "/////6ACAAAQAAAAAAAKAA4ABgANAAgACgAAAAAABAAQAAAAAAEKAAwAAAAIAAQACgAAAAgAAAAIAAAAAAAAAAIAAAC0AQAABAAAAGb+//8UAAAA2AAAAIABAAAAABEBfAEAAAIAAACEAAAABAAAABz+//8IAAAAWAAAAE8AAAB7InR5cGUiOiJtYXAiLCJrZXlUeXBlIjoic3RyaW5nIiwidmFsdWVUeXBlIjoic3RyaW5nIiwidmFsdWVDb250YWluc051bGwiOnRydWV9ABcAAABTcGFyazpEYXRhVHlwZTpKc29uVHlwZQCY/v//CAAAABwAAAATAAAATUFQPFNUUklORywgU1RSSU5HPgAWAAAAU3Bhcms6RGF0YVR5cGU6U3FsTmFtZQAAAQAAAAQAAACq////FAAAABQAAACIAAAAAAAADYQAAAAAAAAAAgAAAEgAAAAEAAAAdv///xQAAAAUAAAAFAAAAAAABQEQAAAAAAAAAAAAAADo/v//BQAAAHZhbHVlABIAGAAUAAAAEwAMAAAACAAEABIAAAAUAAAAFAAAABQAAAAAAAAFEAAAAAAAAAAAAAAAKP///wMAAABrZXkANP///wcAAABlbnRyaWVzAET///8FAAAAbXlNYXAAEgAYABQAEwASAAwAAAAIAAQAEgAAABQAAACQAAAAlAAAAAAABQGQAAAAAgAAAEgAAAAEAAAAyP///wgAAAAUAAAACAAAACJzdHJpbmciAAAAABcAAABTcGFyazpEYXRhVHlwZTpKc29uVHlwZQAIAAwACAAEAAgAAAAIAAAAEAAAAAYAAABTVFJJTkcAABYAAABTcGFyazpEYXRhVHlwZTpTcWxOYW1lAAAAAAAABAAEAAQAAAACAAAAaWQAAAAAAAA=",
+   "cacheLookupResult": "LOCAL_CACHE_HIT",
+   "uncompressedBytes": 512,
+   "compressedBytes": 512
+  },
+  "resultSet": {
+   "status": {
+    "statusCode": "SUCCESS_STATUS"
+   },
+   "hasMoreRows": false,
+   "results": {
+    "startRowOffset": 0,
+    "rows": [],
+    "arrowBatches": [
+     {
+      "batch": "/////2gBAAAUAAAAAAAAAAwAFgAOABUAEAAEAAwAAACQAAAAAAAAAAAABAAQAAAAAAMKABgADAAIAAQACgAAABQAAADYAAAAAwAAAAAAAAAAAAAADAAAAAAAAAAAAAAAAQAAAAAAAAAIAAAAAAAAABAAAAAAAAAAGAAAAAAAAAADAAAAAAAAACAAAAAAAAAAAQAAAAAAAAAoAAAAAAAAABAAAAAAAAAAOAAAAAAAAAABAAAAAAAAAEAAAAAAAAAAAQAAAAAAAABIAAAAAAAAABAAAAAAAAAAWAAAAAAAAAAMAAAAAAAAAGgAAAAAAAAAAQAAAAAAAABwAAAAAAAAABAAAAAAAAAAgAAAAAAAAAAOAAAAAAAAAAAAAAAFAAAAAwAAAAAAAAAAAAAAAAAAAAMAAAAAAAAAAAAAAAAAAAADAAAAAAAAAAAAAAAAAAAAAwAAAAAAAAAAAAAAAAAAAAMAAAAAAAAAAAAAAAAAAAAHAAAAAAAAAAAAAAABAAAAAgAAAAMAAAAxMjMAAAAAAAcAAAAAAAAAAAAAAAEAAAACAAAAAwAAAAcAAAAAAAAABwAAAAAAAAAAAAAABAAAAAgAAAAMAAAAbmFtZW5hbWVuYW1lAAAAAAcAAAAAAAAAAAAAAAYAAAAKAAAADgAAAGFsaWNlMmJvYjJqb24yAAA=",
+      "rowCount": 3
+     }
+    ]
+   }
+  },
+  "closeOperation": {
+   "status": {
+    "statusCode": "SUCCESS_STATUS"
+   }
+  }
+ },
+ "executionRejected": false,
+ "maxClusterCapacity": 10,
+ "queryCost": 0.5,
+ "currentClusterLoad": 1,
+ "idempotencyType": "IDEMPOTENT"
+}
