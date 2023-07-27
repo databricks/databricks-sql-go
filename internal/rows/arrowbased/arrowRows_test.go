@@ -1221,7 +1221,7 @@ func TestArrowRowScanner(t *testing.T) {
 			"[\"2021-07-01 05:43:28 +0000 UTC\",\"-2022-08-13 14:01:01 +0000 UTC\",null]",
 			"[\"Gr8=\",\"D/8=\",null]",
 			"[[1,2,3],[4,5,6],null]",
-			"[{\"key1\":1,\"key2\":2},{\"key1\":1,\"key2\":2},null]",
+			"[{\"key1\":1,\"key2\":2},{\"key3\":3,\"key4\":4},null]",
 			"[{\"Field1\":77,\"Field2\":\"2020-12-31 00:00:00 +0000 UTC\"},{\"Field1\":13,\"Field2\":\"-2020-12-31 00:00:00 +0000 UTC\"},{\"Field1\":null,\"Field2\":null}]",
 			"[5.15,123.45,null]",
 			"[\"2020-12-31 00:00:00 +0000 UTC\",\"-2020-12-31 00:00:00 +0000 UTC\",null]",
@@ -1283,6 +1283,52 @@ func TestArrowRowScanner(t *testing.T) {
 			err := json.Unmarshal([]byte(s), &foo)
 			assert.Nil(t, err)
 			assert.Equal(t, expected[i], dest[i])
+		}
+
+	})
+
+	t.Run("Retrieve values - maps issue 147", func(t *testing.T) {
+		// This is a test for a bug reported as github issue 147
+		// After copying a table with a column of type 'MAP<STRING, STRING>' querying the copy
+		// would return the map value for the first row in all rows.
+		// This was caused by an indexing bug when retrieving map values that showed up based on
+		// how the result set was broken into arrow batches.
+		expected := [][]driver.Value{
+			{1, map[string]string{"name": "alice2"}},
+			{2, map[string]string{"name": "bob2"}},
+			{3, map[string]string{"name": "jon2"}},
+		}
+
+		executeStatementResp := cli_service.TExecuteStatementResp{}
+		loadTestData(t, "issue147.json", &executeStatementResp)
+
+		config := config.WithDefaults()
+		config.UseArrowNativeTimestamp = true
+		config.UseArrowNativeComplexTypes = true
+		config.UseArrowNativeDecimal = false
+		config.UseArrowNativeIntervalTypes = false
+		d, err := NewArrowRowScanner(executeStatementResp.DirectResults.ResultSetMetadata, executeStatementResp.DirectResults.ResultSet.Results, config, nil, context.Background())
+		assert.Nil(t, err)
+
+		ars := d.(*arrowRowScanner)
+
+		dest := make([]driver.Value, len(executeStatementResp.DirectResults.ResultSetMetadata.Schema.Columns))
+
+		for i := range expected {
+			err = ars.ScanRow(dest, int64(i))
+			assert.Nil(t, err)
+
+			var id int
+			s := dest[0].(string)
+			err := json.Unmarshal([]byte(s), &id)
+			assert.Nil(t, err)
+			assert.Equal(t, expected[i][0], id)
+
+			var foo map[string]string
+			s = dest[1].(string)
+			err = json.Unmarshal([]byte(s), &foo)
+			assert.Nil(t, err)
+			assert.Equal(t, expected[i][1], foo)
 		}
 
 	})
