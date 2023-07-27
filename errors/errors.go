@@ -28,6 +28,8 @@ const (
 	ErrBasicAuthNotSupported  = "invalid DSN: basic auth not enabled"
 	ErrInvalidDSNMaxRows      = "invalid DSN: maxRows param is not an integer"
 	ErrInvalidDSNTimeout      = "invalid DSN: timeout param is not an integer"
+	ErrInvalidUseCloudFetch   = "invalid format: useCloudFetch param is not a boolean"
+	ErrInvalidMaxThreads      = "invalid format: maxDownloadThreads param is not an integer"
 
 	// Execution error messages (query failure)
 	ErrQueryExecution = "failed to execute query"
