@@ -3,6 +3,7 @@ package arrowbased
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"github.com/apache/arrow/go/v11/arrow"
 	"github.com/apache/arrow/go/v11/arrow/array"
 	"github.com/apache/arrow/go/v11/arrow/ipc"
@@ -10,6 +11,7 @@ import (
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/config"
 	"github.com/pkg/errors"
+	"github.com/stretchr/testify/assert"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -33,6 +35,7 @@ func generateMockArrowBytes() []byte {
 	builder.Field(1).(*array.StringBuilder).AppendValues([]string{"one", "two", "three"}, nil)
 
 	record := builder.NewRecord()
+	defer record.Release()
 
 	var buf bytes.Buffer
 	w := ipc.NewWriter(&buf, ipc.WithSchema(record.Schema()))
@@ -58,8 +61,16 @@ func TestBatchLoader(t *testing.T) {
 				w.WriteHeader(http.StatusOK)
 				w.Write(generateMockArrowBytes())
 			})),
-			expectedResponse: nil, // replace with []*sparkArrowBatch{}
-			expectedErr:      nil,
+			expectedResponse: []*sparkArrowBatch{
+				{
+					arrowRecordBytes: generateMockArrowBytes(),
+					hasSchema:        true,
+					rowCount:         3,
+					startRow:         0,
+					endRow:           2,
+				},
+			},
+			expectedErr: nil,
 		},
 	}
 
@@ -82,7 +93,7 @@ func TestBatchLoader(t *testing.T) {
 				t.Errorf("expected (%v), got (%v)", tc.expectedResponse, resp)
 			}
 			if !errors.Is(err, tc.expectedErr) {
-				t.Errorf("expected (%v), got (%v)", tc.expectedErr, err)
+				assert.EqualErrorf(t, err, fmt.Sprintf("%v", tc.expectedErr), "expected (%v), got (%v)", tc.expectedErr, err)
 			}
 		})
 	}
