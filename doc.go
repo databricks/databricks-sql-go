@@ -37,6 +37,8 @@ Supported optional connection parameters can be specified in param=value and inc
   - maxRows: Sets up the max rows fetched per request. Default is 100000
   - timeout: Adds timeout (in seconds) for the server query execution. Default is no timeout
   - userAgentEntry: Used to identify partners. Set as a string with format <isv-name+product-name>
+  - useCloudFetch: Used to enable cloud fetch for the query execution. Default is false
+  - maxDownloadThreads: Sets up the max number of concurrent workers for cloud fetch. Default is 10
 
 Supported optional session parameters can be specified in param=value and include:
 
@@ -79,6 +81,8 @@ Supported functional options include:
   - WithSessionParams(<params_map> map[string]string): Sets up session parameters including "timezone" and "ansi_mode". Optional
   - WithTimeout(<timeout> Duration). Adds timeout (in time.Duration) for the server query execution. Default is no timeout. Optional
   - WithUserAgentEntry(<isv-name+product-name> string). Used to identify partners. Optional
+  - WithCloudFetch (bool). Used to enable cloud fetch for the query execution. Default is false. Optional
+  - WithMaxDownloadThreads (<num_threads> int). Sets up the max number of concurrent workers for cloud fetch. Default is 10. Optional
 
 # Query cancellation and timeout
 
