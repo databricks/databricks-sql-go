@@ -215,8 +215,8 @@ func WithAuthenticator(authr auth.Authenticator) connOption {
 	}
 }
 
-// WithUseCloudFetch sets up the use of cloud fetch for query execution. Default is false.
-func WithUseCloudFetch(useCloudFetch bool) connOption {
+// WithCloudFetch sets up the use of cloud fetch for query execution. Default is false.
+func WithCloudFetch(useCloudFetch bool) connOption {
 	return func(c *config.Config) {
 		c.UseCloudFetch = useCloudFetch
 	}
