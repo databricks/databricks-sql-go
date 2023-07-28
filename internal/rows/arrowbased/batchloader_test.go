@@ -10,6 +10,7 @@ import (
 	"github.com/apache/arrow/go/v11/arrow/memory"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/config"
+	dbsqlerrint "github.com/databricks/databricks-sql-go/internal/errors"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"net/http"
@@ -71,6 +72,14 @@ func TestBatchLoader(t *testing.T) {
 				},
 			},
 			expectedErr: nil,
+		},
+		{
+			name: "cloud-fetch-http-error",
+			server: httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusInternalServerError)
+			})),
+			expectedResponse: nil,
+			expectedErr:      dbsqlerrint.NewDriverError(context.TODO(), errArrowRowsCloudFetchDownloadFailure, nil),
 		},
 	}
 

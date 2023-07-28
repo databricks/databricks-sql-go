@@ -33,6 +33,9 @@ func (cu *cloudURL) Fetch(ctx context.Context, cfg *config.Config) ([]*sparkArro
 	if err != nil {
 		return nil, err
 	}
+	if res.StatusCode != http.StatusOK {
+		return nil, dbsqlerrint.NewDriverError(ctx, errArrowRowsCloudFetchDownloadFailure, err)
+	}
 
 	defer res.Body.Close()
 
