@@ -274,7 +274,7 @@ func ParseDSN(dsn string) (UserConfig, error) {
 	if params.Has("useCloudFetch") {
 		useCloudFetch, err := strconv.ParseBool(params.Get("useCloudFetch"))
 		if err != nil {
-			return UserConfig{}, dbsqlerrint.NewRequestError(context.TODO(), dbsqlerr.ErrInvalidUseCloudFetch, err)
+			return UserConfig{}, dbsqlerrint.NewRequestError(context.TODO(), dbsqlerr.InvalidDSNFormat("useCloudFetch", params.Get("useCloudFetch"), "bool"), err)
 		}
 		ucfg.UseCloudFetch = useCloudFetch
 	}
@@ -282,7 +282,7 @@ func ParseDSN(dsn string) (UserConfig, error) {
 	if params.Has("maxDownloadThreads") {
 		numThreads, err := strconv.Atoi(params.Get("maxDownloadThreads"))
 		if err != nil {
-			return UserConfig{}, dbsqlerrint.NewRequestError(context.TODO(), dbsqlerr.ErrInvalidMaxThreads, err)
+			return UserConfig{}, dbsqlerrint.NewRequestError(context.TODO(), dbsqlerr.InvalidDSNFormat("maxDownloadThreads", params.Get("maxDownloadThreads"), "int"), err)
 		}
 		ucfg.MaxDownloadThreads = numThreads
 	}

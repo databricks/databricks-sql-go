@@ -1,6 +1,7 @@
 package errors
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/pkg/errors"
@@ -28,13 +29,15 @@ const (
 	ErrBasicAuthNotSupported  = "invalid DSN: basic auth not enabled"
 	ErrInvalidDSNMaxRows      = "invalid DSN: maxRows param is not an integer"
 	ErrInvalidDSNTimeout      = "invalid DSN: timeout param is not an integer"
-	ErrInvalidUseCloudFetch   = "invalid format: useCloudFetch param is not a boolean"
-	ErrInvalidMaxThreads      = "invalid format: maxDownloadThreads param is not an integer"
 
 	// Execution error messages (query failure)
 	ErrQueryExecution = "failed to execute query"
 	ErrLinkExpired    = "link expired"
 )
+
+func InvalidDSNFormat(param string, value string, expected string) string {
+	return fmt.Sprintf("invalid DSN: param %s with value %s is not of type %s", param, value, expected)
+}
 
 // value to be used with errors.Is() to determine if an error chain contains a request error
 var RequestError error = errors.New("Request Error")
