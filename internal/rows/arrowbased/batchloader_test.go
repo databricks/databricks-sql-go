@@ -50,18 +50,23 @@ func generateMockArrowBytes() []byte {
 }
 
 func TestBatchLoader(t *testing.T) {
+	var handler func(w http.ResponseWriter, r *http.Request)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handler(w, r)
+	}))
+	defer server.Close()
 	testTable := []struct {
 		name             string
-		server           *httptest.Server
+		response         func(w http.ResponseWriter, r *http.Request)
 		expectedResponse []*sparkArrowBatch
 		expectedErr      error
 	}{
 		{
 			name: "cloud-fetch-happy-case",
-			server: httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			response: func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusOK)
 				w.Write(generateMockArrowBytes())
-			})),
+			},
 			expectedResponse: []*sparkArrowBatch{
 				{
 					arrowRecordBytes: generateMockArrowBytes(),
@@ -75,9 +80,9 @@ func TestBatchLoader(t *testing.T) {
 		},
 		{
 			name: "cloud-fetch-http-error",
-			server: httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			response: func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusInternalServerError)
-			})),
+			},
 			expectedResponse: nil,
 			expectedErr:      dbsqlerrint.NewDriverError(context.TODO(), errArrowRowsCloudFetchDownloadFailure, nil),
 		},
@@ -85,11 +90,11 @@ func TestBatchLoader(t *testing.T) {
 
 	for _, tc := range testTable {
 		t.Run(tc.name, func(t *testing.T) {
-			defer tc.server.Close()
+			handler = tc.response
 
 			cu := &cloudURL{
 				TSparkArrowResultLink: &cli_service.TSparkArrowResultLink{
-					FileLink: tc.server.URL,
+					FileLink: server.URL,
 				},
 			}
 
