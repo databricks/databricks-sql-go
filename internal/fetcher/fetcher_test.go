@@ -3,6 +3,7 @@ package fetcher
 import (
 	"context"
 	"github.com/databricks/databricks-sql-go/internal/config"
+	"github.com/pkg/errors"
 	"math"
 	"testing"
 	"time"
@@ -78,6 +79,46 @@ func TestConcurrentFetcher(t *testing.T) {
 		buffer := 100 * time.Millisecond
 		if timeElapsed-expectedTime > buffer {
 			t.Errorf("Expected fetcher to take around %d ms, took %d ms", int64(expectedTime/time.Millisecond), int64(timeElapsed/time.Millisecond))
+		}
+	})
+
+	t.Run("Cancel the concurrent fetcher", func(t *testing.T) {
+		// Create a context with a timeout
+		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+		defer cancel()
+
+		// Create an input channel
+		inputChan := make(chan FetchableItems[*mockOutput], 3)
+		for i := 0; i < 3; i++ {
+			item := mockFetchableItem{item: i, wait: 1 * time.Second}
+			inputChan <- &item
+		}
+		close(inputChan)
+
+		// Create a new fetcher
+		fetcher, err := NewConcurrentFetcher[*mockFetchableItem](ctx, 2, &config.Config{}, inputChan)
+		if err != nil {
+			t.Fatalf("Error creating fetcher: %v", err)
+		}
+
+		// Start the fetcher
+		outChan, cancelFunc, err := fetcher.Start()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// Ensure that the fetcher is cancelled successfully
+		go func() {
+			cancelFunc()
+		}()
+
+		for range outChan {
+			// Just drain the channel
+		}
+
+		// Check if an error occurred
+		if err := fetcher.Err(); err != nil && !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("unexpected error: %v", err)
 		}
 	})
 }
