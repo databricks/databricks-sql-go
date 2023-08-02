@@ -2,6 +2,7 @@ package errors
 
 import (
 	"context"
+	"database/sql/driver"
 	"fmt"
 	"strconv"
 	"time"
@@ -245,4 +246,29 @@ func NewRetryableError(err error, retryAfterHdr string) error {
 	}
 
 	return retryableError{err: err, retryAfter: retryAfter}
+}
+
+// badConnection error identifies as driver.ErrBadConn
+// When added to the error stack the sql package will initiate retry behaviour with a new connection.
+type badConnectionError struct {
+	err error
+}
+
+func (e badConnectionError) Is(err error) bool {
+	return err == driver.ErrBadConn
+}
+
+func (e badConnectionError) Unwrap() error {
+	return e.err
+}
+
+func (e badConnectionError) Error() string {
+	if e.err != nil {
+		return e.err.Error()
+	}
+	return "bad connection error"
+}
+
+func NewBadConnectionError(err error) error {
+	return badConnectionError{err: err}
 }

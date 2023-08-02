@@ -3,11 +3,14 @@ package client
 import (
 	"context"
 	"crypto/x509"
+	"database/sql/driver"
 	"net/http"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
+	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/require"
 )
@@ -126,16 +129,16 @@ func TestRetryPolicy(t *testing.T) {
 		nonRetryableCodes := []int{200, 300, 400, 501}
 
 		retryableOps := []clientMethod{
-			closeSession,
-			getResultSetMetadata,
-			getOperationStatus,
-			closeOperation,
-			cancelOperation,
-			fetchResults,
-			openSession,
+			clientMethodCloseSession,
+			clientMethodGetResultSetMetadata,
+			clientMethodGetOperationStatus,
+			clientMethodCloseOperation,
+			clientMethodCancelOperation,
+			clientMethodFetchResults,
+			clientMethodOpenSession,
 		}
 
-		nonRetryableOps := []clientMethod{executeStatement}
+		nonRetryableOps := []clientMethod{clientMethodExecuteStatement}
 
 		cancelled, cancel := context.WithCancel(context.Background())
 		cancel()
@@ -214,4 +217,41 @@ func TestRetryPolicy(t *testing.T) {
 
 	})
 
+	t.Run("test handling client method errors", func(t *testing.T) {
+		cases := []struct {
+			base      string
+			method    clientMethod
+			isBadConn bool
+		}{
+			{"generic error", clientMethodUnknown, false},
+			{"error with Invalid SessionHandle and stuff", clientMethodUnknown, true},
+			{"generic error", clientMethodOpenSession, false},
+			{"error with Invalid SessionHandle and stuff", clientMethodOpenSession, true},
+			{"generic error", clientMethodCloseSession, false},
+			{"error with Invalid SessionHandle and stuff", clientMethodCloseSession, true},
+			{"generic error", clientMethodFetchResults, false},
+			{"error with Invalid SessionHandle and stuff", clientMethodFetchResults, true},
+			{"generic error", clientMethodGetResultSetMetadata, false},
+			{"error with Invalid SessionHandle and stuff", clientMethodGetResultSetMetadata, true},
+			{"generic error", clientMethodExecuteStatement, false},
+			{"error with Invalid SessionHandle and stuff", clientMethodExecuteStatement, true},
+			{"generic error", clientMethodGetOperationStatus, false},
+			{"error with Invalid SessionHandle and stuff", clientMethodGetOperationStatus, true},
+			{"generic error", clientMethodCloseOperation, false},
+			{"error with Invalid SessionHandle and stuff", clientMethodCloseOperation, true},
+			{"generic error", clientMethodCancelOperation, false},
+			{"error with Invalid SessionHandle and stuff", clientMethodCancelOperation, true},
+		}
+
+		for i := range cases {
+			c := cases[i]
+			err := handleClientMethodError(context.WithValue(context.Background(), ClientMethod, c.method), errors.New(c.base))
+			msg := clientMethodRequestErrorMsgs[c.method]
+			require.True(t, strings.Contains(err.Error(), msg))
+			require.True(t, strings.Contains(err.Error(), c.base))
+			require.True(t, errors.Is(err, dbsqlerr.DatabricksError))
+			require.True(t, errors.Is(err, dbsqlerr.RequestError))
+			require.Equal(t, c.isBadConn, errors.Is(err, driver.ErrBadConn))
+		}
+	})
 }
