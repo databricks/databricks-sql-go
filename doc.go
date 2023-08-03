@@ -70,7 +70,7 @@ Use sql.OpenDB() to create a database handle via a new connector object created 
 
 Supported functional options include:
 
-  - WithServerHostname(<hostname> string): Sets up the server hostname. Mandatory
+  - WithServerHostname(<hostname> string): Sets up the server hostname. The hostname can be prefixed with "http:" or "https:" to specify a protocol to use. Mandatory
   - WithPort(<port> int): Sets up the server port. Mandatory
   - WithAccessToken(<my_token> string): Sets up the Personal Access Token. Mandatory
   - WithHTTPPath(<http_path> string): Sets up the endpoint to the warehouse. Mandatory

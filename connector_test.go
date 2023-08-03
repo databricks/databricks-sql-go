@@ -130,6 +130,37 @@ func TestNewConnector(t *testing.T) {
 		assert.Nil(t, err)
 		assert.Equal(t, expectedCfg, coni.cfg)
 	})
+
+	t.Run("Connector test WithServerHostname", func(t *testing.T) {
+		cases := []struct {
+			hostname, host, protocol string
+		}{
+			{"databricks-host", "databricks-host", "https"},
+			{"http://databricks-host", "databricks-host", "http"},
+			{"https://databricks-host", "databricks-host", "https"},
+			{"http:databricks-host", "databricks-host", "http"},
+			{"https:databricks-host", "databricks-host", "https"},
+			{"htt://databricks-host", "htt://databricks-host", "https"},
+			{"localhost", "localhost", "http"},
+			{"http:localhost", "localhost", "http"},
+			{"https:localhost", "localhost", "https"},
+		}
+
+		for i := range cases {
+			c := cases[i]
+			con, err := NewConnector(
+				WithServerHostname(c.hostname),
+			)
+			assert.Nil(t, err)
+
+			coni, ok := con.(*connector)
+			require.True(t, ok)
+			userConfig := coni.cfg.UserConfig
+			require.Equal(t, c.protocol, userConfig.Protocol)
+			require.Equal(t, c.host, userConfig.Host)
+		}
+
+	})
 }
 
 type mockRoundTripper struct{}

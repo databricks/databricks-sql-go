@@ -109,11 +109,35 @@ func withUserConfig(ucfg config.UserConfig) connOption {
 // WithServerHostname sets up the server hostname. Mandatory.
 func WithServerHostname(host string) connOption {
 	return func(c *config.Config) {
-		if host == "localhost" {
-			c.Protocol = "http"
+		protocol, hostname := parseHostName(host)
+		if protocol != "" {
+			c.Protocol = protocol
 		}
-		c.Host = host
+
+		c.Host = hostname
 	}
+}
+
+func parseHostName(host string) (protocol, hostname string) {
+	hostname = host
+	if strings.HasPrefix(host, "https") {
+		hostname = strings.TrimPrefix(host, "https")
+		protocol = "https"
+	} else if strings.HasPrefix(host, "http") {
+		hostname = strings.TrimPrefix(host, "http")
+		protocol = "http"
+	}
+
+	if protocol != "" {
+		hostname = strings.TrimPrefix(hostname, ":")
+		hostname = strings.TrimPrefix(hostname, "//")
+	}
+
+	if hostname == "localhost" && protocol == "" {
+		protocol = "http"
+	}
+
+	return
 }
 
 // WithPort sets up the server port. Mandatory.
