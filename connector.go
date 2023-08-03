@@ -214,3 +214,17 @@ func WithAuthenticator(authr auth.Authenticator) connOption {
 		c.Authenticator = authr
 	}
 }
+
+// WithCloudFetch sets up the use of cloud fetch for query execution. Default is false.
+func WithCloudFetch(useCloudFetch bool) connOption {
+	return func(c *config.Config) {
+		c.UseCloudFetch = useCloudFetch
+	}
+}
+
+// WithMaxDownloadThreads sets up maximum download threads for cloud fetch. Default is 10.
+func WithMaxDownloadThreads(numThreads int) connOption {
+	return func(c *config.Config) {
+		c.MaxDownloadThreads = numThreads
+	}
+}

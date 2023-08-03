@@ -26,7 +26,6 @@ type Config struct {
 	UserConfig
 	TLSConfig *tls.Config // nil disables TLS
 	ArrowConfig
-	CloudFetchConfig
 	RunAsync                  bool // TODO
 	PollInterval              time.Duration
 	ClientTimeout             time.Duration // max time the http request can last
@@ -99,6 +98,7 @@ type UserConfig struct {
 	RetryWaitMax      time.Duration
 	RetryMax          int
 	UseLz4Compression bool
+	CloudFetchConfig
 }
 
 // DeepCopy returns a true deep copy of UserConfig
@@ -138,6 +138,7 @@ func (ucfg UserConfig) DeepCopy() UserConfig {
 		RetryWaitMax:      ucfg.RetryWaitMax,
 		RetryMax:          ucfg.RetryMax,
 		UseLz4Compression: ucfg.UseLz4Compression,
+		CloudFetchConfig:  ucfg.CloudFetchConfig,
 	}
 }
 
@@ -171,6 +172,7 @@ func (ucfg UserConfig) WithDefaults() UserConfig {
 		ucfg.RetryWaitMax = 30 * time.Second
 	}
 	ucfg.UseLz4Compression = false
+	ucfg.CloudFetchConfig = CloudFetchConfig{}.WithDefaults()
 
 	return ucfg
 }
@@ -181,7 +183,6 @@ func WithDefaults() *Config {
 		UserConfig:                UserConfig{}.WithDefaults(),
 		TLSConfig:                 &tls.Config{MinVersion: tls.VersionTLS12},
 		ArrowConfig:               ArrowConfig{}.WithDefaults(),
-		CloudFetchConfig:          CloudFetchConfig{}.WithDefaults(),
 		RunAsync:                  true,
 		PollInterval:              1 * time.Second,
 		ClientTimeout:             900 * time.Second,
@@ -196,7 +197,7 @@ func WithDefaults() *Config {
 
 }
 
-// ParseDSN constructs UserConfig by parsing DSN string supplied to `sql.Open()`
+// ParseDSN constructs UserConfig and CloudFetchConfig by parsing DSN string supplied to `sql.Open()`
 func ParseDSN(dsn string) (UserConfig, error) {
 	fullDSN := dsn
 	if !strings.HasPrefix(dsn, "https://") && !strings.HasPrefix(dsn, "http://") {
@@ -268,6 +269,25 @@ func ParseDSN(dsn string) (UserConfig, error) {
 		ucfg.Schema = params.Get("schema")
 		params.Del("schema")
 	}
+
+	// Cloud Fetch parameters
+	if params.Has("useCloudFetch") {
+		useCloudFetch, err := strconv.ParseBool(params.Get("useCloudFetch"))
+		if err != nil {
+			return UserConfig{}, dbsqlerrint.NewRequestError(context.TODO(), dbsqlerr.InvalidDSNFormat("useCloudFetch", params.Get("useCloudFetch"), "bool"), err)
+		}
+		ucfg.UseCloudFetch = useCloudFetch
+	}
+	params.Del("useCloudFetch")
+	if params.Has("maxDownloadThreads") {
+		numThreads, err := strconv.Atoi(params.Get("maxDownloadThreads"))
+		if err != nil {
+			return UserConfig{}, dbsqlerrint.NewRequestError(context.TODO(), dbsqlerr.InvalidDSNFormat("maxDownloadThreads", params.Get("maxDownloadThreads"), "int"), err)
+		}
+		ucfg.MaxDownloadThreads = numThreads
+	}
+	params.Del("maxDownloadThreads")
+
 	for k := range params {
 		if strings.ToLower(k) == "timezone" {
 			ucfg.Location, err = time.LoadLocation(params.Get("timezone"))

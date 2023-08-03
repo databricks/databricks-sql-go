@@ -1,6 +1,7 @@
 package errors
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/pkg/errors"
@@ -33,6 +34,10 @@ const (
 	ErrQueryExecution = "failed to execute query"
 	ErrLinkExpired    = "link expired"
 )
+
+func InvalidDSNFormat(param string, value string, expected string) string {
+	return fmt.Sprintf("invalid DSN: param %s with value %s is not of type %s", param, value, expected)
+}
 
 // value to be used with errors.Is() to determine if an error chain contains a request error
 var RequestError error = errors.New("Request Error")
