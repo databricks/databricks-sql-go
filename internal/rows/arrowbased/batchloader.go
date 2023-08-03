@@ -39,6 +39,9 @@ func (cu *cloudURL) Fetch(ctx context.Context, cfg *config.Config) ([]*sparkArro
 	if err != nil {
 		return nil, err
 	}
+	if res.StatusCode != http.StatusOK {
+		return nil, dbsqlerrint.NewDriverError(ctx, errArrowRowsCloudFetchDownloadFailure, err)
+	}
 
 	defer res.Body.Close()
 
@@ -152,7 +155,7 @@ type BatchLoader interface {
 }
 
 type batchLoader[T interface {
-	Fetch(ctx context.Context) ([]*sparkArrowBatch, error)
+	Fetch(ctx context.Context, cfg *config.Config) ([]*sparkArrowBatch, error)
 }] struct {
 	fetcher.Fetcher[*sparkArrowBatch]
 	arrowBatches []*sparkArrowBatch
@@ -179,7 +182,7 @@ func NewCloudBatchLoader(ctx context.Context, files []*cli_service.TSparkArrowRe
 	return cbl, nil
 }
 
-func NewLocalBatchLoader(ctx context.Context, batches []*cli_service.TSparkArrowBatch) (*batchLoader[*localBatch], dbsqlerr.DBError) {
+func NewLocalBatchLoader(ctx context.Context, batches []*cli_service.TSparkArrowBatch, cfg *config.Config) (*batchLoader[*localBatch], dbsqlerr.DBError) {
 	var startRow int64
 	inputChan := make(chan fetcher.FetchableItems[*sparkArrowBatch], len(batches))
 	for i := range batches {

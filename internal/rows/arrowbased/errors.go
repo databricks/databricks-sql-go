@@ -14,6 +14,8 @@ var errArrowRowsSerializeSchema = "databricks: arrow row scanner failed to seria
 var errArrowRowsToTimestampFn = "databricks: arrow row scanner failed getting toTimestamp function"
 var errArrowRowsMakeColumnValueContainers = "databricks: failed creating column value container"
 
+const errArrowRowsCloudFetchDownloadFailure = "cloud fetch batch loader failed to download results"
+
 func errArrowRowsUnsupportedNativeType(t string) string {
 	return fmt.Sprintf("databricks: arrow native values not yet supported for %s", t)
 }
