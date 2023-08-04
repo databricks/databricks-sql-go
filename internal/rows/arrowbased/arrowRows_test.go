@@ -208,7 +208,7 @@ func TestArrowRowScanner(t *testing.T) {
 
 		rowSet := &cli_service.TRowSet{}
 		schema := &cli_service.TTableSchema{}
-		metadataResp := &cli_service.TGetResultSetMetadataResp{Schema: schema}
+		metadataResp := getMetadataResp(schema)
 
 		ars, err := NewArrowRowScanner(metadataResp, rowSet, nil, nil, context.Background())
 		assert.NotNil(t, ars)
@@ -232,7 +232,7 @@ func TestArrowRowScanner(t *testing.T) {
 		// holders
 		rowSet := &cli_service.TRowSet{ArrowBatches: []*cli_service.TSparkArrowBatch{{RowCount: 2}, {RowCount: 3}}}
 		schema := getAllTypesSchema()
-		metadataResp := &cli_service.TGetResultSetMetadataResp{Schema: schema}
+		metadataResp := getMetadataResp(schema)
 
 		d, _ := NewArrowRowScanner(metadataResp, rowSet, nil, nil, context.Background())
 
@@ -300,7 +300,7 @@ func TestArrowRowScanner(t *testing.T) {
 		// from the default if when using native types is specified
 		rowSet := &cli_service.TRowSet{ArrowBatches: []*cli_service.TSparkArrowBatch{{RowCount: 2}, {RowCount: 3}}}
 		schema := getAllTypesSchema()
-		metadataResp := &cli_service.TGetResultSetMetadataResp{Schema: schema}
+		metadataResp := getMetadataResp(schema)
 
 		cfg := config.Config{}
 		cfg.UseArrowBatches = true
@@ -328,7 +328,7 @@ func TestArrowRowScanner(t *testing.T) {
 	t.Run("Fail creating arrow row scanner on invalid native decimal type", func(t *testing.T) {
 		rowSet := &cli_service.TRowSet{ArrowBatches: []*cli_service.TSparkArrowBatch{{RowCount: 2}, {RowCount: 3}}}
 		schema := getAllTypesSchema()
-		metadataResp := &cli_service.TGetResultSetMetadataResp{Schema: schema}
+		metadataResp := getMetadataResp(schema)
 
 		cfg := config.Config{}
 		cfg.UseArrowBatches = true
@@ -401,7 +401,7 @@ func TestArrowRowScanner(t *testing.T) {
 	t.Run("Fail to scan row when no batches are present", func(t *testing.T) {
 		rowSet := &cli_service.TRowSet{}
 		schema := getAllTypesSchema()
-		metadataResp := &cli_service.TGetResultSetMetadataResp{Schema: schema}
+		metadataResp := getMetadataResp(schema)
 
 		cfg := config.Config{}
 		cfg.UseArrowBatches = true
@@ -430,7 +430,7 @@ func TestArrowRowScanner(t *testing.T) {
 		// The following is the code under test
 		rowSet := &cli_service.TRowSet{ArrowBatches: []*cli_service.TSparkArrowBatch{{RowCount: 2}, {RowCount: 3}}}
 		schema := getAllTypesSchema()
-		metadataResp := &cli_service.TGetResultSetMetadataResp{Schema: schema}
+		metadataResp := getMetadataResp(schema)
 
 		cfg := config.Config{}
 		cfg.UseArrowBatches = true
@@ -470,9 +470,12 @@ func TestArrowRowScanner(t *testing.T) {
 			},
 		}
 		schema := getAllTypesSchema()
-		metadataResp := &cli_service.TGetResultSetMetadataResp{Schema: schema}
+		metadataResp := getMetadataResp(schema)
 
-		d, _ := NewArrowRowScanner(metadataResp, rowSet, nil, nil, context.Background())
+		cfg := config.Config{}
+		cfg.UseLz4Compression = false
+
+		d, _ := NewArrowRowScanner(metadataResp, rowSet, &cfg, nil, context.Background())
 
 		var ars *arrowRowScanner = d.(*arrowRowScanner)
 
@@ -513,9 +516,12 @@ func TestArrowRowScanner(t *testing.T) {
 			},
 		}
 		schema := getAllTypesSchema()
-		metadataResp := &cli_service.TGetResultSetMetadataResp{Schema: schema}
+		metadataResp := getMetadataResp(schema)
 
-		d, _ := NewArrowRowScanner(metadataResp, rowSet, nil, nil, nil)
+		cfg := config.Config{}
+		cfg.UseLz4Compression = false
+
+		d, _ := NewArrowRowScanner(metadataResp, rowSet, &cfg, nil, nil)
 
 		var ars *arrowRowScanner = d.(*arrowRowScanner)
 
@@ -543,9 +549,12 @@ func TestArrowRowScanner(t *testing.T) {
 			},
 		}
 		schema := getAllTypesSchema()
-		metadataResp := &cli_service.TGetResultSetMetadataResp{Schema: schema}
+		metadataResp := getMetadataResp(schema)
 
-		d, _ := NewArrowRowScanner(metadataResp, rowSet, nil, nil, nil)
+		cfg := config.Config{}
+		cfg.UseLz4Compression = false
+
+		d, _ := NewArrowRowScanner(metadataResp, rowSet, &cfg, nil, nil)
 
 		var ars *arrowRowScanner = d.(*arrowRowScanner)
 
@@ -574,9 +583,12 @@ func TestArrowRowScanner(t *testing.T) {
 		}
 
 		schema := getAllTypesSchema()
-		metadataResp := &cli_service.TGetResultSetMetadataResp{Schema: schema}
+		metadataResp := getMetadataResp(schema)
 
-		d, _ := NewArrowRowScanner(metadataResp, rowSet, nil, nil, nil)
+		cfg := config.Config{}
+		cfg.UseLz4Compression = false
+
+		d, _ := NewArrowRowScanner(metadataResp, rowSet, &cfg, nil, nil)
 
 		var ars *arrowRowScanner = d.(*arrowRowScanner)
 		ars.recordReader = fakeRecordReader{fnNewRecord: func(arrowSchemaBytes []byte, sparkArrowBatch sparkArrowBatch) (arrow.Record, dbsqlerr.DBError) {
@@ -602,9 +614,12 @@ func TestArrowRowScanner(t *testing.T) {
 		}
 
 		schema := getAllTypesSchema()
-		metadataResp := &cli_service.TGetResultSetMetadataResp{Schema: schema}
+		metadataResp := getMetadataResp(schema)
 
-		d, _ := NewArrowRowScanner(metadataResp, rowSet, nil, nil, nil)
+		cfg := config.Config{}
+		cfg.UseLz4Compression = false
+
+		d, _ := NewArrowRowScanner(metadataResp, rowSet, &cfg, nil, nil)
 
 		var ars *arrowRowScanner = d.(*arrowRowScanner)
 		ars.recordReader = fakeRecordReader{fnNewRecord: func(arrowSchemaBytes []byte, sparkArrowBatch sparkArrowBatch) (arrow.Record, dbsqlerr.DBError) {
@@ -626,9 +641,12 @@ func TestArrowRowScanner(t *testing.T) {
 			},
 		}
 		schema := getAllTypesSchema()
-		metadataResp := &cli_service.TGetResultSetMetadataResp{Schema: schema}
+		metadataResp := getMetadataResp(schema)
 
-		d, _ := NewArrowRowScanner(metadataResp, rowSet, nil, nil, context.Background())
+		cfg := config.Config{}
+		cfg.UseLz4Compression = false
+
+		d, _ := NewArrowRowScanner(metadataResp, rowSet, &cfg, nil, context.Background())
 
 		var ars *arrowRowScanner = d.(*arrowRowScanner)
 
@@ -769,9 +787,12 @@ func TestArrowRowScanner(t *testing.T) {
 			schema := &cli_service.TTableSchema{
 				Columns: []*cli_service.TColumnDesc{columns[i]},
 			}
-			metadataResp := &cli_service.TGetResultSetMetadataResp{Schema: schema}
+			metadataResp := getMetadataResp(schema)
 
-			d, _ := NewArrowRowScanner(metadataResp, rowSet, nil, nil, context.Background())
+			cfg := config.Config{}
+			cfg.UseLz4Compression = false
+
+			d, _ := NewArrowRowScanner(metadataResp, rowSet, &cfg, nil, context.Background())
 
 			var ars *arrowRowScanner = d.(*arrowRowScanner)
 			ars.UseArrowNativeComplexTypes = true
@@ -1782,4 +1803,9 @@ func loadTestData(t *testing.T, name string, v any) {
 			t.Errorf("could not load data from: %s", name)
 		}
 	}
+}
+
+func getMetadataResp(schema *cli_service.TTableSchema) *cli_service.TGetResultSetMetadataResp {
+	rowSetType := cli_service.TSparkRowSetType_ARROW_BASED_SET
+	return &cli_service.TGetResultSetMetadataResp{Schema: schema, ResultFormat: &rowSetType}
 }
