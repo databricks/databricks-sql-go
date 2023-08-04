@@ -8,6 +8,7 @@ import (
 	"github.com/apache/arrow/go/v12/arrow/array"
 	"github.com/apache/arrow/go/v12/arrow/ipc"
 	"github.com/apache/arrow/go/v12/arrow/memory"
+	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/config"
 	dbsqlerrint "github.com/databricks/databricks-sql-go/internal/errors"
@@ -17,6 +18,7 @@ import (
 	"net/http/httptest"
 	"reflect"
 	"testing"
+	"time"
 )
 
 func generateMockArrowBytes() []byte {
@@ -58,6 +60,7 @@ func TestBatchLoader(t *testing.T) {
 	testTable := []struct {
 		name             string
 		response         func(w http.ResponseWriter, r *http.Request)
+		linkExpired      bool
 		expectedResponse []*sparkArrowBatch
 		expectedErr      error
 	}{
@@ -65,8 +68,12 @@ func TestBatchLoader(t *testing.T) {
 			name: "cloud-fetch-happy-case",
 			response: func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusOK)
-				w.Write(generateMockArrowBytes())
+				_, err := w.Write(generateMockArrowBytes())
+				if err != nil {
+					panic(err)
+				}
 			},
+			linkExpired: false,
 			expectedResponse: []*sparkArrowBatch{
 				{
 					arrowRecordBytes: generateMockArrowBytes(),
@@ -79,10 +86,24 @@ func TestBatchLoader(t *testing.T) {
 			expectedErr: nil,
 		},
 		{
+			name: "cloud-fetch-expired_link",
+			response: func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+				_, err := w.Write(generateMockArrowBytes())
+				if err != nil {
+					panic(err)
+				}
+			},
+			linkExpired:      true,
+			expectedResponse: nil,
+			expectedErr:      errors.New(dbsqlerr.ErrLinkExpired),
+		},
+		{
 			name: "cloud-fetch-http-error",
 			response: func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusInternalServerError)
 			},
+			linkExpired:      false,
 			expectedResponse: nil,
 			expectedErr:      dbsqlerrint.NewDriverError(context.TODO(), errArrowRowsCloudFetchDownloadFailure, nil),
 		},
@@ -92,9 +113,18 @@ func TestBatchLoader(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			handler = tc.response
 
+			expiryTime := time.Now()
+			// If link expired, subtract 1 sec from current time to get expiration time
+			if tc.linkExpired {
+				expiryTime = expiryTime.Add(-1 * time.Second)
+			} else {
+				expiryTime = expiryTime.Add(1 * time.Second)
+			}
+
 			cu := &cloudURL{
 				TSparkArrowResultLink: &cli_service.TSparkArrowResultLink{
-					FileLink: server.URL,
+					FileLink:   server.URL,
+					ExpiryTime: expiryTime.Unix(),
 				},
 			}
 
