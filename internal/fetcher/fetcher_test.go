@@ -13,7 +13,6 @@ import (
 type mockFetchableItem struct {
 	item int
 	wait time.Duration
-	err  error
 }
 
 type mockOutput struct {
