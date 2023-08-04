@@ -12,10 +12,11 @@ import (
 
 	"github.com/apache/arrow/go/v12/arrow"
 	"github.com/apache/arrow/go/v12/arrow/array"
+	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/config"
+	dbsqlerrint "github.com/databricks/databricks-sql-go/internal/errors"
 	dbsqllog "github.com/databricks/databricks-sql-go/logger"
-	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -209,22 +210,27 @@ func TestArrowRowScanner(t *testing.T) {
 		schema := &cli_service.TTableSchema{}
 		metadataResp := &cli_service.TGetResultSetMetadataResp{Schema: schema}
 
-		ars, _ := NewArrowRowScanner(metadataResp, rowSet, nil, nil, context.Background())
+		ars, err := NewArrowRowScanner(metadataResp, rowSet, nil, nil, context.Background())
+		assert.NotNil(t, ars)
+		assert.Nil(t, err)
 		assert.Equal(t, int64(0), ars.NRows())
 
 		rowSet.ArrowBatches = []*cli_service.TSparkArrowBatch{}
-		ars, _ = NewArrowRowScanner(metadataResp, rowSet, nil, nil, context.Background())
+		ars, err = NewArrowRowScanner(metadataResp, rowSet, nil, nil, context.Background())
+		assert.NotNil(t, ars)
+		assert.Nil(t, err)
 		assert.Equal(t, int64(0), ars.NRows())
 
 		rowSet.ArrowBatches = []*cli_service.TSparkArrowBatch{{RowCount: 2}, {RowCount: 3}}
 		ars, _ = NewArrowRowScanner(metadataResp, rowSet, nil, nil, context.Background())
+		assert.NotNil(t, ars)
 		assert.Equal(t, int64(5), ars.NRows())
 	})
 
 	t.Run("Create default column value holders", func(t *testing.T) {
 		// Check that correct typing is happening when creating column value
 		// holders
-		rowSet := &cli_service.TRowSet{}
+		rowSet := &cli_service.TRowSet{ArrowBatches: []*cli_service.TSparkArrowBatch{{RowCount: 2}, {RowCount: 3}}}
 		schema := getAllTypesSchema()
 		metadataResp := &cli_service.TGetResultSetMetadataResp{Schema: schema}
 
@@ -292,7 +298,7 @@ func TestArrowRowScanner(t *testing.T) {
 	t.Run("Create native column value holders", func(t *testing.T) {
 		// The types of the column  value holders will be different
 		// from the default if when using native types is specified
-		rowSet := &cli_service.TRowSet{}
+		rowSet := &cli_service.TRowSet{ArrowBatches: []*cli_service.TSparkArrowBatch{{RowCount: 2}, {RowCount: 3}}}
 		schema := getAllTypesSchema()
 		metadataResp := &cli_service.TGetResultSetMetadataResp{Schema: schema}
 
@@ -320,7 +326,7 @@ func TestArrowRowScanner(t *testing.T) {
 	})
 
 	t.Run("Fail creating arrow row scanner on invalid native decimal type", func(t *testing.T) {
-		rowSet := &cli_service.TRowSet{}
+		rowSet := &cli_service.TRowSet{ArrowBatches: []*cli_service.TSparkArrowBatch{{RowCount: 2}, {RowCount: 3}}}
 		schema := getAllTypesSchema()
 		metadataResp := &cli_service.TGetResultSetMetadataResp{Schema: schema}
 
@@ -422,7 +428,7 @@ func TestArrowRowScanner(t *testing.T) {
 		}()
 
 		// The following is the code under test
-		rowSet := &cli_service.TRowSet{}
+		rowSet := &cli_service.TRowSet{ArrowBatches: []*cli_service.TSparkArrowBatch{{RowCount: 2}, {RowCount: 3}}}
 		schema := getAllTypesSchema()
 		metadataResp := &cli_service.TGetResultSetMetadataResp{Schema: schema}
 
@@ -441,67 +447,17 @@ func TestArrowRowScanner(t *testing.T) {
 		assert.Equal(t, 3, releaseCount)
 	})
 
-	t.Run("Convert row index to batch index", func(t *testing.T) {
-		rowSet := &cli_service.TRowSet{
-			ArrowBatches: []*cli_service.TSparkArrowBatch{{RowCount: 5}, {RowCount: 3}, {RowCount: 7}},
-		}
-
-		schema := getAllTypesSchema()
-		metadataResp := &cli_service.TGetResultSetMetadataResp{Schema: schema}
-
-		cfg := config.Config{}
-		cfg.UseArrowBatches = true
-
-		d, err := NewArrowRowScanner(metadataResp, rowSet, &cfg, nil, context.Background())
-		require.Nil(t, err)
-
-		ars := d.(*arrowRowScanner)
-
-		assert.Nil(t, ars.columnValues)
-
-		var batchIndex int
-
-		for _, i := range []int64{0, 1, 2, 3, 4} {
-			batchIndex, err = ars.rowIndexToBatchIndex(i)
-			assert.Nil(t, err)
-			assert.Equal(t, 0, batchIndex)
-		}
-
-		for _, i := range []int64{5, 6, 7} {
-			batchIndex, err = ars.rowIndexToBatchIndex(i)
-			assert.Nil(t, err)
-			assert.Equal(t, 1, batchIndex)
-		}
-
-		for _, i := range []int64{8, 9, 10, 11, 12, 13, 14} {
-			batchIndex, err = ars.rowIndexToBatchIndex(i)
-			assert.Nil(t, err)
-			assert.Equal(t, 2, batchIndex)
-		}
-
-		batchIndex, err = ars.rowIndexToBatchIndex(-1)
-		assert.NotNil(t, err)
-		assert.EqualError(t, err, "databricks: driver error: "+errArrowRowsInvalidRowIndex(-1))
-		assert.Equal(t, -1, batchIndex)
-
-		batchIndex, err = ars.rowIndexToBatchIndex(15)
-		assert.NotNil(t, err)
-		assert.EqualError(t, err, "databricks: driver error: "+errArrowRowsInvalidRowIndex(15))
-		assert.Equal(t, -1, batchIndex)
-
-	})
-
 	t.Run("loadBatch invalid row scanner", func(t *testing.T) {
 		var ars *arrowRowScanner
-		err := ars.loadBatch(0)
+		err := ars.loadBatchFor(0)
 		assert.NotNil(t, err)
-		assert.EqualError(t, err, "databricks: driver error: "+errArrowRowsNoArrowBatches)
+		assert.ErrorContains(t, err, errArrowRowsNoArrowBatches)
 
 		ars = &arrowRowScanner{}
 		ars.DBSQLLogger = dbsqllog.Logger
-		err = ars.loadBatch(0)
+		err = ars.loadBatchFor(0)
 		assert.NotNil(t, err)
-		assert.EqualError(t, err, "databricks: driver error: "+errArrowRowsNoArrowBatches)
+		assert.ErrorContains(t, err, errArrowRowsNoArrowBatches)
 	})
 
 	t.Run("Create column value holders on first batch load", func(t *testing.T) {
@@ -522,12 +478,12 @@ func TestArrowRowScanner(t *testing.T) {
 
 		assert.Nil(t, ars.columnValues)
 
-		ars.recordReader = fakeRecordReader{fnNewRecord: func(arrowSchemaBytes []byte, sparkArrowBatch sparkArrowBatch) (arrow.Record, error) {
+		ars.recordReader = fakeRecordReader{fnNewRecord: func(arrowSchemaBytes []byte, sparkArrowBatch sparkArrowBatch) (arrow.Record, dbsqlerr.DBError) {
 			return fakeRecord{}, nil
 		}}
 
 		var callCount int
-		ars.valueContainerMaker = &fakeValueContainerMaker{fnMakeColumnValuesContainers: func(ars *arrowRowScanner) error {
+		ars.valueContainerMaker = &fakeValueContainerMaker{fnMakeColumnValuesContainers: func(ars *arrowRowScanner) dbsqlerr.DBError {
 			callCount += 1
 			ars.columnValues = make([]columnValues, len(ars.arrowSchema.Fields()))
 			for i := range ars.arrowSchema.Fields() {
@@ -559,21 +515,21 @@ func TestArrowRowScanner(t *testing.T) {
 		schema := getAllTypesSchema()
 		metadataResp := &cli_service.TGetResultSetMetadataResp{Schema: schema}
 
-		d, _ := NewArrowRowScanner(metadataResp, rowSet, nil, nil, context.Background())
+		d, _ := NewArrowRowScanner(metadataResp, rowSet, nil, nil, nil)
 
 		var ars *arrowRowScanner = d.(*arrowRowScanner)
 
 		var callCount int
-		ars.recordReader = fakeRecordReader{fnNewRecord: func(arrowSchemaBytes []byte, sparkArrowBatch sparkArrowBatch) (arrow.Record, error) {
+		ars.recordReader = fakeRecordReader{fnNewRecord: func(arrowSchemaBytes []byte, sparkArrowBatch sparkArrowBatch) (arrow.Record, dbsqlerr.DBError) {
 			callCount += 1
 			return fakeRecord{}, nil
 		}}
 
-		err := ars.loadBatch(0)
+		err := ars.loadBatchFor(0)
 		assert.Nil(t, err)
 		assert.Equal(t, 1, callCount)
 
-		err = ars.loadBatch(0)
+		err = ars.loadBatchFor(0)
 		assert.Nil(t, err)
 		assert.Equal(t, 1, callCount)
 	})
@@ -589,25 +545,23 @@ func TestArrowRowScanner(t *testing.T) {
 		schema := getAllTypesSchema()
 		metadataResp := &cli_service.TGetResultSetMetadataResp{Schema: schema}
 
-		d, _ := NewArrowRowScanner(metadataResp, rowSet, nil, nil, context.Background())
+		d, _ := NewArrowRowScanner(metadataResp, rowSet, nil, nil, nil)
 
 		var ars *arrowRowScanner = d.(*arrowRowScanner)
 
 		var callCount int
-		ars.recordReader = fakeRecordReader{fnNewRecord: func(arrowSchemaBytes []byte, sparkArrowBatch sparkArrowBatch) (arrow.Record, error) {
+		ars.recordReader = fakeRecordReader{fnNewRecord: func(arrowSchemaBytes []byte, sparkArrowBatch sparkArrowBatch) (arrow.Record, dbsqlerr.DBError) {
 			callCount += 1
 			return fakeRecord{}, nil
 		}}
 
-		err := ars.loadBatch(-1)
+		err := ars.loadBatchFor(-1)
 		assert.NotNil(t, err)
-		fmt.Println(err.Error())
-		assert.EqualError(t, err, "databricks: driver error: "+errArrowRowsInvalidBatchIndex(-1, len(ars.arrowBatches)))
+		assert.ErrorContains(t, err, errArrowRowsInvalidRowIndex(-1))
 
-		err = ars.loadBatch(3)
+		err = ars.loadBatchFor(17)
 		assert.NotNil(t, err)
-		fmt.Println(err.Error())
-		assert.EqualError(t, err, "databricks: driver error: "+errArrowRowsInvalidBatchIndex(3, len(ars.arrowBatches)))
+		assert.ErrorContains(t, err, errArrowRowsInvalidRowIndex(17))
 	})
 
 	t.Run("loadBatch container failure", func(t *testing.T) {
@@ -622,19 +576,19 @@ func TestArrowRowScanner(t *testing.T) {
 		schema := getAllTypesSchema()
 		metadataResp := &cli_service.TGetResultSetMetadataResp{Schema: schema}
 
-		d, _ := NewArrowRowScanner(metadataResp, rowSet, nil, nil, context.Background())
+		d, _ := NewArrowRowScanner(metadataResp, rowSet, nil, nil, nil)
 
 		var ars *arrowRowScanner = d.(*arrowRowScanner)
-		ars.recordReader = fakeRecordReader{fnNewRecord: func(arrowSchemaBytes []byte, sparkArrowBatch sparkArrowBatch) (arrow.Record, error) {
+		ars.recordReader = fakeRecordReader{fnNewRecord: func(arrowSchemaBytes []byte, sparkArrowBatch sparkArrowBatch) (arrow.Record, dbsqlerr.DBError) {
 			return fakeRecord{}, nil
 		}}
-		ars.valueContainerMaker = &fakeValueContainerMaker{fnMakeColumnValuesContainers: func(ars *arrowRowScanner) error {
-			return errors.New("error making containers")
+		ars.valueContainerMaker = &fakeValueContainerMaker{fnMakeColumnValuesContainers: func(ars *arrowRowScanner) dbsqlerr.DBError {
+			return dbsqlerrint.NewDriverError(context.TODO(), "error making containers", nil)
 		}}
 
-		err := ars.loadBatch(0)
+		err := ars.loadBatchFor(0)
 		assert.NotNil(t, err)
-		assert.EqualError(t, err, "databricks: driver error: "+errArrowRowsMakeColumnValueContainers+": error making containers")
+		assert.ErrorContains(t, err, "error making containers")
 
 	})
 
@@ -650,16 +604,16 @@ func TestArrowRowScanner(t *testing.T) {
 		schema := getAllTypesSchema()
 		metadataResp := &cli_service.TGetResultSetMetadataResp{Schema: schema}
 
-		d, _ := NewArrowRowScanner(metadataResp, rowSet, nil, nil, context.Background())
+		d, _ := NewArrowRowScanner(metadataResp, rowSet, nil, nil, nil)
 
 		var ars *arrowRowScanner = d.(*arrowRowScanner)
-		ars.recordReader = fakeRecordReader{fnNewRecord: func(arrowSchemaBytes []byte, sparkArrowBatch sparkArrowBatch) (arrow.Record, error) {
-			return fakeRecord{}, errors.New("error reading record")
+		ars.recordReader = fakeRecordReader{fnNewRecord: func(arrowSchemaBytes []byte, sparkArrowBatch sparkArrowBatch) (arrow.Record, dbsqlerr.DBError) {
+			return fakeRecord{}, dbsqlerrint.NewDriverError(context.TODO(), "error reading record", nil)
 		}}
 
-		err := ars.loadBatch(0)
+		err := ars.loadBatchFor(0)
 		assert.NotNil(t, err)
-		assert.EqualError(t, err, "databricks: driver error: "+errArrowRowsUnableToReadBatch+": error reading record")
+		assert.ErrorContains(t, err, "error reading record")
 
 	})
 
@@ -680,7 +634,7 @@ func TestArrowRowScanner(t *testing.T) {
 
 		var callCount int
 		var lastReadBatch *sparkArrowBatch
-		ars.recordReader = fakeRecordReader{fnNewRecord: func(arrowSchemaBytes []byte, sparkArrowBatch sparkArrowBatch) (arrow.Record, error) {
+		ars.recordReader = fakeRecordReader{fnNewRecord: func(arrowSchemaBytes []byte, sparkArrowBatch sparkArrowBatch) (arrow.Record, dbsqlerr.DBError) {
 			callCount += 1
 			lastReadBatch = &sparkArrowBatch
 			return fakeRecord{}, nil
@@ -823,10 +777,10 @@ func TestArrowRowScanner(t *testing.T) {
 			ars.UseArrowNativeComplexTypes = true
 			ars.UseArrowNativeDecimal = true
 			ars.UseArrowNativeIntervalTypes = true
-			ars.recordReader = fakeRecordReader{fnNewRecord: func(arrowSchemaBytes []byte, sparkArrowBatch sparkArrowBatch) (arrow.Record, error) {
+			ars.recordReader = fakeRecordReader{fnNewRecord: func(arrowSchemaBytes []byte, sparkArrowBatch sparkArrowBatch) (arrow.Record, dbsqlerr.DBError) {
 				return fakeRecord{}, nil
 			}}
-			ars.valueContainerMaker = &fakeValueContainerMaker{fnMakeColumnValuesContainers: func(ars *arrowRowScanner) error {
+			ars.valueContainerMaker = &fakeValueContainerMaker{fnMakeColumnValuesContainers: func(ars *arrowRowScanner) dbsqlerr.DBError {
 				ars.columnValues = make([]columnValues, len(ars.arrowSchema.Fields()))
 				for i := range ars.arrowSchema.Fields() {
 					ars.columnValues[i] = &fakeColumnValues{}
@@ -995,7 +949,7 @@ func TestArrowRowScanner(t *testing.T) {
 
 		var loadBatchCallCount int
 		rr := ars.recordReader
-		ars.recordReader = fakeRecordReader{fnNewRecord: func(arrowSchemaBytes []byte, sparkArrowBatch sparkArrowBatch) (arrow.Record, error) {
+		ars.recordReader = fakeRecordReader{fnNewRecord: func(arrowSchemaBytes []byte, sparkArrowBatch sparkArrowBatch) (arrow.Record, dbsqlerr.DBError) {
 			loadBatchCallCount += 1
 			return rr.NewRecordFromBytes(arrowSchemaBytes, sparkArrowBatch)
 		}}
@@ -1497,10 +1451,10 @@ func (cv *fakeColumnValues) SetValueArray(colData arrow.ArrayData) error {
 }
 
 type fakeRecordReader struct {
-	fnNewRecord func(arrowSchemaBytes []byte, sparkArrowBatch sparkArrowBatch) (arrow.Record, error)
+	fnNewRecord func(arrowSchemaBytes []byte, sparkArrowBatch sparkArrowBatch) (arrow.Record, dbsqlerr.DBError)
 }
 
-func (frr fakeRecordReader) NewRecordFromBytes(arrowSchemaBytes []byte, sparkArrowBatch sparkArrowBatch) (arrow.Record, error) {
+func (frr fakeRecordReader) NewRecordFromBytes(arrowSchemaBytes []byte, sparkArrowBatch sparkArrowBatch) (arrow.Record, dbsqlerr.DBError) {
 	if frr.fnNewRecord != nil {
 		return frr.fnNewRecord(arrowSchemaBytes, sparkArrowBatch)
 	}
@@ -1807,7 +1761,7 @@ func getAllTypesSchema() *cli_service.TTableSchema {
 }
 
 type fakeValueContainerMaker struct {
-	fnMakeColumnValuesContainers func(ars *arrowRowScanner) error
+	fnMakeColumnValuesContainers func(ars *arrowRowScanner) dbsqlerr.DBError
 }
 
 var _ valueContainerMaker = (*fakeValueContainerMaker)(nil)
