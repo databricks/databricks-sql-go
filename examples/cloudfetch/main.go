@@ -5,10 +5,9 @@ import (
 	"database/sql"
 	"fmt"
 	dbsql "github.com/databricks/databricks-sql-go"
-	"github.com/stretchr/testify/assert"
+	"log"
 	"os"
 	"strconv"
-	"testing"
 	"time"
 )
 
@@ -78,20 +77,24 @@ func runTest(withCloudFetch bool, query string) ([]row, error) {
 	return res, nil
 }
 
-func TestCloudFetch(t *testing.T) {
-	t.Run("Compare local batch to cloud fetch", func(t *testing.T) {
-		query := "select * from stock_data where date is not null and volume is not null order by date, symbol limit 10000000"
+func main() {
+	query := "select * from stock_data where date is not null and volume is not null order by date, symbol limit 10000000"
 
-		// Local arrow batch
-		abRes, err := runTest(false, query)
-		assert.NoError(t, err)
+	// Local arrow batch
+	abRes, err := runTest(false, query)
+	if err != nil {
+		log.Fatal(err)
+	}
 
-		// Cloud fetch batch
-		cfRes, err := runTest(true, query)
-		assert.NoError(t, err)
+	// Cloud fetch batch
+	cfRes, err := runTest(true, query)
+	if err != nil {
+		log.Fatal(err)
+	}
 
-		for i := 0; i < len(abRes); i++ {
-			assert.Equal(t, abRes[i], cfRes[i], fmt.Sprintf("not equal for row: %d", i))
+	for i := 0; i < len(abRes); i++ {
+		if abRes[i] != cfRes[i] {
+			log.Fatal(fmt.Sprintf("not equal for row: %d", i))
 		}
-	})
+	}
 }
