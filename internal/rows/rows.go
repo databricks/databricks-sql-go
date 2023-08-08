@@ -484,10 +484,12 @@ func (r *rows) fetchResultPage() error {
 
 		r.logger().Debug().Msgf("fetching next batch of up to %d rows, %s", r.maxPageSize, direction.String())
 
+		var includeResultSetMetadata = true
 		req := cli_service.TFetchResultsReq{
-			OperationHandle: r.opHandle,
-			MaxRows:         r.maxPageSize,
-			Orientation:     direction,
+			OperationHandle:          r.opHandle,
+			MaxRows:                  r.maxPageSize,
+			Orientation:              direction,
+			IncludeResultSetMetadata: &includeResultSetMetadata,
 		}
 		ctx := driverctx.NewContextWithCorrelationId(driverctx.NewContextWithConnId(context.Background(), r.connId), r.correlationId)
 
@@ -550,6 +552,8 @@ func (r *rows) makeRowScanner(fetchResults *cli_service.TFetchResultsResp) dbsql
 		if fetchResults.Results.Columns != nil {
 			rs, err = columnbased.NewColumnRowScanner(schema, fetchResults.Results, r.config, r.logger(), r.ctx)
 		} else if fetchResults.Results.ArrowBatches != nil {
+			rs, err = arrowbased.NewArrowRowScanner(r.resultSetMetadata, fetchResults.Results, r.config, r.logger(), r.ctx)
+		} else if fetchResults.Results.ResultLinks != nil {
 			rs, err = arrowbased.NewArrowRowScanner(r.resultSetMetadata, fetchResults.Results, r.config, r.logger(), r.ctx)
 		} else {
 			r.logger().Error().Msg(errRowsUnknowRowType)

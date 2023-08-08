@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"database/sql/driver"
-
 	"time"
 
 	"github.com/apache/arrow/go/v12/arrow"
@@ -20,7 +19,7 @@ import (
 )
 
 type recordReader interface {
-	NewRecordFromBytes(arrowSchemaBytes []byte, sparkArrowBatch sparkArrowBatch) (arrow.Record, error)
+	NewRecordFromBytes(arrowSchemaBytes []byte, sparkArrowBatch sparkArrowBatch) (arrow.Record, dbsqlerr.DBError)
 }
 
 type valueContainerMaker interface {
@@ -30,7 +29,7 @@ type valueContainerMaker interface {
 type sparkArrowBatch struct {
 	rowCount, startRow, endRow int64
 	arrowRecordBytes           []byte
-	index                      int
+	hasSchema                  bool
 }
 
 func (sab *sparkArrowBatch) contains(rowIndex int64) bool {
@@ -52,9 +51,6 @@ type arrowRowScanner struct {
 
 	// configuration of different arrow options for retrieving results
 	config.ArrowConfig
-
-	// arrow batches returned by the thrift server
-	arrowBatches []sparkArrowBatch
 
 	// arrow schema corresponding to the TTableSchema
 	arrowSchema *arrow.Schema
@@ -81,7 +77,12 @@ type arrowRowScanner struct {
 	*dbsqllog.DBSQLLogger
 
 	location *time.Location
-	ctx      context.Context
+
+	ctx context.Context
+
+	resultFormat cli_service.TSparkRowSetType
+
+	BatchLoader
 }
 
 // Make sure arrowRowScanner fulfills the RowScanner interface
@@ -119,18 +120,16 @@ func NewArrowRowScanner(resultSetMetadata *cli_service.TGetResultSetMetadataResp
 		return nil, dbsqlerrint.NewDriverError(ctx, errArrowRowsToTimestampFn, err)
 	}
 
-	arrowBatches := make([]sparkArrowBatch, len(rowSet.ArrowBatches))
-	var startRow int64 = 0
-	for i := range rowSet.ArrowBatches {
-		rsab := rowSet.ArrowBatches[i]
-		arrowBatches[i] = sparkArrowBatch{
-			rowCount:         rsab.RowCount,
-			startRow:         startRow,
-			endRow:           startRow + rsab.RowCount - 1,
-			arrowRecordBytes: rsab.Batch,
-			index:            i,
-		}
-		startRow = startRow + rsab.RowCount
+	var bl BatchLoader
+	var err2 dbsqlerr.DBError
+	if len(rowSet.ResultLinks) > 0 {
+		bl, err2 = NewCloudBatchLoader(context.Background(), rowSet.ResultLinks, cfg)
+	} else {
+		bl, err2 = NewLocalBatchLoader(context.Background(), rowSet.ArrowBatches, cfg)
+	}
+
+	if err2 != nil {
+		return nil, err2
 	}
 
 	var location *time.Location = time.UTC
@@ -141,10 +140,11 @@ func NewArrowRowScanner(resultSetMetadata *cli_service.TGetResultSetMetadataResp
 	}
 
 	rs := &arrowRowScanner{
-		recordReader:        sparkRecordReader{},
+		recordReader: sparkRecordReader{
+			ctx: ctx,
+		},
 		valueContainerMaker: &arrowValueContainerMaker{},
 		ArrowConfig:         arrowConfig,
-		arrowBatches:        arrowBatches,
 		nRows:               countRows(rowSet),
 		arrowSchemaBytes:    schemaBytes,
 		arrowSchema:         arrowSchema,
@@ -152,7 +152,8 @@ func NewArrowRowScanner(resultSetMetadata *cli_service.TGetResultSetMetadataResp
 		colInfo:             colInfos,
 		DBSQLLogger:         logger,
 		location:            location,
-		ctx:                 ctx,
+		resultFormat:        *resultSetMetadata.ResultFormat,
+		BatchLoader:         bl,
 	}
 
 	return rs, nil
@@ -249,13 +250,25 @@ func isIntervalType(typeId cli_service.TTypeId) bool {
 
 // countRows returns the number of rows in the TRowSet
 func countRows(rowSet *cli_service.TRowSet) int64 {
-	if rowSet != nil && rowSet.ArrowBatches != nil {
+	if rowSet == nil {
+		return 0
+	}
+
+	if rowSet.ArrowBatches != nil {
 		batches := rowSet.ArrowBatches
 		var n int64
 		for i := range batches {
 			n += batches[i].RowCount
 		}
+		return n
+	}
 
+	if rowSet.ResultLinks != nil {
+		links := rowSet.ResultLinks
+		var n int64
+		for i := range links {
+			n += links[i].RowCount
+		}
 		return n
 	}
 
@@ -265,43 +278,17 @@ func countRows(rowSet *cli_service.TRowSet) int64 {
 // loadBatchFor loads the batch containing the specified row if necessary
 func (ars *arrowRowScanner) loadBatchFor(rowIndex int64) dbsqlerr.DBError {
 
-	// if we haven't loaded the initial batch or the row is not in the current batch
-	// we need to load a different batch
-	if ars.columnValues == nil || !ars.currentBatch.contains(rowIndex) {
-		batchIndex, err := ars.rowIndexToBatchIndex(rowIndex)
-		if err != nil {
-			return err
-		}
-
-		ars.Debug().Msgf("databricks: loading arrow batch, rowIndex: %d, batchIndex: %d", rowIndex, batchIndex)
-
-		err = ars.loadBatch(batchIndex)
-		if err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-// loadBatch loads the arrow batch at the specified index
-func (ars *arrowRowScanner) loadBatch(batchIndex int) dbsqlerr.DBError {
-	if ars == nil || ars.arrowBatches == nil {
-		if ars != nil {
-			ars.Error().Msg(errArrowRowsNoArrowBatches)
-			return dbsqlerrint.NewDriverError(ars.ctx, errArrowRowsNoArrowBatches, nil)
-		}
+	if ars == nil || ars.BatchLoader == nil {
 		return dbsqlerrint.NewDriverError(context.Background(), errArrowRowsNoArrowBatches, nil)
 	}
-
 	// if the batch already loaded we can just return
-	if ars.currentBatch != nil && ars.currentBatch.index == batchIndex && ars.columnValues != nil {
+	if ars.currentBatch != nil && ars.currentBatch.contains(rowIndex) && ars.columnValues != nil {
 		return nil
 	}
 
-	if batchIndex < 0 || batchIndex >= len(ars.arrowBatches) {
-		ars.Error().Msg(errArrowRowsInvalidBatchIndex(batchIndex, len(ars.arrowBatches)))
-		return dbsqlerrint.NewDriverError(ars.ctx, errArrowRowsInvalidBatchIndex(batchIndex, len(ars.arrowBatches)), nil)
+	batch, err := ars.GetBatchFor(rowIndex)
+	if err != nil {
+		return err
 	}
 
 	// set up the column values containers
@@ -311,8 +298,13 @@ func (ars *arrowRowScanner) loadBatch(batchIndex int) dbsqlerr.DBError {
 			return dbsqlerrint.NewDriverError(ars.ctx, errArrowRowsMakeColumnValueContainers, err)
 		}
 	}
+	var r arrow.Record
+	if ars.resultFormat == cli_service.TSparkRowSetType_ARROW_BASED_SET {
+		r, err = ars.NewRecordFromBytes(ars.arrowSchemaBytes, *batch)
+	} else if ars.resultFormat == cli_service.TSparkRowSetType_URL_BASED_SET {
+		r, err = ars.NewRecordFromBytes(nil, *batch)
+	}
 
-	r, err := ars.NewRecordFromBytes(ars.arrowSchemaBytes, ars.arrowBatches[batchIndex])
 	if err != nil {
 		ars.Err(err).Msg(errArrowRowsUnableToReadBatch)
 		return dbsqlerrint.NewDriverError(ars.ctx, errArrowRowsUnableToReadBatch, err)
@@ -340,7 +332,7 @@ func (ars *arrowRowScanner) loadBatch(batchIndex int) dbsqlerr.DBError {
 		}
 	}
 
-	ars.currentBatch = &ars.arrowBatches[batchIndex]
+	ars.currentBatch = batch
 
 	return nil
 }
@@ -365,19 +357,6 @@ func getArrowSchemaBytes(schema *arrow.Schema, ctx context.Context) ([]byte, dbs
 	arrowSchemaBytes = arrowSchemaBytes[:len(arrowSchemaBytes)-8]
 
 	return arrowSchemaBytes, nil
-}
-
-// rowIndexToBatchIndex returns the index of the batch containing the specified row
-func (ars *arrowRowScanner) rowIndexToBatchIndex(rowIndex int64) (int, dbsqlerr.DBError) {
-
-	for i := range ars.arrowBatches {
-		if ars.arrowBatches[i].contains(rowIndex) {
-			return i, nil
-		}
-	}
-
-	ars.Error().Msg(errArrowRowsInvalidRowIndex(rowIndex))
-	return -1, dbsqlerrint.NewDriverError(ars.ctx, errArrowRowsInvalidRowIndex(rowIndex), nil)
 }
 
 // tTableSchemaToArrowSchema convers the TTableSchema retrieved by the thrift server into an arrow.Schema instance
@@ -580,27 +559,34 @@ func tGetResultSetMetadataRespToArrowSchema(resultSetMetadata *cli_service.TGetR
 	return schemaBytes, arrowSchema, nil
 }
 
-type sparkRecordReader struct{}
+type sparkRecordReader struct {
+	ctx context.Context
+}
 
 // Make sure sparkRecordReader fulfills the recordReader interface
 var _ recordReader = (*sparkRecordReader)(nil)
 
-func (srr sparkRecordReader) NewRecordFromBytes(arrowSchemaBytes []byte, sparkArrowBatch sparkArrowBatch) (arrow.Record, error) {
+func (srr sparkRecordReader) NewRecordFromBytes(arrowSchemaBytes []byte, sparkArrowBatch sparkArrowBatch) (arrow.Record, dbsqlerr.DBError) {
 	// The arrow batches returned from the thrift server are actually a serialized arrow Record
 	// an arrow batch should consist of a Schema and at least one Record.
 	// Use a chunked byte reader to concatenate the schema bytes and the record bytes without
 	// having to allocate/copy slices.
 
-	br := &chunkedByteReader{chunks: [][]byte{arrowSchemaBytes, sparkArrowBatch.arrowRecordBytes}}
+	var br *chunkedByteReader
+	if arrowSchemaBytes == nil {
+		br = &chunkedByteReader{chunks: [][]byte{sparkArrowBatch.arrowRecordBytes}}
+	} else {
+		br = &chunkedByteReader{chunks: [][]byte{arrowSchemaBytes, sparkArrowBatch.arrowRecordBytes}}
+	}
 	rdr, err := ipc.NewReader(br)
 	if err != nil {
-		return nil, err
+		return nil, dbsqlerrint.NewDriverError(srr.ctx, errArrowRowsUnableToReadBatch, err)
 	}
 	defer rdr.Release()
 
 	r, err := rdr.Read()
 	if err != nil {
-		return nil, err
+		return nil, dbsqlerrint.NewDriverError(srr.ctx, errArrowRowsUnableToReadBatch, err)
 	}
 
 	r.Retain()

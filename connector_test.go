@@ -36,24 +36,33 @@ func TestNewConnector(t *testing.T) {
 			WithSessionParams(sessionParams),
 			WithRetries(10, 3*time.Second, 60*time.Second),
 			WithTransport(roundTripper),
+			WithCloudFetch(true),
+			WithMaxDownloadThreads(15),
 		)
+		expectedCloudFetchConfig := config.CloudFetchConfig{
+			UseCloudFetch:      true,
+			MaxDownloadThreads: 15,
+			MaxFilesInMemory:   10,
+			MinTimeToExpiry:    0 * time.Second,
+		}
 		expectedUserConfig := config.UserConfig{
-			Host:           host,
-			Port:           port,
-			Protocol:       "https",
-			AccessToken:    accessToken,
-			Authenticator:  &pat.PATAuth{AccessToken: accessToken},
-			HTTPPath:       "/" + httpPath,
-			MaxRows:        maxRows,
-			QueryTimeout:   timeout,
-			Catalog:        catalog,
-			Schema:         schema,
-			UserAgentEntry: userAgentEntry,
-			SessionParams:  sessionParams,
-			RetryMax:       10,
-			RetryWaitMin:   3 * time.Second,
-			RetryWaitMax:   60 * time.Second,
-			Transport:      roundTripper,
+			Host:             host,
+			Port:             port,
+			Protocol:         "https",
+			AccessToken:      accessToken,
+			Authenticator:    &pat.PATAuth{AccessToken: accessToken},
+			HTTPPath:         "/" + httpPath,
+			MaxRows:          maxRows,
+			QueryTimeout:     timeout,
+			Catalog:          catalog,
+			Schema:           schema,
+			UserAgentEntry:   userAgentEntry,
+			SessionParams:    sessionParams,
+			RetryMax:         10,
+			RetryWaitMin:     3 * time.Second,
+			RetryWaitMax:     60 * time.Second,
+			Transport:        roundTripper,
+			CloudFetchConfig: expectedCloudFetchConfig,
 		}
 		expectedCfg := config.WithDefaults()
 		expectedCfg.DriverVersion = DriverVersion
@@ -75,18 +84,25 @@ func TestNewConnector(t *testing.T) {
 			WithAccessToken(accessToken),
 			WithHTTPPath(httpPath),
 		)
+		expectedCloudFetchConfig := config.CloudFetchConfig{
+			UseCloudFetch:      false,
+			MaxDownloadThreads: 10,
+			MaxFilesInMemory:   10,
+			MinTimeToExpiry:    0 * time.Second,
+		}
 		expectedUserConfig := config.UserConfig{
-			Host:          host,
-			Port:          port,
-			Protocol:      "https",
-			AccessToken:   accessToken,
-			Authenticator: &pat.PATAuth{AccessToken: accessToken},
-			HTTPPath:      "/" + httpPath,
-			MaxRows:       maxRows,
-			SessionParams: sessionParams,
-			RetryMax:      4,
-			RetryWaitMin:  1 * time.Second,
-			RetryWaitMax:  30 * time.Second,
+			Host:             host,
+			Port:             port,
+			Protocol:         "https",
+			AccessToken:      accessToken,
+			Authenticator:    &pat.PATAuth{AccessToken: accessToken},
+			HTTPPath:         "/" + httpPath,
+			MaxRows:          maxRows,
+			SessionParams:    sessionParams,
+			RetryMax:         4,
+			RetryWaitMin:     1 * time.Second,
+			RetryWaitMax:     30 * time.Second,
+			CloudFetchConfig: expectedCloudFetchConfig,
 		}
 		expectedCfg := config.WithDefaults()
 		expectedCfg.UserConfig = expectedUserConfig
@@ -109,18 +125,25 @@ func TestNewConnector(t *testing.T) {
 			WithHTTPPath(httpPath),
 			WithRetries(-1, 0, 0),
 		)
+		expectedCloudFetchConfig := config.CloudFetchConfig{
+			UseCloudFetch:      false,
+			MaxDownloadThreads: 10,
+			MaxFilesInMemory:   10,
+			MinTimeToExpiry:    0 * time.Second,
+		}
 		expectedUserConfig := config.UserConfig{
-			Host:          host,
-			Port:          port,
-			Protocol:      "https",
-			AccessToken:   accessToken,
-			Authenticator: &pat.PATAuth{AccessToken: accessToken},
-			HTTPPath:      "/" + httpPath,
-			MaxRows:       maxRows,
-			SessionParams: sessionParams,
-			RetryMax:      -1,
-			RetryWaitMin:  0,
-			RetryWaitMax:  0,
+			Host:             host,
+			Port:             port,
+			Protocol:         "https",
+			AccessToken:      accessToken,
+			Authenticator:    &pat.PATAuth{AccessToken: accessToken},
+			HTTPPath:         "/" + httpPath,
+			MaxRows:          maxRows,
+			SessionParams:    sessionParams,
+			RetryMax:         -1,
+			RetryWaitMin:     0,
+			RetryWaitMax:     0,
+			CloudFetchConfig: expectedCloudFetchConfig,
 		}
 		expectedCfg := config.WithDefaults()
 		expectedCfg.DriverVersion = DriverVersion

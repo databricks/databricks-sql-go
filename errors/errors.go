@@ -31,7 +31,12 @@ const (
 
 	// Execution error messages (query failure)
 	ErrQueryExecution = "failed to execute query"
+	ErrLinkExpired    = "link expired"
 )
+
+func InvalidDSNFormat(param string, value string, expected string) string {
+	return fmt.Sprintf("invalid DSN: param %s with value %s is not of type %s", param, value, expected)
+}
 
 func ErrInvalidOperationState(state string) string {
 	return fmt.Sprintf("invalid operation state %s. This should not have happened", state)

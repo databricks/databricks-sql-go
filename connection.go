@@ -283,6 +283,7 @@ func (c *conn) executeStatement(ctx context.Context, query string, args []driver
 		GetDirectResults: &cli_service.TSparkGetDirectResults{
 			MaxRows: int64(c.cfg.MaxRows),
 		},
+		CanDecompressLZ4Result_: &c.cfg.UseLz4Compression,
 	}
 
 	if c.cfg.UseArrowBatches {
@@ -293,6 +294,10 @@ func (c *conn) executeStatement(ctx context.Context, query string, args []driver
 			ComplexTypesAsArrow:  &c.cfg.UseArrowNativeComplexTypes,
 			IntervalTypesAsArrow: &c.cfg.UseArrowNativeIntervalTypes,
 		}
+	}
+
+	if c.cfg.UseCloudFetch {
+		req.CanDownloadResult_ = &c.cfg.UseCloudFetch
 	}
 
 	ctx = driverctx.NewContextWithConnId(ctx, c.id)
