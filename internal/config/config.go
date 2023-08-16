@@ -194,7 +194,7 @@ func WithDefaults() *Config {
 		DriverName:                "godatabrickssqlconnector", // important. Do not change
 		ThriftProtocol:            "binary",
 		ThriftTransport:           "http",
-		ThriftProtocolVersion:     cli_service.TProtocolVersion_SPARK_CLI_SERVICE_PROTOCOL_V6,
+		ThriftProtocolVersion:     cli_service.TProtocolVersion_SPARK_CLI_SERVICE_PROTOCOL_V7,
 		ThriftDebugClientProtocol: false,
 	}
 
