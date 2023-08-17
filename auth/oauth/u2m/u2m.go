@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/databricks/databricks-sql-go/auth/oauth"
-	"github.com/databricks/databricks-sql-go/internal/auth/oauth/pkce"
+	"github.com/databricks/databricks-sql-go/auth/oauth/pkce"
 	"golang.org/x/oauth2"
 )
 

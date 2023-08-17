@@ -27,8 +27,7 @@ const (
 	ErrInvalidDSNPort         = "invalid DSN: invalid DSN port"
 	ErrInvalidDSNPATIsEmpty   = "invalid DSN: empty token"
 	ErrBasicAuthNotSupported  = "invalid DSN: basic auth not enabled"
-	ErrInvalidDSNMaxRows      = "invalid DSN: maxRows param is not an integer"
-	ErrInvalidDSNTimeout      = "invalid DSN: timeout param is not an integer"
+	ErrInvalidDSNM2m          = "invalid DSN: clientId and clientSecret params required"
 
 	// Execution error messages (query failure)
 	ErrQueryExecution = "failed to execute query"

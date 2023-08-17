@@ -22,7 +22,6 @@ import (
 	"github.com/apache/thrift/lib/go/thrift"
 	"github.com/databricks/databricks-sql-go/auth"
 	"github.com/databricks/databricks-sql-go/driverctx"
-	"github.com/databricks/databricks-sql-go/internal/auth/oauth/defauth"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/config"
 	"github.com/databricks/databricks-sql-go/logger"
@@ -254,10 +253,7 @@ func InitThriftClient(cfg *config.Config, httpclient *http.Client) (*ThriftServi
 	case "http":
 		if httpclient == nil {
 			if cfg.Authenticator == nil {
-				cfg.Authenticator, err = defauth.NewDefaultAuthenticator(cfg.Host, 0)
-				if err != nil {
-					return nil, dbsqlerrint.NewRequestError(context.TODO(), dbsqlerr.ErrNoDefaultAuthenticator, nil)
-				}
+				return nil, dbsqlerrint.NewRequestError(context.TODO(), dbsqlerr.ErrNoDefaultAuthenticator, nil)
 			}
 			httpclient = RetryableClient(cfg)
 		}
@@ -407,11 +403,7 @@ func PooledTransport() *http.Transport {
 
 func PooledClient(cfg *config.Config) *http.Client {
 	if cfg.Authenticator == nil {
-		var err error
-		cfg.Authenticator, err = defauth.NewDefaultAuthenticator(cfg.Host, 0)
-		if err != nil {
-			return nil
-		}
+		return nil
 	}
 
 	var tr *Transport

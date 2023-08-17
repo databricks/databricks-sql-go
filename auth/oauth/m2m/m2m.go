@@ -16,7 +16,7 @@ import (
 	"golang.org/x/oauth2/clientcredentials"
 )
 
-func NewClient(clientID, clientSecret, hostName string) auth.Authenticator {
+func NewAuthenticator(clientID, clientSecret, hostName string) auth.Authenticator {
 	scopes := oauth.GetScopes(hostName, []string{})
 	return &authClient{
 		clientID:     clientID,

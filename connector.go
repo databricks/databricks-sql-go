@@ -9,10 +9,10 @@ import (
 	"time"
 
 	"github.com/databricks/databricks-sql-go/auth"
+	"github.com/databricks/databricks-sql-go/auth/oauth/m2m"
+	"github.com/databricks/databricks-sql-go/auth/pat"
 	"github.com/databricks/databricks-sql-go/driverctx"
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
-	"github.com/databricks/databricks-sql-go/internal/auth/oauth/m2m"
-	"github.com/databricks/databricks-sql-go/internal/auth/pat"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/client"
 	"github.com/databricks/databricks-sql-go/internal/config"
@@ -264,7 +264,7 @@ func WithMaxDownloadThreads(numThreads int) connOption {
 func WithClientCredentials(clientID, clientSecret string) connOption {
 	return func(c *config.Config) {
 		if clientID != "" && clientSecret != "" {
-			authr := m2m.NewClient(clientID, clientSecret, c.Host)
+			authr := m2m.NewAuthenticator(clientID, clientSecret, c.Host)
 			c.Authenticator = authr
 		}
 	}

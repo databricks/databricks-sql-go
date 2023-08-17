@@ -11,7 +11,11 @@ import (
 )
 
 const (
-	azureEnterpriseAppId = "2ff814a6-3304-4ab8-85cb-cd0e6f879c1d"
+	azureClientId   = "96eecda7-19ea-49cc-abb5-240097d554f5"
+	azureTenantId   = "4a67d088-db5c-48f1-9ff2-0aace800ae68"
+	azureRedirctURL = "localhost:8030"
+	awsClientId     = "databricks-sql-connector"
+	awsRedirctURL   = "localhost:8030"
 )
 
 func GetEndpoint(ctx context.Context, hostName string) (oauth2.Endpoint, error) {
@@ -44,7 +48,7 @@ func GetEndpoint(ctx context.Context, hostName string) (oauth2.Endpoint, error) 
 }
 
 func GetScopes(hostName string, scopes []string) []string {
-	for _, s := range []string{oidc.ScopeOfflineAccess, oidc.ScopeOpenID} {
+	for _, s := range []string{oidc.ScopeOfflineAccess} {
 		if !hasScope(scopes, s) {
 			scopes = append(scopes, s)
 		}
@@ -52,7 +56,7 @@ func GetScopes(hostName string, scopes []string) []string {
 
 	cloudType := InferCloudFromHost(hostName)
 	if cloudType == Azure {
-		userImpersonationScope := fmt.Sprintf("%s/user_impersonation", azureEnterpriseAppId)
+		userImpersonationScope := fmt.Sprintf("%s/user_impersonation", azureTenantId)
 		if !hasScope(scopes, userImpersonationScope) {
 			scopes = append(scopes, userImpersonationScope)
 		}
@@ -85,14 +89,11 @@ var databricksAzureDomains []string = []string{
 	".databricks.azure.us",
 }
 
-var databricksGCPDomains []string = []string{".gcp.databricks.com"}
-
 type CloudType int
 
 const (
 	AWS = iota
 	Azure
-	GCP
 	Unknown
 )
 
@@ -102,8 +103,6 @@ func (cl CloudType) String() string {
 		return "AWS"
 	case Azure:
 		return "Azure"
-	case GCP:
-		return "GCP"
 	}
 
 	return "Unknown"
@@ -120,12 +119,6 @@ func InferCloudFromHost(hostname string) CloudType {
 	for _, d := range databricksAWSDomains {
 		if strings.Contains(hostname, d) {
 			return AWS
-		}
-	}
-
-	for _, d := range databricksGCPDomains {
-		if strings.Contains(hostname, d) {
-			return GCP
 		}
 	}
 

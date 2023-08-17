@@ -2,12 +2,16 @@ package config
 
 import (
 	"crypto/tls"
+	"fmt"
 	"reflect"
 	"testing"
 	"time"
 
+	"github.com/databricks/databricks-sql-go/auth"
 	"github.com/databricks/databricks-sql-go/auth/noop"
-	"github.com/databricks/databricks-sql-go/internal/auth/pat"
+	"github.com/databricks/databricks-sql-go/auth/oauth/m2m"
+	"github.com/databricks/databricks-sql-go/auth/oauth/u2m"
+	"github.com/databricks/databricks-sql-go/auth/pat"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 )
 
@@ -15,6 +19,9 @@ func TestParseConfig(t *testing.T) {
 	type args struct {
 		dsn string
 	}
+
+	defCloudConfig := CloudFetchConfig{}.WithDefaults()
+
 	tz, _ := time.LoadLocation("America/Vancouver")
 	tests := []struct {
 		name            string
@@ -39,12 +46,7 @@ func TestParseConfig(t *testing.T) {
 				RetryMax:      4,
 				RetryWaitMin:  1 * time.Second,
 				RetryWaitMax:  30 * time.Second,
-				CloudFetchConfig: CloudFetchConfig{
-					UseCloudFetch:      false,
-					MaxDownloadThreads: 10,
-					MaxFilesInMemory:   10,
-					MinTimeToExpiry:    0 * time.Second,
-				},
+				CloudFetchConfig: defCloudConfig,
 			},
 			wantURL: "https://example.cloud.databricks.com:443/sql/1.0/endpoints/12346a5b5b0e123a",
 			wantErr: false,
@@ -64,12 +66,7 @@ func TestParseConfig(t *testing.T) {
 				RetryMax:      4,
 				RetryWaitMin:  1 * time.Second,
 				RetryWaitMax:  30 * time.Second,
-				CloudFetchConfig: CloudFetchConfig{
-					UseCloudFetch:      false,
-					MaxDownloadThreads: 10,
-					MaxFilesInMemory:   10,
-					MinTimeToExpiry:    0 * time.Second,
-				},
+				CloudFetchConfig: defCloudConfig,
 			},
 			wantURL: "https://example.cloud.databricks.com:443/sql/1.0/endpoints/12346a5b5b0e123a",
 			wantErr: false,
@@ -88,12 +85,7 @@ func TestParseConfig(t *testing.T) {
 				RetryMax:      4,
 				RetryWaitMin:  1 * time.Second,
 				RetryWaitMax:  30 * time.Second,
-				CloudFetchConfig: CloudFetchConfig{
-					UseCloudFetch:      false,
-					MaxDownloadThreads: 10,
-					MaxFilesInMemory:   10,
-					MinTimeToExpiry:    0 * time.Second,
-				},
+				CloudFetchConfig: defCloudConfig,
 			},
 			wantErr: false,
 			wantURL: "http://localhost:8080/sql/1.0/endpoints/12346a5b5b0e123a",
@@ -111,12 +103,7 @@ func TestParseConfig(t *testing.T) {
 				RetryMax:      4,
 				RetryWaitMin:  1 * time.Second,
 				RetryWaitMax:  30 * time.Second,
-				CloudFetchConfig: CloudFetchConfig{
-					UseCloudFetch:      false,
-					MaxDownloadThreads: 10,
-					MaxFilesInMemory:   10,
-					MinTimeToExpiry:    0 * time.Second,
-				},
+				CloudFetchConfig: defCloudConfig,
 			},
 			wantErr: false,
 			wantURL: "http://localhost:8080",
@@ -137,12 +124,7 @@ func TestParseConfig(t *testing.T) {
 				RetryMax:      4,
 				RetryWaitMin:  1 * time.Second,
 				RetryWaitMax:  30 * time.Second,
-				CloudFetchConfig: CloudFetchConfig{
-					UseCloudFetch:      false,
-					MaxDownloadThreads: 10,
-					MaxFilesInMemory:   10,
-					MinTimeToExpiry:    0 * time.Second,
-				},
+				CloudFetchConfig: defCloudConfig,
 			},
 			wantURL: "https://example.cloud.databricks.com:8000/sql/1.0/endpoints/12346a5b5b0e123a",
 			wantErr: false,
@@ -164,12 +146,7 @@ func TestParseConfig(t *testing.T) {
 				RetryMax:      4,
 				RetryWaitMin:  1 * time.Second,
 				RetryWaitMax:  30 * time.Second,
-				CloudFetchConfig: CloudFetchConfig{
-					UseCloudFetch:      false,
-					MaxDownloadThreads: 10,
-					MaxFilesInMemory:   10,
-					MinTimeToExpiry:    0 * time.Second,
-				},
+				CloudFetchConfig: defCloudConfig,
 			},
 			wantURL: "https://example.cloud.databricks.com:8000/sql/1.0/endpoints/12346a5b5b0e123a",
 			wantErr: false,
@@ -188,12 +165,7 @@ func TestParseConfig(t *testing.T) {
 				RetryMax:      4,
 				RetryWaitMin:  1 * time.Second,
 				RetryWaitMax:  30 * time.Second,
-				CloudFetchConfig: CloudFetchConfig{
-					UseCloudFetch:      false,
-					MaxDownloadThreads: 10,
-					MaxFilesInMemory:   10,
-					MinTimeToExpiry:    0 * time.Second,
-				},
+				CloudFetchConfig: defCloudConfig,
 			},
 			wantURL: "https://example.cloud.databricks.com:8000/sql/1.0/endpoints/12346a5b5b0e123a",
 			wantErr: false,
@@ -214,12 +186,7 @@ func TestParseConfig(t *testing.T) {
 				RetryMax:      4,
 				RetryWaitMin:  1 * time.Second,
 				RetryWaitMax:  30 * time.Second,
-				CloudFetchConfig: CloudFetchConfig{
-					UseCloudFetch:      false,
-					MaxDownloadThreads: 10,
-					MaxFilesInMemory:   10,
-					MinTimeToExpiry:    0 * time.Second,
-				},
+				CloudFetchConfig: defCloudConfig,
 			},
 			wantURL: "https://example.cloud.databricks.com:8000/sql/1.0/endpoints/12346a5b5b0e123b",
 			wantErr: false,
@@ -240,12 +207,7 @@ func TestParseConfig(t *testing.T) {
 				RetryMax:       4,
 				RetryWaitMin:   1 * time.Second,
 				RetryWaitMax:   30 * time.Second,
-				CloudFetchConfig: CloudFetchConfig{
-					UseCloudFetch:      false,
-					MaxDownloadThreads: 10,
-					MaxFilesInMemory:   10,
-					MinTimeToExpiry:    0 * time.Second,
-				},
+				CloudFetchConfig: defCloudConfig,
 			},
 			wantURL: "https://example.cloud.databricks.com:8000/sql/1.0/endpoints/12346a5b5b0e123b",
 			wantErr: false,
@@ -266,12 +228,7 @@ func TestParseConfig(t *testing.T) {
 				RetryMax:      4,
 				RetryWaitMin:  1 * time.Second,
 				RetryWaitMax:  30 * time.Second,
-				CloudFetchConfig: CloudFetchConfig{
-					UseCloudFetch:      false,
-					MaxDownloadThreads: 10,
-					MaxFilesInMemory:   10,
-					MinTimeToExpiry:    0 * time.Second,
-				},
+				CloudFetchConfig: defCloudConfig,
 			},
 			wantURL: "https://example.cloud.databricks.com:8000/sql/1.0/endpoints/12346a5b5b0e123a",
 			wantErr: false,
@@ -292,10 +249,9 @@ func TestParseConfig(t *testing.T) {
 				RetryWaitMin:  1 * time.Second,
 				RetryWaitMax:  30 * time.Second,
 				CloudFetchConfig: CloudFetchConfig{
-					UseCloudFetch:      true,
+					UseCloudFetch: true,
 					MaxDownloadThreads: 10,
-					MaxFilesInMemory:   10,
-					MinTimeToExpiry:    0 * time.Second,
+					MaxFilesInMemory: 10,
 				},
 			},
 			wantURL: "https://example.cloud.databricks.com:8000/sql/1.0/endpoints/12346a5b5b0e123b",
@@ -317,10 +273,9 @@ func TestParseConfig(t *testing.T) {
 				RetryWaitMin:  1 * time.Second,
 				RetryWaitMax:  30 * time.Second,
 				CloudFetchConfig: CloudFetchConfig{
-					UseCloudFetch:      true,
+					UseCloudFetch: true,
 					MaxDownloadThreads: 15,
-					MaxFilesInMemory:   10,
-					MinTimeToExpiry:    0 * time.Second,
+					MaxFilesInMemory: 10,
 				},
 			},
 			wantURL: "https://example.cloud.databricks.com:8000/sql/1.0/endpoints/12346a5b5b0e123b",
@@ -346,10 +301,9 @@ func TestParseConfig(t *testing.T) {
 				RetryWaitMin:   1 * time.Second,
 				RetryWaitMax:   30 * time.Second,
 				CloudFetchConfig: CloudFetchConfig{
-					UseCloudFetch:      true,
+					UseCloudFetch: true,
 					MaxDownloadThreads: 15,
-					MaxFilesInMemory:   10,
-					MinTimeToExpiry:    0 * time.Second,
+					MaxFilesInMemory: 10,
 				},
 			},
 			wantURL: "https://example.cloud.databricks.com:8000/sql/1.0/endpoints/12346a5b5b0e123a",
@@ -369,12 +323,7 @@ func TestParseConfig(t *testing.T) {
 				RetryMax:      4,
 				RetryWaitMin:  1 * time.Second,
 				RetryWaitMax:  30 * time.Second,
-				CloudFetchConfig: CloudFetchConfig{
-					UseCloudFetch:      false,
-					MaxDownloadThreads: 10,
-					MaxFilesInMemory:   10,
-					MinTimeToExpiry:    0 * time.Second,
-				},
+				CloudFetchConfig: defCloudConfig,
 			},
 			wantURL:         "https://example.cloud.databricks.com:443",
 			wantErr:         false,
@@ -397,12 +346,7 @@ func TestParseConfig(t *testing.T) {
 				RetryMax:      4,
 				RetryWaitMin:  1 * time.Second,
 				RetryWaitMax:  30 * time.Second,
-				CloudFetchConfig: CloudFetchConfig{
-					UseCloudFetch:      false,
-					MaxDownloadThreads: 10,
-					MaxFilesInMemory:   10,
-					MinTimeToExpiry:    0 * time.Second,
-				},
+				CloudFetchConfig: defCloudConfig,
 			},
 			wantURL:         "https://example.cloud.databricks.com:443",
 			wantErr:         false,
@@ -444,7 +388,6 @@ func TestParseConfig(t *testing.T) {
 			wantCfg: UserConfig{},
 			wantErr: true,
 		},
-
 		{
 			name: "missing host",
 			args: args{dsn: "token:supersecret2@:443?catalog=default&schema=system&timeout=100&maxRows=1000"},
@@ -461,24 +404,158 @@ func TestParseConfig(t *testing.T) {
 				RetryMax:         4,
 				RetryWaitMin:     1 * time.Second,
 				RetryWaitMax:     30 * time.Second,
-				CloudFetchConfig: CloudFetchConfig{}.WithDefaults(),
+				CloudFetchConfig: defCloudConfig,
 			},
 			wantURL:         "https://:443",
 			wantErr:         false,
 			wantEndpointErr: true,
 		},
+		{
+			name: "with accessToken param",
+			args: args{dsn: "example.cloud.databricks.com:8000/sql/1.0/endpoints/12346a5b5b0e123a?catalog=default&schema=system&userAgentEntry=partner-name&timeout=100&maxRows=1000&ANSI_MODE=true&accessToken=supersecret2"},
+			wantCfg: UserConfig{
+				Protocol:       "https",
+				Host:           "example.cloud.databricks.com",
+				Port:           8000,
+				AccessToken:    "supersecret2",
+				Authenticator:  &pat.PATAuth{AccessToken: "supersecret2"},
+				HTTPPath:       "/sql/1.0/endpoints/12346a5b5b0e123a",
+				QueryTimeout:   100 * time.Second,
+				MaxRows:        1000,
+				UserAgentEntry: "partner-name",
+				Catalog:        "default",
+				Schema:         "system",
+				SessionParams:  map[string]string{"ANSI_MODE": "true"},
+				RetryMax:       4,
+				RetryWaitMin:   1 * time.Second,
+				RetryWaitMax:   30 * time.Second,
+				CloudFetchConfig: defCloudConfig,
+			},
+			wantURL: "https://example.cloud.databricks.com:8000/sql/1.0/endpoints/12346a5b5b0e123a",
+			wantErr: false,
+		},
+		{
+			name: "with accessToken param and client id/secret params",
+			args: args{dsn: "example.cloud.databricks.com:8000/sql/1.0/endpoints/12346a5b5b0e123a?catalog=default&schema=system&userAgentEntry=partner-name&timeout=100&maxRows=1000&ANSI_MODE=true&accessToken=supersecret2&clientId=client_id&clientSecret=client_secret"},
+			wantCfg: UserConfig{
+				Protocol:       "https",
+				Host:           "example.cloud.databricks.com",
+				Port:           8000,
+				AccessToken:    "supersecret2",
+				Authenticator:  &pat.PATAuth{AccessToken: "supersecret2"},
+				HTTPPath:       "/sql/1.0/endpoints/12346a5b5b0e123a",
+				QueryTimeout:   100 * time.Second,
+				MaxRows:        1000,
+				UserAgentEntry: "partner-name",
+				Catalog:        "default",
+				Schema:         "system",
+				SessionParams:  map[string]string{"ANSI_MODE": "true"},
+				RetryMax:       4,
+				RetryWaitMin:   1 * time.Second,
+				RetryWaitMax:   30 * time.Second,
+				CloudFetchConfig: defCloudConfig,
+			},
+			wantURL: "https://example.cloud.databricks.com:8000/sql/1.0/endpoints/12346a5b5b0e123a",
+			wantErr: false,
+		},
+		{
+			name: "authType unknown with accessTokenParam",
+			args: args{dsn: "example.cloud.databricks.com:8000/sql/1.0/endpoints/12346a5b5b0e123a?authType=unknown&catalog=default&schema=system&userAgentEntry=partner-name&timeout=100&maxRows=1000&ANSI_MODE=true&accessToken=supersecret2&clientId=client_id&clientSecret=client_secret"},
+			wantCfg: UserConfig{
+				Protocol:       "https",
+				Host:           "example.cloud.databricks.com",
+				Port:           8000,
+				AccessToken:    "supersecret2",
+				Authenticator:  &pat.PATAuth{AccessToken: "supersecret2"},
+				HTTPPath:       "/sql/1.0/endpoints/12346a5b5b0e123a",
+				QueryTimeout:   100 * time.Second,
+				MaxRows:        1000,
+				UserAgentEntry: "partner-name",
+				Catalog:        "default",
+				Schema:         "system",
+				SessionParams:  map[string]string{"ANSI_MODE": "true"},
+				RetryMax:       4,
+				RetryWaitMin:   1 * time.Second,
+				RetryWaitMax:   30 * time.Second,
+				CloudFetchConfig: defCloudConfig,
+			},
+			wantURL: "https://example.cloud.databricks.com:8000/sql/1.0/endpoints/12346a5b5b0e123a",
+			wantErr: false,
+		},
+		{
+			name:    "client id no secret",
+			args:    args{dsn: "example.cloud.databricks.com:8000/sql/1.0/endpoints/12346a5b5b0e123a?authType=unknown&clientId=client_id&catalog=default&schema=system&userAgentEntry=partner-name&timeout=100&maxRows=1000&ANSI_MODE=true"},
+			wantCfg: UserConfig{},
+			wantErr: true,
+		},
+		{
+			name:    "client secret no id",
+			args:    args{dsn: "example.cloud.databricks.com:8000/sql/1.0/endpoints/12346a5b5b0e123a?authType=unknown&clientSecret=client_secret&catalog=default&schema=system&userAgentEntry=partner-name&timeout=100&maxRows=1000&ANSI_MODE=true"},
+			wantCfg: UserConfig{},
+			wantErr: true,
+		},
+		{
+			name:    "authType Pat, no accessToken",
+			args:    args{dsn: "example.cloud.databricks.com:8000/sql/1.0/endpoints/12346a5b5b0e123a?authType=pat&clientSecret=client_secret&catalog=default&schema=system&userAgentEntry=partner-name&timeout=100&maxRows=1000&ANSI_MODE=true"},
+			wantCfg: UserConfig{},
+			wantErr: true,
+		},
+		{
+			name:    "authType m2m, no id",
+			args:    args{dsn: "example.cloud.databricks.com:8000/sql/1.0/endpoints/12346a5b5b0e123a?authType=oauthm2m&clientSecret=client_secret&catalog=default&schema=system&userAgentEntry=partner-name&timeout=100&maxRows=1000&ANSI_MODE=true"},
+			wantCfg: UserConfig{},
+			wantErr: true,
+		},
+		{
+			name:    "authType m2m, no secret",
+			args:    args{dsn: "example.cloud.databricks.com:8000/sql/1.0/endpoints/12346a5b5b0e123a?authType=oauthm2m&clientId=client_id&client_secret=&catalog=default&schema=system&userAgentEntry=partner-name&timeout=100&maxRows=1000&ANSI_MODE=true"},
+			wantCfg: UserConfig{},
+			wantErr: true,
+		},
+		{
+			name: "authType unknown with client id/secret",
+			args: args{dsn: "example.cloud.databricks.com:8000/sql/1.0/endpoints/12346a5b5b0e123a?authType=unknown&clientId=client_id&clientSecret=client_secret&catalog=default&schema=system&userAgentEntry=partner-name&timeout=100&maxRows=1000&ANSI_MODE=true"},
+			wantCfg: UserConfig{
+				Protocol:         "https",
+				Host:             "example.cloud.databricks.com",
+				Port:             8000,
+				Authenticator:    m2m.NewAuthenticator("client_id", "client_secret", "example.cloud.databricks.com"),
+				HTTPPath:         "/sql/1.0/endpoints/12346a5b5b0e123a",
+				QueryTimeout:     100 * time.Second,
+				MaxRows:          1000,
+				UserAgentEntry:   "partner-name",
+				Catalog:          "default",
+				Schema:           "system",
+				SessionParams:    map[string]string{"ANSI_MODE": "true"},
+				RetryMax:         4,
+				RetryWaitMin:     1 * time.Second,
+				RetryWaitMax:     30 * time.Second,
+				CloudFetchConfig: defCloudConfig,
+			},
+			wantURL: "https://example.cloud.databricks.com:8000/sql/1.0/endpoints/12346a5b5b0e123a",
+			wantErr: false,
+		},
+		{
+			name:    "authType m2m with accessToken",
+			args:    args{dsn: "example.cloud.databricks.com:8000/sql/1.0/endpoints/12346a5b5b0e123a?authType=oauthm2m&accessToken=supersecret2&catalog=default&schema=system&userAgentEntry=partner-name&timeout=100&maxRows=1000&ANSI_MODE=true"},
+			wantCfg: UserConfig{},
+			wantErr: true,
+		},
 	}
-	for _, tt := range tests {
+	for i, tt := range tests {
+		fmt.Println(i)
 		t.Run(tt.name, func(t *testing.T) {
 			got, err := ParseDSN(tt.args.dsn)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("ParseConfig() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
+
 			if !reflect.DeepEqual(got, tt.wantCfg) {
 				t.Errorf("ParseConfig() = %v, want %v", got, tt.wantCfg)
 				return
 			}
+
 			if err == nil {
 				cfg := &Config{UserConfig: got}
 				gotUrl, err := cfg.ToEndpointURL()
@@ -583,4 +660,12 @@ func TestConfig_DeepCopy(t *testing.T) {
 			t.Errorf("DeepCopy() = %v, want %v", cfg_copy, cfg)
 		}
 	})
+}
+
+func makeU2MAuthenticator(t *testing.T, host string) auth.Authenticator {
+	auth, err := u2m.NewAuthenticator(host, 0)
+	if err != nil {
+		t.Errorf("u2m.NewAuthenticator %s", err)
+	}
+	return auth
 }
