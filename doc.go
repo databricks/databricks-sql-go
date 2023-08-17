@@ -39,6 +39,10 @@ Supported optional connection parameters can be specified in param=value and inc
   - userAgentEntry: Used to identify partners. Set as a string with format <isv-name+product-name>
   - useCloudFetch: Used to enable cloud fetch for the query execution. Default is false
   - maxDownloadThreads: Sets up the max number of concurrent workers for cloud fetch. Default is 10
+  - authType: Specifies the desired authentication type. Valid values are: Pat, OauthM2M, OauthU2M
+  - accessToken: Personal access token. Required if authType set to Pat
+  - clientID: Specifies the client ID to use with OauthM2M
+  - clientSecret: Specifies the client secret to use with OauthM2M
 
 Supported optional session parameters can be specified in param=value and include:
 
@@ -83,6 +87,8 @@ Supported functional options include:
   - WithUserAgentEntry(<isv-name+product-name> string). Used to identify partners. Optional
   - WithCloudFetch (bool). Used to enable cloud fetch for the query execution. Default is false. Optional
   - WithMaxDownloadThreads (<num_threads> int). Sets up the max number of concurrent workers for cloud fetch. Default is 10. Optional
+  - WithAuthenticator (<authenticator> auth.Authenticator). Sets up authentication. Required if neither access token or client credentials are provided.
+  - WithClientCredentials(<clientID> string, <clientSecret> string). Sets up Oauth M2M authentication.
 
 # Query cancellation and timeout
 

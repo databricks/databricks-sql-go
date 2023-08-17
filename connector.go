@@ -261,6 +261,7 @@ func WithMaxDownloadThreads(numThreads int) connOption {
 	}
 }
 
+// Setup of Oauth M2m authentication
 func WithClientCredentials(clientID, clientSecret string) connOption {
 	return func(c *config.Config) {
 		if clientID != "" && clientSecret != "" {

@@ -18,7 +18,7 @@ const (
 	AuthTypeOauthM2M
 )
 
-var authTypeNames []string = []string{"Unknown", "Pat", "OauthU2m", "OauthM2M"}
+var authTypeNames []string = []string{"Unknown", "Pat", "OauthU2M", "OauthM2M"}
 
 func (at AuthType) String() string {
 	if at >= 0 && int(at) < len(authTypeNames) {
