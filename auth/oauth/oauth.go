@@ -11,11 +11,7 @@ import (
 )
 
 const (
-	azureClientId   = "96eecda7-19ea-49cc-abb5-240097d554f5"
-	azureTenantId   = "4a67d088-db5c-48f1-9ff2-0aace800ae68"
-	azureRedirctURL = "localhost:8030"
-	awsClientId     = "databricks-sql-connector"
-	awsRedirctURL   = "localhost:8030"
+	azureTenantId = "4a67d088-db5c-48f1-9ff2-0aace800ae68"
 )
 
 func GetEndpoint(ctx context.Context, hostName string) (oauth2.Endpoint, error) {

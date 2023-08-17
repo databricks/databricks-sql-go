@@ -26,7 +26,6 @@ import (
 
 const (
 	azureClientId   = "96eecda7-19ea-49cc-abb5-240097d554f5"
-	azureTenantId   = "4a67d088-db5c-48f1-9ff2-0aace800ae68"
 	azureRedirctURL = "localhost:8030"
 
 	awsClientId   = "databricks-sql-connector"
