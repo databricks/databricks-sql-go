@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql/driver"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/databricks/databricks-sql-go/driverctx"
@@ -342,7 +343,7 @@ func (c *conn) executeStatement(ctx context.Context, query string, args []driver
 }
 
 func namedValuesToTSparkParams(args []driver.NamedValue) []*cli_service.TSparkParameter {
-	var ts []string = []string{"STRING", "DOUBLE", "BOOLEAN"}
+	var ts []string = []string{"STRING", "DOUBLE", "BOOLEAN", "TIMESTAMP", "FLOAT", "INTEGER", "TINYINT", "SMALLINT", "BIGINT"}
 	var params []*cli_service.TSparkParameter
 	for i := range args {
 		arg := args[i]
@@ -366,47 +367,51 @@ func namedValuesToTSparkParams(args []driver.NamedValue) []*cli_service.TSparkPa
 		case int:
 			f := float64(t)
 			param.Value.DoubleValue = &f
-			param.Type = &ts[1]
+			param.Type = &ts[5]
 		case uint:
 			f := float64(t)
 			param.Value.DoubleValue = &f
-			param.Type = &ts[1]
+			param.Type = &ts[5]
 		case int8:
 			f := float64(t)
 			param.Value.DoubleValue = &f
-			param.Type = &ts[1]
+			param.Type = &ts[6]
 		case uint8:
 			f := float64(t)
 			param.Value.DoubleValue = &f
-			param.Type = &ts[1]
+			param.Type = &ts[6]
 		case int16:
 			f := float64(t)
 			param.Value.DoubleValue = &f
-			param.Type = &ts[1]
+			param.Type = &ts[7]
 		case uint16:
 			f := float64(t)
 			param.Value.DoubleValue = &f
-			param.Type = &ts[1]
+			param.Type = &ts[7]
 		case int32:
 			f := float64(t)
 			param.Value.DoubleValue = &f
-			param.Type = &ts[1]
+			param.Type = &ts[5]
 		case uint32:
 			f := float64(t)
 			param.Value.DoubleValue = &f
-			param.Type = &ts[1]
+			param.Type = &ts[5]
 		case int64:
-			f := float64(t)
-			param.Value.DoubleValue = &f
-			param.Type = &ts[1]
+			s := strconv.FormatInt(t, 10)
+			param.Value.StringValue = &s
+			param.Type = &ts[8]
 		case uint64:
-			f := float64(t)
-			param.Value.DoubleValue = &f
-			param.Type = &ts[1]
+			s := strconv.FormatUint(t, 10)
+			param.Value.StringValue = &s
+			param.Type = &ts[8]
 		case float32:
 			f := float64(t)
 			param.Value.DoubleValue = &f
-			param.Type = &ts[1]
+			param.Type = &ts[4]
+		case time.Time:
+			s := t.String()
+			param.Value.StringValue = &s
+			param.Type = &ts[3]
 		default:
 			s := fmt.Sprintf("%s", arg.Value)
 			param.Value.StringValue = &s
