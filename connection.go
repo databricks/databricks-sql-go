@@ -342,6 +342,13 @@ func (c *conn) executeStatement(ctx context.Context, query string, args []driver
 	return resp, err
 }
 
+type dbSqlParam struct {
+	Ordinal *int32
+	Name    *string
+	Type    *string
+	Value   *string
+}
+
 func namedValuesToTSparkParams(args []driver.NamedValue) []*cli_service.TSparkParameter {
 	var ts []string = []string{"STRING", "DOUBLE", "BOOLEAN", "TIMESTAMP", "FLOAT", "INTEGER", "TINYINT", "SMALLINT", "BIGINT"}
 	var params []*cli_service.TSparkParameter
@@ -412,6 +419,9 @@ func namedValuesToTSparkParams(args []driver.NamedValue) []*cli_service.TSparkPa
 			s := t.String()
 			param.Value.StringValue = &s
 			param.Type = &ts[3]
+		case dbSqlParam:
+			param.Value.StringValue = t.Value
+			param.Type = t.Type
 		default:
 			s := fmt.Sprintf("%s", arg.Value)
 			param.Value.StringValue = &s
