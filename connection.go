@@ -3,6 +3,7 @@ package dbsql
 import (
 	"context"
 	"database/sql/driver"
+	"fmt"
 	"time"
 
 	"github.com/databricks/databricks-sql-go/driverctx"
@@ -103,6 +104,7 @@ func (c *conn) ExecContext(ctx context.Context, query string, args []driver.Name
 	if len(args) > 0 {
 		return nil, dbsqlerrint.NewDriverError(ctx, dbsqlerr.ErrParametersNotSupported, nil)
 	}
+
 	exStmtResp, opStatusResp, err := c.runQuery(ctx, query, args)
 
 	if exStmtResp != nil && exStmtResp.OperationHandle != nil {
@@ -145,6 +147,7 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 	if len(args) > 0 {
 		return nil, dbsqlerrint.NewDriverError(ctx, dbsqlerr.ErrParametersNotSupported, nil)
 	}
+
 	// first we try to get the results synchronously.
 	// at any point in time that the context is done we must cancel and return
 	exStmtResp, opStatusResp, err := c.runQuery(ctx, query, args)
@@ -284,6 +287,7 @@ func (c *conn) executeStatement(ctx context.Context, query string, args []driver
 			MaxRows: int64(c.cfg.MaxRows),
 		},
 		CanDecompressLZ4Result_: &c.cfg.UseLz4Compression,
+		Parameters:              namedValuesToTSparkParams(args),
 	}
 
 	if c.cfg.UseArrowBatches {
@@ -335,6 +339,83 @@ func (c *conn) executeStatement(ctx context.Context, query string, args []driver
 	}
 
 	return resp, err
+}
+
+func namedValuesToTSparkParams(args []driver.NamedValue) []*cli_service.TSparkParameter {
+	var ts []string = []string{"STRING", "DOUBLE", "BOOLEAN"}
+	var params []*cli_service.TSparkParameter
+	for i := range args {
+		arg := args[i]
+		param := cli_service.TSparkParameter{Value: &cli_service.TSparkParameterValue{}}
+		if arg.Name != "" {
+			param.Name = &arg.Name
+		} else {
+			i := int32(arg.Ordinal)
+			param.Ordinal = &i
+		}
+
+		switch t := arg.Value.(type) {
+		case bool:
+			b := arg.Value.(bool)
+			param.Value.BooleanValue = &b
+			param.Type = &ts[2]
+		case string:
+			s := arg.Value.(string)
+			param.Value.StringValue = &s
+			param.Type = &ts[0]
+		case int:
+			f := float64(t)
+			param.Value.DoubleValue = &f
+			param.Type = &ts[1]
+		case uint:
+			f := float64(t)
+			param.Value.DoubleValue = &f
+			param.Type = &ts[1]
+		case int8:
+			f := float64(t)
+			param.Value.DoubleValue = &f
+			param.Type = &ts[1]
+		case uint8:
+			f := float64(t)
+			param.Value.DoubleValue = &f
+			param.Type = &ts[1]
+		case int16:
+			f := float64(t)
+			param.Value.DoubleValue = &f
+			param.Type = &ts[1]
+		case uint16:
+			f := float64(t)
+			param.Value.DoubleValue = &f
+			param.Type = &ts[1]
+		case int32:
+			f := float64(t)
+			param.Value.DoubleValue = &f
+			param.Type = &ts[1]
+		case uint32:
+			f := float64(t)
+			param.Value.DoubleValue = &f
+			param.Type = &ts[1]
+		case int64:
+			f := float64(t)
+			param.Value.DoubleValue = &f
+			param.Type = &ts[1]
+		case uint64:
+			f := float64(t)
+			param.Value.DoubleValue = &f
+			param.Type = &ts[1]
+		case float32:
+			f := float64(t)
+			param.Value.DoubleValue = &f
+			param.Type = &ts[1]
+		default:
+			s := fmt.Sprintf("%s", arg.Value)
+			param.Value.StringValue = &s
+			param.Type = &ts[0]
+		}
+
+		params = append(params, &param)
+	}
+	return params
 }
 
 func (c *conn) pollOperation(ctx context.Context, opHandle *cli_service.TOperationHandle) (*cli_service.TGetOperationStatusResp, error) {
