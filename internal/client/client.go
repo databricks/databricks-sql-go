@@ -14,6 +14,7 @@ import (
 	"os"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
@@ -45,116 +46,121 @@ const (
 
 type clientMethod int
 
-//go:generate go run golang.org/x/tools/cmd/stringer -type=clientMethod
+//go:generate go run golang.org/x/tools/cmd/stringer -type=clientMethod -trimprefix=clientMethod
 
 const (
-	unknown clientMethod = iota
-	openSession
-	closeSession
-	fetchResults
-	getResultSetMetadata
-	executeStatement
-	getOperationStatus
-	closeOperation
-	cancelOperation
+	clientMethodUnknown clientMethod = iota
+	clientMethodOpenSession
+	clientMethodCloseSession
+	clientMethodFetchResults
+	clientMethodGetResultSetMetadata
+	clientMethodExecuteStatement
+	clientMethodGetOperationStatus
+	clientMethodCloseOperation
+	clientMethodCancelOperation
 )
 
 var nonRetryableClientMethods map[clientMethod]any = map[clientMethod]any{
-	executeStatement: struct{}{},
-	unknown:          struct{}{}}
+	clientMethodExecuteStatement: struct{}{},
+	clientMethodUnknown:          struct{}{},
+}
+
+var clientMethodRequestErrorMsgs map[clientMethod]string = map[clientMethod]string{
+	clientMethodOpenSession:          "open session request error",
+	clientMethodCloseSession:         "close session request error",
+	clientMethodFetchResults:         "fetch results request error",
+	clientMethodGetResultSetMetadata: "get result set metadata request error",
+	clientMethodExecuteStatement:     "execute statement request error",
+	clientMethodGetOperationStatus:   "get operation status request error",
+	clientMethodCloseOperation:       "close operation request error",
+	clientMethodCancelOperation:      "cancel operation request error",
+}
 
 // OpenSession is a wrapper around the thrift operation OpenSession
 // If RecordResults is true, the results will be marshalled to JSON format and written to OpenSession<index>.json
 func (tsc *ThriftServiceClient) OpenSession(ctx context.Context, req *cli_service.TOpenSessionReq) (*cli_service.TOpenSessionResp, error) {
-	ctx = context.WithValue(ctx, ClientMethod, openSession)
+	ctx = context.WithValue(ctx, ClientMethod, clientMethodOpenSession)
 	msg, start := logger.Track("OpenSession")
 	resp, err := tsc.TCLIServiceClient.OpenSession(ctx, req)
 	if err != nil {
-		return nil, dbsqlerrint.NewRequestError(ctx, "open session request error", err)
+		err = handleClientMethodError(ctx, err)
+		return resp, err
 	}
+
+	recordResult(ctx, resp)
+
 	log := logger.WithContext(SprintGuid(resp.SessionHandle.SessionId.GUID), driverctx.CorrelationIdFromContext(ctx), "")
 	defer log.Duration(msg, start)
-	if RecordResults {
-		j, _ := json.MarshalIndent(resp, "", " ")
-		_ = os.WriteFile(fmt.Sprintf("OpenSession%d.json", resultIndex), j, 0600)
-		resultIndex++
-	}
+
 	return resp, CheckStatus(resp)
 }
 
 // CloseSession is a wrapper around the thrift operation CloseSession
 // If RecordResults is true, the results will be marshalled to JSON format and written to CloseSession<index>.json
 func (tsc *ThriftServiceClient) CloseSession(ctx context.Context, req *cli_service.TCloseSessionReq) (*cli_service.TCloseSessionResp, error) {
-	ctx = context.WithValue(ctx, ClientMethod, closeSession)
+	ctx = context.WithValue(ctx, ClientMethod, clientMethodCloseSession)
 	log := logger.WithContext(driverctx.ConnIdFromContext(ctx), driverctx.CorrelationIdFromContext(ctx), "")
 	defer log.Duration(logger.Track("CloseSession"))
 	resp, err := tsc.TCLIServiceClient.CloseSession(ctx, req)
 	if err != nil {
-		return resp, dbsqlerrint.NewRequestError(ctx, "close session request error", err)
+		err = handleClientMethodError(ctx, err)
+		return resp, err
 	}
-	if RecordResults {
-		j, _ := json.MarshalIndent(resp, "", " ")
-		_ = os.WriteFile(fmt.Sprintf("CloseSession%d.json", resultIndex), j, 0600)
-		resultIndex++
-	}
+
+	recordResult(ctx, resp)
+
 	return resp, CheckStatus(resp)
 }
 
 // FetchResults is a wrapper around the thrift operation FetchResults
 // If RecordResults is true, the results will be marshalled to JSON format and written to FetchResults<index>.json
 func (tsc *ThriftServiceClient) FetchResults(ctx context.Context, req *cli_service.TFetchResultsReq) (*cli_service.TFetchResultsResp, error) {
-	ctx = context.WithValue(ctx, ClientMethod, fetchResults)
+	ctx = context.WithValue(ctx, ClientMethod, clientMethodFetchResults)
 	log := logger.WithContext(driverctx.ConnIdFromContext(ctx), driverctx.CorrelationIdFromContext(ctx), SprintGuid(req.OperationHandle.OperationId.GUID))
 	defer log.Duration(logger.Track("FetchResults"))
 	resp, err := tsc.TCLIServiceClient.FetchResults(ctx, req)
 	if err != nil {
-		return resp, dbsqlerrint.NewRequestError(ctx, "fetch results request error", err)
+		err = handleClientMethodError(ctx, err)
+		return resp, err
 	}
-	if RecordResults {
-		j, _ := json.MarshalIndent(resp, "", " ")
-		_ = os.WriteFile(fmt.Sprintf("FetchResults%d.json", resultIndex), j, 0600)
-		resultIndex++
-	}
+
+	recordResult(ctx, resp)
+
 	return resp, CheckStatus(resp)
 }
 
 // GetResultSetMetadata is a wrapper around the thrift operation GetResultSetMetadata
 // If RecordResults is true, the results will be marshalled to JSON format and written to GetResultSetMetadata<index>.json
 func (tsc *ThriftServiceClient) GetResultSetMetadata(ctx context.Context, req *cli_service.TGetResultSetMetadataReq) (*cli_service.TGetResultSetMetadataResp, error) {
-	ctx = context.WithValue(ctx, ClientMethod, getResultSetMetadata)
+	ctx = context.WithValue(ctx, ClientMethod, clientMethodGetResultSetMetadata)
 	log := logger.WithContext(driverctx.ConnIdFromContext(ctx), driverctx.CorrelationIdFromContext(ctx), SprintGuid(req.OperationHandle.OperationId.GUID))
 	defer log.Duration(logger.Track("GetResultSetMetadata"))
 	resp, err := tsc.TCLIServiceClient.GetResultSetMetadata(ctx, req)
 	if err != nil {
-		return resp, dbsqlerrint.NewRequestError(ctx, "get result set metadata request error", err)
+		err = handleClientMethodError(ctx, err)
+		return resp, err
 	}
-	if RecordResults {
-		j, _ := json.MarshalIndent(resp, "", " ")
-		_ = os.WriteFile(fmt.Sprintf("GetResultSetMetadata%d.json", resultIndex), j, 0600)
-		resultIndex++
-	}
+
+	recordResult(ctx, resp)
+
 	return resp, CheckStatus(resp)
 }
 
 // ExecuteStatement is a wrapper around the thrift operation ExecuteStatement
 // If RecordResults is true, the results will be marshalled to JSON format and written to ExecuteStatement<index>.json
 func (tsc *ThriftServiceClient) ExecuteStatement(ctx context.Context, req *cli_service.TExecuteStatementReq) (*cli_service.TExecuteStatementResp, error) {
-	ctx = context.WithValue(ctx, ClientMethod, executeStatement)
+	ctx = context.WithValue(ctx, ClientMethod, clientMethodExecuteStatement)
 	msg, start := logger.Track("ExecuteStatement")
 
 	// We use context.Background to fix a problem where on context done the query would not be cancelled.
 	resp, err := tsc.TCLIServiceClient.ExecuteStatement(context.Background(), req)
 	if err != nil {
-		return resp, dbsqlerrint.NewRequestError(ctx, "execute statement request error", err)
+		err = handleClientMethodError(ctx, err)
+		return resp, err
 	}
-	if RecordResults {
-		j, _ := json.MarshalIndent(resp, "", " ")
-		_ = os.WriteFile(fmt.Sprintf("ExecuteStatement%d.json", resultIndex), j, 0600)
-		// f, _ := os.ReadFile(fmt.Sprintf("ExecuteStatement%d.json", resultIndex))
-		// var resp2 cli_service.TExecuteStatementResp
-		// json.Unmarshal(f, &resp2)
-		resultIndex++
-	}
+
+	recordResult(ctx, resp)
+
 	if resp != nil && resp.OperationHandle != nil {
 		log := logger.WithContext(driverctx.ConnIdFromContext(ctx), driverctx.CorrelationIdFromContext(ctx), SprintGuid(resp.OperationHandle.OperationId.GUID))
 		defer log.Duration(msg, start)
@@ -165,54 +171,51 @@ func (tsc *ThriftServiceClient) ExecuteStatement(ctx context.Context, req *cli_s
 // GetOperationStatus is a wrapper around the thrift operation GetOperationStatus
 // If RecordResults is true, the results will be marshalled to JSON format and written to GetOperationStatus<index>.json
 func (tsc *ThriftServiceClient) GetOperationStatus(ctx context.Context, req *cli_service.TGetOperationStatusReq) (*cli_service.TGetOperationStatusResp, error) {
-	ctx = context.WithValue(ctx, ClientMethod, getOperationStatus)
+	ctx = context.WithValue(ctx, ClientMethod, clientMethodGetOperationStatus)
 	log := logger.WithContext(driverctx.ConnIdFromContext(ctx), driverctx.CorrelationIdFromContext(ctx), SprintGuid(req.OperationHandle.OperationId.GUID))
 	defer log.Duration(logger.Track("GetOperationStatus"))
 	resp, err := tsc.TCLIServiceClient.GetOperationStatus(ctx, req)
 	if err != nil {
-		return resp, dbsqlerrint.NewRequestError(driverctx.NewContextWithQueryId(ctx, SprintGuid(req.OperationHandle.OperationId.GUID)), "databricks: get operation status request error", err)
+		err = handleClientMethodError(driverctx.NewContextWithQueryId(ctx, SprintGuid(req.OperationHandle.OperationId.GUID)), err)
+		return resp, err
 	}
-	if RecordResults {
-		j, _ := json.MarshalIndent(resp, "", " ")
-		_ = os.WriteFile(fmt.Sprintf("GetOperationStatus%d.json", resultIndex), j, 0600)
-		resultIndex++
-	}
+
+	recordResult(ctx, resp)
+
 	return resp, CheckStatus(resp)
 }
 
 // CloseOperation is a wrapper around the thrift operation CloseOperation
 // If RecordResults is true, the results will be marshalled to JSON format and written to CloseOperation<index>.json
 func (tsc *ThriftServiceClient) CloseOperation(ctx context.Context, req *cli_service.TCloseOperationReq) (*cli_service.TCloseOperationResp, error) {
-	ctx = context.WithValue(ctx, ClientMethod, closeOperation)
+	ctx = context.WithValue(ctx, ClientMethod, clientMethodCloseOperation)
 	log := logger.WithContext(driverctx.ConnIdFromContext(ctx), driverctx.CorrelationIdFromContext(ctx), SprintGuid(req.OperationHandle.OperationId.GUID))
 	defer log.Duration(logger.Track("CloseOperation"))
 	resp, err := tsc.TCLIServiceClient.CloseOperation(ctx, req)
 	if err != nil {
-		return resp, dbsqlerrint.NewRequestError(ctx, "close operation request error", err)
+		err = handleClientMethodError(ctx, err)
+		return resp, err
 	}
-	if RecordResults {
-		j, _ := json.MarshalIndent(resp, "", " ")
-		_ = os.WriteFile(fmt.Sprintf("CloseOperation%d.json", resultIndex), j, 0600)
-		resultIndex++
-	}
+
+	recordResult(ctx, resp)
+
 	return resp, CheckStatus(resp)
 }
 
 // CancelOperation is a wrapper around the thrift operation CancelOperation
 // If RecordResults is true, the results will be marshalled to JSON format and written to CancelOperation<index>.json
 func (tsc *ThriftServiceClient) CancelOperation(ctx context.Context, req *cli_service.TCancelOperationReq) (*cli_service.TCancelOperationResp, error) {
-	ctx = context.WithValue(ctx, ClientMethod, cancelOperation)
+	ctx = context.WithValue(ctx, ClientMethod, clientMethodCancelOperation)
 	log := logger.WithContext(driverctx.ConnIdFromContext(ctx), driverctx.CorrelationIdFromContext(ctx), SprintGuid(req.OperationHandle.OperationId.GUID))
 	defer log.Duration(logger.Track("CancelOperation"))
 	resp, err := tsc.TCLIServiceClient.CancelOperation(ctx, req)
 	if err != nil {
-		return resp, dbsqlerrint.NewRequestError(ctx, "cancel operation request error", err)
+		err = handleClientMethodError(ctx, err)
+		return resp, err
 	}
-	if RecordResults {
-		j, _ := json.MarshalIndent(resp, "", " ")
-		_ = os.WriteFile(fmt.Sprintf("CancelOperation%d.json", resultIndex), j, 0600)
-		resultIndex++
-	}
+
+	recordResult(ctx, resp)
+
 	return resp, CheckStatus(resp)
 }
 
@@ -281,6 +284,42 @@ func InitThriftClient(cfg *config.Config, httpclient *http.Client) (*ThriftServi
 	tclient := cli_service.NewTCLIServiceClient(thrift.NewTStandardClient(iprot, oprot))
 	tsClient := &ThriftServiceClient{tclient}
 	return tsClient, nil
+}
+
+// handler function for errors returned by the thrift client methods
+func handleClientMethodError(ctx context.Context, err error) dbsqlerr.DBRequestError {
+	if err == nil {
+		return nil
+	}
+
+	// If the passed error indicates an invalid session we inject a bad connection error
+	// into the error stack. This allows the for retrying with a new connection.
+	s := err.Error()
+	if strings.Contains(s, "Invalid SessionHandle") {
+		err = dbsqlerrint.NewBadConnectionError(err)
+	}
+
+	// the passed error will be wrapped in a DBRequestError
+	method := getClientMethod(ctx)
+	msg := clientMethodRequestErrorMsgs[method]
+
+	return dbsqlerrint.NewRequestError(ctx, msg, err)
+}
+
+// Extract a clientMethod value from the given Context.
+func getClientMethod(ctx context.Context) clientMethod {
+	v, _ := ctx.Value(ClientMethod).(clientMethod)
+	return v
+}
+
+// Write the result
+func recordResult(ctx context.Context, resp any) {
+	if RecordResults && resp != nil {
+		method := getClientMethod(ctx)
+		j, _ := json.MarshalIndent(resp, "", " ")
+		_ = os.WriteFile(fmt.Sprintf("%s%d.json", method, resultIndex), j, 0600)
+		resultIndex++
+	}
 }
 
 // ThriftResponse represents the thrift rpc response
@@ -507,7 +546,7 @@ func RetryPolicy(ctx context.Context, resp *http.Response, err error) (bool, err
 		return false, ctx.Err()
 	}
 
-	caller, _ := ctx.Value(ClientMethod).(clientMethod)
+	caller := getClientMethod(ctx)
 	_, nonRetryableClientMethod := nonRetryableClientMethods[caller]
 
 	if err != nil {
