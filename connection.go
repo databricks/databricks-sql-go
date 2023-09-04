@@ -3,8 +3,6 @@ package dbsql
 import (
 	"context"
 	"database/sql/driver"
-	"fmt"
-	"strconv"
 	"time"
 
 	"github.com/databricks/databricks-sql-go/driverctx"
@@ -288,7 +286,7 @@ func (c *conn) executeStatement(ctx context.Context, query string, args []driver
 			MaxRows: int64(c.cfg.MaxRows),
 		},
 		CanDecompressLZ4Result_: &c.cfg.UseLz4Compression,
-		Parameters:              namedValuesToTSparkParams(args),
+		Parameters:              convertNamedValuesToSparkParams(args),
 	}
 
 	if c.cfg.UseArrowBatches {
@@ -340,97 +338,6 @@ func (c *conn) executeStatement(ctx context.Context, query string, args []driver
 	}
 
 	return resp, err
-}
-
-type dbSqlParam struct {
-	Ordinal *int32
-	Name    *string
-	Type    *string
-	Value   *string
-}
-
-func namedValuesToTSparkParams(args []driver.NamedValue) []*cli_service.TSparkParameter {
-	var ts []string = []string{"STRING", "DOUBLE", "BOOLEAN", "TIMESTAMP", "FLOAT", "INTEGER", "TINYINT", "SMALLINT", "BIGINT"}
-	var params []*cli_service.TSparkParameter
-	for i := range args {
-		arg := args[i]
-		param := cli_service.TSparkParameter{Value: &cli_service.TSparkParameterValue{}}
-		if arg.Name != "" {
-			param.Name = &arg.Name
-		} else {
-			i := int32(arg.Ordinal)
-			param.Ordinal = &i
-		}
-
-		switch t := arg.Value.(type) {
-		case bool:
-			b := arg.Value.(bool)
-			param.Value.BooleanValue = &b
-			param.Type = &ts[2]
-		case string:
-			s := arg.Value.(string)
-			param.Value.StringValue = &s
-			param.Type = &ts[0]
-		case int:
-			f := float64(t)
-			param.Value.DoubleValue = &f
-			param.Type = &ts[5]
-		case uint:
-			f := float64(t)
-			param.Value.DoubleValue = &f
-			param.Type = &ts[5]
-		case int8:
-			f := float64(t)
-			param.Value.DoubleValue = &f
-			param.Type = &ts[6]
-		case uint8:
-			f := float64(t)
-			param.Value.DoubleValue = &f
-			param.Type = &ts[6]
-		case int16:
-			f := float64(t)
-			param.Value.DoubleValue = &f
-			param.Type = &ts[7]
-		case uint16:
-			f := float64(t)
-			param.Value.DoubleValue = &f
-			param.Type = &ts[7]
-		case int32:
-			f := float64(t)
-			param.Value.DoubleValue = &f
-			param.Type = &ts[5]
-		case uint32:
-			f := float64(t)
-			param.Value.DoubleValue = &f
-			param.Type = &ts[5]
-		case int64:
-			s := strconv.FormatInt(t, 10)
-			param.Value.StringValue = &s
-			param.Type = &ts[8]
-		case uint64:
-			s := strconv.FormatUint(t, 10)
-			param.Value.StringValue = &s
-			param.Type = &ts[8]
-		case float32:
-			f := float64(t)
-			param.Value.DoubleValue = &f
-			param.Type = &ts[4]
-		case time.Time:
-			s := t.String()
-			param.Value.StringValue = &s
-			param.Type = &ts[3]
-		case dbSqlParam:
-			param.Value.StringValue = t.Value
-			param.Type = t.Type
-		default:
-			s := fmt.Sprintf("%s", arg.Value)
-			param.Value.StringValue = &s
-			param.Type = &ts[0]
-		}
-
-		params = append(params, &param)
-	}
-	return params
 }
 
 func (c *conn) pollOperation(ctx context.Context, opHandle *cli_service.TOperationHandle) (*cli_service.TGetOperationStatusResp, error) {
