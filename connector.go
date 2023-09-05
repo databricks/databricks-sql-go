@@ -25,6 +25,36 @@ type connector struct {
 	client *http.Client
 }
 
+type StagingCtx struct {
+	IsStagingOperation      bool
+	StagingAllowedLocalPath string
+}
+
+func (ctx *StagingCtx) WithDefaults() {
+	ctx.IsStagingOperation = true
+	ctx.StagingAllowedLocalPath = "staging/"
+}
+
+func (StagingCtx) Deadline() (deadline time.Time, ok bool) {
+	return
+}
+
+func (StagingCtx) Done() <-chan struct{} {
+	return nil
+}
+
+func (StagingCtx) Err() error {
+	return nil
+}
+
+func (StagingCtx) Value(key any) any {
+	return nil
+}
+
+func (StagingCtx) String() string {
+	return "context.Background"
+}
+
 // Connect returns a connection to the Databricks database from a connection pool.
 func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 	var catalogName *cli_service.TIdentifier

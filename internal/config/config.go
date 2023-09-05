@@ -82,24 +82,25 @@ func (c *Config) DeepCopy() *Config {
 
 // UserConfig is the set of configurations exposed to users
 type UserConfig struct {
-	Protocol          string
-	Host              string // from databricks UI
-	Port              int    // from databricks UI
-	HTTPPath          string // from databricks UI
-	Catalog           string
-	Schema            string
-	Authenticator     auth.Authenticator
-	AccessToken       string        // from databricks UI
-	MaxRows           int           // max rows per page
-	QueryTimeout      time.Duration // Timeout passed to server for query processing
-	UserAgentEntry    string
-	Location          *time.Location
-	SessionParams     map[string]string
-	RetryWaitMin      time.Duration
-	RetryWaitMax      time.Duration
-	RetryMax          int
-	Transport         http.RoundTripper
-	UseLz4Compression bool
+	Protocol                string
+	Host                    string // from databricks UI
+	Port                    int    // from databricks UI
+	HTTPPath                string // from databricks UI
+	Catalog                 string
+	Schema                  string
+	Authenticator           auth.Authenticator
+	AccessToken             string        // from databricks UI
+	MaxRows                 int           // max rows per page
+	QueryTimeout            time.Duration // Timeout passed to server for query processing
+	UserAgentEntry          string
+	Location                *time.Location
+	SessionParams           map[string]string
+	RetryWaitMin            time.Duration
+	RetryWaitMax            time.Duration
+	RetryMax                int
+	Transport               http.RoundTripper
+	UseLz4Compression       bool
+	StagingAllowedLocalPath string
 	CloudFetchConfig
 }
 
@@ -123,25 +124,26 @@ func (ucfg UserConfig) DeepCopy() UserConfig {
 	}
 
 	return UserConfig{
-		Protocol:          ucfg.Protocol,
-		Host:              ucfg.Host,
-		Port:              ucfg.Port,
-		HTTPPath:          ucfg.HTTPPath,
-		Catalog:           ucfg.Catalog,
-		Schema:            ucfg.Schema,
-		Authenticator:     ucfg.Authenticator,
-		AccessToken:       ucfg.AccessToken,
-		MaxRows:           ucfg.MaxRows,
-		QueryTimeout:      ucfg.QueryTimeout,
-		UserAgentEntry:    ucfg.UserAgentEntry,
-		Location:          loccp,
-		SessionParams:     sessionParams,
-		RetryWaitMin:      ucfg.RetryWaitMin,
-		RetryWaitMax:      ucfg.RetryWaitMax,
-		RetryMax:          ucfg.RetryMax,
-		Transport:         ucfg.Transport,
-		UseLz4Compression: ucfg.UseLz4Compression,
-		CloudFetchConfig:  ucfg.CloudFetchConfig,
+		Protocol:                ucfg.Protocol,
+		Host:                    ucfg.Host,
+		Port:                    ucfg.Port,
+		HTTPPath:                ucfg.HTTPPath,
+		Catalog:                 ucfg.Catalog,
+		Schema:                  ucfg.Schema,
+		Authenticator:           ucfg.Authenticator,
+		AccessToken:             ucfg.AccessToken,
+		MaxRows:                 ucfg.MaxRows,
+		QueryTimeout:            ucfg.QueryTimeout,
+		UserAgentEntry:          ucfg.UserAgentEntry,
+		Location:                loccp,
+		SessionParams:           sessionParams,
+		RetryWaitMin:            ucfg.RetryWaitMin,
+		RetryWaitMax:            ucfg.RetryWaitMax,
+		RetryMax:                ucfg.RetryMax,
+		Transport:               ucfg.Transport,
+		UseLz4Compression:       ucfg.UseLz4Compression,
+		StagingAllowedLocalPath: ucfg.StagingAllowedLocalPath,
+		CloudFetchConfig:        ucfg.CloudFetchConfig,
 	}
 }
 
@@ -176,7 +178,7 @@ func (ucfg UserConfig) WithDefaults() UserConfig {
 	}
 	ucfg.UseLz4Compression = false
 	ucfg.CloudFetchConfig = CloudFetchConfig{}.WithDefaults()
-
+	ucfg.StagingAllowedLocalPath = "staging/"
 	return ucfg
 }
 
@@ -278,6 +280,11 @@ func ParseDSN(dsn string) (UserConfig, error) {
 	if timezone, ok := params.getNoCase("timezone"); ok {
 		ucfg.Location, err = time.LoadLocation(timezone)
 	}
+
+	if params.Has("stagingAllowedLocalPath") {
+		ucfg.StagingAllowedLocalPath = params.Get("stagingAllowedLocalPath")
+	}
+	params.Del("stagingAllowedLocalPath")
 
 	// any left over params are treated as session params
 	if len(params.Values) > 0 {

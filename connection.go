@@ -94,6 +94,13 @@ func (c *conn) IsValid() bool {
 // ExecContext honors the context timeout and return when it is canceled.
 // Statement ExecContext is the same as connection ExecContext
 func (c *conn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
+	s, ok := ctx.(StagingCtx)
+	if ok {
+		if s.IsStagingOperation {
+			return c.ExecStagingOperation(s, query, args)
+		}
+	}
+
 	corrId := driverctx.CorrelationIdFromContext(ctx)
 	log := logger.WithContext(c.id, corrId, "")
 	msg, start := logger.Track("ExecContext")
@@ -131,6 +138,22 @@ func (c *conn) ExecContext(ctx context.Context, query string, args []driver.Name
 	res := result{AffectedRows: opStatusResp.GetNumModifiedRows()}
 
 	return &res, nil
+}
+
+type StagingRow struct {
+	presignedUrl string
+	localFile    string
+	headers      string
+	operation    string
+}
+
+func (c *conn) ExecStagingOperation(ctx StagingCtx, query string, args []driver.NamedValue) (driver.Result, error) {
+	row, err := c.QueryContext(ctx, query, args)
+	if err != nil {
+		return nil, err
+	}
+
+	row.Next()
 }
 
 // QueryContext executes a query that may return rows, such as a
