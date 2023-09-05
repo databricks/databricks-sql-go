@@ -256,7 +256,7 @@ func InitThriftClient(cfg *config.Config, httpclient *http.Client) (*ThriftServi
 	case "http":
 		if httpclient == nil {
 			if cfg.Authenticator == nil {
-				return nil, dbsqlerrint.NewRequestError(context.TODO(), dbsqlerr.ErrNoAuthenticationMethod, nil)
+				return nil, dbsqlerrint.NewRequestError(context.TODO(), dbsqlerr.ErrNoDefaultAuthenticator, nil)
 			}
 			httpclient = RetryableClient(cfg)
 		}

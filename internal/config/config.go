@@ -15,6 +15,8 @@ import (
 
 	"github.com/databricks/databricks-sql-go/auth"
 	"github.com/databricks/databricks-sql-go/auth/noop"
+	"github.com/databricks/databricks-sql-go/auth/oauth/m2m"
+	"github.com/databricks/databricks-sql-go/auth/oauth/u2m"
 	"github.com/databricks/databricks-sql-go/auth/pat"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	dbsqlerrint "github.com/databricks/databricks-sql-go/internal/errors"
@@ -218,93 +220,221 @@ func ParseDSN(dsn string) (UserConfig, error) {
 		return UserConfig{}, dbsqlerrint.NewRequestError(context.TODO(), dbsqlerr.ErrInvalidDSNPort, err)
 	}
 	ucfg.Port = port
-	name := parsedURL.User.Username()
-	if name == "token" {
-		pass, ok := parsedURL.User.Password()
-		if pass == "" {
-			return UserConfig{}, dbsqlerrint.NewRequestError(context.TODO(), dbsqlerr.ErrInvalidDSNPATIsEmpty, err)
-		}
-		if ok {
-			ucfg.AccessToken = pass
-			pat := &pat.PATAuth{
-				AccessToken: pass,
-			}
-			ucfg.Authenticator = pat
-		}
-	} else {
-		if name != "" {
-			return UserConfig{}, dbsqlerrint.NewRequestError(context.TODO(), dbsqlerr.ErrBasicAuthNotSupported, err)
-		}
-	}
+
 	ucfg.HTTPPath = parsedURL.Path
-	params := parsedURL.Query()
-	maxRowsStr := params.Get("maxRows")
-	if maxRowsStr != "" {
-		maxRows, err := strconv.Atoi(maxRowsStr)
+
+	// Any params that are not specifically handled are assumed to be session params.
+	// Use extractableParams so that the processed values are deleted as we go.
+	params := &extractableParams{Values: parsedURL.Query()}
+
+	// Create an authenticator based on the url and params
+	err = makeAuthenticator(parsedURL, params, &ucfg)
+	if err != nil {
+		return UserConfig{}, err
+	}
+
+	if maxRows, ok, err := params.extractAsInt("maxRows"); ok {
 		if err != nil {
-			return UserConfig{}, dbsqlerrint.NewRequestError(context.TODO(), dbsqlerr.ErrInvalidDSNMaxRows, err)
+			return UserConfig{}, err
 		}
-		// we should always have at least some page size
-		if maxRows != 0 {
+		if maxRows > 0 {
 			ucfg.MaxRows = maxRows
 		}
 	}
-	params.Del("maxRows")
 
-	timeoutStr := params.Get("timeout")
-	if timeoutStr != "" {
-		timeoutSeconds, err := strconv.Atoi(timeoutStr)
+	if timeoutSeconds, ok, err := params.extractAsInt("timeout"); ok {
 		if err != nil {
-			return UserConfig{}, dbsqlerrint.NewRequestError(context.TODO(), dbsqlerr.ErrInvalidDSNTimeout, err)
+			return UserConfig{}, err
 		}
 		ucfg.QueryTimeout = time.Duration(timeoutSeconds) * time.Second
 	}
-	params.Del("timeout")
-	if params.Has("catalog") {
-		ucfg.Catalog = params.Get("catalog")
-		params.Del("catalog")
+
+	if catalog, ok := params.extract("catalog"); ok {
+		ucfg.Catalog = catalog
 	}
-	if params.Has("userAgentEntry") {
-		ucfg.UserAgentEntry = params.Get("userAgentEntry")
+	if userAgent, ok := params.extract("userAgentEntry"); ok {
+		ucfg.UserAgentEntry = userAgent
 		params.Del("userAgentEntry")
 	}
-	if params.Has("schema") {
-		ucfg.Schema = params.Get("schema")
-		params.Del("schema")
+	if schema, ok := params.extract("schema"); ok {
+		ucfg.Schema = schema
 	}
 
 	// Cloud Fetch parameters
-	if params.Has("useCloudFetch") {
-		useCloudFetch, err := strconv.ParseBool(params.Get("useCloudFetch"))
+	if useCloudFetch, ok, err := params.extractAsBool("useCloudFetch"); ok {
 		if err != nil {
-			return UserConfig{}, dbsqlerrint.NewRequestError(context.TODO(), dbsqlerr.InvalidDSNFormat("useCloudFetch", params.Get("useCloudFetch"), "bool"), err)
+			return UserConfig{}, err
 		}
 		ucfg.UseCloudFetch = useCloudFetch
 	}
-	params.Del("useCloudFetch")
-	if params.Has("maxDownloadThreads") {
-		numThreads, err := strconv.Atoi(params.Get("maxDownloadThreads"))
+
+	if numThreads, ok, err := params.extractAsInt("maxDownloadThreads"); ok {
 		if err != nil {
-			return UserConfig{}, dbsqlerrint.NewRequestError(context.TODO(), dbsqlerr.InvalidDSNFormat("maxDownloadThreads", params.Get("maxDownloadThreads"), "int"), err)
+			return UserConfig{}, err
 		}
 		ucfg.MaxDownloadThreads = numThreads
 	}
-	params.Del("maxDownloadThreads")
 
-	for k := range params {
-		if strings.ToLower(k) == "timezone" {
-			ucfg.Location, err = time.LoadLocation(params.Get("timezone"))
-		}
+	// for timezone we do a case insensitive key match.
+	// We use getNoCase because we want to leave timezone in the params so that it will also
+	// be used as a session param.
+	if timezone, ok := params.getNoCase("timezone"); ok {
+		ucfg.Location, err = time.LoadLocation(timezone)
 	}
-	if len(params) > 0 {
+
+	// any left over params are treated as session params
+	if len(params.Values) > 0 {
 		sessionParams := make(map[string]string)
-		for k := range params {
+		for k := range params.Values {
 			sessionParams[k] = params.Get(k)
 		}
 		ucfg.SessionParams = sessionParams
 	}
 
 	return ucfg, err
+}
+
+// update the config with an authenticator based on the value from the parsed DSN
+func makeAuthenticator(parsedURL *url.URL, params *extractableParams, config *UserConfig) error {
+	name := parsedURL.User.Username()
+	// if the user name is set to 'token' we will interpret the password as an acess token
+	if name == "token" {
+		pass, _ := parsedURL.User.Password()
+		return addPatAuthenticator(pass, config)
+	} else if name != "" {
+		// Currently don't support user name/password authentication
+		return dbsqlerrint.NewRequestError(context.TODO(), dbsqlerr.ErrBasicAuthNotSupported, nil)
+	} else {
+		// Process parameters that specify the authentication type.  They are removed from params
+		// Get the optional authentication type param
+		authTypeS, _ := params.extract("authType")
+		authType := auth.ParseAuthType(authTypeS)
+
+		// Get optional parameters for creating an authenticator
+		clientId, hasClientId := params.extract("clientId")
+		if !hasClientId {
+			clientId, hasClientId = params.extract("clientID")
+		}
+
+		clientSecret, hasClientSecret := params.extract("clientSecret")
+		accessToken, hasAccessToken := params.extract("accessToken")
+
+		switch authType {
+		case auth.AuthTypeUnknown:
+			// if no authentication type is specified create an authenticator based on which
+			// params have values
+			if hasAccessToken {
+				return addPatAuthenticator(accessToken, config)
+			}
+
+			if hasClientId || hasClientSecret {
+				return addOauthM2MAuthenticator(clientId, clientSecret, config)
+			}
+		case auth.AuthTypePat:
+			return addPatAuthenticator(accessToken, config)
+		case auth.AuthTypeOauthM2M:
+			return addOauthM2MAuthenticator(clientId, clientSecret, config)
+		case auth.AuthTypeOauthU2M:
+			return addOauthU2MAuthenticator(config)
+		}
+
+	}
+
+	return nil
+}
+
+func addPatAuthenticator(accessToken string, config *UserConfig) error {
+	if accessToken == "" {
+		return dbsqlerrint.NewRequestError(context.TODO(), dbsqlerr.ErrInvalidDSNPATIsEmpty, nil)
+	}
+	config.AccessToken = accessToken
+	pat := &pat.PATAuth{
+		AccessToken: accessToken,
+	}
+	config.Authenticator = pat
+	return nil
+}
+
+func addOauthM2MAuthenticator(clientId, clientSecret string, config *UserConfig) error {
+	if clientId == "" || clientSecret == "" {
+		return dbsqlerrint.NewRequestError(context.TODO(), dbsqlerr.ErrInvalidDSNM2m, nil)
+	}
+
+	m2m := m2m.NewAuthenticator(clientId, clientSecret, config.Host)
+	config.Authenticator = m2m
+	return nil
+}
+
+func addOauthU2MAuthenticator(config *UserConfig) error {
+	u2m, err := u2m.NewAuthenticator(config.Host, 0)
+	if err == nil {
+		config.Authenticator = u2m
+	}
+	return err
+}
+
+type extractableParams struct {
+	url.Values
+}
+
+// returns the value corresponding to the key, if any, and a bool flag indicating if
+// there was a set value and it is not the empty string
+// deletes the key/value from params
+func (params *extractableParams) extract(key string) (string, bool) {
+	return extractParam(key, params, false, true)
+}
+
+func (params *extractableParams) extractAsInt(key string) (int, bool, error) {
+	if intString, ok := extractParam(key, params, false, true); ok {
+		i, err := strconv.Atoi(intString)
+		if err != nil {
+			return 0, true, dbsqlerrint.NewRequestError(context.TODO(), dbsqlerr.InvalidDSNFormat(key, intString, "int"), err)
+		}
+
+		return i, true, nil
+	}
+
+	return 0, false, nil
+}
+
+func (params *extractableParams) extractAsBool(key string) (bool, bool, error) {
+	if boolString, ok := extractParam(key, params, false, true); ok {
+		b, err := strconv.ParseBool(boolString)
+		if err != nil {
+			return false, true, dbsqlerrint.NewRequestError(context.TODO(), dbsqlerr.InvalidDSNFormat(key, boolString, "bool"), err)
+		}
+
+		return b, true, nil
+	}
+	return false, false, nil
+}
+
+// returns the value corresponding to the key using case insensitive key matching and a bool flag
+// indicating if the value was set and is not the empty string
+func (params *extractableParams) getNoCase(key string) (string, bool) {
+	return extractParam(key, params, true, false)
+}
+
+func extractParam(key string, params *extractableParams, ignoreCase bool, delValue bool) (string, bool) {
+	if ignoreCase {
+		key = strings.ToLower(key)
+	}
+
+	for k := range params.Values {
+		kc := k
+		if ignoreCase {
+			kc = strings.ToLower(k)
+		}
+		if kc == key {
+			val := params.Get(k)
+			if delValue {
+				params.Del(k)
+			}
+			return val, val != ""
+		}
+	}
+
+	return "", false
 }
 
 type ArrowConfig struct {

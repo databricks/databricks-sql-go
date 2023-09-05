@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/databricks/databricks-sql-go/auth"
+	"github.com/databricks/databricks-sql-go/auth/oauth/m2m"
 	"github.com/databricks/databricks-sql-go/auth/pat"
 	"github.com/databricks/databricks-sql-go/driverctx"
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
@@ -257,5 +258,15 @@ func WithCloudFetch(useCloudFetch bool) connOption {
 func WithMaxDownloadThreads(numThreads int) connOption {
 	return func(c *config.Config) {
 		c.MaxDownloadThreads = numThreads
+	}
+}
+
+// Setup of Oauth M2m authentication
+func WithClientCredentials(clientID, clientSecret string) connOption {
+	return func(c *config.Config) {
+		if clientID != "" && clientSecret != "" {
+			authr := m2m.NewAuthenticator(clientID, clientSecret, c.Host)
+			c.Authenticator = authr
+		}
 	}
 }
