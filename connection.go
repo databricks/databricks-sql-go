@@ -392,6 +392,18 @@ func (c *conn) pollOperation(ctx context.Context, opHandle *cli_service.TOperati
 	return statusResp, nil
 }
 
+func (c *conn) CheckNamedValue(nv *driver.NamedValue) error {
+	var err error
+	if dbsqlParam, ok := nv.Value.(DbSqlParam); ok {
+		nv.Name = dbsqlParam.Name
+		dbsqlParam.Value, err = driver.DefaultParameterConverter.ConvertValue(dbsqlParam.Value)
+		return err
+	}
+
+	nv.Value, err = driver.DefaultParameterConverter.ConvertValue(nv.Value)
+	return err
+}
+
 var _ driver.Conn = (*conn)(nil)
 var _ driver.Pinger = (*conn)(nil)
 var _ driver.SessionResetter = (*conn)(nil)
@@ -400,3 +412,4 @@ var _ driver.ExecerContext = (*conn)(nil)
 var _ driver.QueryerContext = (*conn)(nil)
 var _ driver.ConnPrepareContext = (*conn)(nil)
 var _ driver.ConnBeginTx = (*conn)(nil)
+var _ driver.NamedValueChecker = (*conn)(nil)
