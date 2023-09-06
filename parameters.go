@@ -35,8 +35,6 @@ const (
 
 func (s SqlType) String() string {
 	switch s {
-	case Void:
-		return "VOID"
 	case String:
 		return "STRING"
 	case Date:
@@ -87,7 +85,7 @@ func inferTypes(params []DbSqlParam) {
 			param.Value = strconv.FormatBool(value)
 			param.Type = Boolean
 		case string:
-			param.Value = &value
+			param.Value = value
 			param.Type = String
 		case int:
 			param.Value = strconv.Itoa(value)

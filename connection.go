@@ -100,9 +100,6 @@ func (c *conn) ExecContext(ctx context.Context, query string, args []driver.Name
 	defer log.Duration(msg, start)
 
 	ctx = driverctx.NewContextWithConnId(ctx, c.id)
-	if len(args) > 0 {
-		return nil, dbsqlerrint.NewDriverError(ctx, dbsqlerr.ErrParametersNotSupported, nil)
-	}
 
 	exStmtResp, opStatusResp, err := c.runQuery(ctx, query, args)
 
@@ -143,9 +140,6 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 	msg, start := log.Track("QueryContext")
 
 	ctx = driverctx.NewContextWithConnId(ctx, c.id)
-	if len(args) > 0 {
-		return nil, dbsqlerrint.NewDriverError(ctx, dbsqlerr.ErrParametersNotSupported, nil)
-	}
 
 	// first we try to get the results synchronously.
 	// at any point in time that the context is done we must cancel and return
