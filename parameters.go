@@ -18,8 +18,7 @@ type DbSqlParam struct {
 type SqlType int64
 
 const (
-	Void SqlType = iota
-	String
+	String SqlType = iota
 	Date
 	Timestamp
 	Float
@@ -84,8 +83,6 @@ func inferTypes(params []DbSqlParam) {
 	for i := range params {
 		param := &params[i]
 		switch value := param.Value.(type) {
-		case nil:
-			param.Type = Void
 		case bool:
 			param.Value = strconv.FormatBool(value)
 			param.Type = Boolean
