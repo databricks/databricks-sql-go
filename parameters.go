@@ -15,11 +15,6 @@ type DbSqlParam struct {
 	Value any
 }
 
-type TypeValuePair struct {
-	Type  SqlType
-	Value any
-}
-
 type SqlType int64
 
 const (
@@ -133,7 +128,7 @@ func inferTypes(params []DbSqlParam) {
 		case time.Time:
 			param.Value = value.String()
 			param.Type = Timestamp
-		case TypeValuePair:
+		case DbSqlParam:
 			param.Value = value.Value
 			param.Type = value.Type
 		default:
