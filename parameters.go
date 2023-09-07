@@ -9,7 +9,7 @@ import (
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 )
 
-type DbSqlParam struct {
+type DBSqlParam struct {
 	Name  string
 	Type  SqlType
 	Value any
@@ -25,9 +25,9 @@ const (
 	Decimal
 	Double
 	Integer
-	Bigint
-	Smallint
-	Tinyint
+	BigInt
+	SmallInt
+	TinyInt
 	Boolean
 	IntervalMonth
 	IntervalDay
@@ -49,11 +49,11 @@ func (s SqlType) String() string {
 		return "DOUBLE"
 	case Integer:
 		return "INTEGER"
-	case Bigint:
+	case BigInt:
 		return "BIGINT"
-	case Smallint:
+	case SmallInt:
 		return "SMALLINT"
-	case Tinyint:
+	case TinyInt:
 		return "TINYINT"
 	case Boolean:
 		return "BOOLEAN"
@@ -65,11 +65,11 @@ func (s SqlType) String() string {
 	return "unknown"
 }
 
-func valuesToDBSQLParams(namedValues []driver.NamedValue) []DbSqlParam {
-	var params []DbSqlParam
+func valuesToDBSQLParams(namedValues []driver.NamedValue) []DBSqlParam {
+	var params []DBSqlParam
 	for i := range namedValues {
 		namedValue := namedValues[i]
-		param := *new(DbSqlParam)
+		param := *new(DBSqlParam)
 		param.Name = namedValue.Name
 		param.Value = namedValue.Value
 		params = append(params, param)
@@ -77,7 +77,7 @@ func valuesToDBSQLParams(namedValues []driver.NamedValue) []DbSqlParam {
 	return params
 }
 
-func inferTypes(params []DbSqlParam) {
+func inferTypes(params []DBSqlParam) {
 	for i := range params {
 		param := &params[i]
 		switch value := param.Value.(type) {
@@ -123,7 +123,8 @@ func inferTypes(params []DbSqlParam) {
 		case time.Time:
 			param.Value = value.String()
 			param.Type = Timestamp
-		case DbSqlParam:
+		case DBSqlParam:
+			param.Name = value.Name
 			param.Value = value.Value
 			param.Type = value.Type
 		default:
