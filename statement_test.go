@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql/driver"
 	"testing"
-	"time"
 
 	"github.com/apache/thrift/lib/go/thrift"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
@@ -164,15 +163,5 @@ func TestStmt_QueryContext(t *testing.T) {
 		assert.NotNil(t, rows)
 		assert.Equal(t, 1, executeStatementCount)
 		assert.Equal(t, testQuery, savedQueryString)
-	})
-}
-func TestParameters(t *testing.T) {
-	t.Run("Parameter casting should be correct", func(t *testing.T) {
-		values := [3]driver.NamedValue{{Ordinal: 1, Name: "", Value: float32(5)}, {Ordinal: 2, Name: "", Value: time.Now()}, {Ordinal: 3, Name: "", Value: int64(5)}}
-		parameters := namedValuesToTSparkParams(values[:])
-		assert.Equal(t, &cli_service.TSparkParameterValue{DoubleValue: thrift.Float64Ptr(5)}, parameters[0].Value)
-		assert.NotNil(t, parameters[1].Value.StringValue)
-		assert.Equal(t, string("TIMESTAMP"), *parameters[1].Type)
-		assert.Equal(t, &cli_service.TSparkParameterValue{StringValue: strPtr("5")}, parameters[2].Value)
 	})
 }

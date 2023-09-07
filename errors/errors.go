@@ -12,7 +12,6 @@ const (
 	// Driver errors
 	ErrNotImplemented           = "not implemented"
 	ErrTransactionsNotSupported = "transactions are not supported"
-	ErrParametersNotSupported   = "query parameters are not supported"
 	ErrReadQueryStatus          = "could not read query status"
 	ErrSentinelTimeout          = "sentinel timed out waiting for operation to complete"
 
