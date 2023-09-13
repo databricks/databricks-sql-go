@@ -314,25 +314,28 @@ func (ars *arrowRowScanner) loadBatchFor(rowIndex int64) dbsqlerr.DBError {
 
 	// for each column we want to create an arrow array specific to the data type
 	for i, col := range r.Columns() {
-		col.Retain()
-		defer col.Release()
+		func() {
+			col.Retain()
+			defer col.Release()
 
-		colData := col.Data()
-		colData.Retain()
-		defer colData.Release()
+			colData := col.Data()
+			colData.Retain()
+			defer colData.Release()
 
-		colValsHolder := ars.columnValues[i]
+			colValsHolder := ars.columnValues[i]
 
-		// release the arrow array already held
-		colValsHolder.Release()
+			// release the arrow array already held
+			colValsHolder.Release()
 
-		err := colValsHolder.SetValueArray(colData)
-		if err != nil {
-			ars.Error().Msg(err.Error())
-		}
+			err := colValsHolder.SetValueArray(colData)
+			if err != nil {
+				ars.Error().Msg(err.Error())
+			}
+		}()
 	}
 
 	ars.currentBatch = batch
+	batch.arrowRecordBytes = nil
 
 	return nil
 }
