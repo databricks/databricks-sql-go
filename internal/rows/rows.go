@@ -453,9 +453,15 @@ func (r *rows) getResultSetSchema() (*cli_service.TTableSchema, dbsqlerr.DBError
 
 // fetchResultPage will fetch the result page containing the next row, if necessary
 func (r *rows) fetchResultPage() error {
+
 	var err dbsqlerr.DBError = isValidRows(r)
 	if err != nil {
 		return err
+	}
+
+	if r.RowScanner != nil {
+		r.RowScanner.Close()
+		r.RowScanner = nil
 	}
 
 	r.logger().Debug().Msgf("databricks: fetching result page for row %d", r.nextRowNumber)
@@ -564,6 +570,10 @@ func (r *rows) makeRowScanner(fetchResults *cli_service.TFetchResultsResp) dbsql
 	} else {
 		r.logger().Error().Msg(errRowsUnknowRowType)
 		err = dbsqlerr_int.NewDriverError(r.ctx, errRowsUnknowRowType, nil)
+	}
+
+	if r.RowScanner != nil {
+		r.RowScanner.Close()
 	}
 
 	r.RowScanner = rs
