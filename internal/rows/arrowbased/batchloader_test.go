@@ -4,21 +4,22 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"reflect"
+	"testing"
+	"time"
+
 	"github.com/apache/arrow/go/v12/arrow"
 	"github.com/apache/arrow/go/v12/arrow/array"
 	"github.com/apache/arrow/go/v12/arrow/ipc"
 	"github.com/apache/arrow/go/v12/arrow/memory"
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
-	"github.com/databricks/databricks-sql-go/internal/config"
 	dbsqlerrint "github.com/databricks/databricks-sql-go/internal/errors"
+	"github.com/databricks/databricks-sql-go/internal/rows/rowscanner"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
-	"net/http"
-	"net/http/httptest"
-	"reflect"
-	"testing"
-	"time"
 )
 
 func generateMockArrowBytes() []byte {
@@ -76,11 +77,9 @@ func TestBatchLoader(t *testing.T) {
 			linkExpired: false,
 			expectedResponse: []*sparkArrowBatch{
 				{
+					Delimiter:        rowscanner.NewDelimiter(0, 3),
 					arrowRecordBytes: generateMockArrowBytes(),
 					hasSchema:        true,
-					rowCount:         3,
-					startRow:         0,
-					endRow:           2,
 				},
 			},
 			expectedErr: nil,
@@ -129,9 +128,8 @@ func TestBatchLoader(t *testing.T) {
 			}
 
 			ctx := context.Background()
-			cfg := config.WithDefaults()
 
-			resp, err := cu.Fetch(ctx, cfg)
+			resp, err := cu.Fetch(ctx)
 
 			if !reflect.DeepEqual(resp, tc.expectedResponse) {
 				t.Errorf("expected (%v), got (%v)", tc.expectedResponse, resp)

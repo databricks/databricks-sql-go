@@ -2,7 +2,6 @@ package fetcher
 
 import (
 	"context"
-	"github.com/databricks/databricks-sql-go/internal/config"
 	"sync"
 
 	"github.com/databricks/databricks-sql-go/driverctx"
@@ -10,7 +9,7 @@ import (
 )
 
 type FetchableItems[OutputType any] interface {
-	Fetch(ctx context.Context, cfg *config.Config) ([]OutputType, error)
+	Fetch(ctx context.Context) ([]OutputType, error)
 }
 
 type Fetcher[OutputType any] interface {
@@ -24,7 +23,6 @@ type concurrentFetcher[I FetchableItems[O], O any] struct {
 	outChan    chan O
 	err        error
 	nWorkers   int
-	cfg        *config.Config
 	mu         sync.Mutex
 	start      sync.Once
 	ctx        context.Context
@@ -100,10 +98,17 @@ func (f *concurrentFetcher[I, O]) logger() *dbsqllog.DBSQLLogger {
 	return f.DBSQLLogger
 }
 
-func NewConcurrentFetcher[I FetchableItems[O], O any](ctx context.Context, nWorkers int, cfg *config.Config, inputChan <-chan FetchableItems[O]) (Fetcher[O], error) {
+func NewConcurrentFetcher[I FetchableItems[O], O any](ctx context.Context, nWorkers, maxItemsInMemory int, inputChan <-chan FetchableItems[O]) (Fetcher[O], error) {
+	if nWorkers < 1 {
+		nWorkers = 1
+	}
+	if maxItemsInMemory < 1 {
+		maxItemsInMemory = 1
+	}
+
 	// channel for loaded items
 	// TODO: pass buffer size
-	outputChannel := make(chan O, 100)
+	outputChannel := make(chan O, maxItemsInMemory)
 
 	// channel to signal a cancel
 	stopChannel := make(chan bool)
@@ -118,7 +123,6 @@ func NewConcurrentFetcher[I FetchableItems[O], O any](ctx context.Context, nWork
 		cancelChan: stopChannel,
 		ctx:        ctx,
 		nWorkers:   nWorkers,
-		cfg:        cfg,
 	}
 
 	return fetcher, nil
@@ -139,7 +143,7 @@ func work[I FetchableItems[O], O any](f *concurrentFetcher[I, O], workerIndex in
 		case input, ok := <-f.inputChan:
 			if ok {
 				f.logger().Debug().Msgf("concurrent fetcher worker %d loading item", workerIndex)
-				result, err := input.Fetch(f.ctx, f.cfg)
+				result, err := input.Fetch(f.ctx)
 				if err != nil {
 					f.logger().Debug().Msgf("concurrent fetcher worker %d received error", workerIndex)
 					f.setErr(err)

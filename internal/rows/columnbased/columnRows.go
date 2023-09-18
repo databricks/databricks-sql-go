@@ -22,11 +22,9 @@ type columnRowScanner struct {
 	rowSet *cli_service.TRowSet
 	schema *cli_service.TTableSchema
 
-	// number of rows in the current TRowSet
-	nRows int64
-
 	location *time.Location
 	ctx      context.Context
+	rowscanner.Delimiter
 }
 
 var _ rowscanner.RowScanner = (*columnRowScanner)(nil)
@@ -47,9 +45,9 @@ func NewColumnRowScanner(schema *cli_service.TTableSchema, rowSet *cli_service.T
 
 	logger.Debug().Msg("databricks: creating column row scanner")
 	rs := &columnRowScanner{
+		Delimiter:   rowscanner.NewDelimiter(rowSet.StartRowOffset, rowscanner.CountRows(rowSet)),
 		schema:      schema,
 		rowSet:      rowSet,
-		nRows:       countRows(rowSet),
 		DBSQLLogger: logger,
 		location:    location,
 		ctx:         ctx,
@@ -66,7 +64,7 @@ func (crs *columnRowScanner) NRows() int64 {
 	if crs == nil {
 		return 0
 	}
-	return crs.nRows
+	return crs.Count()
 }
 
 // ScanRow is called to populate the provided slice with the
@@ -136,40 +134,4 @@ func (crs *columnRowScanner) value(tColumn *cli_service.TColumn, tColumnDesc *cl
 	}
 
 	return val, err
-}
-
-// countRows returns the number of rows in the TRowSet
-func countRows(rowSet *cli_service.TRowSet) int64 {
-	if rowSet == nil || rowSet.Columns == nil {
-		return 0
-	}
-
-	// Find a column/values and return the number of values.
-	for _, col := range rowSet.Columns {
-		if col.BoolVal != nil {
-			return int64(len(col.BoolVal.Values))
-		}
-		if col.ByteVal != nil {
-			return int64(len(col.ByteVal.Values))
-		}
-		if col.I16Val != nil {
-			return int64(len(col.I16Val.Values))
-		}
-		if col.I32Val != nil {
-			return int64(len(col.I32Val.Values))
-		}
-		if col.I64Val != nil {
-			return int64(len(col.I64Val.Values))
-		}
-		if col.StringVal != nil {
-			return int64(len(col.StringVal.Values))
-		}
-		if col.DoubleVal != nil {
-			return int64(len(col.DoubleVal.Values))
-		}
-		if col.BinaryVal != nil {
-			return int64(len(col.BinaryVal.Values))
-		}
-	}
-	return 0
 }
