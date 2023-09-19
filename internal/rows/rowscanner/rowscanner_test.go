@@ -2,10 +2,12 @@ package rowscanner
 
 import (
 	"fmt"
+	"io"
 	"strings"
 	"testing"
 	"time"
 
+	dbsqllog "github.com/databricks/databricks-sql-go/logger"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -64,4 +66,53 @@ func TestHandlingDateTime(t *testing.T) {
 			assert.Equal(t, expectedTime, dt)
 		}
 	})
+}
+
+func TestRowsFetchResultPageErrors(t *testing.T) {
+	t.Parallel()
+
+	var fetcher *resultPageIterator
+
+	_, err := fetcher.Next()
+	assert.EqualError(t, err, "databricks: driver error: "+errRowsNilResultPageFetcher)
+
+	fetcher = &resultPageIterator{
+		Delimiter: NewDelimiter(0, -1),
+		logger:    dbsqllog.WithContext("", "", ""),
+	}
+
+	_, err = fetcher.Next()
+	assert.EqualError(t, err, "databricks: driver error: "+ErrRowsFetchPriorToStart, "negative row number should return error")
+
+	fetcher = &resultPageIterator{
+		Delimiter:  NewDelimiter(0, 0),
+		isFinished: true,
+		logger:     dbsqllog.WithContext("", "", ""),
+	}
+
+	_, err = fetcher.Next()
+	assert.EqualError(t, err, io.EOF.Error(), "row number past end of result set should return EOF")
+}
+
+func TestDelimiter(t *testing.T) {
+	t.Parallel()
+
+	var d Delimiter = delimiter{}
+
+	assert.False(t, d.Contains(0))
+	assert.False(t, d.Contains(1))
+	assert.False(t, d.Contains(-1))
+	assert.Equal(t, DirForward, d.Direction(0))
+	assert.Equal(t, DirForward, d.Direction(1))
+	assert.Equal(t, DirBack, d.Direction(-1))
+
+	d = NewDelimiter(0, 5)
+	assert.True(t, d.Contains(0))
+	assert.True(t, d.Contains(4))
+	assert.False(t, d.Contains(-1))
+	assert.False(t, d.Contains(5))
+	assert.Equal(t, DirNone, d.Direction(0))
+	assert.Equal(t, DirNone, d.Direction(4))
+	assert.Equal(t, DirForward, d.Direction(5))
+	assert.Equal(t, DirBack, d.Direction(-1))
 }

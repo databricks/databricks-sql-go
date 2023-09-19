@@ -13,6 +13,7 @@ import (
 // RowScanner is an interface defining the behaviours that are specific to
 // the formats in which query results can be returned.
 type RowScanner interface {
+	Delimiter
 	// ScanRow is called to populate the provided slice with the
 	// content of the current row. The provided slice will be the same
 	// size as the number of columns.
@@ -42,6 +43,47 @@ func IsNull(nulls []byte, position int64) bool {
 		return (b & (1 << (uint)(position%8))) != 0
 	}
 	return false
+}
+
+type Delimiter interface {
+	Start() int64
+	End() int64
+	Count() int64
+	Contains(int64) bool
+	Direction(int64) Direction
+}
+
+func NewDelimiter(start, count int64) Delimiter {
+	return delimiter{
+		start: start,
+		count: count,
+		end:   start + count - 1,
+	}
+}
+
+type delimiter struct {
+	start int64
+	end   int64
+	count int64
+}
+
+func (d delimiter) Start() int64          { return d.start }
+func (d delimiter) End() int64            { return d.end }
+func (d delimiter) Count() int64          { return d.count }
+func (d delimiter) Contains(i int64) bool { return d.count > 0 && i >= d.start && i <= d.end }
+func (d delimiter) Direction(i int64) Direction {
+
+	if d.Contains(i) {
+		return DirNone
+	} else if i < d.Start() {
+		return DirBack
+	} else if i > d.End() {
+		return DirForward
+	} else if d.Count() == 0 {
+		return DirForward
+	} else {
+		return DirUnknown
+	}
 }
 
 var ErrRowsParseValue = "databricks: unable to parse %s value '%v' from column %s"

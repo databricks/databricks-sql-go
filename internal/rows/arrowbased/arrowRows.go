@@ -27,13 +27,9 @@ type valueContainerMaker interface {
 }
 
 type sparkArrowBatch struct {
-	rowCount, startRow, endRow int64
-	arrowRecordBytes           []byte
-	hasSchema                  bool
-}
-
-func (sab *sparkArrowBatch) contains(rowIndex int64) bool {
-	return sab != nil && sab.startRow <= rowIndex && sab.endRow >= rowIndex
+	rowscanner.Delimiter
+	arrowRecordBytes []byte
+	hasSchema        bool
 }
 
 type timeStampFn func(arrow.Timestamp) time.Time
@@ -46,6 +42,7 @@ type colInfo struct {
 
 // arrowRowScanner handles extracting values from arrow records
 type arrowRowScanner struct {
+	rowscanner.Delimiter
 	recordReader
 	valueContainerMaker
 
@@ -60,9 +57,6 @@ type arrowRowScanner struct {
 
 	// database types for the columns
 	colInfo []colInfo
-
-	// number of rows in the current TRowSet
-	nRows int64
 
 	// a TRowSet contains multiple arrow batches
 	currentBatch *sparkArrowBatch
@@ -140,12 +134,12 @@ func NewArrowRowScanner(resultSetMetadata *cli_service.TGetResultSetMetadataResp
 	}
 
 	rs := &arrowRowScanner{
+		Delimiter: rowscanner.NewDelimiter(rowSet.StartRowOffset, rowscanner.CountRows(rowSet)),
 		recordReader: sparkRecordReader{
 			ctx: ctx,
 		},
 		valueContainerMaker: &arrowValueContainerMaker{},
 		ArrowConfig:         arrowConfig,
-		nRows:               countRows(rowSet),
 		arrowSchemaBytes:    schemaBytes,
 		arrowSchema:         arrowSchema,
 		toTimestampFn:       ttsf,
@@ -172,7 +166,7 @@ func (ars *arrowRowScanner) Close() {
 // NRows returns the number of rows in the current set of batches
 func (ars *arrowRowScanner) NRows() int64 {
 	if ars != nil {
-		return ars.nRows
+		return ars.Count()
 	}
 
 	return 0
@@ -203,7 +197,7 @@ func (ars *arrowRowScanner) ScanRow(
 		return err
 	}
 
-	var rowInBatchIndex int = int(rowIndex - ars.currentBatch.startRow)
+	var rowInBatchIndex int = int(rowIndex - ars.currentBatch.Start())
 
 	// if no location is provided default to UTC
 	if ars.location == nil {
@@ -248,33 +242,6 @@ func isIntervalType(typeId cli_service.TTypeId) bool {
 	return ok
 }
 
-// countRows returns the number of rows in the TRowSet
-func countRows(rowSet *cli_service.TRowSet) int64 {
-	if rowSet == nil {
-		return 0
-	}
-
-	if rowSet.ArrowBatches != nil {
-		batches := rowSet.ArrowBatches
-		var n int64
-		for i := range batches {
-			n += batches[i].RowCount
-		}
-		return n
-	}
-
-	if rowSet.ResultLinks != nil {
-		links := rowSet.ResultLinks
-		var n int64
-		for i := range links {
-			n += links[i].RowCount
-		}
-		return n
-	}
-
-	return 0
-}
-
 // loadBatchFor loads the batch containing the specified row if necessary
 func (ars *arrowRowScanner) loadBatchFor(rowIndex int64) dbsqlerr.DBError {
 
@@ -282,7 +249,7 @@ func (ars *arrowRowScanner) loadBatchFor(rowIndex int64) dbsqlerr.DBError {
 		return dbsqlerrint.NewDriverError(context.Background(), errArrowRowsNoArrowBatches, nil)
 	}
 	// if the batch already loaded we can just return
-	if ars.currentBatch != nil && ars.currentBatch.contains(rowIndex) && ars.columnValues != nil {
+	if ars.currentBatch != nil && ars.currentBatch.Contains(rowIndex) && ars.columnValues != nil {
 		return nil
 	}
 

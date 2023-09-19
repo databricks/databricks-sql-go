@@ -663,7 +663,7 @@ func TestArrowRowScanner(t *testing.T) {
 			assert.Nil(t, err)
 			assert.NotNil(t, lastReadBatch)
 			assert.Equal(t, 1, callCount)
-			assert.Equal(t, int64(0), lastReadBatch.startRow)
+			assert.Equal(t, int64(0), lastReadBatch.Start())
 		}
 
 		for _, i := range []int64{5, 6, 7} {
@@ -671,7 +671,7 @@ func TestArrowRowScanner(t *testing.T) {
 			assert.Nil(t, err)
 			assert.NotNil(t, lastReadBatch)
 			assert.Equal(t, 2, callCount)
-			assert.Equal(t, int64(5), lastReadBatch.startRow)
+			assert.Equal(t, int64(5), lastReadBatch.Start())
 		}
 
 		for _, i := range []int64{8, 9, 10, 11, 12, 13, 14} {
@@ -679,7 +679,7 @@ func TestArrowRowScanner(t *testing.T) {
 			assert.Nil(t, err)
 			assert.NotNil(t, lastReadBatch)
 			assert.Equal(t, 3, callCount)
-			assert.Equal(t, int64(8), lastReadBatch.startRow)
+			assert.Equal(t, int64(8), lastReadBatch.Start())
 		}
 
 		err := ars.loadBatchFor(-1)
@@ -983,13 +983,13 @@ func TestArrowRowScanner(t *testing.T) {
 
 			if i%1000 == 0 {
 				assert.NotNil(t, ars.currentBatch)
-				assert.Equal(t, int64(i), ars.currentBatch.startRow)
+				assert.Equal(t, int64(i), ars.currentBatch.Start())
 				if i < 53000 {
-					assert.Equal(t, int64(1000), ars.currentBatch.rowCount)
+					assert.Equal(t, int64(1000), ars.currentBatch.Count())
 				} else {
-					assert.Equal(t, int64(940), ars.currentBatch.rowCount)
+					assert.Equal(t, int64(940), ars.currentBatch.Count())
 				}
-				assert.Equal(t, ars.currentBatch.startRow+ars.currentBatch.rowCount-1, ars.currentBatch.endRow)
+				assert.Equal(t, ars.currentBatch.Start()+ars.currentBatch.Count()-1, ars.currentBatch.End())
 			}
 		}
 

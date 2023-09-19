@@ -102,110 +102,26 @@ func TestRowsNextRowInPage(t *testing.T) {
 	assert.False(t, inPage, "next row after current page should return false")
 }
 
-func TestRowsGetPageFetchDirection(t *testing.T) {
-	t.Parallel()
-	var rowSet *rows
-
-	// nil rows instance
-	direction := rowSet.getPageFetchDirection()
-	assert.Equal(t, cli_service.TFetchOrientation_FETCH_NEXT, direction, "nil rows instance should return forward direction")
-
-	// default rows instance
-	rowSet = &rows{schema: &cli_service.TTableSchema{}}
-	direction = rowSet.getPageFetchDirection()
-	assert.Equal(t, cli_service.TFetchOrientation_FETCH_NEXT, direction, "default rows instance should return forward direction")
-
-	fetchResults := &cli_service.TFetchResultsResp{}
-
-	// fetchResults has no TRowSet
-	err := rowSet.makeRowScanner(fetchResults)
-	assert.EqualError(t, err, "databricks: driver error: "+errRowsUnknowRowType)
-	direction = rowSet.getPageFetchDirection()
-	assert.Equal(t, cli_service.TFetchOrientation_FETCH_NEXT, direction, "fetchResults has no TRowSet should return forward direction")
-
-	tRowSet := &cli_service.TRowSet{}
-
-	// default TRowSet
-	fetchResults.Results = tRowSet
-	err = rowSet.makeRowScanner(fetchResults)
-	assert.EqualError(t, err, "databricks: driver error: "+errRowsUnknowRowType)
-	direction = rowSet.getPageFetchDirection()
-	assert.Equal(t, cli_service.TFetchOrientation_FETCH_NEXT, direction, "fetchResults has no TRowSet should return forward direction")
-
-	// Set up a result page starting with row 10 and containing 5 rows
-	tRowSet.StartRowOffset = 10
-	tColumn := &cli_service.TColumn{BoolVal: &cli_service.TBoolColumn{Values: []bool{true, false, true, false, true}}}
-	tRowSet.Columns = []*cli_service.TColumn{tColumn}
-
-	err = rowSet.makeRowScanner(fetchResults)
-	assert.Nil(t, err)
-
-	// next row number is prior to result page
-	rowSet.nextRowNumber = 0
-	direction = rowSet.getPageFetchDirection()
-	assert.Equal(t, cli_service.TFetchOrientation_FETCH_PRIOR, direction, "next row number is prior to result page should return reverse direction")
-
-	// next row number is immediately prior to result page
-	rowSet.nextRowNumber = 9
-	direction = rowSet.getPageFetchDirection()
-	assert.Equal(t, cli_service.TFetchOrientation_FETCH_PRIOR, direction, "next row number is immediately prior to result page should return reverse direction")
-
-	// next row number is first row in page
-	rowSet.nextRowNumber = 10
-	direction = rowSet.getPageFetchDirection()
-	assert.Equal(t, cli_service.TFetchOrientation_FETCH_NEXT, direction, "fetchResults has no TRowSet should return forward direction")
-
-	// next row is last row in page
-	rowSet.nextRowNumber = 14
-	direction = rowSet.getPageFetchDirection()
-	assert.Equal(t, cli_service.TFetchOrientation_FETCH_NEXT, direction, "fetchResults has no TRowSet should return forward direction")
-
-	// next row is in page
-	rowSet.nextRowNumber = 12
-	direction = rowSet.getPageFetchDirection()
-	assert.Equal(t, cli_service.TFetchOrientation_FETCH_NEXT, direction, "fetchResults has no TRowSet should return forward direction")
-
-	// next row immediately follows current page
-	rowSet.nextRowNumber = 15
-	direction = rowSet.getPageFetchDirection()
-	assert.Equal(t, cli_service.TFetchOrientation_FETCH_NEXT, direction, "fetchResults has no TRowSet should return forward direction")
-
-	// next row after current page
-	rowSet.nextRowNumber = 100
-	direction = rowSet.getPageFetchDirection()
-	assert.Equal(t, cli_service.TFetchOrientation_FETCH_NEXT, direction, "fetchResults has no TRowSet should return forward direction")
-}
-
 func TestRowsGetPageStartRowNum(t *testing.T) {
 	t.Parallel()
-	var noRows int64 = 0
 	var sevenRows int64 = 7
 
 	rowSet := &rows{schema: &cli_service.TTableSchema{}}
 
-	start := rowSet.pageStartingRowNum
-	assert.Equal(t, noRows, start, "rows with no page should return 0")
-
 	err := rowSet.makeRowScanner(&cli_service.TFetchResultsResp{})
 	assert.EqualError(t, err, "databricks: driver error: "+errRowsUnknowRowType)
-
-	start = rowSet.pageStartingRowNum
-	assert.Equal(t, noRows, start, "rows with no TRowSet should return 0")
 
 	err = rowSet.makeRowScanner(&cli_service.TFetchResultsResp{Results: &cli_service.TRowSet{}})
 	assert.EqualError(t, err, "databricks: driver error: "+errRowsUnknowRowType)
 
-	start = rowSet.pageStartingRowNum
-	assert.Equal(t, noRows, start, "rows with default TRowSet should return 0")
-
 	err = rowSet.makeRowScanner(&cli_service.TFetchResultsResp{Results: &cli_service.TRowSet{StartRowOffset: 7, Columns: []*cli_service.TColumn{}}})
 	assert.Nil(t, err)
 
-	start = rowSet.pageStartingRowNum
+	start := rowSet.RowScanner.Start()
 	assert.Equal(t, sevenRows, start, "rows with TRowSet should return TRowSet.StartRowOffset")
 }
 
-func TestRowsFetchResultPageErrors(t *testing.T) {
+func TestRowsFetchMakeRowScanner(t *testing.T) {
 	t.Parallel()
 	var rowSet *rows
 
@@ -217,8 +133,6 @@ func TestRowsFetchResultPageErrors(t *testing.T) {
 		client:        &cli_service.TCLIServiceClient{},
 		schema:        &cli_service.TTableSchema{},
 	}
-	err = rowSet.fetchResultPage()
-	assert.EqualError(t, err, "databricks: driver error: "+errRowsFetchPriorToStart, "negative row number should return error")
 
 	err = rowSet.makeRowScanner(&cli_service.TFetchResultsResp{})
 	assert.EqualError(t, err, "databricks: driver error: "+errRowsUnknowRowType)
@@ -237,8 +151,6 @@ func TestRowsFetchResultPageErrors(t *testing.T) {
 	err = rowSet.makeRowScanner(&cli_service.TFetchResultsResp{Results: tRowSet, HasMoreRows: &noMoreRows})
 	assert.Nil(t, err)
 
-	err = rowSet.fetchResultPage()
-	assert.EqualError(t, err, io.EOF.Error(), "row number past end of result set should return EOF")
 }
 
 func TestGetResultMetadataNoDirectResults(t *testing.T) {
@@ -335,54 +247,46 @@ func TestRowsFetchResultPageNoDirectResults(t *testing.T) {
 		offset:            int64(5),
 	}.validatePaging(t, rowSet, err, fetchResultsCount, getMetadataCount)
 
-	// next row number is two, should fetch previous result page
+	// next row number is two, can't fetch previous result page
 	rowSet.nextRowNumber = 2
 	err = rowSet.fetchResultPage()
+	assert.EqualError(t, err, "can't go backward")
+
+	// next row number is past end of next result page
+	rowSet.nextRowNumber = 15
+	err = rowSet.fetchResultPage()
+	assert.EqualError(t, err, "Invalid row number state")
+
+	rowSet.nextRowNumber = 12
+	err = rowSet.fetchResultPage()
+
 	rowTestPagingResult{
 		getMetadataCount:  1,
 		fetchResultsCount: 3,
 		nextRowIndex:      int64(2),
-		nextRowNumber:     int64(2),
-		offset:            i64Zero,
+		nextRowNumber:     int64(12),
+		offset:            int64(10),
 	}.validatePaging(t, rowSet, err, fetchResultsCount, getMetadataCount)
 
-	// next row number is past end of results, should fetch all result pages
-	// going forward and then return EOF
 	rowSet.nextRowNumber = 15
 	err = rowSet.fetchResultPage()
 	errMsg := io.EOF.Error()
-	rowTestPagingResult{
-		getMetadataCount:  1,
-		fetchResultsCount: 5,
-		nextRowIndex:      int64(2),
-		nextRowNumber:     int64(15),
-		offset:            int64(10),
-		errMessage:        &errMsg,
-	}.validatePaging(t, rowSet, err, fetchResultsCount, getMetadataCount)
+	assert.EqualError(t, err, errMsg)
 
 	// next row number is before start of results, should fetch all result pages
 	// going forward and then return EOF
 	rowSet.nextRowNumber = -1
 	err = rowSet.fetchResultPage()
-	errMsg = "databricks: driver error: " + errRowsFetchPriorToStart
-	rowTestPagingResult{
-		getMetadataCount:  1,
-		fetchResultsCount: 7,
-		nextRowIndex:      int64(2),
-		nextRowNumber:     int64(-1),
-		offset:            i64Zero,
-		errMessage:        &errMsg,
-	}.validatePaging(t, rowSet, err, fetchResultsCount, getMetadataCount)
+	assert.EqualError(t, err, "can't go backward")
 
 	// jump back to last page
-	rowSet.nextRowNumber = 12
+	rowSet.nextRowNumber = 13
 	err = rowSet.fetchResultPage()
-	errMsg = "databricks: driver error: " + errRowsFetchPriorToStart
 	rowTestPagingResult{
 		getMetadataCount:  1,
-		fetchResultsCount: 9,
-		nextRowIndex:      int64(2),
-		nextRowNumber:     int64(12),
+		fetchResultsCount: 3,
+		nextRowIndex:      int64(3),
+		nextRowNumber:     int64(13),
 		offset:            int64(10),
 	}.validatePaging(t, rowSet, err, fetchResultsCount, getMetadataCount)
 }
@@ -441,49 +345,36 @@ func TestRowsFetchResultPageWithDirectResults(t *testing.T) {
 	// next row number is two, should fetch previous result page
 	rowSet.nextRowNumber = 2
 	err = rowSet.fetchResultPage()
-	rowTestPagingResult{
-		getMetadataCount:  1,
-		fetchResultsCount: 3,
-		nextRowIndex:      int64(2),
-		nextRowNumber:     int64(2),
-		offset:            i64Zero,
-	}.validatePaging(t, rowSet, err, fetchResultsCount, getMetadataCount)
+	assert.EqualError(t, err, "can't go backward")
 
 	// next row number is past end of results, should fetch all result pages
 	// going forward and then return EOF
 	rowSet.nextRowNumber = 15
 	err = rowSet.fetchResultPage()
-	errMsg := io.EOF.Error()
+	assert.EqualError(t, err, "Invalid row number state")
+
+	rowSet.nextRowNumber = 10
+	err = rowSet.fetchResultPage()
 	rowTestPagingResult{
 		getMetadataCount:  1,
-		fetchResultsCount: 5,
-		nextRowIndex:      int64(2),
-		nextRowNumber:     int64(15),
+		fetchResultsCount: 3,
+		nextRowIndex:      int64(0),
+		nextRowNumber:     int64(10),
 		offset:            int64(10),
-		errMessage:        &errMsg,
 	}.validatePaging(t, rowSet, err, fetchResultsCount, getMetadataCount)
 
-	// next row number is before start of results, should fetch all result pages
-	// going forward and then return EOF
-	rowSet.nextRowNumber = -1
+	rowSet.nextRowNumber = 15
 	err = rowSet.fetchResultPage()
-	errMsg = "databricks: driver error: " + errRowsFetchPriorToStart
-	rowTestPagingResult{
-		getMetadataCount:  1,
-		fetchResultsCount: 7,
-		nextRowIndex:      int64(2),
-		nextRowNumber:     int64(-1),
-		offset:            i64Zero,
-		errMessage:        &errMsg,
-	}.validatePaging(t, rowSet, err, fetchResultsCount, getMetadataCount)
+	errMsg := io.EOF.Error()
+	assert.EqualError(t, err, errMsg)
 
 	// jump back to last page
 	rowSet.nextRowNumber = 12
 	err = rowSet.fetchResultPage()
-	errMsg = "databricks: driver error: " + errRowsFetchPriorToStart
+
 	rowTestPagingResult{
 		getMetadataCount:  1,
-		fetchResultsCount: 9,
+		fetchResultsCount: 3,
 		nextRowIndex:      int64(2),
 		nextRowNumber:     int64(12),
 		offset:            int64(10),
@@ -590,7 +481,7 @@ func TestNextNoDirectResults(t *testing.T) {
 	assert.Nil(t, err)
 	assert.Equal(t, row0, row)
 	assert.Equal(t, int64(1), rowSet.nextRowNumber)
-	assert.Equal(t, int64(1), rowSet.nextRowIndex)
+	assert.Equal(t, int64(1), rowSet.nextRowIndex())
 	assert.Equal(t, 1, getMetadataCount)
 	assert.Equal(t, 1, fetchResultsCount)
 }
@@ -646,7 +537,7 @@ func TestNextWithDirectResults(t *testing.T) {
 	assert.Nil(t, err)
 	assert.Equal(t, row0, row)
 	assert.Equal(t, int64(1), rowSet.nextRowNumber)
-	assert.Equal(t, int64(1), rowSet.nextRowIndex)
+	assert.Equal(t, int64(1), rowSet.nextRowIndex())
 	assert.Equal(t, 2, getMetadataCount)
 	assert.Equal(t, 1, fetchResultsCount)
 }
@@ -878,9 +769,9 @@ type rowTestPagingResult struct {
 func (rt rowTestPagingResult) validatePaging(t *testing.T, rowSet *rows, err error, fetchResultsCount, getMetadataCount int) {
 	assert.Equal(t, rt.fetchResultsCount, fetchResultsCount)
 	assert.Equal(t, rt.getMetadataCount, getMetadataCount)
-	assert.Equal(t, rt.nextRowIndex, rowSet.nextRowIndex)
+	assert.Equal(t, rt.nextRowIndex, rowSet.nextRowIndex())
 	assert.Equal(t, rt.nextRowNumber, rowSet.nextRowNumber)
-	assert.Equal(t, rt.offset, rowSet.pageStartingRowNum)
+	assert.Equal(t, rt.offset, rowSet.RowScanner.Start())
 	if rt.errMessage == nil {
 		assert.Nil(t, err)
 	} else {

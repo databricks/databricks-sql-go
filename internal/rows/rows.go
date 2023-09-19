@@ -4,7 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
-	"io"
+	"errors"
 	"math"
 	"reflect"
 	"time"
@@ -31,6 +31,7 @@ type rows struct {
 	// The RowScanner is responsible for handling the different
 	// formats in which the query results can be returned
 	rowscanner.RowScanner
+	rowscanner.ResultPageIterator
 
 	// Handle for the associated database operation.
 	opHandle *cli_service.TOperationHandle
@@ -55,14 +56,8 @@ type rows struct {
 	connId        string
 	correlationId string
 
-	// Index in the current page of rows
-	nextRowIndex int64
-
 	// Row number within the overall result set
 	nextRowNumber int64
-
-	// starting row number of the current results page
-	pageStartingRowNum int64
 
 	// If the server returns an entire result set
 	// in the direct results it may have already
@@ -243,16 +238,17 @@ func (r *rows) Next(dest []driver.Value) error {
 	}
 
 	// Put values into the destination slice
-	err = r.ScanRow(dest, r.nextRowIndex)
+	err = r.ScanRow(dest, r.nextRowIndex())
 	if err != nil {
 		return err
 	}
 
-	r.nextRowIndex++
 	r.nextRowNumber++
 
 	return nil
 }
+
+func (r *rows) nextRowIndex() int64 { return r.nextRowNumber - r.RowScanner.Start() }
 
 // ColumnTypeScanType returns column's native type
 func (r *rows) ColumnTypeScanType(index int) reflect.Type {
@@ -415,13 +411,7 @@ func (r *rows) isNextRowInPage() (bool, dbsqlerr.DBError) {
 		return false, nil
 	}
 
-	nRowsInPage := r.NRows()
-	if nRowsInPage == 0 {
-		return false, nil
-	}
-
-	startRowOffset := r.pageStartingRowNum
-	return r.nextRowNumber >= startRowOffset && r.nextRowNumber < (startRowOffset+nRowsInPage), nil
+	return r.RowScanner.Contains(r.nextRowNumber), nil
 }
 
 // getResultMetadata does a one time fetch of the result set schema
@@ -458,79 +448,35 @@ func (r *rows) fetchResultPage() error {
 		return err
 	}
 
-	r.logger().Debug().Msgf("databricks: fetching result page for row %d", r.nextRowNumber)
-
-	var b bool
-	var e dbsqlerr.DBError
-	for b, e = r.isNextRowInPage(); !b && e == nil; b, e = r.isNextRowInPage() {
-
-		// determine the direction of page fetching. Currently we only handle
-		// TFetchOrientation_FETCH_PRIOR and TFetchOrientation_FETCH_NEXT
-		var direction cli_service.TFetchOrientation = r.getPageFetchDirection()
-		if direction == cli_service.TFetchOrientation_FETCH_PRIOR {
-			// can't fetch rows previous to the start
-			if r.pageStartingRowNum == 0 {
-				return dbsqlerr_int.NewDriverError(r.ctx, errRowsFetchPriorToStart, nil)
-			}
-		} else if direction == cli_service.TFetchOrientation_FETCH_NEXT {
-			// can't fetch past the end of the query results
-			if !r.hasMoreRows {
-				return io.EOF
-			}
-		} else {
-			r.logger().Error().Msgf(errRowsUnandledFetchDirection(direction.String()))
-			return dbsqlerr_int.NewDriverError(r.ctx, errRowsUnandledFetchDirection(direction.String()), nil)
-		}
-
-		r.logger().Debug().Msgf("fetching next batch of up to %d rows, %s", r.maxPageSize, direction.String())
-
-		var includeResultSetMetadata = true
-		req := cli_service.TFetchResultsReq{
-			OperationHandle:          r.opHandle,
-			MaxRows:                  r.maxPageSize,
-			Orientation:              direction,
-			IncludeResultSetMetadata: &includeResultSetMetadata,
-		}
-		ctx := driverctx.NewContextWithCorrelationId(driverctx.NewContextWithConnId(context.Background(), r.connId), r.correlationId)
-
-		fetchResult, err := r.client.FetchResults(ctx, &req)
-		if err != nil {
-			r.logger().Err(err).Msg("databricks: Rows instance failed to retrieve results")
-			return dbsqlerr_int.NewRequestError(r.ctx, errRowsResultFetchFailed, err)
-		}
-
-		err1 := r.makeRowScanner(fetchResult)
-		if err1 != nil {
-			return err1
-		}
-
-		r.logger().Debug().Msgf("databricks: new result page startRow: %d, nRows: %v, hasMoreRows: %v", fetchResult.Results.StartRowOffset, r.NRows(), fetchResult.HasMoreRows)
+	if r.RowScanner != nil && r.RowScanner.Contains(r.nextRowNumber) {
+		return nil
 	}
 
-	if e != nil {
-		return e
+	if r.RowScanner != nil && r.nextRowNumber < r.RowScanner.Start() {
+		//TODO
+		return errors.New("can't go backward")
 	}
 
-	// don't assume the next row is the first row in the page
-	r.nextRowIndex = r.nextRowNumber - r.pageStartingRowNum
+	if r.ResultPageIterator == nil {
+		r.ResultPageIterator = makeResultPageIterator(r)
+	}
+
+	fetchResult, err1 := r.ResultPageIterator.Next()
+	if err1 != nil {
+		return err1
+	}
+
+	err1 = r.makeRowScanner(fetchResult)
+	if err1 != nil {
+		return err1
+	}
+
+	if !r.RowScanner.Contains(r.nextRowNumber) {
+		// TODO
+		return errors.New("Invalid row number state")
+	}
 
 	return nil
-}
-
-// getPageFetchDirection returns the cli_service.TFetchOrientation
-// necessary to fetch a result page containing the next row number.
-// Note: if the next row number is in the current page TFetchOrientation_FETCH_NEXT
-// is returned. Use rows.nextRowInPage to determine if a fetch is necessary
-func (r *rows) getPageFetchDirection() cli_service.TFetchOrientation {
-	if r == nil {
-		return cli_service.TFetchOrientation_FETCH_NEXT
-	}
-
-	if r.nextRowNumber < r.pageStartingRowNum {
-		return cli_service.TFetchOrientation_FETCH_PRIOR
-	}
-
-	return cli_service.TFetchOrientation_FETCH_NEXT
 }
 
 // makeRowScanner creates the embedded RowScanner instance based on the format
@@ -549,6 +495,7 @@ func (r *rows) makeRowScanner(fetchResults *cli_service.TFetchResultsResp) dbsql
 	var rs rowscanner.RowScanner
 	var err dbsqlerr.DBError
 	if fetchResults.Results != nil {
+
 		if fetchResults.Results.Columns != nil {
 			rs, err = columnbased.NewColumnRowScanner(schema, fetchResults.Results, r.config, r.logger(), r.ctx)
 		} else if fetchResults.Results.ArrowBatches != nil {
@@ -560,7 +507,6 @@ func (r *rows) makeRowScanner(fetchResults *cli_service.TFetchResultsResp) dbsql
 			err = dbsqlerr_int.NewDriverError(r.ctx, errRowsUnknowRowType, nil)
 		}
 
-		r.pageStartingRowNum = fetchResults.Results.StartRowOffset
 	} else {
 		r.logger().Error().Msg(errRowsUnknowRowType)
 		err = dbsqlerr_int.NewDriverError(r.ctx, errRowsUnknowRowType, nil)
@@ -585,4 +531,27 @@ func (r *rows) logger() *dbsqllog.DBSQLLogger {
 		}
 	}
 	return r.logger_
+}
+
+func makeResultPageIterator(r *rows) rowscanner.ResultPageIterator {
+
+	var d rowscanner.Delimiter
+	if r.RowScanner != nil {
+		d = rowscanner.NewDelimiter(r.RowScanner.Start(), r.RowScanner.Count())
+	} else {
+		d = rowscanner.NewDelimiter(0, 0)
+	}
+
+	resultPageIterator := rowscanner.NewResultPageIterator(
+		d,
+		r.hasMoreRows,
+		r.maxPageSize,
+		r.opHandle,
+		r.client,
+		r.connId,
+		r.correlationId,
+		r.logger(),
+	)
+
+	return resultPageIterator
 }
