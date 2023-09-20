@@ -101,6 +101,10 @@ func (c *conn) ExecContext(ctx context.Context, query string, args []driver.Name
 
 	ctx = driverctx.NewContextWithConnId(ctx, c.id)
 
+	if len(args) > 0 && c.session.ServerProtocolVersion < cli_service.TProtocolVersion_SPARK_CLI_SERVICE_PROTOCOL_V8 {
+		return nil, dbsqlerrint.NewDriverError(ctx, dbsqlerr.ErrParametersNotSupported, nil)
+	}
+
 	exStmtResp, opStatusResp, err := c.runQuery(ctx, query, args)
 
 	if exStmtResp != nil && exStmtResp.OperationHandle != nil {
@@ -140,6 +144,10 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 	msg, start := log.Track("QueryContext")
 
 	ctx = driverctx.NewContextWithConnId(ctx, c.id)
+
+	if len(args) > 0 && c.session.ServerProtocolVersion < cli_service.TProtocolVersion_SPARK_CLI_SERVICE_PROTOCOL_V8 {
+		return nil, dbsqlerrint.NewDriverError(ctx, dbsqlerr.ErrParametersNotSupported, nil)
+	}
 
 	// first we try to get the results synchronously.
 	// at any point in time that the context is done we must cancel and return
@@ -274,7 +282,7 @@ func (c *conn) executeStatement(ctx context.Context, query string, args []driver
 	req := cli_service.TExecuteStatementReq{
 		SessionHandle: c.session.SessionHandle,
 		Statement:     query,
-		RunAsync:      c.cfg.RunAsync,
+		RunAsync:      true,
 		QueryTimeout:  int64(c.cfg.QueryTimeout / time.Second),
 		GetDirectResults: &cli_service.TSparkGetDirectResults{
 			MaxRows: int64(c.cfg.MaxRows),

@@ -29,7 +29,6 @@ type Config struct {
 	UserConfig
 	TLSConfig *tls.Config // nil disables TLS
 	ArrowConfig
-	RunAsync                  bool // TODO
 	PollInterval              time.Duration
 	ClientTimeout             time.Duration // max time the http request can last
 	PingTimeout               time.Duration // max time allowed for ping
@@ -68,7 +67,6 @@ func (c *Config) DeepCopy() *Config {
 		UserConfig:                c.UserConfig.DeepCopy(),
 		TLSConfig:                 c.TLSConfig.Clone(),
 		ArrowConfig:               c.ArrowConfig.DeepCopy(),
-		RunAsync:                  c.RunAsync,
 		PollInterval:              c.PollInterval,
 		ClientTimeout:             c.ClientTimeout,
 		PingTimeout:               c.PingTimeout,
@@ -188,7 +186,6 @@ func WithDefaults() *Config {
 		UserConfig:                UserConfig{}.WithDefaults(),
 		TLSConfig:                 &tls.Config{MinVersion: tls.VersionTLS12},
 		ArrowConfig:               ArrowConfig{}.WithDefaults(),
-		RunAsync:                  true,
 		PollInterval:              1 * time.Second,
 		ClientTimeout:             900 * time.Second,
 		PingTimeout:               60 * time.Second,
@@ -196,7 +193,7 @@ func WithDefaults() *Config {
 		DriverName:                "godatabrickssqlconnector", // important. Do not change
 		ThriftProtocol:            "binary",
 		ThriftTransport:           "http",
-		ThriftProtocolVersion:     cli_service.TProtocolVersion_SPARK_CLI_SERVICE_PROTOCOL_V7,
+		ThriftProtocolVersion:     cli_service.TProtocolVersion_SPARK_CLI_SERVICE_PROTOCOL_V8,
 		ThriftDebugClientProtocol: false,
 	}
 
