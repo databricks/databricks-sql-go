@@ -75,8 +75,9 @@ func (crs *columnRowScanner) NRows() int64 {
 // a buffer held in dest.
 func (crs *columnRowScanner) ScanRow(
 	dest []driver.Value,
-	rowIndex int64) dbsqlerr.DBError {
+	rowNumber int64) dbsqlerr.DBError {
 
+	rowIndex := rowNumber - crs.Start()
 	// populate the destinatino slice
 	for i := range dest {
 		val, err := crs.value(crs.rowSet.Columns[i], crs.schema.Columns[i], rowIndex)

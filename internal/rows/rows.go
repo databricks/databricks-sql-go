@@ -4,7 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
-	"errors"
+	"io"
 	"math"
 	"reflect"
 	"time"
@@ -238,7 +238,7 @@ func (r *rows) Next(dest []driver.Value) error {
 	}
 
 	// Put values into the destination slice
-	err = r.ScanRow(dest, r.nextRowIndex())
+	err = r.ScanRow(dest, r.nextRowNumber)
 	if err != nil {
 		return err
 	}
@@ -247,8 +247,6 @@ func (r *rows) Next(dest []driver.Value) error {
 
 	return nil
 }
-
-func (r *rows) nextRowIndex() int64 { return r.nextRowNumber - r.RowScanner.Start() }
 
 // ColumnTypeScanType returns column's native type
 func (r *rows) ColumnTypeScanType(index int) reflect.Type {
@@ -453,12 +451,28 @@ func (r *rows) fetchResultPage() error {
 	}
 
 	if r.RowScanner != nil && r.nextRowNumber < r.RowScanner.Start() {
-		//TODO
-		return errors.New("can't go backward")
+		return dbsqlerr_int.NewDriverError(r.ctx, errRowsOnlyForward, nil)
 	}
 
 	if r.ResultPageIterator == nil {
-		r.ResultPageIterator = makeResultPageIterator(r)
+		var d rowscanner.Delimiter
+		if r.RowScanner != nil {
+			d = rowscanner.NewDelimiter(r.RowScanner.Start(), r.RowScanner.Count())
+		} else {
+			d = rowscanner.NewDelimiter(0, 0)
+		}
+		r.ResultPageIterator = makeResultPageIterator(r, d)
+	}
+
+	// Close/release the existing row scanner before loading the next result page to
+	// help keep memory usage down.
+	if r.RowScanner != nil {
+		r.RowScanner.Close()
+		r.RowScanner = nil
+	}
+
+	if !r.ResultPageIterator.HasNext() {
+		return io.EOF
 	}
 
 	fetchResult, err1 := r.ResultPageIterator.Next()
@@ -471,9 +485,10 @@ func (r *rows) fetchResultPage() error {
 		return err1
 	}
 
+	// We should be iterating over the rows so the next row number should be in the
+	// next result page
 	if !r.RowScanner.Contains(r.nextRowNumber) {
-		// TODO
-		return errors.New("Invalid row number state")
+		return dbsqlerr_int.NewDriverError(r.ctx, errInvalidRowNumberState, nil)
 	}
 
 	return nil
@@ -512,7 +527,12 @@ func (r *rows) makeRowScanner(fetchResults *cli_service.TFetchResultsResp) dbsql
 		err = dbsqlerr_int.NewDriverError(r.ctx, errRowsUnknowRowType, nil)
 	}
 
+	if r.RowScanner != nil {
+		r.RowScanner.Close()
+	}
+
 	r.RowScanner = rs
+
 	if fetchResults.HasMoreRows != nil {
 		r.hasMoreRows = *fetchResults.HasMoreRows
 	} else {
@@ -533,14 +553,7 @@ func (r *rows) logger() *dbsqllog.DBSQLLogger {
 	return r.logger_
 }
 
-func makeResultPageIterator(r *rows) rowscanner.ResultPageIterator {
-
-	var d rowscanner.Delimiter
-	if r.RowScanner != nil {
-		d = rowscanner.NewDelimiter(r.RowScanner.Start(), r.RowScanner.Count())
-	} else {
-		d = rowscanner.NewDelimiter(0, 0)
-	}
+func makeResultPageIterator(r *rows, d rowscanner.Delimiter) rowscanner.ResultPageIterator {
 
 	resultPageIterator := rowscanner.NewResultPageIterator(
 		d,

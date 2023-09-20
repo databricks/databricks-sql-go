@@ -12,6 +12,71 @@ import (
 	"github.com/pkg/errors"
 )
 
+// Abstraction for holding the values for a set of rows
+type RowValues interface {
+	rowscanner.Delimiter
+	Close()
+	NColumns() int
+	SetColumnValues(columnIndex int, values arrow.ArrayData) error
+	IsNull(columnIndex int, rowNumber int64) bool
+	Value(columnIndex int, rowNumber int64) (any, error)
+	SetDelimiter(d rowscanner.Delimiter)
+}
+
+func NewRowValues(d rowscanner.Delimiter, holders []columnValues) RowValues {
+	return &rowValues{Delimiter: d, columnValueHolders: holders}
+}
+
+type rowValues struct {
+	rowscanner.Delimiter
+	columnValueHolders []columnValues
+}
+
+var _ RowValues = (*rowValues)(nil)
+
+func (rv *rowValues) Close() {
+	// release any retained arrow arrays
+	for i := range rv.columnValueHolders {
+		if rv.columnValueHolders[i] != nil {
+			rv.columnValueHolders[i].Release()
+		}
+	}
+}
+
+func (rv *rowValues) SetColumnValues(columnIndex int, values arrow.ArrayData) error {
+	var err error
+	if columnIndex < len(rv.columnValueHolders) && rv.columnValueHolders[columnIndex] != nil {
+		rv.columnValueHolders[columnIndex].Release()
+		err = rv.columnValueHolders[columnIndex].SetValueArray(values)
+	}
+	return err
+}
+
+func (rv *rowValues) IsNull(columnIndex int, rowNumber int64) bool {
+	var b bool = true
+	if columnIndex < len(rv.columnValueHolders) {
+		b = rv.columnValueHolders[columnIndex].IsNull(int(rowNumber - rv.Start()))
+	}
+	return b
+}
+
+func (rv *rowValues) Value(columnIndex int, rowNumber int64) (any, error) {
+	var err error
+	var value any
+	if columnIndex < len(rv.columnValueHolders) {
+		value, err = rv.columnValueHolders[columnIndex].Value(int(rowNumber - rv.Start()))
+	}
+	return value, err
+}
+
+func (rv *rowValues) NColumns() int { return len(rv.columnValueHolders) }
+
+func (rv *rowValues) SetDelimiter(d rowscanner.Delimiter) { rv.Delimiter = d }
+
+type valueContainerMaker interface {
+	makeColumnValuesContainers(ars *arrowRowScanner, d rowscanner.Delimiter) error
+}
+
 // columnValues is the interface for accessing the values for a column
 type columnValues interface {
 	Value(int) (any, error)
