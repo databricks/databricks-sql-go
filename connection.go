@@ -3,6 +3,13 @@ package dbsql
 import (
 	"context"
 	"database/sql/driver"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/databricks/databricks-sql-go/driverctx"
@@ -140,11 +147,98 @@ func (c *conn) ExecContext(ctx context.Context, query string, args []driver.Name
 	return &res, nil
 }
 
-type StagingRow struct {
-	presignedUrl string
-	localFile    string
-	headers      string
-	operation    string
+func Succeeded(response *http.Response) bool {
+	if response.StatusCode == 200 || response.StatusCode == 201 || response.StatusCode == 202 || response.StatusCode == 204 {
+		return true
+	}
+	return false
+}
+
+func (c *conn) HandleStagingPut(presignedUrl string, headers map[string]string, localFile string) (driver.Result, error) {
+	if localFile == "" {
+		return nil, fmt.Errorf("cannot perform PUT without specifying a local_file")
+	}
+	client := &http.Client{}
+	req, _ := http.NewRequest("GET", presignedUrl, nil)
+
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	res, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer res.Body.Close()
+	content, err := io.ReadAll(res.Body)
+
+	if err != nil || !Succeeded(res) {
+		return nil, fmt.Errorf("staging operation over HTTP was unsuccessful: %d-%s", res.StatusCode, content)
+	}
+	return driver.ResultNoRows, nil
+
+}
+
+func (c *conn) HandleStagingGet(presignedUrl string, headers map[string]string, localFile string) (driver.Result, error) {
+	if localFile == "" {
+		return nil, fmt.Errorf("cannot perform GET without specifying a local_file")
+	}
+	client := &http.Client{}
+	req, _ := http.NewRequest("GET", presignedUrl, nil)
+
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	res, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer res.Body.Close()
+	content, err := io.ReadAll(res.Body)
+
+	if err != nil || !Succeeded(res) {
+		return nil, fmt.Errorf("staging operation over HTTP was unsuccessful: %d-%s", res.StatusCode, content)
+	}
+
+	err = os.WriteFile(localFile, content, 0644)
+	if err != nil {
+		return nil, err
+	}
+	return driver.ResultNoRows, nil
+
+}
+
+func (c *conn) HandleStagingDelete(presignedUrl string, headers map[string]string) (driver.Result, error) {
+	client := &http.Client{}
+	req, _ := http.NewRequest("DELETE", presignedUrl, nil)
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	res, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer res.Body.Close()
+	content, err := io.ReadAll(res.Body)
+
+	if err != nil || !Succeeded(res) {
+		return nil, fmt.Errorf("staging operation over HTTP was unsuccessful: %d-%s", res.StatusCode, content)
+	}
+
+	return driver.ResultNoRows, nil
+}
+
+func localPathIsAllowed(ctx StagingCtx, localFile string) bool {
+	for i := range ctx.StagingAllowedLocalPath {
+		path := ctx.StagingAllowedLocalPath[i]
+		relativePath, err := filepath.Rel(path, localFile)
+		if err != nil {
+			return false
+		}
+		if !strings.Contains(relativePath, "../") {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *conn) ExecStagingOperation(ctx StagingCtx, query string, args []driver.NamedValue) (driver.Result, error) {
@@ -152,8 +246,38 @@ func (c *conn) ExecStagingOperation(ctx StagingCtx, query string, args []driver.
 	if err != nil {
 		return nil, err
 	}
+	var sqlRow []driver.Value
+	colNames := row.Columns()
+	sqlRow = make([]driver.Value, len(colNames))
+	row.Next(sqlRow)
+	operation := sqlRow[0].(string)
+	presignedUrl := sqlRow[1].(string)
+	headersByteArr := []byte(sqlRow[2].(string))
+	var headers map[string]string
+	if err := json.Unmarshal(headersByteArr, &headers); err != nil {
+		return nil, err
+	}
+	localFile := sqlRow[3].(string)
+	switch operation {
+	case "PUT":
+		if localPathIsAllowed(ctx, localFile) {
+			c.HandleStagingPut(presignedUrl, headers, localFile)
+		} else {
+			return nil, fmt.Errorf("local file operations are restricted to paths within the configured staging_allowed_local_path")
+		}
+	case "GET":
+		if localPathIsAllowed(ctx, localFile) {
+			c.HandleStagingGet(presignedUrl, headers, localFile)
+		} else {
+			return nil, fmt.Errorf("local file operations are restricted to paths within the configured staging_allowed_local_path")
+		}
+	case "DELETE":
+		c.HandleStagingDelete(presignedUrl, headers)
+	default:
+		return nil, fmt.Errorf("operation %s is not supported. Supported operations are GET, PUT, and REMOVE", operation)
+	}
 
-	row.Next()
+	return driver.ResultNoRows, nil
 }
 
 // QueryContext executes a query that may return rows, such as a

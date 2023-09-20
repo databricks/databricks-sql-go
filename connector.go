@@ -27,12 +27,14 @@ type connector struct {
 
 type StagingCtx struct {
 	IsStagingOperation      bool
-	StagingAllowedLocalPath string
+	StagingAllowedLocalPath []string
 }
 
-func (ctx *StagingCtx) WithDefaults() {
-	ctx.IsStagingOperation = true
-	ctx.StagingAllowedLocalPath = "staging/"
+func (stagingCtx StagingCtx) WithDefaults() StagingCtx {
+	stagingCtx.IsStagingOperation = true
+	stagingCtx.StagingAllowedLocalPath = []string{"staging/"}
+
+	return stagingCtx
 }
 
 func (StagingCtx) Deadline() (deadline time.Time, ok bool) {
