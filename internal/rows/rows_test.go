@@ -220,7 +220,6 @@ func TestRowsFetchResultPageNoDirectResults(t *testing.T) {
 	rowTestPagingResult{
 		getMetadataCount:  1,
 		fetchResultsCount: 1,
-		nextRowIndex:      i64Zero,
 		nextRowNumber:     i64Zero,
 		offset:            i64Zero,
 	}.validatePaging(t, rowSet, err, fetchResultsCount, getMetadataCount)
@@ -231,7 +230,6 @@ func TestRowsFetchResultPageNoDirectResults(t *testing.T) {
 	rowTestPagingResult{
 		getMetadataCount:  1,
 		fetchResultsCount: 1,
-		nextRowIndex:      int64(4),
 		nextRowNumber:     int64(4),
 		offset:            i64Zero,
 	}.validatePaging(t, rowSet, err, fetchResultsCount, getMetadataCount)
@@ -242,7 +240,6 @@ func TestRowsFetchResultPageNoDirectResults(t *testing.T) {
 	rowTestPagingResult{
 		getMetadataCount:  1,
 		fetchResultsCount: 2,
-		nextRowIndex:      int64(1),
 		nextRowNumber:     int64(6),
 		offset:            int64(5),
 	}.validatePaging(t, rowSet, err, fetchResultsCount, getMetadataCount)
@@ -250,20 +247,18 @@ func TestRowsFetchResultPageNoDirectResults(t *testing.T) {
 	// next row number is two, can't fetch previous result page
 	rowSet.nextRowNumber = 2
 	err = rowSet.fetchResultPage()
-	assert.EqualError(t, err, "can't go backward")
+	assert.ErrorContains(t, err, errRowsOnlyForward)
 
 	// next row number is past end of next result page
 	rowSet.nextRowNumber = 15
 	err = rowSet.fetchResultPage()
-	assert.EqualError(t, err, "Invalid row number state")
+	assert.ErrorContains(t, err, errInvalidRowNumberState)
 
 	rowSet.nextRowNumber = 12
 	err = rowSet.fetchResultPage()
-
 	rowTestPagingResult{
 		getMetadataCount:  1,
 		fetchResultsCount: 3,
-		nextRowIndex:      int64(2),
 		nextRowNumber:     int64(12),
 		offset:            int64(10),
 	}.validatePaging(t, rowSet, err, fetchResultsCount, getMetadataCount)
@@ -273,22 +268,15 @@ func TestRowsFetchResultPageNoDirectResults(t *testing.T) {
 	errMsg := io.EOF.Error()
 	assert.EqualError(t, err, errMsg)
 
-	// next row number is before start of results, should fetch all result pages
-	// going forward and then return EOF
+	// Once we've hit an EOF state any call to fetchResultPage will return EOF
 	rowSet.nextRowNumber = -1
 	err = rowSet.fetchResultPage()
-	assert.EqualError(t, err, "can't go backward")
+	assert.EqualError(t, err, io.EOF.Error())
 
 	// jump back to last page
 	rowSet.nextRowNumber = 13
 	err = rowSet.fetchResultPage()
-	rowTestPagingResult{
-		getMetadataCount:  1,
-		fetchResultsCount: 3,
-		nextRowIndex:      int64(3),
-		nextRowNumber:     int64(13),
-		offset:            int64(10),
-	}.validatePaging(t, rowSet, err, fetchResultsCount, getMetadataCount)
+	assert.EqualError(t, err, io.EOF.Error())
 }
 
 func TestRowsFetchResultPageWithDirectResults(t *testing.T) {
@@ -315,7 +303,6 @@ func TestRowsFetchResultPageWithDirectResults(t *testing.T) {
 	rowTestPagingResult{
 		getMetadataCount:  1,
 		fetchResultsCount: 1,
-		nextRowIndex:      i64Zero,
 		nextRowNumber:     i64Zero,
 		offset:            i64Zero,
 	}.validatePaging(t, rowSet, err, fetchResultsCount, getMetadataCount)
@@ -326,7 +313,6 @@ func TestRowsFetchResultPageWithDirectResults(t *testing.T) {
 	rowTestPagingResult{
 		getMetadataCount:  1,
 		fetchResultsCount: 1,
-		nextRowIndex:      int64(4),
 		nextRowNumber:     int64(4),
 		offset:            i64Zero,
 	}.validatePaging(t, rowSet, err, fetchResultsCount, getMetadataCount)
@@ -337,28 +323,26 @@ func TestRowsFetchResultPageWithDirectResults(t *testing.T) {
 	rowTestPagingResult{
 		getMetadataCount:  1,
 		fetchResultsCount: 2,
-		nextRowIndex:      int64(1),
 		nextRowNumber:     int64(6),
 		offset:            int64(5),
 	}.validatePaging(t, rowSet, err, fetchResultsCount, getMetadataCount)
 
-	// next row number is two, should fetch previous result page
+	// next row number is two, can't fetch previous result page
 	rowSet.nextRowNumber = 2
 	err = rowSet.fetchResultPage()
-	assert.EqualError(t, err, "can't go backward")
+	assert.ErrorContains(t, err, errRowsOnlyForward)
 
 	// next row number is past end of results, should fetch all result pages
 	// going forward and then return EOF
 	rowSet.nextRowNumber = 15
 	err = rowSet.fetchResultPage()
-	assert.EqualError(t, err, "Invalid row number state")
+	assert.ErrorContains(t, err, errInvalidRowNumberState)
 
 	rowSet.nextRowNumber = 10
 	err = rowSet.fetchResultPage()
 	rowTestPagingResult{
 		getMetadataCount:  1,
 		fetchResultsCount: 3,
-		nextRowIndex:      int64(0),
 		nextRowNumber:     int64(10),
 		offset:            int64(10),
 	}.validatePaging(t, rowSet, err, fetchResultsCount, getMetadataCount)
@@ -366,19 +350,13 @@ func TestRowsFetchResultPageWithDirectResults(t *testing.T) {
 	rowSet.nextRowNumber = 15
 	err = rowSet.fetchResultPage()
 	errMsg := io.EOF.Error()
-	assert.EqualError(t, err, errMsg)
+	assert.ErrorContains(t, err, errMsg)
 
 	// jump back to last page
 	rowSet.nextRowNumber = 12
 	err = rowSet.fetchResultPage()
+	assert.ErrorContains(t, err, errMsg)
 
-	rowTestPagingResult{
-		getMetadataCount:  1,
-		fetchResultsCount: 3,
-		nextRowIndex:      int64(2),
-		nextRowNumber:     int64(12),
-		offset:            int64(10),
-	}.validatePaging(t, rowSet, err, fetchResultsCount, getMetadataCount)
 }
 
 var rowTestColNames []string = []string{
@@ -481,7 +459,6 @@ func TestNextNoDirectResults(t *testing.T) {
 	assert.Nil(t, err)
 	assert.Equal(t, row0, row)
 	assert.Equal(t, int64(1), rowSet.nextRowNumber)
-	assert.Equal(t, int64(1), rowSet.nextRowIndex())
 	assert.Equal(t, 1, getMetadataCount)
 	assert.Equal(t, 1, fetchResultsCount)
 }
@@ -537,7 +514,6 @@ func TestNextWithDirectResults(t *testing.T) {
 	assert.Nil(t, err)
 	assert.Equal(t, row0, row)
 	assert.Equal(t, int64(1), rowSet.nextRowNumber)
-	assert.Equal(t, int64(1), rowSet.nextRowIndex())
 	assert.Equal(t, 2, getMetadataCount)
 	assert.Equal(t, 1, fetchResultsCount)
 }
@@ -760,7 +736,6 @@ func TestFetchResultsWithRetries(t *testing.T) {
 type rowTestPagingResult struct {
 	getMetadataCount  int
 	fetchResultsCount int
-	nextRowIndex      int64
 	nextRowNumber     int64
 	offset            int64
 	errMessage        *string
@@ -769,7 +744,6 @@ type rowTestPagingResult struct {
 func (rt rowTestPagingResult) validatePaging(t *testing.T, rowSet *rows, err error, fetchResultsCount, getMetadataCount int) {
 	assert.Equal(t, rt.fetchResultsCount, fetchResultsCount)
 	assert.Equal(t, rt.getMetadataCount, getMetadataCount)
-	assert.Equal(t, rt.nextRowIndex, rowSet.nextRowIndex())
 	assert.Equal(t, rt.nextRowNumber, rowSet.nextRowNumber)
 	assert.Equal(t, rt.offset, rowSet.RowScanner.Start())
 	if rt.errMessage == nil {

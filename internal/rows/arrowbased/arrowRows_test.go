@@ -16,6 +16,7 @@ import (
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/config"
 	dbsqlerrint "github.com/databricks/databricks-sql-go/internal/errors"
+	"github.com/databricks/databricks-sql-go/internal/rows/rowscanner"
 	dbsqllog "github.com/databricks/databricks-sql-go/logger"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -238,60 +239,63 @@ func TestArrowRowScanner(t *testing.T) {
 
 		var ars *arrowRowScanner = d.(*arrowRowScanner)
 
-		err := ars.makeColumnValuesContainers(ars)
+		err := ars.makeColumnValuesContainers(ars, rowscanner.NewDelimiter(0, 1))
 		require.Nil(t, err)
 
 		var ok bool
 
-		_, ok = ars.columnValues[0].(*columnValuesTyped[*array.Boolean, bool])
+		rowValues, ok := ars.rowValues.(*rowValues)
 		assert.True(t, ok)
 
-		_, ok = ars.columnValues[1].(*columnValuesTyped[*array.Int8, int8])
+		_, ok = rowValues.columnValueHolders[0].(*columnValuesTyped[*array.Boolean, bool])
 		assert.True(t, ok)
 
-		_, ok = ars.columnValues[2].(*columnValuesTyped[*array.Int16, int16])
+		_, ok = rowValues.columnValueHolders[1].(*columnValuesTyped[*array.Int8, int8])
 		assert.True(t, ok)
 
-		_, ok = ars.columnValues[3].(*columnValuesTyped[*array.Int32, int32])
+		_, ok = rowValues.columnValueHolders[2].(*columnValuesTyped[*array.Int16, int16])
 		assert.True(t, ok)
 
-		_, ok = ars.columnValues[4].(*columnValuesTyped[*array.Int64, int64])
+		_, ok = rowValues.columnValueHolders[3].(*columnValuesTyped[*array.Int32, int32])
 		assert.True(t, ok)
 
-		_, ok = ars.columnValues[5].(*columnValuesTyped[*array.Float32, float32])
+		_, ok = rowValues.columnValueHolders[4].(*columnValuesTyped[*array.Int64, int64])
 		assert.True(t, ok)
 
-		_, ok = ars.columnValues[6].(*columnValuesTyped[*array.Float64, float64])
+		_, ok = rowValues.columnValueHolders[5].(*columnValuesTyped[*array.Float32, float32])
 		assert.True(t, ok)
 
-		_, ok = ars.columnValues[7].(*columnValuesTyped[*array.String, string])
+		_, ok = rowValues.columnValueHolders[6].(*columnValuesTyped[*array.Float64, float64])
 		assert.True(t, ok)
 
-		_, ok = ars.columnValues[8].(*timestampStringValueContainer)
+		_, ok = rowValues.columnValueHolders[7].(*columnValuesTyped[*array.String, string])
 		assert.True(t, ok)
 
-		_, ok = ars.columnValues[9].(*columnValuesTyped[*array.Binary, []byte])
+		_, ok = rowValues.columnValueHolders[8].(*timestampStringValueContainer)
 		assert.True(t, ok)
 
-		_, ok = ars.columnValues[10].(*columnValuesTyped[*array.String, string])
+		_, ok = rowValues.columnValueHolders[9].(*columnValuesTyped[*array.Binary, []byte])
 		assert.True(t, ok)
 
-		_, ok = ars.columnValues[11].(*columnValuesTyped[*array.String, string])
+		_, ok = rowValues.columnValueHolders[10].(*columnValuesTyped[*array.String, string])
 		assert.True(t, ok)
 
-		_, ok = ars.columnValues[12].(*columnValuesTyped[*array.String, string])
+		_, ok = rowValues.columnValueHolders[11].(*columnValuesTyped[*array.String, string])
 		assert.True(t, ok)
 
-		_, ok = ars.columnValues[13].(*columnValuesTyped[*array.String, string])
+		_, ok = rowValues.columnValueHolders[12].(*columnValuesTyped[*array.String, string])
 		assert.True(t, ok)
 
-		_, ok = ars.columnValues[14].(*dateValueContainer)
+		_, ok = rowValues.columnValueHolders[13].(*columnValuesTyped[*array.String, string])
 		assert.True(t, ok)
 
-		_, ok = ars.columnValues[15].(*columnValuesTyped[*array.String, string])
+		_, ok = rowValues.columnValueHolders[14].(*dateValueContainer)
 		assert.True(t, ok)
 
-		_, ok = ars.columnValues[16].(*columnValuesTyped[*array.String, string])
+		_, ok = rowValues.columnValueHolders[15].(*columnValuesTyped[*array.String, string])
+		assert.True(t, ok)
+
+		_, ok = rowValues.columnValueHolders[16].(*columnValuesTyped[*array.String, string])
 		assert.True(t, ok)
 	})
 
@@ -311,17 +315,20 @@ func TestArrowRowScanner(t *testing.T) {
 
 		var ars *arrowRowScanner = d.(*arrowRowScanner)
 
-		err := ars.makeColumnValuesContainers(ars)
+		err := ars.makeColumnValuesContainers(ars, rowscanner.NewDelimiter(0, 1))
 		require.Nil(t, err)
 
 		var ok bool
 
+		rowValues, ok := ars.rowValues.(*rowValues)
+		assert.True(t, ok)
+
 		// timestamp
-		_, ok = ars.columnValues[8].(*timestampValueContainer)
+		_, ok = rowValues.columnValueHolders[8].(*timestampValueContainer)
 		assert.True(t, ok)
 
 		// decimal
-		_, ok = ars.columnValues[13].(*decimal128Container)
+		_, ok = rowValues.columnValueHolders[13].(*decimal128Container)
 		assert.True(t, ok)
 	})
 
@@ -410,13 +417,13 @@ func TestArrowRowScanner(t *testing.T) {
 
 		var ars *arrowRowScanner = d.(*arrowRowScanner)
 
-		err := ars.makeColumnValuesContainers(ars)
+		err := ars.makeColumnValuesContainers(ars, rowscanner.NewDelimiter(0, 0))
 		require.Nil(t, err)
 
 		dest := make([]driver.Value, 1)
 		err = ars.ScanRow(dest, 0)
 		require.NotNil(t, err)
-		assert.True(t, strings.HasPrefix(err.Error(), "databricks: driver error: "+errArrowRowsInvalidRowIndex(0)))
+		assert.True(t, strings.Contains(err.Error(), "databricks: driver error: "+errArrowRowsInvalidRowNumber(0)))
 	})
 
 	t.Run("Close releases column values", func(t *testing.T) {
@@ -442,7 +449,7 @@ func TestArrowRowScanner(t *testing.T) {
 		ars := d.(*arrowRowScanner)
 		var releaseCount int
 		fc := &fakeColumnValues{fnRelease: func() { releaseCount++ }}
-		ars.columnValues = []columnValues{fc, fc, fc}
+		ars.rowValues = NewRowValues(rowscanner.NewDelimiter(0, 1), []columnValues{fc, fc, fc})
 		d.Close()
 		assert.Equal(t, 3, releaseCount)
 	})
@@ -479,31 +486,55 @@ func TestArrowRowScanner(t *testing.T) {
 
 		var ars *arrowRowScanner = d.(*arrowRowScanner)
 
-		assert.Nil(t, ars.columnValues)
+		assert.Nil(t, ars.rowValues)
 
-		ars.recordReader = fakeRecordReader{fnNewRecord: func(arrowSchemaBytes []byte, sparkArrowBatch sparkArrowBatch) (arrow.Record, dbsqlerr.DBError) {
-			return fakeRecord{}, nil
-		}}
+		b1 := &sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(0, 5), arrowRecords: []SparkArrowRecord{
+			&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(0, 2), Record: &fakeRecord{}},
+			&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(2, 3), Record: &fakeRecord{}}}}
+		b2 := &sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(5, 3), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(5, 3), Record: &fakeRecord{}}}}
+		b3 := &sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(8, 7), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(8, 7), Record: &fakeRecord{}}}}
+		fbl := &fakeBatchLoader{
+			Delimiter: rowscanner.NewDelimiter(0, 15),
+			batches:   []SparkArrowBatch{b1, b2, b3},
+		}
+		var e dbsqlerr.DBError
+		ars.batchIterator, e = NewBatchIterator(fbl)
+		assert.Nil(t, e)
 
 		var callCount int
-		ars.valueContainerMaker = &fakeValueContainerMaker{fnMakeColumnValuesContainers: func(ars *arrowRowScanner) dbsqlerr.DBError {
+		ars.valueContainerMaker = &fakeValueContainerMaker{fnMakeColumnValuesContainers: func(ars *arrowRowScanner, d rowscanner.Delimiter) dbsqlerr.DBError {
 			callCount += 1
-			ars.columnValues = make([]columnValues, len(ars.arrowSchema.Fields()))
+			columnValueHolders := make([]columnValues, len(ars.arrowSchema.Fields()))
 			for i := range ars.arrowSchema.Fields() {
-				ars.columnValues[i] = &fakeColumnValues{}
+				columnValueHolders[i] = &fakeColumnValues{}
 			}
+			ars.rowValues = NewRowValues(rowscanner.NewDelimiter(0, 0), make([]columnValues, len(ars.arrowSchema.Fields())))
 			return nil
 		}}
 
 		err := ars.loadBatchFor(0)
 		assert.Nil(t, err)
-		assert.NotNil(t, ars.columnValues)
+		assert.Equal(t, len(metadataResp.Schema.Columns), ars.rowValues.NColumns())
 		assert.Equal(t, 1, callCount)
+		assert.Equal(t, 1, fbl.callCount)
+
+		err = ars.loadBatchFor(1)
+		assert.Nil(t, err)
+		assert.Equal(t, len(metadataResp.Schema.Columns), ars.rowValues.NColumns())
+		assert.Equal(t, 1, callCount)
+		assert.Equal(t, 1, fbl.callCount)
+
+		err = ars.loadBatchFor(2)
+		assert.Nil(t, err)
+		assert.Equal(t, len(metadataResp.Schema.Columns), ars.rowValues.NColumns())
+		assert.Equal(t, 1, callCount)
+		assert.Equal(t, 1, fbl.callCount)
 
 		err = ars.loadBatchFor(5)
 		assert.Nil(t, err)
-		assert.NotNil(t, ars.columnValues)
+		assert.Equal(t, len(metadataResp.Schema.Columns), ars.rowValues.NColumns())
 		assert.Equal(t, 1, callCount)
+		assert.Equal(t, 2, fbl.callCount)
 
 	})
 
@@ -525,19 +556,25 @@ func TestArrowRowScanner(t *testing.T) {
 
 		var ars *arrowRowScanner = d.(*arrowRowScanner)
 
-		var callCount int
-		ars.recordReader = fakeRecordReader{fnNewRecord: func(arrowSchemaBytes []byte, sparkArrowBatch sparkArrowBatch) (arrow.Record, dbsqlerr.DBError) {
-			callCount += 1
-			return fakeRecord{}, nil
-		}}
+		fbl := &fakeBatchLoader{
+			Delimiter: rowscanner.NewDelimiter(0, 15),
+			batches: []SparkArrowBatch{
+				&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(0, 5), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(0, 5), Record: &fakeRecord{}}}},
+				&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(5, 3), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(5, 3), Record: &fakeRecord{}}}},
+				&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(8, 7), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(8, 7), Record: &fakeRecord{}}}},
+			},
+		}
+		var e dbsqlerr.DBError
+		ars.batchIterator, e = NewBatchIterator(fbl)
+		assert.Nil(t, e)
 
 		err := ars.loadBatchFor(0)
 		assert.Nil(t, err)
-		assert.Equal(t, 1, callCount)
+		assert.Equal(t, 1, fbl.callCount)
 
 		err = ars.loadBatchFor(0)
 		assert.Nil(t, err)
-		assert.Equal(t, 1, callCount)
+		assert.Equal(t, 1, fbl.callCount)
 	})
 
 	t.Run("loadBatch index out of bounds", func(t *testing.T) {
@@ -558,19 +595,25 @@ func TestArrowRowScanner(t *testing.T) {
 
 		var ars *arrowRowScanner = d.(*arrowRowScanner)
 
-		var callCount int
-		ars.recordReader = fakeRecordReader{fnNewRecord: func(arrowSchemaBytes []byte, sparkArrowBatch sparkArrowBatch) (arrow.Record, dbsqlerr.DBError) {
-			callCount += 1
-			return fakeRecord{}, nil
-		}}
+		fbl := &fakeBatchLoader{
+			Delimiter: rowscanner.NewDelimiter(0, 15),
+			batches: []SparkArrowBatch{
+				&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(0, 5), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(0, 5), Record: &fakeRecord{}}}},
+				&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(5, 3), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(5, 3), Record: &fakeRecord{}}}},
+				&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(8, 7), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(8, 7), Record: &fakeRecord{}}}},
+			},
+		}
+		var e dbsqlerr.DBError
+		ars.batchIterator, e = NewBatchIterator(fbl)
+		assert.Nil(t, e)
 
 		err := ars.loadBatchFor(-1)
 		assert.NotNil(t, err)
-		assert.ErrorContains(t, err, errArrowRowsInvalidRowIndex(-1))
+		assert.ErrorContains(t, err, errArrowRowsInvalidRowNumber(-1))
 
 		err = ars.loadBatchFor(17)
 		assert.NotNil(t, err)
-		assert.ErrorContains(t, err, errArrowRowsInvalidRowIndex(17))
+		assert.ErrorContains(t, err, errArrowRowsInvalidRowNumber(17))
 	})
 
 	t.Run("loadBatch container failure", func(t *testing.T) {
@@ -591,12 +634,24 @@ func TestArrowRowScanner(t *testing.T) {
 		d, _ := NewArrowRowScanner(metadataResp, rowSet, &cfg, nil, nil)
 
 		var ars *arrowRowScanner = d.(*arrowRowScanner)
-		ars.recordReader = fakeRecordReader{fnNewRecord: func(arrowSchemaBytes []byte, sparkArrowBatch sparkArrowBatch) (arrow.Record, dbsqlerr.DBError) {
-			return fakeRecord{}, nil
-		}}
-		ars.valueContainerMaker = &fakeValueContainerMaker{fnMakeColumnValuesContainers: func(ars *arrowRowScanner) dbsqlerr.DBError {
-			return dbsqlerrint.NewDriverError(context.TODO(), "error making containers", nil)
-		}}
+
+		fbl := &fakeBatchLoader{
+			Delimiter: rowscanner.NewDelimiter(0, 15),
+			batches: []SparkArrowBatch{
+				&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(0, 5), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(0, 5), Record: &fakeRecord{}}}},
+				&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(5, 3), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(5, 3), Record: &fakeRecord{}}}},
+				&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(8, 7), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(8, 7), Record: &fakeRecord{}}}},
+			},
+		}
+		var e dbsqlerr.DBError
+		ars.batchIterator, e = NewBatchIterator(fbl)
+		assert.Nil(t, e)
+
+		ars.valueContainerMaker = &fakeValueContainerMaker{
+			fnMakeColumnValuesContainers: func(ars *arrowRowScanner, d rowscanner.Delimiter) dbsqlerr.DBError {
+				return dbsqlerrint.NewDriverError(context.TODO(), "error making containers", nil)
+			},
+		}
 
 		err := ars.loadBatchFor(0)
 		assert.NotNil(t, err)
@@ -622,9 +677,19 @@ func TestArrowRowScanner(t *testing.T) {
 		d, _ := NewArrowRowScanner(metadataResp, rowSet, &cfg, nil, nil)
 
 		var ars *arrowRowScanner = d.(*arrowRowScanner)
-		ars.recordReader = fakeRecordReader{fnNewRecord: func(arrowSchemaBytes []byte, sparkArrowBatch sparkArrowBatch) (arrow.Record, dbsqlerr.DBError) {
-			return fakeRecord{}, dbsqlerrint.NewDriverError(context.TODO(), "error reading record", nil)
-		}}
+
+		fbl := &fakeBatchLoader{
+			Delimiter: rowscanner.NewDelimiter(0, 15),
+			batches: []SparkArrowBatch{
+				&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(0, 5), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(0, 5), Record: &fakeRecord{}}}},
+				&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(5, 3), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(5, 3), Record: &fakeRecord{}}}},
+				&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(8, 7), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(8, 7), Record: &fakeRecord{}}}},
+			},
+			err: dbsqlerrint.NewDriverError(context.TODO(), "error reading record", nil),
+		}
+		var e dbsqlerr.DBError
+		ars.batchIterator, e = NewBatchIterator(fbl)
+		assert.Nil(t, e)
 
 		err := ars.loadBatchFor(0)
 		assert.NotNil(t, err)
@@ -650,45 +715,49 @@ func TestArrowRowScanner(t *testing.T) {
 
 		var ars *arrowRowScanner = d.(*arrowRowScanner)
 
-		var callCount int
-		var lastReadBatch *sparkArrowBatch
-		ars.recordReader = fakeRecordReader{fnNewRecord: func(arrowSchemaBytes []byte, sparkArrowBatch sparkArrowBatch) (arrow.Record, dbsqlerr.DBError) {
-			callCount += 1
-			lastReadBatch = &sparkArrowBatch
-			return fakeRecord{}, nil
-		}}
+		fbl := &fakeBatchLoader{
+			Delimiter: rowscanner.NewDelimiter(0, 15),
+			batches: []SparkArrowBatch{
+				&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(0, 5), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(0, 5), Record: &fakeRecord{}}}},
+				&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(5, 3), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(5, 3), Record: &fakeRecord{}}}},
+				&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(8, 7), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(8, 7), Record: &fakeRecord{}}}},
+			},
+		}
+		var e dbsqlerr.DBError
+		ars.batchIterator, e = NewBatchIterator(fbl)
+		assert.Nil(t, e)
 
 		for _, i := range []int64{0, 1, 2, 3, 4} {
 			err := ars.loadBatchFor(i)
 			assert.Nil(t, err)
-			assert.NotNil(t, lastReadBatch)
-			assert.Equal(t, 1, callCount)
-			assert.Equal(t, int64(0), lastReadBatch.Start())
+			assert.NotNil(t, fbl.lastReadBatch)
+			assert.Equal(t, 1, fbl.callCount)
+			assert.Equal(t, int64(0), fbl.lastReadBatch.Start())
 		}
 
 		for _, i := range []int64{5, 6, 7} {
 			err := ars.loadBatchFor(i)
 			assert.Nil(t, err)
-			assert.NotNil(t, lastReadBatch)
-			assert.Equal(t, 2, callCount)
-			assert.Equal(t, int64(5), lastReadBatch.Start())
+			assert.NotNil(t, fbl.lastReadBatch)
+			assert.Equal(t, 2, fbl.callCount)
+			assert.Equal(t, int64(5), fbl.lastReadBatch.Start())
 		}
 
 		for _, i := range []int64{8, 9, 10, 11, 12, 13, 14} {
 			err := ars.loadBatchFor(i)
 			assert.Nil(t, err)
-			assert.NotNil(t, lastReadBatch)
-			assert.Equal(t, 3, callCount)
-			assert.Equal(t, int64(8), lastReadBatch.Start())
+			assert.NotNil(t, fbl.lastReadBatch)
+			assert.Equal(t, 3, fbl.callCount)
+			assert.Equal(t, int64(8), fbl.lastReadBatch.Start())
 		}
 
 		err := ars.loadBatchFor(-1)
 		assert.NotNil(t, err)
-		assert.EqualError(t, err, "databricks: driver error: "+errArrowRowsInvalidRowIndex(-1))
+		assert.EqualError(t, err, "databricks: driver error: "+errArrowRowsInvalidRowNumber(-1))
 
 		err = ars.loadBatchFor(15)
 		assert.NotNil(t, err)
-		assert.EqualError(t, err, "databricks: driver error: "+errArrowRowsInvalidRowIndex(15))
+		assert.EqualError(t, err, "databricks: driver error: "+errArrowRowsInvalidRowNumber(15))
 	})
 
 	t.Run("Error on retrieving not implemented native arrow types", func(t *testing.T) {
@@ -798,14 +867,25 @@ func TestArrowRowScanner(t *testing.T) {
 			ars.UseArrowNativeComplexTypes = true
 			ars.UseArrowNativeDecimal = true
 			ars.UseArrowNativeIntervalTypes = true
-			ars.recordReader = fakeRecordReader{fnNewRecord: func(arrowSchemaBytes []byte, sparkArrowBatch sparkArrowBatch) (arrow.Record, dbsqlerr.DBError) {
-				return fakeRecord{}, nil
-			}}
-			ars.valueContainerMaker = &fakeValueContainerMaker{fnMakeColumnValuesContainers: func(ars *arrowRowScanner) dbsqlerr.DBError {
-				ars.columnValues = make([]columnValues, len(ars.arrowSchema.Fields()))
+
+			fbl := &fakeBatchLoader{
+				Delimiter: rowscanner.NewDelimiter(0, 15),
+				batches: []SparkArrowBatch{
+					&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(0, 5), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(0, 5), Record: &fakeRecord{}}}},
+					&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(5, 3), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(5, 3), Record: &fakeRecord{}}}},
+					&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(8, 7), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(8, 7), Record: &fakeRecord{}}}},
+				},
+			}
+			var e dbsqlerr.DBError
+			ars.batchIterator, e = NewBatchIterator(fbl)
+			assert.Nil(t, e)
+
+			ars.valueContainerMaker = &fakeValueContainerMaker{fnMakeColumnValuesContainers: func(ars *arrowRowScanner, d rowscanner.Delimiter) dbsqlerr.DBError {
+				columnValueHolders := make([]columnValues, len(ars.arrowSchema.Fields()))
 				for i := range ars.arrowSchema.Fields() {
-					ars.columnValues[i] = &fakeColumnValues{}
+					columnValueHolders[i] = &fakeColumnValues{}
 				}
+				ars.rowValues = NewRowValues(rowscanner.NewDelimiter(0, 0), columnValueHolders)
 				return nil
 			}}
 
@@ -968,12 +1048,17 @@ func TestArrowRowScanner(t *testing.T) {
 		ars := d.(*arrowRowScanner)
 		assert.Equal(t, int64(53940), ars.NRows())
 
-		var loadBatchCallCount int
-		rr := ars.recordReader
-		ars.recordReader = fakeRecordReader{fnNewRecord: func(arrowSchemaBytes []byte, sparkArrowBatch sparkArrowBatch) (arrow.Record, dbsqlerr.DBError) {
-			loadBatchCallCount += 1
-			return rr.NewRecordFromBytes(arrowSchemaBytes, sparkArrowBatch)
-		}}
+		bi, ok := ars.batchIterator.(*batchIterator)
+		assert.True(t, ok)
+		bl := bi.batchLoader
+		fbl := &batchLoaderWrapper{
+			Delimiter: rowscanner.NewDelimiter(bl.Start(), bl.Count()),
+			bl:        bl,
+		}
+
+		var e dbsqlerr.DBError
+		ars.batchIterator, e = NewBatchIterator(fbl)
+		assert.Nil(t, e)
 
 		dest := make([]driver.Value, len(executeStatementResp.DirectResults.ResultSetMetadata.Schema.Columns))
 		for i := int64(0); i < ars.NRows(); i = i + 1 {
@@ -993,7 +1078,7 @@ func TestArrowRowScanner(t *testing.T) {
 			}
 		}
 
-		assert.Equal(t, 54, loadBatchCallCount)
+		assert.Equal(t, 54, fbl.callCount)
 	})
 
 	t.Run("Retrieve values - native arrow schema", func(t *testing.T) {
@@ -1039,6 +1124,9 @@ func TestArrowRowScanner(t *testing.T) {
 		ars := d.(*arrowRowScanner)
 
 		dest := make([]driver.Value, len(executeStatementResp.DirectResults.ResultSetMetadata.Schema.Columns))
+		// err = ars.ScanRow(dest, 0)
+		// assert.Nil(t, err)
+
 		err = ars.ScanRow(dest, 1)
 		assert.Nil(t, err)
 
@@ -1471,15 +1559,58 @@ func (cv *fakeColumnValues) SetValueArray(colData arrow.ArrayData) error {
 	return nil
 }
 
-type fakeRecordReader struct {
-	fnNewRecord func(arrowSchemaBytes []byte, sparkArrowBatch sparkArrowBatch) (arrow.Record, dbsqlerr.DBError)
+// type fakeRecordReader struct {
+// 	fnNewRecord func(arrowSchemaBytes []byte, sparkArrowBatch sparkArrowBatch) (arrow.Record, dbsqlerr.DBError)
+// }
+
+// func (frr fakeRecordReader) NewRecordFromBytes(arrowSchemaBytes []byte, sparkArrowBatch sparkArrowBatch) (arrow.Record, dbsqlerr.DBError) {
+// 	if frr.fnNewRecord != nil {
+// 		return frr.fnNewRecord(arrowSchemaBytes, sparkArrowBatch)
+// 	}
+// 	return nil, nil
+// }
+
+type fakeBatchLoader struct {
+	rowscanner.Delimiter
+	batches       []SparkArrowBatch
+	callCount     int
+	err           dbsqlerr.DBError
+	lastReadBatch SparkArrowBatch
 }
 
-func (frr fakeRecordReader) NewRecordFromBytes(arrowSchemaBytes []byte, sparkArrowBatch sparkArrowBatch) (arrow.Record, dbsqlerr.DBError) {
-	if frr.fnNewRecord != nil {
-		return frr.fnNewRecord(arrowSchemaBytes, sparkArrowBatch)
+var _ BatchLoader = (*fakeBatchLoader)(nil)
+
+func (fbl *fakeBatchLoader) Close() {}
+func (fbl *fakeBatchLoader) GetBatchFor(recordNum int64) (SparkArrowBatch, dbsqlerr.DBError) {
+	fbl.callCount += 1
+	if fbl.err != nil {
+		return nil, fbl.err
 	}
-	return nil, nil
+	for i := range fbl.batches {
+		if fbl.batches[i].Contains(recordNum) {
+			fbl.lastReadBatch = fbl.batches[i]
+			return fbl.batches[i], nil
+		}
+
+	}
+	return nil, dbsqlerrint.NewDriverError(context.Background(), errArrowRowsInvalidRowNumber(recordNum), nil)
+}
+
+type batchLoaderWrapper struct {
+	rowscanner.Delimiter
+	bl              BatchLoader
+	callCount       int
+	lastLoadedBatch SparkArrowBatch
+}
+
+var _ BatchLoader = (*batchLoaderWrapper)(nil)
+
+func (fbl *batchLoaderWrapper) Close() { fbl.bl.Close() }
+func (fbl *batchLoaderWrapper) GetBatchFor(recordNum int64) (SparkArrowBatch, dbsqlerr.DBError) {
+	fbl.callCount += 1
+	batch, err := fbl.bl.GetBatchFor(recordNum)
+	fbl.lastLoadedBatch = batch
+	return batch, err
 }
 
 type fakeRecord struct {
@@ -1782,14 +1913,14 @@ func getAllTypesSchema() *cli_service.TTableSchema {
 }
 
 type fakeValueContainerMaker struct {
-	fnMakeColumnValuesContainers func(ars *arrowRowScanner) dbsqlerr.DBError
+	fnMakeColumnValuesContainers func(ars *arrowRowScanner, d rowscanner.Delimiter) dbsqlerr.DBError
 }
 
 var _ valueContainerMaker = (*fakeValueContainerMaker)(nil)
 
-func (vcm *fakeValueContainerMaker) makeColumnValuesContainers(ars *arrowRowScanner) error {
+func (vcm *fakeValueContainerMaker) makeColumnValuesContainers(ars *arrowRowScanner, d rowscanner.Delimiter) error {
 	if vcm.fnMakeColumnValuesContainers != nil {
-		return vcm.fnMakeColumnValuesContainers(ars)
+		return vcm.fnMakeColumnValuesContainers(ars, d)
 	}
 
 	return nil

@@ -9,7 +9,7 @@ import (
 )
 
 type FetchableItems[OutputType any] interface {
-	Fetch(ctx context.Context) ([]OutputType, error)
+	Fetch(ctx context.Context) (OutputType, error)
 }
 
 type Fetcher[OutputType any] interface {
@@ -151,10 +151,7 @@ func work[I FetchableItems[O], O any](f *concurrentFetcher[I, O], workerIndex in
 					return
 				} else {
 					f.logger().Debug().Msgf("concurrent fetcher worker %d item loaded", workerIndex)
-					for i := range result {
-						r := result[i]
-						f.outChan <- r
-					}
+					f.outChan <- result
 				}
 			} else {
 				f.logger().Debug().Msgf("concurrent fetcher ending %d", workerIndex)

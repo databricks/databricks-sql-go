@@ -30,13 +30,13 @@ func (m *mockFetchableItem) Fetch(ctx context.Context) ([]*mockOutput, error) {
 	return outputs, nil
 }
 
-var _ FetchableItems[*mockOutput] = (*mockFetchableItem)(nil)
+var _ FetchableItems[[]*mockOutput] = (*mockFetchableItem)(nil)
 
 func TestConcurrentFetcher(t *testing.T) {
 	t.Run("Comprehensively tests the concurrent fetcher", func(t *testing.T) {
 		ctx := context.Background()
 
-		inputChan := make(chan FetchableItems[*mockOutput], 10)
+		inputChan := make(chan FetchableItems[[]*mockOutput], 10)
 		for i := 0; i < 10; i++ {
 			item := mockFetchableItem{item: i, wait: 1 * time.Second}
 			inputChan <- &item
@@ -57,7 +57,7 @@ func TestConcurrentFetcher(t *testing.T) {
 
 		var results []*mockOutput
 		for result := range outChan {
-			results = append(results, result)
+			results = append(results, result...)
 		}
 
 		// Check if the fetcher returned the expected results
@@ -87,7 +87,7 @@ func TestConcurrentFetcher(t *testing.T) {
 		defer cancel()
 
 		// Create an input channel
-		inputChan := make(chan FetchableItems[*mockOutput], 3)
+		inputChan := make(chan FetchableItems[[]*mockOutput], 3)
 		for i := 0; i < 3; i++ {
 			item := mockFetchableItem{item: i, wait: 1 * time.Second}
 			inputChan <- &item

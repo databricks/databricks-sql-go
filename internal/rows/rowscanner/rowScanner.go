@@ -20,7 +20,7 @@ type RowScanner interface {
 	// The dest should not be written to outside of ScanRow. Care
 	// should be taken when closing a RowScanner not to modify
 	// a buffer held in dest.
-	ScanRow(dest []driver.Value, rowIndex int64) dbsqlerr.DBError
+	ScanRow(dest []driver.Value, rowNumber int64) dbsqlerr.DBError
 
 	// NRows returns the number of rows in the current result page
 	NRows() int64

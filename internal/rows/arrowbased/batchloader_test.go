@@ -15,44 +15,14 @@ import (
 	"github.com/apache/arrow/go/v12/arrow/ipc"
 	"github.com/apache/arrow/go/v12/arrow/memory"
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
-	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	dbsqlerrint "github.com/databricks/databricks-sql-go/internal/errors"
 	"github.com/databricks/databricks-sql-go/internal/rows/rowscanner"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 )
 
-func generateMockArrowBytes() []byte {
-	mem := memory.NewCheckedAllocator(memory.NewGoAllocator())
-	defer mem.AssertSize(nil, 0)
+func TestCloudURLFetch(t *testing.T) {
 
-	fields := []arrow.Field{
-		{Name: "id", Type: arrow.PrimitiveTypes.Int32},
-		{Name: "name", Type: arrow.BinaryTypes.String},
-	}
-	schema := arrow.NewSchema(fields, nil)
-
-	builder := array.NewRecordBuilder(mem, schema)
-	defer builder.Release()
-
-	builder.Field(0).(*array.Int32Builder).AppendValues([]int32{1, 2, 3}, nil)
-	builder.Field(1).(*array.StringBuilder).AppendValues([]string{"one", "two", "three"}, nil)
-
-	record := builder.NewRecord()
-	defer record.Release()
-
-	var buf bytes.Buffer
-	w := ipc.NewWriter(&buf, ipc.WithSchema(record.Schema()))
-	if err := w.Write(record); err != nil {
-		return nil
-	}
-	if err := w.Close(); err != nil {
-		return nil
-	}
-	return buf.Bytes()
-}
-
-func TestBatchLoader(t *testing.T) {
 	var handler func(w http.ResponseWriter, r *http.Request)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		handler(w, r)
@@ -62,24 +32,24 @@ func TestBatchLoader(t *testing.T) {
 		name             string
 		response         func(w http.ResponseWriter, r *http.Request)
 		linkExpired      bool
-		expectedResponse []*sparkArrowBatch
+		expectedResponse SparkArrowBatch
 		expectedErr      error
 	}{
 		{
 			name: "cloud-fetch-happy-case",
 			response: func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusOK)
-				_, err := w.Write(generateMockArrowBytes())
+				_, err := w.Write(generateMockArrowBytes(generateArrowRecord()))
 				if err != nil {
 					panic(err)
 				}
 			},
 			linkExpired: false,
-			expectedResponse: []*sparkArrowBatch{
-				{
-					Delimiter:        rowscanner.NewDelimiter(0, 3),
-					arrowRecordBytes: generateMockArrowBytes(),
-					hasSchema:        true,
+			expectedResponse: &sparkArrowBatch{
+				Delimiter: rowscanner.NewDelimiter(0, 3),
+				arrowRecords: []SparkArrowRecord{
+					&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(0, 3), Record: generateArrowRecord()},
+					&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(3, 3), Record: generateArrowRecord()},
 				},
 			},
 			expectedErr: nil,
@@ -88,7 +58,7 @@ func TestBatchLoader(t *testing.T) {
 			name: "cloud-fetch-expired_link",
 			response: func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusOK)
-				_, err := w.Write(generateMockArrowBytes())
+				_, err := w.Write(generateMockArrowBytes(generateArrowRecord()))
 				if err != nil {
 					panic(err)
 				}
@@ -117,26 +87,80 @@ func TestBatchLoader(t *testing.T) {
 			if tc.linkExpired {
 				expiryTime = expiryTime.Add(-1 * time.Second)
 			} else {
-				expiryTime = expiryTime.Add(1 * time.Second)
+				expiryTime = expiryTime.Add(10 * time.Second)
 			}
 
 			cu := &cloudURL{
-				TSparkArrowResultLink: &cli_service.TSparkArrowResultLink{
-					FileLink:   server.URL,
-					ExpiryTime: expiryTime.Unix(),
-				},
+				Delimiter:  rowscanner.NewDelimiter(0, 3),
+				fileLink:   server.URL,
+				expiryTime: expiryTime.Unix(),
 			}
 
 			ctx := context.Background()
 
 			resp, err := cu.Fetch(ctx)
 
-			if !reflect.DeepEqual(resp, tc.expectedResponse) {
-				t.Errorf("expected (%v), got (%v)", tc.expectedResponse, resp)
+			if tc.expectedResponse != nil {
+				assert.NotNil(t, resp)
+				esab, ok := tc.expectedResponse.(*sparkArrowBatch)
+				assert.True(t, ok)
+				asab, ok2 := resp.(*sparkArrowBatch)
+				assert.True(t, ok2)
+				if !reflect.DeepEqual(esab.Delimiter, asab.Delimiter) {
+					t.Errorf("expected (%v), got (%v)", esab.Delimiter, asab.Delimiter)
+				}
+				assert.Equal(t, len(esab.arrowRecords), len(asab.arrowRecords))
+				for i := range esab.arrowRecords {
+					er := esab.arrowRecords[i]
+					ar := asab.arrowRecords[i]
+
+					eb := generateMockArrowBytes(er)
+					ab := generateMockArrowBytes(ar)
+					assert.Equal(t, eb, ab)
+				}
 			}
+
 			if !errors.Is(err, tc.expectedErr) {
 				assert.EqualErrorf(t, err, fmt.Sprintf("%v", tc.expectedErr), "expected (%v), got (%v)", tc.expectedErr, err)
 			}
 		})
 	}
+}
+
+func generateArrowRecord() arrow.Record {
+	mem := memory.NewCheckedAllocator(memory.NewGoAllocator())
+
+	fields := []arrow.Field{
+		{Name: "id", Type: arrow.PrimitiveTypes.Int32},
+		{Name: "name", Type: arrow.BinaryTypes.String},
+	}
+	schema := arrow.NewSchema(fields, nil)
+
+	builder := array.NewRecordBuilder(mem, schema)
+	defer builder.Release()
+
+	builder.Field(0).(*array.Int32Builder).AppendValues([]int32{1, 2, 3}, nil)
+	builder.Field(1).(*array.StringBuilder).AppendValues([]string{"one", "two", "three"}, nil)
+
+	record := builder.NewRecord()
+
+	return record
+}
+
+func generateMockArrowBytes(record arrow.Record) []byte {
+
+	defer record.Release()
+
+	var buf bytes.Buffer
+	w := ipc.NewWriter(&buf, ipc.WithSchema(record.Schema()))
+	if err := w.Write(record); err != nil {
+		return nil
+	}
+	if err := w.Write(record); err != nil {
+		return nil
+	}
+	if err := w.Close(); err != nil {
+		return nil
+	}
+	return buf.Bytes()
 }
