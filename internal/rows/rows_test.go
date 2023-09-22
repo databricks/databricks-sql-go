@@ -3,17 +3,21 @@ package rows
 import (
 	"context"
 	"database/sql/driver"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"math"
+	"os"
 	"reflect"
 	"testing"
 	"time"
 
-	"github.com/databricks/databricks-sql-go/internal/client"
-	"github.com/databricks/databricks-sql-go/internal/rows/rowscanner"
-
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
+	"github.com/databricks/databricks-sql-go/internal/client"
+	"github.com/databricks/databricks-sql-go/internal/config"
+	"github.com/databricks/databricks-sql-go/internal/rows/rowscanner"
+	dbsqlrows "github.com/databricks/databricks-sql-go/rows"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -211,7 +215,19 @@ func TestRowsFetchResultPageNoDirectResults(t *testing.T) {
 	var getMetadataCount, fetchResultsCount int
 
 	client := getRowsTestSimpleClient(&getMetadataCount, &fetchResultsCount)
-	rowSet := &rows{client: client, hasMoreRows: true}
+	rowSet := &rows{client: client}
+
+	resultPageIterator := rowscanner.NewResultPageIterator(
+		rowscanner.NewDelimiter(0, 0),
+		1000,
+		nil,
+		false,
+		client,
+		"connId",
+		"corrId",
+		rowSet.logger(),
+	)
+	rowSet.ResultPageIterator = resultPageIterator
 
 	var i64Zero int64
 
@@ -286,13 +302,26 @@ func TestRowsFetchResultPageWithDirectResults(t *testing.T) {
 	var i64Zero int64
 
 	client := getRowsTestSimpleClient(&getMetadataCount, &fetchResultsCount)
-	rowSet := &rows{client: client, hasMoreRows: true}
+	rowSet := &rows{client: client}
+
 	req := &cli_service.TFetchResultsReq{
 		Orientation: cli_service.TFetchOrientation_FETCH_NEXT,
 	}
 	firstPage, _ := client.FetchResults(context.Background(), req)
 	err1 := rowSet.makeRowScanner(firstPage)
 	assert.Nil(t, err1)
+
+	resultPageIterator := rowscanner.NewResultPageIterator(
+		rowscanner.NewDelimiter(rowSet.RowScanner.Start(), rowSet.RowScanner.Count()),
+		1000,
+		nil,
+		false,
+		client,
+		"connId",
+		"corrId",
+		rowSet.logger(),
+	)
+	rowSet.ResultPageIterator = resultPageIterator
 
 	// fetch results and get metadata have been called once
 	assert.Equal(t, 1, fetchResultsCount)
@@ -427,9 +456,21 @@ func TestNextNoDirectResults(t *testing.T) {
 	err := rowSet.Next(nil)
 	assert.EqualError(t, err, "databricks: driver error: "+errRowsNilRows)
 
-	rowSet = &rows{hasMoreRows: true}
+	rowSet = &rows{}
 	client := getRowsTestSimpleClient(&getMetadataCount, &fetchResultsCount)
 	rowSet.client = client
+
+	resultPageIterator := rowscanner.NewResultPageIterator(
+		rowscanner.NewDelimiter(0, 0),
+		1000,
+		nil,
+		false,
+		client,
+		"connId",
+		"corrId",
+		rowSet.logger(),
+	)
+	rowSet.ResultPageIterator = resultPageIterator
 
 	colNames := rowSet.Columns()
 	row := make([]driver.Value, len(colNames))
@@ -466,7 +507,7 @@ func TestNextNoDirectResults(t *testing.T) {
 func TestNextWithDirectResults(t *testing.T) {
 	var getMetadataCount, fetchResultsCount int
 
-	rowSet := &rows{hasMoreRows: true}
+	rowSet := &rows{}
 	client := getRowsTestSimpleClient(&getMetadataCount, &fetchResultsCount)
 	rowSet.client = client
 
@@ -677,7 +718,7 @@ func TestRowsCloseOptimization(t *testing.T) {
 	// rowSet has direct results, but operation was not closed so it should call client to close operation
 	directResults := &cli_service.TSparkDirectResults{
 		ResultSetMetadata: &cli_service.TGetResultSetMetadataResp{Schema: &cli_service.TTableSchema{}},
-		ResultSet:         &cli_service.TFetchResultsResp{Results: &cli_service.TRowSet{}},
+		ResultSet:         &cli_service.TFetchResultsResp{Results: &cli_service.TRowSet{Columns: []*cli_service.TColumn{}}},
 	}
 	closeCount = 0
 	rowSet, _ = NewRows("", "", opHandle, client, nil, directResults)
@@ -691,7 +732,7 @@ func TestRowsCloseOptimization(t *testing.T) {
 	directResults = &cli_service.TSparkDirectResults{
 		CloseOperation:    &cli_service.TCloseOperationResp{},
 		ResultSetMetadata: &cli_service.TGetResultSetMetadataResp{Schema: &cli_service.TTableSchema{}},
-		ResultSet:         &cli_service.TFetchResultsResp{Results: &cli_service.TRowSet{}},
+		ResultSet:         &cli_service.TFetchResultsResp{Results: &cli_service.TRowSet{Columns: []*cli_service.TColumn{}}},
 	}
 	rowSet, _ = NewRows("", "", opHandle, client, nil, directResults)
 	err = rowSet.Close()
@@ -712,7 +753,19 @@ func TestFetchResultsWithRetries(t *testing.T) {
 	fetches := []fetch{}
 
 	client := getRowsTestSimpleClient2(&fetches)
-	rowSet := &rows{client: client, hasMoreRows: true}
+	rowSet := &rows{client: client}
+
+	resultPageIterator := rowscanner.NewResultPageIterator(
+		rowscanner.NewDelimiter(0, 0),
+		1000,
+		nil,
+		false,
+		client,
+		"connId",
+		"corrId",
+		rowSet.logger(),
+	)
+	rowSet.ResultPageIterator = resultPageIterator
 
 	// next row number is zero so should fetch first result page
 	err := rowSet.fetchResultPage()
@@ -731,6 +784,142 @@ func TestFetchResultsWithRetries(t *testing.T) {
 	assert.Nil(t, err)
 	assert.Len(t, fetches, 5)
 
+}
+
+func TestGetArrowBatches(t *testing.T) {
+	t.Run("with direct results", func(t *testing.T) {
+		executeStatementResp := cli_service.TExecuteStatementResp{}
+		loadTestData(t, "directResultsMultipleFetch/ExecuteStatement.json", &executeStatementResp)
+
+		fetchResp1 := cli_service.TFetchResultsResp{}
+		loadTestData(t, "directResultsMultipleFetch/FetchResults1.json", &fetchResp1)
+
+		fetchResp2 := cli_service.TFetchResultsResp{}
+		loadTestData(t, "directResultsMultipleFetch/FetchResults2.json", &fetchResp2)
+
+		client := getSimpleClient([]cli_service.TFetchResultsResp{fetchResp1, fetchResp2})
+		cfg := config.WithDefaults()
+		rows, err := NewRows("connId", "corrId", nil, client, cfg, executeStatementResp.DirectResults)
+		assert.Nil(t, err)
+
+		rows2, ok := rows.(dbsqlrows.DBSQLRows)
+		assert.True(t, ok)
+
+		rs, err2 := rows2.GetArrowBatches(context.Background())
+		assert.Nil(t, err2)
+
+		hasNext := rs.HasNext()
+		assert.True(t, hasNext)
+		r, err2 := rs.Next()
+		assert.Nil(t, err2)
+		assert.Equal(t, executeStatementResp.DirectResults.ResultSet.Results.ArrowBatches[0].RowCount, r.NumRows())
+		r.Release()
+
+		hasNext = rs.HasNext()
+		assert.True(t, hasNext)
+		r2, err2 := rs.Next()
+		assert.Nil(t, err2)
+		assert.Equal(t, executeStatementResp.DirectResults.ResultSet.Results.ArrowBatches[1].RowCount, r2.NumRows())
+		r2.Release()
+
+		hasNext = rs.HasNext()
+		assert.True(t, hasNext)
+		r3, err2 := rs.Next()
+		assert.Nil(t, err2)
+		assert.Equal(t, fetchResp1.Results.ArrowBatches[0].RowCount, r3.NumRows())
+		r3.Release()
+
+		hasNext = rs.HasNext()
+		assert.True(t, hasNext)
+		r4, err2 := rs.Next()
+		assert.Nil(t, err2)
+		assert.Equal(t, fetchResp1.Results.ArrowBatches[1].RowCount, r4.NumRows())
+		r4.Release()
+
+		hasNext = rs.HasNext()
+		assert.True(t, hasNext)
+		r5, err2 := rs.Next()
+		assert.Nil(t, err2)
+		assert.Equal(t, fetchResp2.Results.ArrowBatches[0].RowCount, r5.NumRows())
+		r5.Release()
+
+		hasNext = rs.HasNext()
+		assert.True(t, hasNext)
+		r6, err2 := rs.Next()
+		assert.Nil(t, err2)
+		assert.Equal(t, fetchResp2.Results.ArrowBatches[1].RowCount, r6.NumRows())
+		r6.Release()
+
+		hasNext = rs.HasNext()
+		assert.False(t, hasNext)
+		r7, err2 := rs.Next()
+		assert.Nil(t, r7)
+		assert.ErrorContains(t, err2, io.EOF.Error())
+	})
+
+	t.Run("without direct results", func(t *testing.T) {
+		fetchResp1 := cli_service.TFetchResultsResp{}
+		loadTestData(t, "multipleFetch/FetchResults1.json", &fetchResp1)
+
+		fetchResp2 := cli_service.TFetchResultsResp{}
+		loadTestData(t, "multipleFetch/FetchResults2.json", &fetchResp2)
+
+		fetchResp3 := cli_service.TFetchResultsResp{}
+		loadTestData(t, "multipleFetch/FetchResults3.json", &fetchResp3)
+
+		client := getSimpleClient([]cli_service.TFetchResultsResp{fetchResp1, fetchResp2, fetchResp3})
+		cfg := config.WithDefaults()
+		rows, err := NewRows("connId", "corrId", nil, client, cfg, nil)
+		assert.Nil(t, err)
+
+		rows2, ok := rows.(dbsqlrows.DBSQLRows)
+		assert.True(t, ok)
+
+		rs, err2 := rows2.GetArrowBatches(context.Background())
+		assert.Nil(t, err2)
+
+		hasNext := rs.HasNext()
+		assert.True(t, hasNext)
+		r, err2 := rs.Next()
+		assert.Nil(t, err2)
+		assert.Equal(t, fetchResp1.Results.ArrowBatches[0].RowCount, r.NumRows())
+		r.Release()
+
+		hasNext = rs.HasNext()
+		assert.True(t, hasNext)
+		r2, err2 := rs.Next()
+		assert.Nil(t, err2)
+		assert.Equal(t, fetchResp1.Results.ArrowBatches[1].RowCount, r2.NumRows())
+		r2.Release()
+
+		hasNext = rs.HasNext()
+		assert.True(t, hasNext)
+		r3, err2 := rs.Next()
+		assert.Nil(t, err2)
+		assert.Equal(t, fetchResp2.Results.ArrowBatches[0].RowCount, r3.NumRows())
+		r3.Release()
+
+		hasNext = rs.HasNext()
+		assert.True(t, hasNext)
+		r4, err2 := rs.Next()
+		assert.Nil(t, err2)
+		assert.Equal(t, fetchResp2.Results.ArrowBatches[1].RowCount, r4.NumRows())
+		r4.Release()
+
+		hasNext = rs.HasNext()
+		assert.True(t, hasNext)
+		r5, err2 := rs.Next()
+		assert.Nil(t, err2)
+		assert.Equal(t, fetchResp3.Results.ArrowBatches[0].RowCount, r5.NumRows())
+		r5.Release()
+
+		hasNext = rs.HasNext()
+		assert.True(t, hasNext)
+		r6, err2 := rs.Next()
+		assert.Nil(t, err2)
+		assert.Equal(t, fetchResp3.Results.ArrowBatches[1].RowCount, r6.NumRows())
+		r6.Release()
+	})
 }
 
 type rowTestPagingResult struct {
@@ -1239,6 +1428,34 @@ func getRowsTestSimpleClient2(fetches *[]fetch) cli_service.TCLIService {
 	client := &client.TestClient{
 		FnGetResultSetMetadata: getMetadata,
 		FnFetchResults:         fetchResults,
+	}
+
+	return client
+}
+
+func loadTestData(t *testing.T, name string, v any) {
+	if f, err := os.ReadFile(fmt.Sprintf("testdata/%s", name)); err != nil {
+		t.Errorf("could not read data from: %s", name)
+	} else {
+		if err := json.Unmarshal(f, v); err != nil {
+			t.Errorf("could not load data from: %s", name)
+		}
+	}
+}
+
+func getSimpleClient(fetchResults []cli_service.TFetchResultsResp) cli_service.TCLIService {
+	var resultIndex int
+
+	fetchResultsFn := func(ctx context.Context, req *cli_service.TFetchResultsReq) (_r *cli_service.TFetchResultsResp, _err error) {
+
+		p := fetchResults[resultIndex]
+
+		resultIndex++
+		return &p, nil
+	}
+
+	client := &client.TestClient{
+		FnFetchResults: fetchResultsFn,
 	}
 
 	return client

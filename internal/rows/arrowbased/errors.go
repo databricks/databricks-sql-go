@@ -13,6 +13,7 @@ var errArrowRowsConvertSchema = "databricks: arrow row scanner failed to convert
 var errArrowRowsSerializeSchema = "databricks: arrow row scanner failed to serialize schema"
 var errArrowRowsToTimestampFn = "databricks: arrow row scanner failed getting toTimestamp function"
 var errArrowRowsMakeColumnValueContainers = "databricks: failed creating column value container"
+var errArrowRowsNotArrowFormat = "databricks: result set is not in arrow format"
 
 const errArrowRowsCloudFetchDownloadFailure = "cloud fetch batch loader failed to download results"
 

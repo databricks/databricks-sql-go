@@ -11,6 +11,7 @@ import (
 	dbsqlerr_int "github.com/databricks/databricks-sql-go/internal/errors"
 	"github.com/databricks/databricks-sql-go/internal/rows/rowscanner"
 	dbsqllog "github.com/databricks/databricks-sql-go/logger"
+	dbsqlrows "github.com/databricks/databricks-sql-go/rows"
 )
 
 var errRowsParseDateTime = "databricks: column row scanner failed to parse date/time"
@@ -135,4 +136,11 @@ func (crs *columnRowScanner) value(tColumn *cli_service.TColumn, tColumnDesc *cl
 	}
 
 	return val, err
+}
+
+func (crs *columnRowScanner) GetArrowBatches(
+	ctx context.Context,
+	cfg config.Config,
+	rpi rowscanner.ResultPageIterator) (dbsqlrows.DBSQLArrowBatchIterator, error) {
+	return nil, dbsqlerr_int.NewDriverError(ctx, "databricks: result set is not in arrow format", nil)
 }
