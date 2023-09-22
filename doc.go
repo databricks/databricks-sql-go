@@ -257,6 +257,7 @@ The driver exposes two public interfaces for working with record batches:
 
 The driver.Rows instance retrieved using Conn.Raw() can be converted to DBSQLRows via a type assertion, then use GetArrowBatches() to retrieve a batch iterator.
 If the DBSQLArrowBatchIterator is not closed it will leak resources, such as the underlying connection.
+Calling code must call Release() on records returned by DBSQLArrowBatchIterator.Next().
 
 Example usage:
 
