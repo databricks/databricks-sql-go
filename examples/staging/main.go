@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"log"
@@ -8,6 +9,7 @@ import (
 	"strconv"
 
 	dbsql "github.com/databricks/databricks-sql-go"
+	"github.com/databricks/databricks-sql-go/driverctx"
 	"github.com/joho/godotenv"
 )
 
@@ -39,7 +41,8 @@ func main() {
 
 	// ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	// defer cancel()
-	ctx := dbsql.StagingCtx{}.WithDefaults()
+
+	ctx := driverctx.NewContextWithStagingInfo(context.Background(), []string{"staging"})
 	if err := db.Ping(); err != nil {
 		fmt.Println(err)
 	}

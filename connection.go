@@ -1,6 +1,7 @@
 package dbsql
 
 import (
+	"bytes"
 	"context"
 	"database/sql/driver"
 	"encoding/json"
@@ -101,12 +102,6 @@ func (c *conn) IsValid() bool {
 // ExecContext honors the context timeout and return when it is canceled.
 // Statement ExecContext is the same as connection ExecContext
 func (c *conn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
-	s, ok := ctx.(StagingCtx)
-	if ok {
-		if s.IsStagingOperation {
-			return c.ExecStagingOperation(s, query, args)
-		}
-	}
 
 	corrId := driverctx.CorrelationIdFromContext(ctx)
 	log := logger.WithContext(c.id, corrId, "")
@@ -122,6 +117,25 @@ func (c *conn) ExecContext(ctx context.Context, query string, args []driver.Name
 	exStmtResp, opStatusResp, err := c.runQuery(ctx, query, args)
 
 	if exStmtResp != nil && exStmtResp.OperationHandle != nil {
+		req := cli_service.TGetResultSetMetadataReq{
+			OperationHandle: exStmtResp.OperationHandle,
+		}
+		resp, err2 := c.client.GetResultSetMetadata(ctx, &req)
+		if err2 != nil {
+			return nil, errors.New("Error performing staging operation")
+		}
+		if *resp.IsStagingOperation {
+			if len(driverctx.StagingPathsFromContext(ctx)) != 0 {
+				row, err := rows.NewRows(c.id, corrId, exStmtResp.OperationHandle, c.client, c.cfg, exStmtResp.DirectResults)
+				if err == nil {
+					return nil, dbsqlerrint.NewDriverError(ctx, "Error reading row.", errors.New("Error reading row."))
+				}
+				return c.ExecStagingOperation(ctx, row)
+			} else {
+				return nil, dbsqlerrint.NewDriverError(ctx, "Staging ctx must be provided.", errors.New("Staging ctx must be provided."))
+			}
+		}
+
 		// we have an operation id so update the logger
 		log = logger.WithContext(c.id, corrId, client.SprintGuid(exStmtResp.OperationHandle.OperationId.GUID))
 
@@ -159,8 +173,14 @@ func (c *conn) HandleStagingPut(presignedUrl string, headers map[string]string, 
 		return nil, fmt.Errorf("cannot perform PUT without specifying a local_file")
 	}
 	client := &http.Client{}
-	req, _ := http.NewRequest("GET", presignedUrl, nil)
 
+	dat, err := os.ReadFile(localFile)
+
+	req, _ := http.NewRequest("PUT", presignedUrl, bytes.NewReader(dat))
+
+	if err != nil {
+		return nil, err
+	}
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}
@@ -227,9 +247,10 @@ func (c *conn) HandleStagingDelete(presignedUrl string, headers map[string]strin
 	return driver.ResultNoRows, nil
 }
 
-func localPathIsAllowed(ctx StagingCtx, localFile string) bool {
-	for i := range ctx.StagingAllowedLocalPath {
-		path := ctx.StagingAllowedLocalPath[i]
+func localPathIsAllowed(ctx context.Context, localFile string) bool {
+	stagingAllowedLocalPaths := driverctx.StagingPathsFromContext(ctx)
+	for i := range stagingAllowedLocalPaths {
+		path := stagingAllowedLocalPaths[i]
 		relativePath, err := filepath.Rel(path, localFile)
 		if err != nil {
 			return false
@@ -241,23 +262,30 @@ func localPathIsAllowed(ctx StagingCtx, localFile string) bool {
 	return false
 }
 
-func (c *conn) ExecStagingOperation(ctx StagingCtx, query string, args []driver.NamedValue) (driver.Result, error) {
-	row, err := c.QueryContext(ctx, query, args)
-	if err != nil {
-		return nil, err
-	}
+func (c *conn) ExecStagingOperation(
+	ctx context.Context,
+	row driver.Rows) (driver.Result, error) {
+
 	var sqlRow []driver.Value
 	colNames := row.Columns()
 	sqlRow = make([]driver.Value, len(colNames))
 	row.Next(sqlRow)
-	operation := sqlRow[0].(string)
-	presignedUrl := sqlRow[1].(string)
-	headersByteArr := []byte(sqlRow[2].(string))
+	var stringValues []string = make([]string, 4)
+	for i := range stringValues {
+		if s, ok := sqlRow[i].(string); ok {
+			stringValues[i] = s
+		} else {
+			return nil, fmt.Errorf("local file operations are restricted to paths within the configured staging_allowed_local_path")
+		}
+	}
+	operation := stringValues[0]
+	presignedUrl := stringValues[1]
+	headersByteArr := []byte(stringValues[2])
 	var headers map[string]string
 	if err := json.Unmarshal(headersByteArr, &headers); err != nil {
 		return nil, err
 	}
-	localFile := sqlRow[3].(string)
+	localFile := stringValues[3]
 	switch operation {
 	case "PUT":
 		if localPathIsAllowed(ctx, localFile) {
