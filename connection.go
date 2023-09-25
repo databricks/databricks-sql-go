@@ -117,22 +117,28 @@ func (c *conn) ExecContext(ctx context.Context, query string, args []driver.Name
 	exStmtResp, opStatusResp, err := c.runQuery(ctx, query, args)
 
 	if exStmtResp != nil && exStmtResp.OperationHandle != nil {
-		req := cli_service.TGetResultSetMetadataReq{
-			OperationHandle: exStmtResp.OperationHandle,
+		var isStagingOperation bool
+		if exStmtResp.DirectResults != nil && exStmtResp.DirectResults.ResultSetMetadata != nil && exStmtResp.DirectResults.ResultSetMetadata.IsStagingOperation != nil {
+			isStagingOperation = *exStmtResp.DirectResults.ResultSetMetadata.IsStagingOperation
+		} else {
+			req := cli_service.TGetResultSetMetadataReq{
+				OperationHandle: exStmtResp.OperationHandle,
+			}
+			resp, err := c.client.GetResultSetMetadata(ctx, &req)
+			if err != nil {
+				return nil, dbsqlerrint.NewDriverError(ctx, "Error performing staging operation", err)
+			}
+			isStagingOperation = *resp.IsStagingOperation
 		}
-		resp, err2 := c.client.GetResultSetMetadata(ctx, &req)
-		if err2 != nil {
-			return nil, errors.New("Error performing staging operation")
-		}
-		if *resp.IsStagingOperation {
+		if isStagingOperation {
 			if len(driverctx.StagingPathsFromContext(ctx)) != 0 {
 				row, err := rows.NewRows(c.id, corrId, exStmtResp.OperationHandle, c.client, c.cfg, exStmtResp.DirectResults)
-				if err == nil {
-					return nil, dbsqlerrint.NewDriverError(ctx, "Error reading row.", errors.New("Error reading row."))
+				if err != nil {
+					return nil, dbsqlerrint.NewDriverError(ctx, "Error reading row.", err)
 				}
 				return c.ExecStagingOperation(ctx, row)
 			} else {
-				return nil, dbsqlerrint.NewDriverError(ctx, "Staging ctx must be provided.", errors.New("Staging ctx must be provided."))
+				return nil, dbsqlerrint.NewDriverError(ctx, "Staging ctx must be provided.", nil)
 			}
 		}
 
@@ -168,9 +174,9 @@ func Succeeded(response *http.Response) bool {
 	return false
 }
 
-func (c *conn) HandleStagingPut(presignedUrl string, headers map[string]string, localFile string) (driver.Result, error) {
+func (c *conn) HandleStagingPut(ctx context.Context, presignedUrl string, headers map[string]string, localFile string) (driver.Result, error) {
 	if localFile == "" {
-		return nil, fmt.Errorf("cannot perform PUT without specifying a local_file")
+		return nil, dbsqlerrint.NewDriverError(ctx, "cannot perform PUT without specifying a local_file", nil)
 	}
 	client := &http.Client{}
 
@@ -192,13 +198,13 @@ func (c *conn) HandleStagingPut(presignedUrl string, headers map[string]string, 
 	content, err := io.ReadAll(res.Body)
 
 	if err != nil || !Succeeded(res) {
-		return nil, fmt.Errorf("staging operation over HTTP was unsuccessful: %d-%s", res.StatusCode, content)
+		return nil, dbsqlerrint.NewDriverError(ctx, fmt.Sprintf("staging operation over HTTP was unsuccessful: %d-%s, nil", res.StatusCode, content), nil)
 	}
 	return driver.ResultNoRows, nil
 
 }
 
-func (c *conn) HandleStagingGet(presignedUrl string, headers map[string]string, localFile string) (driver.Result, error) {
+func (c *conn) HandleStagingGet(ctx context.Context, presignedUrl string, headers map[string]string, localFile string) (driver.Result, error) {
 	if localFile == "" {
 		return nil, fmt.Errorf("cannot perform GET without specifying a local_file")
 	}
@@ -216,10 +222,10 @@ func (c *conn) HandleStagingGet(presignedUrl string, headers map[string]string, 
 	content, err := io.ReadAll(res.Body)
 
 	if err != nil || !Succeeded(res) {
-		return nil, fmt.Errorf("staging operation over HTTP was unsuccessful: %d-%s", res.StatusCode, content)
+		return nil, dbsqlerrint.NewDriverError(ctx, fmt.Sprintf("staging operation over HTTP was unsuccessful: %d-%s, nil", res.StatusCode, content), nil)
 	}
 
-	err = os.WriteFile(localFile, content, 0644)
+	err = os.WriteFile(localFile, content, 0644) //nolint:gosec
 	if err != nil {
 		return nil, err
 	}
@@ -227,7 +233,7 @@ func (c *conn) HandleStagingGet(presignedUrl string, headers map[string]string, 
 
 }
 
-func (c *conn) HandleStagingDelete(presignedUrl string, headers map[string]string) (driver.Result, error) {
+func (c *conn) HandleStagingDelete(ctx context.Context, presignedUrl string, headers map[string]string) (driver.Result, error) {
 	client := &http.Client{}
 	req, _ := http.NewRequest("DELETE", presignedUrl, nil)
 	for k, v := range headers {
@@ -241,7 +247,7 @@ func (c *conn) HandleStagingDelete(presignedUrl string, headers map[string]strin
 	content, err := io.ReadAll(res.Body)
 
 	if err != nil || !Succeeded(res) {
-		return nil, fmt.Errorf("staging operation over HTTP was unsuccessful: %d-%s", res.StatusCode, content)
+		return nil, dbsqlerrint.NewDriverError(ctx, fmt.Sprintf("staging operation over HTTP was unsuccessful: %d-%s, nil", res.StatusCode, content), nil)
 	}
 
 	return driver.ResultNoRows, nil
@@ -289,23 +295,21 @@ func (c *conn) ExecStagingOperation(
 	switch operation {
 	case "PUT":
 		if localPathIsAllowed(ctx, localFile) {
-			c.HandleStagingPut(presignedUrl, headers, localFile)
+			return c.HandleStagingPut(ctx, presignedUrl, headers, localFile)
 		} else {
 			return nil, fmt.Errorf("local file operations are restricted to paths within the configured staging_allowed_local_path")
 		}
 	case "GET":
 		if localPathIsAllowed(ctx, localFile) {
-			c.HandleStagingGet(presignedUrl, headers, localFile)
+			return c.HandleStagingGet(ctx, presignedUrl, headers, localFile)
 		} else {
-			return nil, fmt.Errorf("local file operations are restricted to paths within the configured staging_allowed_local_path")
+			return nil, dbsqlerrint.NewDriverError(ctx, "local file operations are restricted to paths within the configured staging_allowed_local_path", nil)
 		}
 	case "DELETE":
-		c.HandleStagingDelete(presignedUrl, headers)
+		return c.HandleStagingDelete(ctx, presignedUrl, headers)
 	default:
-		return nil, fmt.Errorf("operation %s is not supported. Supported operations are GET, PUT, and REMOVE", operation)
+		return nil, dbsqlerrint.NewDriverError(ctx, fmt.Sprintf("operation %s is not supported. Supported operations are GET, PUT, and REMOVE", operation), nil)
 	}
-
-	return driver.ResultNoRows, nil
 }
 
 // QueryContext executes a query that may return rows, such as a
