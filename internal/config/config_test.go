@@ -640,7 +640,6 @@ func TestConfig_DeepCopy(t *testing.T) {
 		cfg := &Config{
 			UserConfig:                UserConfig{}.WithDefaults(),
 			TLSConfig:                 &tls.Config{MinVersion: tls.VersionTLS12},
-			RunAsync:                  true,
 			PollInterval:              1 * time.Second,
 			ClientTimeout:             900 * time.Second,
 			PingTimeout:               15 * time.Second,

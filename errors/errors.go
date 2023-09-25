@@ -14,6 +14,7 @@ const (
 	ErrTransactionsNotSupported = "transactions are not supported"
 	ErrReadQueryStatus          = "could not read query status"
 	ErrSentinelTimeout          = "sentinel timed out waiting for operation to complete"
+	ErrParametersNotSupported   = "query parameters are not supported by this server"
 
 	// Request error messages (connection, authentication, network error)
 	ErrCloseConnection = "failed to close connection"
