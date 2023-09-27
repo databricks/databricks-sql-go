@@ -4,6 +4,7 @@ import (
 	"database/sql/driver"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
@@ -142,9 +143,33 @@ func convertNamedValuesToSparkParams(values []driver.NamedValue) []*cli_service.
 	for i := range sqlParams {
 		sqlParam := sqlParams[i]
 		sparkParamValue := sqlParam.Value.(string)
-		sparkParamType := sqlParam.Type.String()
+		var sparkParamType string
+		if sqlParam.Type == Decimal {
+			sparkParamType = inferDecimalType(sparkParamValue)
+		} else {
+			sparkParamType = sqlParam.Type.String()
+		}
 		sparkParam := cli_service.TSparkParameter{Name: &sqlParam.Name, Type: &sparkParamType, Value: &cli_service.TSparkParameterValue{StringValue: &sparkParamValue}}
 		sparkParams = append(sparkParams, &sparkParam)
 	}
 	return sparkParams
+}
+
+func inferDecimalType(d string) (t string) {
+	var overall int
+	var after int
+	if strings.HasPrefix(d, "0.") {
+		// Less than one
+		overall = len(d) - 2
+		after = len(d) - 2
+	} else if !strings.Contains(d, ".") {
+		// Less than one
+		overall = len(d)
+		after = 0
+	} else {
+		components := strings.Split(d, ".")
+		overall, after = len(components[0])+len(components[1]), len(components[1])
+	}
+
+	return fmt.Sprintf("DECIMAL(%d,%d)", overall, after)
 }

@@ -19,7 +19,7 @@ func TestParameter_Inference(t *testing.T) {
 		assert.Equal(t, string("TIMESTAMP"), *parameters[1].Type)
 		assert.Equal(t, &cli_service.TSparkParameterValue{StringValue: strPtr("5")}, parameters[2].Value)
 		assert.Equal(t, string("true"), *parameters[3].Value.StringValue)
-		assert.Equal(t, string("DECIMAL"), *parameters[4].Type)
+		assert.Equal(t, string("DECIMAL(2,1)"), *parameters[4].Type)
 		assert.Equal(t, string("6.2"), *parameters[4].Value.StringValue)
 	})
 }
@@ -31,6 +31,6 @@ func TestParameters_Names(t *testing.T) {
 		assert.Equal(t, cli_service.TSparkParameterValue{StringValue: strPtr("26")}, *parameters[0].Value)
 		assert.Equal(t, string("2"), *parameters[1].Name)
 		assert.Equal(t, cli_service.TSparkParameterValue{StringValue: strPtr("6.2")}, *parameters[1].Value)
-		assert.Equal(t, string("DECIMAL"), *parameters[1].Type)
+		assert.Equal(t, string("DECIMAL(2,1)"), *parameters[1].Type)
 	})
 }
