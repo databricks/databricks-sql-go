@@ -57,7 +57,7 @@ func loopWithHasNext(db *sql.DB) {
 	conn, _ := db.Conn(ctx)
 	defer conn.Close()
 
-	query := `select * from hive_metastore.main.taxi_trip_data`
+	query := `select * from main.default.diamonds`
 
 	var rows driver.Rows
 	var err error
@@ -65,7 +65,7 @@ func loopWithHasNext(db *sql.DB) {
 		rows, err = d.(driver.QueryerContext).QueryContext(ctx, query, nil)
 		return err
 	})
-	
+
 	if err != nil {
 		log.Fatalf("unable to run the query. err: %v", err)
 	}
@@ -74,7 +74,7 @@ func loopWithHasNext(db *sql.DB) {
 	ctx2, cancel2 := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel2()
 
-	batches, err := rows.(dbsqlrows.DBSQLRows).GetArrowBatches(ctx2)
+	batches, err := rows.(dbsqlrows.Rows).GetArrowBatches(ctx2)
 	if err != nil {
 		log.Fatalf("unable to get arrow batches. err: %v", err)
 	}
@@ -100,7 +100,7 @@ func loopWithNext(db *sql.DB) {
 	conn, _ := db.Conn(ctx)
 	defer conn.Close()
 
-	query := `select * from hive_metastore.main.taxi_trip_data`
+	query := `select * from main.default.diamonds`
 
 	var rows driver.Rows
 	var err error
@@ -117,7 +117,7 @@ func loopWithNext(db *sql.DB) {
 	ctx2, cancel2 := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel2()
 
-	batches, err := rows.(dbsqlrows.DBSQLRows).GetArrowBatches(ctx2)
+	batches, err := rows.(dbsqlrows.Rows).GetArrowBatches(ctx2)
 	if err != nil {
 		log.Fatalf("unable to get arrow batches. err: %v", err)
 	}

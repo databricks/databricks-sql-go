@@ -65,7 +65,7 @@ var _ driver.RowsColumnTypeScanType = (*rows)(nil)
 var _ driver.RowsColumnTypeDatabaseTypeName = (*rows)(nil)
 var _ driver.RowsColumnTypeNullable = (*rows)(nil)
 var _ driver.RowsColumnTypeLength = (*rows)(nil)
-var _ dbsqlrows.DBSQLRows = (*rows)(nil)
+var _ dbsqlrows.Rows = (*rows)(nil)
 
 func NewRows(
 	connId string,
@@ -532,7 +532,7 @@ func (r *rows) logger() *dbsqllog.DBSQLLogger {
 	return r.logger_
 }
 
-func (r *rows) GetArrowBatches(ctx context.Context) (dbsqlrows.DBSQLArrowBatchIterator, error) {
+func (r *rows) GetArrowBatches(ctx context.Context) (dbsqlrows.ArrowBatchIterator, error) {
 	// update context with correlationId and connectionId which will be used in logging and errors
 	ctx = driverctx.NewContextWithCorrelationId(driverctx.NewContextWithConnId(ctx, r.connId), r.correlationId)
 

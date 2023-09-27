@@ -6,11 +6,11 @@ import (
 	"github.com/apache/arrow/go/v12/arrow"
 )
 
-type DBSQLRows interface {
-	GetArrowBatches(context.Context) (DBSQLArrowBatchIterator, error)
+type Rows interface {
+	GetArrowBatches(context.Context) (ArrowBatchIterator, error)
 }
 
-type DBSQLArrowBatchIterator interface {
+type ArrowBatchIterator interface {
 	// Retrieve the next arrow.Record.
 	// Will return io.EOF if there are no more records
 	Next() (arrow.Record, error)

@@ -12,7 +12,7 @@ import (
 	"github.com/databricks/databricks-sql-go/rows"
 )
 
-func NewArrowRecordIterator(ctx context.Context, rpi rowscanner.ResultPageIterator, bi BatchIterator, arrowSchemaBytes []byte, cfg config.Config) rows.DBSQLArrowBatchIterator {
+func NewArrowRecordIterator(ctx context.Context, rpi rowscanner.ResultPageIterator, bi BatchIterator, arrowSchemaBytes []byte, cfg config.Config) rows.ArrowBatchIterator {
 	ari := arrowRecordIterator{
 		cfg:                cfg,
 		batchIterator:      bi,
@@ -36,7 +36,7 @@ type arrowRecordIterator struct {
 	arrowSchemaBytes   []byte
 }
 
-var _ rows.DBSQLArrowBatchIterator = (*arrowRecordIterator)(nil)
+var _ rows.ArrowBatchIterator = (*arrowRecordIterator)(nil)
 
 // Retrieve the next arrow record
 func (ri *arrowRecordIterator) Next() (arrow.Record, error) {

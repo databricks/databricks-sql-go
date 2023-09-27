@@ -802,7 +802,7 @@ func TestGetArrowBatches(t *testing.T) {
 		rows, err := NewRows("connId", "corrId", nil, client, cfg, executeStatementResp.DirectResults)
 		assert.Nil(t, err)
 
-		rows2, ok := rows.(dbsqlrows.DBSQLRows)
+		rows2, ok := rows.(dbsqlrows.Rows)
 		assert.True(t, ok)
 
 		rs, err2 := rows2.GetArrowBatches(context.Background())
@@ -872,7 +872,7 @@ func TestGetArrowBatches(t *testing.T) {
 		rows, err := NewRows("connId", "corrId", nil, client, cfg, nil)
 		assert.Nil(t, err)
 
-		rows2, ok := rows.(dbsqlrows.DBSQLRows)
+		rows2, ok := rows.(dbsqlrows.Rows)
 		assert.True(t, ok)
 
 		rs, err2 := rows2.GetArrowBatches(context.Background())

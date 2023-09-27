@@ -141,6 +141,6 @@ func (crs *columnRowScanner) value(tColumn *cli_service.TColumn, tColumnDesc *cl
 func (crs *columnRowScanner) GetArrowBatches(
 	ctx context.Context,
 	cfg config.Config,
-	rpi rowscanner.ResultPageIterator) (dbsqlrows.DBSQLArrowBatchIterator, error) {
+	rpi rowscanner.ResultPageIterator) (dbsqlrows.ArrowBatchIterator, error) {
 	return nil, dbsqlerr_int.NewDriverError(ctx, "databricks: result set is not in arrow format", nil)
 }
