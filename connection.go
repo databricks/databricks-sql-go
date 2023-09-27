@@ -253,10 +253,18 @@ func (c *conn) HandleStagingDelete(ctx context.Context, presignedUrl string, hea
 	return driver.ResultNoRows, nil
 }
 
-func localPathIsAllowed(ctx context.Context, localFile string) bool {
-	stagingAllowedLocalPaths := driverctx.StagingPathsFromContext(ctx)
+func localPathIsAllowed(stagingAllowedLocalPaths []string, localFile string) bool {
 	for i := range stagingAllowedLocalPaths {
-		path := stagingAllowedLocalPaths[i]
+		// Convert both filepaths to absolute paths to avoid potential issues.
+		//
+		path, err := filepath.Abs(stagingAllowedLocalPaths[i])
+		if err != nil {
+			return false
+		}
+		localFile, err := filepath.Abs(localFile)
+		if err != nil {
+			return false
+		}
 		relativePath, err := filepath.Rel(path, localFile)
 		if err != nil {
 			return false
@@ -275,13 +283,16 @@ func (c *conn) ExecStagingOperation(
 	var sqlRow []driver.Value
 	colNames := row.Columns()
 	sqlRow = make([]driver.Value, len(colNames))
-	row.Next(sqlRow)
+	err := row.Next(sqlRow)
+	if err != nil {
+		return nil, dbsqlerrint.NewDriverError(ctx, "Error fetching staging operation results", err)
+	}
 	var stringValues []string = make([]string, 4)
 	for i := range stringValues {
 		if s, ok := sqlRow[i].(string); ok {
 			stringValues[i] = s
 		} else {
-			return nil, fmt.Errorf("local file operations are restricted to paths within the configured staging_allowed_local_path")
+			return nil, dbsqlerrint.NewDriverError(ctx, "Received unexpected response from the server.", nil)
 		}
 	}
 	operation := stringValues[0]
@@ -292,18 +303,19 @@ func (c *conn) ExecStagingOperation(
 		return nil, err
 	}
 	localFile := stringValues[3]
+	stagingAllowedLocalPaths := driverctx.StagingPathsFromContext(ctx)
 	switch operation {
 	case "PUT":
-		if localPathIsAllowed(ctx, localFile) {
+		if localPathIsAllowed(stagingAllowedLocalPaths, localFile) {
 			return c.HandleStagingPut(ctx, presignedUrl, headers, localFile)
 		} else {
-			return nil, fmt.Errorf("local file operations are restricted to paths within the configured staging_allowed_local_path")
+			return nil, dbsqlerrint.NewDriverError(ctx, "local file operations are restricted to paths within the configured stagingAllowedLocalPath", nil)
 		}
 	case "GET":
-		if localPathIsAllowed(ctx, localFile) {
+		if localPathIsAllowed(stagingAllowedLocalPaths, localFile) {
 			return c.HandleStagingGet(ctx, presignedUrl, headers, localFile)
 		} else {
-			return nil, dbsqlerrint.NewDriverError(ctx, "local file operations are restricted to paths within the configured staging_allowed_local_path", nil)
+			return nil, dbsqlerrint.NewDriverError(ctx, "local file operations are restricted to paths within the configured stagingAllowedLocalPath", nil)
 		}
 	case "DELETE":
 		return c.HandleStagingDelete(ctx, presignedUrl, headers)

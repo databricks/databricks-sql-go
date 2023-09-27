@@ -54,4 +54,10 @@ func main() {
 		return
 	}
 
+	_, err1 = db.ExecContext(ctx, `GET '/Volumes/main/staging_test/e2etests/file1.csv' TO 'staging/newfile.csv'`)
+	if err1 != nil {
+		fmt.Println(err1.Error())
+		return
+	}
+
 }
