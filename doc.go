@@ -237,13 +237,13 @@ See the documentation for dbsql/errors for more information.
 
 The driver supports the ability to retrieve Apache Arrow record batches.
 To work with record batches it is necessary to use sql.Conn.Raw() to access the underlying driver connection to retrieve a driver.Rows instance.
-The driver exposes two public interfaces for working with record batches:
+The driver exposes two public interfaces for working with record batches from the rows sub-package:
 
-	type DBSQLRows interface {
-		GetArrowBatches(context.Context) (DBSQLArrowBatchIterator, error)
+	type Rows interface {
+		GetArrowBatches(context.Context) (ArrowBatchIterator, error)
 	}
 
-	type DBSQLArrowBatchIterator interface {
+	type ArrowBatchIterator interface {
 		// Retrieve the next arrow.Record.
 		// Will return io.EOF if there are no more records
 		Next() (arrow.Record, error)
@@ -255,8 +255,8 @@ The driver exposes two public interfaces for working with record batches:
 		Close()
 	}
 
-The driver.Rows instance retrieved using Conn.Raw() can be converted to DBSQLRows via a type assertion, then use GetArrowBatches() to retrieve a batch iterator.
-If the DBSQLArrowBatchIterator is not closed it will leak resources, such as the underlying connection.
+The driver.Rows instance retrieved using Conn.Raw() can be converted to a Databricks Rows instance via a type assertion, then use GetArrowBatches() to retrieve a batch iterator.
+If the ArrowBatchIterator is not closed it will leak resources, such as the underlying connection.
 Calling code must call Release() on records returned by DBSQLArrowBatchIterator.Next().
 
 Example usage:
@@ -288,7 +288,7 @@ Example usage:
 		}
 		defer rows.Close()
 
-		batches, err := rows.(dbsqlrows.DBSQLRows).GetArrowBatches(context.BackGround())
+		batches, err := rows.(dbsqlrows.Rows).GetArrowBatches(context.BackGround())
 		if err != nil {
 			log.Fatalf("unable to get arrow batches. err: %v", err)
 		}
