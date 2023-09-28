@@ -14,6 +14,7 @@ const (
 	QueryIdContextKey
 	QueryIdCallbackKey
 	ConnIdCallbackKey
+	StagingAllowedLocalPathKey
 )
 
 type IdCallbackFunc func(string)
@@ -79,10 +80,27 @@ func QueryIdFromContext(ctx context.Context) string {
 	return queryId
 }
 
+// QueryIdFromContext retrieves the queryId stored in context.
+func StagingPathsFromContext(ctx context.Context) []string {
+	if ctx == nil {
+		return []string{}
+	}
+
+	stagingAllowedLocalPath, ok := ctx.Value(StagingAllowedLocalPathKey).([]string)
+	if !ok {
+		return []string{}
+	}
+	return stagingAllowedLocalPath
+}
+
 func NewContextWithQueryIdCallback(ctx context.Context, callback IdCallbackFunc) context.Context {
 	return context.WithValue(ctx, QueryIdCallbackKey, callback)
 }
 
 func NewContextWithConnIdCallback(ctx context.Context, callback IdCallbackFunc) context.Context {
 	return context.WithValue(ctx, ConnIdCallbackKey, callback)
+}
+
+func NewContextWithStagingInfo(ctx context.Context, stagingAllowedLocalPath []string) context.Context {
+	return context.WithValue(ctx, StagingAllowedLocalPathKey, stagingAllowedLocalPath)
 }
