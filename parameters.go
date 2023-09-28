@@ -10,7 +10,7 @@ import (
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 )
 
-type DBSqlParam struct {
+type Parameter struct {
 	Name  string
 	Type  SqlType
 	Value any
@@ -67,12 +67,12 @@ func (s SqlType) String() string {
 	return "unknown"
 }
 
-func valuesToDBSQLParams(namedValues []driver.NamedValue) []DBSqlParam {
-	var params []DBSqlParam
+func valuesToParameters(namedValues []driver.NamedValue) []Parameter {
+	var params []Parameter
 	for i := range namedValues {
-		newParam := *new(DBSqlParam)
+		newParam := *new(Parameter)
 		namedValue := namedValues[i]
-		param, ok := namedValue.Value.(DBSqlParam)
+		param, ok := namedValue.Value.(Parameter)
 		if ok {
 			newParam.Name = param.Name
 			newParam.Value = param.Value
@@ -86,7 +86,7 @@ func valuesToDBSQLParams(namedValues []driver.NamedValue) []DBSqlParam {
 	return params
 }
 
-func inferTypes(params []DBSqlParam) {
+func inferTypes(params []Parameter) {
 	for i := range params {
 		param := &params[i]
 		if param.Type == SqlUnkown {
@@ -144,7 +144,7 @@ func inferTypes(params []DBSqlParam) {
 func convertNamedValuesToSparkParams(values []driver.NamedValue) []*cli_service.TSparkParameter {
 	var sparkParams []*cli_service.TSparkParameter
 
-	sqlParams := valuesToDBSQLParams(values)
+	sqlParams := valuesToParameters(values)
 	inferTypes(sqlParams)
 	for i := range sqlParams {
 		sqlParam := sqlParams[i]

@@ -50,11 +50,11 @@ func main() {
 	:p_double AS col_double,
 	:p_float AS col_float,
 	:p_date AS col_date`,
-		dbsql.DBSqlParam{Name: "p_bool", Value: true},
-		dbsql.DBSqlParam{Name: "p_int", Value: int(1234)},
-		dbsql.DBSqlParam{Name: "p_double", Type: dbsql.SqlDouble, Value: "3.14"},
-		dbsql.DBSqlParam{Name: "p_float", Type: dbsql.SqlFloat, Value: "3.14"},
-		dbsql.DBSqlParam{Name: "p_date", Type: dbsql.SqlDate, Value: "2017-07-23 00:00:00"}).Scan(&p_bool, &p_int, &p_double, &p_float, &p_date)
+		dbsql.Parameter{Name: "p_bool", Value: true},
+		dbsql.Parameter{Name: "p_int", Value: int(1234)},
+		dbsql.Parameter{Name: "p_double", Type: dbsql.SqlDouble, Value: "3.14"},
+		dbsql.Parameter{Name: "p_float", Type: dbsql.SqlFloat, Value: "3.14"},
+		dbsql.Parameter{Name: "p_date", Type: dbsql.SqlDate, Value: "2017-07-23 00:00:00"}).Scan(&p_bool, &p_int, &p_double, &p_float, &p_date)
 
 	if err1 != nil {
 		if err1 == sql.ErrNoRows {
