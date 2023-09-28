@@ -121,6 +121,11 @@ func TestConn_executeStatement(t *testing.T) {
 			},
 		}
 
+		getResultSetMetadata := func(ctx context.Context, req *cli_service.TGetResultSetMetadataReq) (_r *cli_service.TGetResultSetMetadataResp, _err error) {
+			var b = false
+			return &cli_service.TGetResultSetMetadataResp{IsStagingOperation: &b}, nil
+		}
+
 		testClient := &client.TestClient{
 			FnExecuteStatement: func(ctx context.Context, req *cli_service.TExecuteStatementReq) (r *cli_service.TExecuteStatementResp, err error) {
 				executeStatementCount++
@@ -130,6 +135,7 @@ func TestConn_executeStatement(t *testing.T) {
 				closeOperationCount++
 				return &cli_service.TCloseOperationResp{}, nil
 			},
+			FnGetResultSetMetadata: getResultSetMetadata,
 		}
 		testConn := &conn{
 			session: getTestSession(),
@@ -1103,6 +1109,10 @@ func TestConn_ExecContext(t *testing.T) {
 			}
 			return getOperationStatusResp, nil
 		}
+		getResultSetMetadata := func(ctx context.Context, req *cli_service.TGetResultSetMetadataReq) (_r *cli_service.TGetResultSetMetadataResp, _err error) {
+			var b = false
+			return &cli_service.TGetResultSetMetadataResp{IsStagingOperation: &b}, nil
+		}
 
 		testClient := &client.TestClient{
 			FnExecuteStatement:   executeStatement,
@@ -1112,6 +1122,7 @@ func TestConn_ExecContext(t *testing.T) {
 				assert.NoError(t, ctxErr)
 				return &cli_service.TCloseOperationResp{}, nil
 			},
+			FnGetResultSetMetadata: getResultSetMetadata,
 		}
 		testConn := &conn{
 			session: getTestSession(),
@@ -1155,6 +1166,11 @@ func TestConn_ExecContext(t *testing.T) {
 			return getOperationStatusResp, nil
 		}
 
+		getResultSetMetadata := func(ctx context.Context, req *cli_service.TGetResultSetMetadataReq) (_r *cli_service.TGetResultSetMetadataResp, _err error) {
+			var b = false
+			return &cli_service.TGetResultSetMetadataResp{IsStagingOperation: &b}, nil
+		}
+
 		testClient := &client.TestClient{
 			FnExecuteStatement:   executeStatement,
 			FnGetOperationStatus: getOperationStatus,
@@ -1173,7 +1189,9 @@ func TestConn_ExecContext(t *testing.T) {
 				}
 				return cancelOperationResp, nil
 			},
+			FnGetResultSetMetadata: getResultSetMetadata,
 		}
+
 		testConn := &conn{
 			session: getTestSession(),
 			client:  testClient,

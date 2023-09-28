@@ -87,7 +87,8 @@ func TestStmt_ExecContext(t *testing.T) {
 			}
 			return getOperationStatusResp, nil
 		}
-		fetchResultSetMetadata := func(ctx context.Context, req *cli_service.TGetResultSetMetadataReq) (_r *cli_service.TGetResultSetMetadataResp, _err error) {
+
+		getResultSetMetadata := func(ctx context.Context, req *cli_service.TGetResultSetMetadataReq) (_r *cli_service.TGetResultSetMetadataResp, _err error) {
 			var b = false
 			return &cli_service.TGetResultSetMetadataResp{IsStagingOperation: &b}, nil
 		}
@@ -95,7 +96,7 @@ func TestStmt_ExecContext(t *testing.T) {
 		testClient := &client.TestClient{
 			FnExecuteStatement:     executeStatement,
 			FnGetOperationStatus:   getOperationStatus,
-			FnGetResultSetMetadata: fetchResultSetMetadata,
+			FnGetResultSetMetadata: getResultSetMetadata,
 		}
 		testConn := &conn{
 			session: getTestSession(),
