@@ -274,7 +274,7 @@ Example usage:
 		conn, _ := db.Conn(context.BackGround())
 		defer conn.Close()
 
-		query := `select * from hive_metastore.main.taxi_trip_data`
+		query := `select * from main.default.taxi_trip_data`
 
 		var rows driver.Rows
 		var err error
