@@ -16,51 +16,52 @@ type DBSqlParam struct {
 	Value any
 }
 
-type SqlType int64
+type SqlType int
 
 const (
-	String SqlType = iota
-	Date
-	Timestamp
-	Float
-	Decimal
-	Double
-	Integer
-	BigInt
-	SmallInt
-	TinyInt
-	Boolean
-	IntervalMonth
-	IntervalDay
+	SqlUnkown SqlType = iota
+	SqlString
+	SqlDate
+	SqlTimestamp
+	SqlFloat
+	SqlDecimal
+	SqlDouble
+	SqlInteger
+	SqlBigInt
+	SqlSmallInt
+	SqlTinyInt
+	SqlBoolean
+	SqlIntervalMonth
+	SqlIntervalDay
 )
 
 func (s SqlType) String() string {
 	switch s {
-	case String:
+	case SqlString:
 		return "STRING"
-	case Date:
+	case SqlDate:
 		return "DATE"
-	case Timestamp:
+	case SqlTimestamp:
 		return "TIMESTAMP"
-	case Float:
+	case SqlFloat:
 		return "FLOAT"
-	case Decimal:
+	case SqlDecimal:
 		return "DECIMAL"
-	case Double:
+	case SqlDouble:
 		return "DOUBLE"
-	case Integer:
+	case SqlInteger:
 		return "INTEGER"
-	case BigInt:
+	case SqlBigInt:
 		return "BIGINT"
-	case SmallInt:
+	case SqlSmallInt:
 		return "SMALLINT"
-	case TinyInt:
+	case SqlTinyInt:
 		return "TINYINT"
-	case Boolean:
+	case SqlBoolean:
 		return "BOOLEAN"
-	case IntervalMonth:
+	case SqlIntervalMonth:
 		return "INTERVAL MONTH"
-	case IntervalDay:
+	case SqlIntervalDay:
 		return "INTERVAL DAY"
 	}
 	return "unknown"
@@ -69,11 +70,18 @@ func (s SqlType) String() string {
 func valuesToDBSQLParams(namedValues []driver.NamedValue) []DBSqlParam {
 	var params []DBSqlParam
 	for i := range namedValues {
+		newParam := *new(DBSqlParam)
 		namedValue := namedValues[i]
-		param := *new(DBSqlParam)
-		param.Name = namedValue.Name
-		param.Value = namedValue.Value
-		params = append(params, param)
+		param, ok := namedValue.Value.(DBSqlParam)
+		if ok {
+			newParam.Name = param.Name
+			newParam.Value = param.Value
+			newParam.Type = param.Type
+		} else {
+			newParam.Name = namedValue.Name
+			newParam.Value = namedValue.Value
+		}
+		params = append(params, newParam)
 	}
 	return params
 }
@@ -81,57 +89,55 @@ func valuesToDBSQLParams(namedValues []driver.NamedValue) []DBSqlParam {
 func inferTypes(params []DBSqlParam) {
 	for i := range params {
 		param := &params[i]
-		switch value := param.Value.(type) {
-		case bool:
-			param.Value = strconv.FormatBool(value)
-			param.Type = Boolean
-		case string:
-			param.Value = value
-			param.Type = String
-		case int:
-			param.Value = strconv.Itoa(value)
-			param.Type = Integer
-		case uint:
-			param.Value = strconv.FormatUint(uint64(value), 10)
-			param.Type = Integer
-		case int8:
-			param.Value = strconv.Itoa(int(value))
-			param.Type = Integer
-		case uint8:
-			param.Value = strconv.FormatUint(uint64(value), 10)
-			param.Type = Integer
-		case int16:
-			param.Value = strconv.Itoa(int(value))
-			param.Type = Integer
-		case uint16:
-			param.Value = strconv.FormatUint(uint64(value), 10)
-			param.Type = Integer
-		case int32:
-			param.Value = strconv.Itoa(int(value))
-			param.Type = Integer
-		case uint32:
-			param.Value = strconv.FormatUint(uint64(value), 10)
-			param.Type = Integer
-		case int64:
-			param.Value = strconv.Itoa(int(value))
-			param.Type = Integer
-		case uint64:
-			param.Value = strconv.FormatUint(uint64(value), 10)
-			param.Type = Integer
-		case float32:
-			param.Value = strconv.FormatFloat(float64(value), 'f', -1, 32)
-			param.Type = Float
-		case time.Time:
-			param.Value = value.String()
-			param.Type = Timestamp
-		case DBSqlParam:
-			param.Name = value.Name
-			param.Value = value.Value
-			param.Type = value.Type
-		default:
-			s := fmt.Sprintf("%s", value)
-			param.Value = s
-			param.Type = String
+		if param.Type == SqlUnkown {
+			switch value := param.Value.(type) {
+			case bool:
+				param.Value = strconv.FormatBool(value)
+				param.Type = SqlBoolean
+			case string:
+				param.Value = value
+				param.Type = SqlString
+			case int:
+				param.Value = strconv.Itoa(value)
+				param.Type = SqlInteger
+			case uint:
+				param.Value = strconv.FormatUint(uint64(value), 10)
+				param.Type = SqlInteger
+			case int8:
+				param.Value = strconv.Itoa(int(value))
+				param.Type = SqlInteger
+			case uint8:
+				param.Value = strconv.FormatUint(uint64(value), 10)
+				param.Type = SqlInteger
+			case int16:
+				param.Value = strconv.Itoa(int(value))
+				param.Type = SqlInteger
+			case uint16:
+				param.Value = strconv.FormatUint(uint64(value), 10)
+				param.Type = SqlInteger
+			case int32:
+				param.Value = strconv.Itoa(int(value))
+				param.Type = SqlInteger
+			case uint32:
+				param.Value = strconv.FormatUint(uint64(value), 10)
+				param.Type = SqlInteger
+			case int64:
+				param.Value = strconv.Itoa(int(value))
+				param.Type = SqlInteger
+			case uint64:
+				param.Value = strconv.FormatUint(uint64(value), 10)
+				param.Type = SqlInteger
+			case float32:
+				param.Value = strconv.FormatFloat(float64(value), 'f', -1, 32)
+				param.Type = SqlFloat
+			case time.Time:
+				param.Value = value.String()
+				param.Type = SqlTimestamp
+			default:
+				s := fmt.Sprintf("%s", param.Value)
+				param.Value = s
+				param.Type = SqlString
+			}
 		}
 	}
 }
@@ -144,7 +150,7 @@ func convertNamedValuesToSparkParams(values []driver.NamedValue) []*cli_service.
 		sqlParam := sqlParams[i]
 		sparkParamValue := sqlParam.Value.(string)
 		var sparkParamType string
-		if sqlParam.Type == Decimal {
+		if sqlParam.Type == SqlDecimal {
 			sparkParamType = inferDecimalType(sparkParamValue)
 		} else {
 			sparkParamType = sqlParam.Type.String()

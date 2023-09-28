@@ -39,16 +39,22 @@ func main() {
 	// ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	// defer cancel()
 	ctx := context.Background()
-	var res string
+	var p_bool bool
+	var p_int int
+	var p_double float64
+	var p_float float32
+	var p_date string
 	err1 := db.QueryRowContext(ctx, `SELECT
 	:p_bool AS col_bool,
 	:p_int AS col_int,
 	:p_double AS col_double,
-	:p_floatfloat AS col_float`,
+	:p_float AS col_float,
+	:p_date AS col_date`,
 		dbsql.DBSqlParam{Name: "p_bool", Value: true},
 		dbsql.DBSqlParam{Name: "p_int", Value: int(1234)},
-		dbsql.DBSqlParam{Name: "p_double", Type: dbsql.Double, Value: 3.14},
-		dbsql.DBSqlParam{Name: "p_float", Type: dbsql.Float, Value: 3.14}).Scan(&res)
+		dbsql.DBSqlParam{Name: "p_double", Type: dbsql.SqlDouble, Value: "3.14"},
+		dbsql.DBSqlParam{Name: "p_float", Type: dbsql.SqlFloat, Value: "3.14"},
+		dbsql.DBSqlParam{Name: "p_date", Type: dbsql.SqlDate, Value: "2017-07-23 00:00:00"}).Scan(&p_bool, &p_int, &p_double, &p_float, &p_date)
 
 	if err1 != nil {
 		if err1 == sql.ErrNoRows {
@@ -58,6 +64,5 @@ func main() {
 			fmt.Printf("err: %v\n", err1)
 		}
 	}
-	fmt.Println(res)
 
 }
