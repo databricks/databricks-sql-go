@@ -233,6 +233,80 @@ Example usage:
 
 See the documentation for dbsql/errors for more information.
 
+# Retrieving Arrow Batches
+
+The driver supports the ability to retrieve Apache Arrow record batches.
+To work with record batches it is necessary to use sql.Conn.Raw() to access the underlying driver connection to retrieve a driver.Rows instance.
+The driver exposes two public interfaces for working with record batches from the rows sub-package:
+
+	type Rows interface {
+		GetArrowBatches(context.Context) (ArrowBatchIterator, error)
+	}
+
+	type ArrowBatchIterator interface {
+		// Retrieve the next arrow.Record.
+		// Will return io.EOF if there are no more records
+		Next() (arrow.Record, error)
+
+		// Return true if the iterator contains more batches, false otherwise.
+		HasNext() bool
+
+		// Release any resources in use by the iterator.
+		Close()
+	}
+
+The driver.Rows instance retrieved using Conn.Raw() can be converted to a Databricks Rows instance via a type assertion, then use GetArrowBatches() to retrieve a batch iterator.
+If the ArrowBatchIterator is not closed it will leak resources, such as the underlying connection.
+Calling code must call Release() on records returned by DBSQLArrowBatchIterator.Next().
+
+Example usage:
+
+	import (
+		...
+		dbsqlrows "github.com/databricks/databricks-sql-go/rows"
+	)
+
+	func main() {
+		...
+		db := sql.OpenDB(connector)
+		defer db.Close()
+
+		conn, _ := db.Conn(context.BackGround())
+		defer conn.Close()
+
+		query := `select * from main.default.taxi_trip_data`
+
+		var rows driver.Rows
+		var err error
+		err = conn.Raw(func(d interface{}) error {
+			rows, err = d.(driver.QueryerContext).QueryContext(ctx, query, nil)
+			return err
+		})
+
+		if err != nil {
+			log.Fatalf("unable to run the query. err: %v", err)
+		}
+		defer rows.Close()
+
+		batches, err := rows.(dbsqlrows.Rows).GetArrowBatches(context.BackGround())
+		if err != nil {
+			log.Fatalf("unable to get arrow batches. err: %v", err)
+		}
+
+		var iBatch, nRows int
+		for batches.HasNext() {
+			b, err := batches.Next()
+			if err != nil {
+				log.Fatalf("Failure retrieving batch. err: %v", err)
+			}
+
+			log.Printf("batch %v: nRecords=%v\n", iBatch, b.NumRows())
+			iBatch += 1
+			nRows += int(b.NumRows())
+		}
+		log.Printf("NRows: %v\n", nRows)
+	}
+
 # Supported Data Types
 
 ==================================

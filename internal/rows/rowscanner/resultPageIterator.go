@@ -23,6 +23,7 @@ func errRowsUnandledFetchDirection(dir string) string {
 type ResultPageIterator interface {
 	Next() (*cli_service.TFetchResultsResp, error)
 	HasNext() bool
+	Close() error
 	Delimiter
 }
 
@@ -45,25 +46,27 @@ func (d Direction) String() string {
 // Create a new result page iterator.
 func NewResultPageIterator(
 	delimiter Delimiter,
-	hasMoreRows bool,
 	maxPageSize int64,
 	opHandle *cli_service.TOperationHandle,
+	closedOnServer bool,
 	client cli_service.TCLIService,
 	connectionId string,
 	correlationId string,
 	logger *dbsqllog.DBSQLLogger,
 ) ResultPageIterator {
+
 	// delimiter and hasMoreRows are used to set up the point in the paginated
 	// result set that this iterator starts from.
 	return &resultPageIterator{
-		Delimiter:     delimiter,
-		isFinished:    !hasMoreRows,
-		maxPageSize:   maxPageSize,
-		opHandle:      opHandle,
-		client:        client,
-		connectionId:  connectionId,
-		correlationId: correlationId,
-		logger:        logger,
+		Delimiter:      delimiter,
+		isFinished:     closedOnServer,
+		maxPageSize:    maxPageSize,
+		opHandle:       opHandle,
+		closedOnServer: closedOnServer,
+		client:         client,
+		connectionId:   connectionId,
+		correlationId:  correlationId,
+		logger:         logger,
 	}
 }
 
@@ -79,6 +82,11 @@ type resultPageIterator struct {
 
 	// handle of the operation producing the result set
 	opHandle *cli_service.TOperationHandle
+
+	// If the server returns an entire result set
+	// in the direct results it may have already
+	// closed the operation.
+	closedOnServer bool
 
 	// client for communicating with the server
 	client cli_service.TCLIService
@@ -109,7 +117,7 @@ func (rpf *resultPageIterator) Next() (*cli_service.TFetchResultsResp, error) {
 		return nil, io.EOF
 	}
 
-	// Starting row number of next result pag. This is used to check that the returned page is
+	// Starting row number of next result page. This is used to check that the returned page is
 	// the expected one.
 	nextPageStartRow := rpf.Start() + rpf.Count()
 
@@ -153,6 +161,22 @@ func (rpf *resultPageIterator) Next() (*cli_service.TFetchResultsResp, error) {
 	}
 
 	return fetchResult, nil
+}
+
+func (rpf *resultPageIterator) Close() (err error) {
+	// if the operation hasn't already been closed on the server we
+	// need to do that now
+	if !rpf.closedOnServer {
+		rpf.closedOnServer = true
+
+		req := cli_service.TCloseOperationReq{
+			OperationHandle: rpf.opHandle,
+		}
+
+		_, err = rpf.client.CloseOperation(context.Background(), &req)
+		return err
+	}
+	return
 }
 
 // countRows returns the number of rows in the TRowSet

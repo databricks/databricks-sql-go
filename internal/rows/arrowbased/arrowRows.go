@@ -16,6 +16,7 @@ import (
 	dbsqlerrint "github.com/databricks/databricks-sql-go/internal/errors"
 	"github.com/databricks/databricks-sql-go/internal/rows/rowscanner"
 	dbsqllog "github.com/databricks/databricks-sql-go/logger"
+	dbsqlrows "github.com/databricks/databricks-sql-go/rows"
 	"github.com/pkg/errors"
 )
 
@@ -23,6 +24,7 @@ import (
 type SparkArrowBatch interface {
 	rowscanner.Delimiter
 	Next() (SparkArrowRecord, error)
+	HasNext() bool
 	Close()
 }
 
@@ -71,8 +73,6 @@ type arrowRowScanner struct {
 	location *time.Location
 
 	ctx context.Context
-
-	resultFormat cli_service.TSparkRowSetType
 
 	batchIterator BatchIterator
 }
@@ -145,7 +145,6 @@ func NewArrowRowScanner(resultSetMetadata *cli_service.TGetResultSetMetadataResp
 		colInfo:             colInfos,
 		DBSQLLogger:         logger,
 		location:            location,
-		resultFormat:        *resultSetMetadata.ResultFormat,
 		batchIterator:       bi,
 	}
 
@@ -245,8 +244,12 @@ func isIntervalType(typeId cli_service.TTypeId) bool {
 // loadBatchFor loads the batch containing the specified row if necessary
 func (ars *arrowRowScanner) loadBatchFor(rowNumber int64) dbsqlerr.DBError {
 
-	if ars == nil || ars.batchIterator == nil {
+	if ars == nil {
 		return dbsqlerrint.NewDriverError(context.Background(), errArrowRowsNoArrowBatches, nil)
+	}
+
+	if ars.batchIterator == nil {
+		return dbsqlerrint.NewDriverError(ars.ctx, errArrowRowsNoArrowBatches, nil)
 	}
 
 	// if the batch already loaded we can just return
@@ -264,7 +267,11 @@ func (ars *arrowRowScanner) loadBatchFor(rowNumber int64) dbsqlerr.DBError {
 	for ars.currentBatch == nil || !ars.currentBatch.Contains(rowNumber) {
 		batch, err := ars.batchIterator.Next()
 		if err != nil {
-			return err
+			if dbErr, ok := err.(dbsqlerr.DBError); ok {
+				return dbErr
+			} else {
+				return dbsqlerrint.NewDriverError(ars.ctx, errArrowRowsInvalidRowNumber(rowNumber), err)
+			}
 		}
 
 		ars.currentBatch = batch
@@ -316,6 +323,11 @@ func (ars *arrowRowScanner) validateRowNumber(rowNumber int64) dbsqlerr.DBError 
 		return dbsqlerrint.NewDriverError(ars.ctx, errArrowRowsInvalidRowNumber(rowNumber), nil)
 	}
 	return nil
+}
+
+func (ars *arrowRowScanner) GetArrowBatches(ctx context.Context, cfg config.Config, rpi rowscanner.ResultPageIterator) (dbsqlrows.ArrowBatchIterator, error) {
+	ri := NewArrowRecordIterator(ctx, rpi, ars.batchIterator, ars.arrowSchemaBytes, cfg)
+	return ri, nil
 }
 
 // getArrowSchemaBytes returns the serialized schema in ipc format
@@ -691,6 +703,8 @@ func (b *sparkArrowBatch) Next() (SparkArrowRecord, error) {
 	// no more records
 	return nil, io.EOF
 }
+
+func (b *sparkArrowBatch) HasNext() bool { return b != nil && len(b.arrowRecords) > 0 }
 
 func (b *sparkArrowBatch) Close() {
 	// Release any arrow records

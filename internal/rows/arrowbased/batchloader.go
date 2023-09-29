@@ -21,7 +21,8 @@ import (
 )
 
 type BatchIterator interface {
-	Next() (SparkArrowBatch, dbsqlerr.DBError)
+	Next() (SparkArrowBatch, error)
+	HasNext() bool
 	Close()
 }
 
@@ -33,7 +34,8 @@ type BatchLoader interface {
 
 func NewBatchIterator(batchLoader BatchLoader) (BatchIterator, dbsqlerr.DBError) {
 	bi := &batchIterator{
-		batchLoader: batchLoader,
+		nextBatchStart: batchLoader.Start(),
+		batchLoader:    batchLoader,
 	}
 
 	return bi, nil
@@ -293,7 +295,10 @@ type batchIterator struct {
 
 var _ BatchIterator = (*batchIterator)(nil)
 
-func (bi *batchIterator) Next() (SparkArrowBatch, dbsqlerr.DBError) {
+func (bi *batchIterator) Next() (SparkArrowBatch, error) {
+	if !bi.HasNext() {
+		return nil, io.EOF
+	}
 	if bi != nil && bi.batchLoader != nil {
 		batch, err := bi.batchLoader.GetBatchFor(bi.nextBatchStart)
 		if batch != nil && err == nil {
@@ -302,6 +307,10 @@ func (bi *batchIterator) Next() (SparkArrowBatch, dbsqlerr.DBError) {
 		return batch, err
 	}
 	return nil, nil
+}
+
+func (bi *batchIterator) HasNext() bool {
+	return bi != nil && bi.batchLoader != nil && bi.batchLoader.Contains(bi.nextBatchStart)
 }
 
 func (bi *batchIterator) Close() {

@@ -19,6 +19,7 @@ import (
 	"github.com/databricks/databricks-sql-go/internal/rows/columnbased"
 	"github.com/databricks/databricks-sql-go/internal/rows/rowscanner"
 	dbsqllog "github.com/databricks/databricks-sql-go/logger"
+	dbsqlrows "github.com/databricks/databricks-sql-go/rows"
 )
 
 // rows implements the following interfaces from database.sql.driver
@@ -38,16 +39,11 @@ type rows struct {
 
 	client cli_service.TCLIService
 
-	// Maximum number of rows to return from a single fetch operation
-	maxPageSize int64
-
 	location *time.Location
 
 	// Metadata for result set
 	resultSetMetadata *cli_service.TGetResultSetMetadataResp
 	schema            *cli_service.TTableSchema
-
-	hasMoreRows bool
 
 	config *config.Config
 
@@ -59,11 +55,6 @@ type rows struct {
 	// Row number within the overall result set
 	nextRowNumber int64
 
-	// If the server returns an entire result set
-	// in the direct results it may have already
-	// closed the operation.
-	closedOnServer bool
-
 	logger_ *dbsqllog.DBSQLLogger
 
 	ctx context.Context
@@ -74,6 +65,7 @@ var _ driver.RowsColumnTypeScanType = (*rows)(nil)
 var _ driver.RowsColumnTypeDatabaseTypeName = (*rows)(nil)
 var _ driver.RowsColumnTypeNullable = (*rows)(nil)
 var _ driver.RowsColumnTypeLength = (*rows)(nil)
+var _ dbsqlrows.Rows = (*rows)(nil)
 
 func NewRows(
 	connId string,
@@ -116,10 +108,8 @@ func NewRows(
 		opHandle:      opHandle,
 		connId:        connId,
 		correlationId: correlationId,
-		maxPageSize:   pageSize,
 		location:      location,
 		config:        config,
-		hasMoreRows:   true,
 		logger_:       logger,
 		ctx:           ctx,
 	}
@@ -133,19 +123,33 @@ func NewRows(
 			r.schema = directResults.ResultSetMetadata.Schema
 		}
 
-		// If the entire query result set fits in direct results the server closes
-		// the operations.
-		if directResults.CloseOperation != nil {
-			logger.Debug().Msgf("databricks: creating Rows with server operation closed")
-			r.closedOnServer = true
-		}
-
 		// initialize the row scanner
 		err := r.makeRowScanner(directResults.ResultSet)
 		if err != nil {
 			return r, err
 		}
 	}
+
+	var d rowscanner.Delimiter
+	if r.RowScanner != nil {
+		d = rowscanner.NewDelimiter(r.RowScanner.Start(), r.RowScanner.Count())
+	} else {
+		d = rowscanner.NewDelimiter(0, 0)
+	}
+
+	// If the entire query result set fits in direct results the server closes
+	// the operations.
+	closedOnServer := directResults != nil && directResults.CloseOperation != nil
+	r.ResultPageIterator = rowscanner.NewResultPageIterator(
+		d,
+		pageSize,
+		opHandle,
+		closedOnServer,
+		client,
+		connId,
+		correlationId,
+		r.logger(),
+	)
 
 	return r, nil
 }
@@ -186,21 +190,12 @@ func (r *rows) Close() error {
 		r.RowScanner.Close()
 	}
 
-	if !r.closedOnServer {
+	if r.ResultPageIterator != nil {
 		r.logger().Debug().Msgf("databricks: closing Rows operation")
-
-		// if the operation hasn't already been closed on the server we
-		// need to do that now
-		r.closedOnServer = true
-
-		req := cli_service.TCloseOperationReq{
-			OperationHandle: r.opHandle,
-		}
-
-		_, err1 := r.client.CloseOperation(r.ctx, &req)
-		if err1 != nil {
-			r.logger().Err(err1).Msg(errRowsCloseFailed)
-			return dbsqlerr_int.NewRequestError(r.ctx, errRowsCloseFailed, err1)
+		err := r.ResultPageIterator.Close()
+		if err != nil {
+			r.logger().Err(err).Msg(errRowsCloseFailed)
+			return dbsqlerr_int.NewRequestError(r.ctx, errRowsCloseFailed, err)
 		}
 	}
 
@@ -454,16 +449,6 @@ func (r *rows) fetchResultPage() error {
 		return dbsqlerr_int.NewDriverError(r.ctx, errRowsOnlyForward, nil)
 	}
 
-	if r.ResultPageIterator == nil {
-		var d rowscanner.Delimiter
-		if r.RowScanner != nil {
-			d = rowscanner.NewDelimiter(r.RowScanner.Start(), r.RowScanner.Count())
-		} else {
-			d = rowscanner.NewDelimiter(0, 0)
-		}
-		r.ResultPageIterator = makeResultPageIterator(r, d)
-	}
-
 	// Close/release the existing row scanner before loading the next result page to
 	// help keep memory usage down.
 	if r.RowScanner != nil {
@@ -533,12 +518,6 @@ func (r *rows) makeRowScanner(fetchResults *cli_service.TFetchResultsResp) dbsql
 
 	r.RowScanner = rs
 
-	if fetchResults.HasMoreRows != nil {
-		r.hasMoreRows = *fetchResults.HasMoreRows
-	} else {
-		r.hasMoreRows = false
-	}
-
 	return err
 }
 
@@ -553,18 +532,15 @@ func (r *rows) logger() *dbsqllog.DBSQLLogger {
 	return r.logger_
 }
 
-func makeResultPageIterator(r *rows, d rowscanner.Delimiter) rowscanner.ResultPageIterator {
+func (r *rows) GetArrowBatches(ctx context.Context) (dbsqlrows.ArrowBatchIterator, error) {
+	// update context with correlationId and connectionId which will be used in logging and errors
+	ctx = driverctx.NewContextWithCorrelationId(driverctx.NewContextWithConnId(ctx, r.connId), r.correlationId)
 
-	resultPageIterator := rowscanner.NewResultPageIterator(
-		d,
-		r.hasMoreRows,
-		r.maxPageSize,
-		r.opHandle,
-		r.client,
-		r.connId,
-		r.correlationId,
-		r.logger(),
-	)
+	// If a row scanner exists we use it to create the iterator, that way the iterator includes
+	// data returned as direct results
+	if r.RowScanner != nil {
+		return r.RowScanner.GetArrowBatches(ctx, *r.config, r.ResultPageIterator)
+	}
 
-	return resultPageIterator
+	return arrowbased.NewArrowRecordIterator(ctx, r.ResultPageIterator, nil, nil, *r.config), nil
 }

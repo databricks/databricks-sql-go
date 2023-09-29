@@ -1,13 +1,16 @@
 package rowscanner
 
 import (
+	"context"
 	"database/sql/driver"
 	"strings"
 	"time"
 
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
+	"github.com/databricks/databricks-sql-go/internal/config"
 	dbsqlerrint "github.com/databricks/databricks-sql-go/internal/errors"
+	dbsqlrows "github.com/databricks/databricks-sql-go/rows"
 )
 
 // RowScanner is an interface defining the behaviours that are specific to
@@ -27,6 +30,8 @@ type RowScanner interface {
 
 	// Close any open resources
 	Close()
+
+	GetArrowBatches(ctx context.Context, cfg config.Config, rpi ResultPageIterator) (dbsqlrows.ArrowBatchIterator, error)
 }
 
 // Expected formats for TIMESTAMP and DATE types when represented by a string value
