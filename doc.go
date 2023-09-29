@@ -184,6 +184,25 @@ Use the driverctx package under driverctx/ctx.go to add callbacks to the query c
 
 	}
 
+# Query parameters
+
+Passing parameters to a query is supported when run against servers with version DBR 14.1.
+
+	p := dbsql.Parameter{Name: "p_bool", Value: true},
+	rows, err1 := db.QueryContext(ctx, `select * from sometable where condition=:p_bool`,dbsql.Parameter{Name: "p_bool", Value: true})
+
+For complex types, you can specify the SQL type using the dbsql.Parameter type field. If this field is set, the value field MUST be set to a string.
+
+# Staging Ingestion
+
+The Go driver now supports staging operations. In order to use a staging operation, you first must update the context with a list of folders that you are allowing the driver to access.
+
+	ctx := driverctx.NewContextWithStagingInfo(context.Background(), []string{"staging/"})
+
+After doing so, you can execute staging operations using this context using the exec context.
+
+	_, err1 := db.ExecContext(ctx, `PUT 'staging/file.csv' INTO '/Volumes/main/staging_test/e2etests/file.csv' OVERWRITE`)
+
 # Errors
 
 There are three error types exposed via dbsql/errors
