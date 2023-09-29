@@ -596,9 +596,9 @@ func (c *conn) pollOperation(ctx context.Context, opHandle *cli_service.TOperati
 
 func (c *conn) CheckNamedValue(nv *driver.NamedValue) error {
 	var err error
-	if dbsqlParam, ok := nv.Value.(DBSqlParam); ok {
-		nv.Name = dbsqlParam.Name
-		dbsqlParam.Value, err = driver.DefaultParameterConverter.ConvertValue(dbsqlParam.Value)
+	if parameter, ok := nv.Value.(Parameter); ok {
+		nv.Name = parameter.Name
+		parameter.Value, err = driver.DefaultParameterConverter.ConvertValue(parameter.Value)
 		return err
 	}
 
