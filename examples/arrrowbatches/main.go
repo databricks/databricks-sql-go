@@ -89,6 +89,7 @@ func loopWithHasNext(db *sql.DB) {
 		log.Printf("batch %v: nRecords=%v\n", iBatch, b.NumRows())
 		iBatch += 1
 		nRows += int(b.NumRows())
+		b.Release()
 	}
 	log.Printf("NRows: %v\n", nRows)
 }
@@ -128,6 +129,7 @@ func loopWithNext(db *sql.DB) {
 		log.Printf("batch %v: nRecords=%v\n", iBatch, b.NumRows())
 		iBatch += 1
 		nRows += int(b.NumRows())
+		b.Release()
 	}
 
 	log.Printf("NRows: %v\n", nRows)
