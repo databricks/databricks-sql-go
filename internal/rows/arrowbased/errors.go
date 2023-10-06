@@ -13,6 +13,7 @@ var errArrowRowsConvertSchema = "databricks: arrow row scanner failed to convert
 var errArrowRowsSerializeSchema = "databricks: arrow row scanner failed to serialize schema"
 var errArrowRowsToTimestampFn = "databricks: arrow row scanner failed getting toTimestamp function"
 var errArrowRowsMakeColumnValueContainers = "databricks: failed creating column value container"
+var errArrowRowsNotArrowFormat = "databricks: result set is not in arrow format"
 
 const errArrowRowsCloudFetchDownloadFailure = "cloud fetch batch loader failed to download results"
 
@@ -22,8 +23,8 @@ func errArrowRowsUnsupportedNativeType(t string) string {
 func errArrowRowsUnsupportedWithHiveSchema(t string) string {
 	return fmt.Sprintf("databricks: arrow native values for %s require arrow schema", t)
 }
-func errArrowRowsInvalidRowIndex(index int64) string {
-	return fmt.Sprintf("databricks: row index %d is not contained in any arrow batch", index)
+func errArrowRowsInvalidRowNumber(index int64) string {
+	return fmt.Sprintf("databricks: row number %d is not contained in any arrow batch", index)
 }
 func errArrowRowsUnableToCreateDecimalType(scale, precision int32) string {
 	return fmt.Sprintf("databricks: unable to create decimal type scale: %d, precision: %d", scale, precision)

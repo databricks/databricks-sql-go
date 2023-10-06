@@ -2,11 +2,11 @@ package fetcher
 
 import (
 	"context"
-	"github.com/databricks/databricks-sql-go/internal/config"
-	"github.com/pkg/errors"
 	"math"
 	"testing"
 	"time"
+
+	"github.com/pkg/errors"
 )
 
 // Create a mock struct for FetchableItems
@@ -20,7 +20,7 @@ type mockOutput struct {
 }
 
 // Implement the Fetch method
-func (m *mockFetchableItem) Fetch(ctx context.Context, cfg *config.Config) ([]*mockOutput, error) {
+func (m *mockFetchableItem) Fetch(ctx context.Context) ([]*mockOutput, error) {
 	time.Sleep(m.wait)
 	outputs := make([]*mockOutput, 5)
 	for i := range outputs {
@@ -30,13 +30,13 @@ func (m *mockFetchableItem) Fetch(ctx context.Context, cfg *config.Config) ([]*m
 	return outputs, nil
 }
 
-var _ FetchableItems[*mockOutput] = (*mockFetchableItem)(nil)
+var _ FetchableItems[[]*mockOutput] = (*mockFetchableItem)(nil)
 
 func TestConcurrentFetcher(t *testing.T) {
 	t.Run("Comprehensively tests the concurrent fetcher", func(t *testing.T) {
 		ctx := context.Background()
-		cfg := &config.Config{}
-		inputChan := make(chan FetchableItems[*mockOutput], 10)
+
+		inputChan := make(chan FetchableItems[[]*mockOutput], 10)
 		for i := 0; i < 10; i++ {
 			item := mockFetchableItem{item: i, wait: 1 * time.Second}
 			inputChan <- &item
@@ -44,7 +44,7 @@ func TestConcurrentFetcher(t *testing.T) {
 		close(inputChan)
 
 		// Create a fetcher
-		fetcher, err := NewConcurrentFetcher[*mockFetchableItem](ctx, 3, cfg, inputChan)
+		fetcher, err := NewConcurrentFetcher[*mockFetchableItem](ctx, 3, 3, inputChan)
 		if err != nil {
 			t.Fatalf("Error creating fetcher: %v", err)
 		}
@@ -57,7 +57,7 @@ func TestConcurrentFetcher(t *testing.T) {
 
 		var results []*mockOutput
 		for result := range outChan {
-			results = append(results, result)
+			results = append(results, result...)
 		}
 
 		// Check if the fetcher returned the expected results
@@ -87,7 +87,7 @@ func TestConcurrentFetcher(t *testing.T) {
 		defer cancel()
 
 		// Create an input channel
-		inputChan := make(chan FetchableItems[*mockOutput], 3)
+		inputChan := make(chan FetchableItems[[]*mockOutput], 3)
 		for i := 0; i < 3; i++ {
 			item := mockFetchableItem{item: i, wait: 1 * time.Second}
 			inputChan <- &item
@@ -95,7 +95,7 @@ func TestConcurrentFetcher(t *testing.T) {
 		close(inputChan)
 
 		// Create a new fetcher
-		fetcher, err := NewConcurrentFetcher[*mockFetchableItem](ctx, 2, &config.Config{}, inputChan)
+		fetcher, err := NewConcurrentFetcher[*mockFetchableItem](ctx, 2, 2, inputChan)
 		if err != nil {
 			t.Fatalf("Error creating fetcher: %v", err)
 		}

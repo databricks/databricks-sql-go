@@ -1,8 +1,16 @@
 package dbsql
 
 import (
+	"bytes"
 	"context"
 	"database/sql/driver"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/databricks/databricks-sql-go/driverctx"
@@ -94,18 +102,49 @@ func (c *conn) IsValid() bool {
 // ExecContext honors the context timeout and return when it is canceled.
 // Statement ExecContext is the same as connection ExecContext
 func (c *conn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
+
 	corrId := driverctx.CorrelationIdFromContext(ctx)
 	log := logger.WithContext(c.id, corrId, "")
 	msg, start := logger.Track("ExecContext")
 	defer log.Duration(msg, start)
 
 	ctx = driverctx.NewContextWithConnId(ctx, c.id)
-	if len(args) > 0 {
+
+	if len(args) > 0 && c.session.ServerProtocolVersion < cli_service.TProtocolVersion_SPARK_CLI_SERVICE_PROTOCOL_V8 {
 		return nil, dbsqlerrint.NewDriverError(ctx, dbsqlerr.ErrParametersNotSupported, nil)
 	}
+
 	exStmtResp, opStatusResp, err := c.runQuery(ctx, query, args)
 
 	if exStmtResp != nil && exStmtResp.OperationHandle != nil {
+		var isStagingOperation bool
+		if exStmtResp.DirectResults != nil && exStmtResp.DirectResults.ResultSetMetadata != nil && exStmtResp.DirectResults.ResultSetMetadata.IsStagingOperation != nil {
+			isStagingOperation = *exStmtResp.DirectResults.ResultSetMetadata.IsStagingOperation
+		} else {
+			req := cli_service.TGetResultSetMetadataReq{
+				OperationHandle: exStmtResp.OperationHandle,
+			}
+			resp, err := c.client.GetResultSetMetadata(ctx, &req)
+			if err != nil {
+				return nil, dbsqlerrint.NewDriverError(ctx, "error performing staging operation", err)
+			}
+			isStagingOperation = *resp.IsStagingOperation
+		}
+		if isStagingOperation {
+			if len(driverctx.StagingPathsFromContext(ctx)) != 0 {
+				row, err := rows.NewRows(c.id, corrId, exStmtResp.OperationHandle, c.client, c.cfg, exStmtResp.DirectResults)
+				if err != nil {
+					return nil, dbsqlerrint.NewDriverError(ctx, "error reading row.", err)
+				}
+				err = c.ExecStagingOperation(ctx, row)
+				if err != nil {
+					return nil, err
+				}
+			} else {
+				return nil, dbsqlerrint.NewDriverError(ctx, "staging ctx must be provided.", nil)
+			}
+		}
+
 		// we have an operation id so update the logger
 		log = logger.WithContext(c.id, corrId, client.SprintGuid(exStmtResp.OperationHandle.OperationId.GUID))
 
@@ -131,6 +170,163 @@ func (c *conn) ExecContext(ctx context.Context, query string, args []driver.Name
 	return &res, nil
 }
 
+func Succeeded(response *http.Response) bool {
+	if response.StatusCode == 200 || response.StatusCode == 201 || response.StatusCode == 202 || response.StatusCode == 204 {
+		return true
+	}
+	return false
+}
+
+func (c *conn) HandleStagingPut(ctx context.Context, presignedUrl string, headers map[string]string, localFile string) dbsqlerr.DBError {
+	if localFile == "" {
+		return dbsqlerrint.NewDriverError(ctx, "cannot perform PUT without specifying a local_file", nil)
+	}
+	client := &http.Client{}
+
+	dat, err := os.ReadFile(localFile)
+
+	if err != nil {
+		return dbsqlerrint.NewDriverError(ctx, "error reading local file", err)
+	}
+
+	req, _ := http.NewRequest("PUT", presignedUrl, bytes.NewReader(dat))
+
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	res, err := client.Do(req)
+	if err != nil {
+		return dbsqlerrint.NewDriverError(ctx, "error sending http request", err)
+	}
+	defer res.Body.Close()
+	content, err := io.ReadAll(res.Body)
+
+	if err != nil || !Succeeded(res) {
+		return dbsqlerrint.NewDriverError(ctx, fmt.Sprintf("staging operation over HTTP was unsuccessful: %d-%s", res.StatusCode, content), nil)
+	}
+	return nil
+
+}
+
+func (c *conn) HandleStagingGet(ctx context.Context, presignedUrl string, headers map[string]string, localFile string) dbsqlerr.DBError {
+	if localFile == "" {
+		return dbsqlerrint.NewDriverError(ctx, "cannot perform GET without specifying a local_file", nil)
+	}
+	client := &http.Client{}
+	req, _ := http.NewRequest("GET", presignedUrl, nil)
+
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	res, err := client.Do(req)
+	if err != nil {
+		return dbsqlerrint.NewDriverError(ctx, "error sending http request", err)
+	}
+	defer res.Body.Close()
+	content, err := io.ReadAll(res.Body)
+
+	if err != nil || !Succeeded(res) {
+		return dbsqlerrint.NewDriverError(ctx, fmt.Sprintf("staging operation over HTTP was unsuccessful: %d-%s", res.StatusCode, content), nil)
+	}
+
+	err = os.WriteFile(localFile, content, 0644) //nolint:gosec
+	if err != nil {
+		return dbsqlerrint.NewDriverError(ctx, "error writing local file", err)
+	}
+	return nil
+}
+
+func (c *conn) HandleStagingDelete(ctx context.Context, presignedUrl string, headers map[string]string) dbsqlerr.DBError {
+	client := &http.Client{}
+	req, _ := http.NewRequest("DELETE", presignedUrl, nil)
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	res, err := client.Do(req)
+	if err != nil {
+		return dbsqlerrint.NewDriverError(ctx, "error sending http request", err)
+	}
+	defer res.Body.Close()
+	content, err := io.ReadAll(res.Body)
+
+	if err != nil || !Succeeded(res) {
+		return dbsqlerrint.NewDriverError(ctx, fmt.Sprintf("staging operation over HTTP was unsuccessful: %d-%s, nil", res.StatusCode, content), nil)
+	}
+
+	return nil
+}
+
+func localPathIsAllowed(stagingAllowedLocalPaths []string, localFile string) bool {
+	for i := range stagingAllowedLocalPaths {
+		// Convert both filepaths to absolute paths to avoid potential issues.
+		//
+		path, err := filepath.Abs(stagingAllowedLocalPaths[i])
+		if err != nil {
+			return false
+		}
+		localFile, err := filepath.Abs(localFile)
+		if err != nil {
+			return false
+		}
+		relativePath, err := filepath.Rel(path, localFile)
+		if err != nil {
+			return false
+		}
+		if !strings.Contains(relativePath, "../") {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *conn) ExecStagingOperation(
+	ctx context.Context,
+	row driver.Rows) dbsqlerr.DBError {
+
+	var sqlRow []driver.Value
+	colNames := row.Columns()
+	sqlRow = make([]driver.Value, len(colNames))
+	err := row.Next(sqlRow)
+	if err != nil {
+		return dbsqlerrint.NewDriverError(ctx, "error fetching staging operation results", err)
+	}
+	var stringValues []string = make([]string, 4)
+	for i := range stringValues {
+		if s, ok := sqlRow[i].(string); ok {
+			stringValues[i] = s
+		} else {
+			return dbsqlerrint.NewDriverError(ctx, "received unexpected response from the server.", nil)
+		}
+	}
+	operation := stringValues[0]
+	presignedUrl := stringValues[1]
+	headersByteArr := []byte(stringValues[2])
+	var headers map[string]string
+	if err := json.Unmarshal(headersByteArr, &headers); err != nil {
+		return dbsqlerrint.NewDriverError(ctx, "error parsing server response.", nil)
+	}
+	localFile := stringValues[3]
+	stagingAllowedLocalPaths := driverctx.StagingPathsFromContext(ctx)
+	switch operation {
+	case "PUT":
+		if localPathIsAllowed(stagingAllowedLocalPaths, localFile) {
+			return c.HandleStagingPut(ctx, presignedUrl, headers, localFile)
+		} else {
+			return dbsqlerrint.NewDriverError(ctx, "local file operations are restricted to paths within the configured stagingAllowedLocalPath", nil)
+		}
+	case "GET":
+		if localPathIsAllowed(stagingAllowedLocalPaths, localFile) {
+			return c.HandleStagingGet(ctx, presignedUrl, headers, localFile)
+		} else {
+			return dbsqlerrint.NewDriverError(ctx, "local file operations are restricted to paths within the configured stagingAllowedLocalPath", nil)
+		}
+	case "DELETE":
+		return c.HandleStagingDelete(ctx, presignedUrl, headers)
+	default:
+		return dbsqlerrint.NewDriverError(ctx, fmt.Sprintf("operation %s is not supported. Supported operations are GET, PUT, and REMOVE", operation), nil)
+	}
+}
+
 // QueryContext executes a query that may return rows, such as a
 // SELECT.
 //
@@ -142,9 +338,11 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 	msg, start := log.Track("QueryContext")
 
 	ctx = driverctx.NewContextWithConnId(ctx, c.id)
-	if len(args) > 0 {
+
+	if len(args) > 0 && c.session.ServerProtocolVersion < cli_service.TProtocolVersion_SPARK_CLI_SERVICE_PROTOCOL_V8 {
 		return nil, dbsqlerrint.NewDriverError(ctx, dbsqlerr.ErrParametersNotSupported, nil)
 	}
+
 	// first we try to get the results synchronously.
 	// at any point in time that the context is done we must cancel and return
 	exStmtResp, opStatusResp, err := c.runQuery(ctx, query, args)
@@ -278,12 +476,13 @@ func (c *conn) executeStatement(ctx context.Context, query string, args []driver
 	req := cli_service.TExecuteStatementReq{
 		SessionHandle: c.session.SessionHandle,
 		Statement:     query,
-		RunAsync:      c.cfg.RunAsync,
+		RunAsync:      true,
 		QueryTimeout:  int64(c.cfg.QueryTimeout / time.Second),
 		GetDirectResults: &cli_service.TSparkGetDirectResults{
 			MaxRows: int64(c.cfg.MaxRows),
 		},
 		CanDecompressLZ4Result_: &c.cfg.UseLz4Compression,
+		Parameters:              convertNamedValuesToSparkParams(args),
 	}
 
 	if c.cfg.UseArrowBatches {
@@ -395,6 +594,18 @@ func (c *conn) pollOperation(ctx context.Context, opHandle *cli_service.TOperati
 	return statusResp, nil
 }
 
+func (c *conn) CheckNamedValue(nv *driver.NamedValue) error {
+	var err error
+	if parameter, ok := nv.Value.(Parameter); ok {
+		nv.Name = parameter.Name
+		parameter.Value, err = driver.DefaultParameterConverter.ConvertValue(parameter.Value)
+		return err
+	}
+
+	nv.Value, err = driver.DefaultParameterConverter.ConvertValue(nv.Value)
+	return err
+}
+
 var _ driver.Conn = (*conn)(nil)
 var _ driver.Pinger = (*conn)(nil)
 var _ driver.SessionResetter = (*conn)(nil)
@@ -403,3 +614,4 @@ var _ driver.ExecerContext = (*conn)(nil)
 var _ driver.QueryerContext = (*conn)(nil)
 var _ driver.ConnPrepareContext = (*conn)(nil)
 var _ driver.ConnBeginTx = (*conn)(nil)
+var _ driver.NamedValueChecker = (*conn)(nil)

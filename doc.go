@@ -39,6 +39,10 @@ Supported optional connection parameters can be specified in param=value and inc
   - userAgentEntry: Used to identify partners. Set as a string with format <isv-name+product-name>
   - useCloudFetch: Used to enable cloud fetch for the query execution. Default is false
   - maxDownloadThreads: Sets up the max number of concurrent workers for cloud fetch. Default is 10
+  - authType: Specifies the desired authentication type. Valid values are: Pat, OauthM2M, OauthU2M
+  - accessToken: Personal access token. Required if authType set to Pat
+  - clientID: Specifies the client ID to use with OauthM2M
+  - clientSecret: Specifies the client secret to use with OauthM2M
 
 Supported optional session parameters can be specified in param=value and include:
 
@@ -83,6 +87,8 @@ Supported functional options include:
   - WithUserAgentEntry(<isv-name+product-name> string). Used to identify partners. Optional
   - WithCloudFetch (bool). Used to enable cloud fetch for the query execution. Default is false. Optional
   - WithMaxDownloadThreads (<num_threads> int). Sets up the max number of concurrent workers for cloud fetch. Default is 10. Optional
+  - WithAuthenticator (<authenticator> auth.Authenticator). Sets up authentication. Required if neither access token or client credentials are provided.
+  - WithClientCredentials(<clientID> string, <clientSecret> string). Sets up Oauth M2M authentication.
 
 # Query cancellation and timeout
 
@@ -178,6 +184,25 @@ Use the driverctx package under driverctx/ctx.go to add callbacks to the query c
 
 	}
 
+# Query parameters
+
+Passing parameters to a query is supported when run against servers with version DBR 14.1.
+
+	p := dbsql.Parameter{Name: "p_bool", Value: true},
+	rows, err1 := db.QueryContext(ctx, `select * from sometable where condition=:p_bool`,dbsql.Parameter{Name: "p_bool", Value: true})
+
+For complex types, you can specify the SQL type using the dbsql.Parameter type field. If this field is set, the value field MUST be set to a string.
+
+# Staging Ingestion
+
+The Go driver now supports staging operations. In order to use a staging operation, you first must update the context with a list of folders that you are allowing the driver to access.
+
+	ctx := driverctx.NewContextWithStagingInfo(context.Background(), []string{"staging/"})
+
+After doing so, you can execute staging operations using this context using the exec context.
+
+	_, err1 := db.ExecContext(ctx, `PUT 'staging/file.csv' INTO '/Volumes/main/staging_test/e2etests/file.csv' OVERWRITE`)
+
 # Errors
 
 There are three error types exposed via dbsql/errors
@@ -226,6 +251,81 @@ Example usage:
 	}
 
 See the documentation for dbsql/errors for more information.
+
+# Retrieving Arrow Batches
+
+The driver supports the ability to retrieve Apache Arrow record batches.
+To work with record batches it is necessary to use sql.Conn.Raw() to access the underlying driver connection to retrieve a driver.Rows instance.
+The driver exposes two public interfaces for working with record batches from the rows sub-package:
+
+	type Rows interface {
+		GetArrowBatches(context.Context) (ArrowBatchIterator, error)
+	}
+
+	type ArrowBatchIterator interface {
+		// Retrieve the next arrow.Record.
+		// Will return io.EOF if there are no more records
+		Next() (arrow.Record, error)
+
+		// Return true if the iterator contains more batches, false otherwise.
+		HasNext() bool
+
+		// Release any resources in use by the iterator.
+		Close()
+	}
+
+The driver.Rows instance retrieved using Conn.Raw() can be converted to a Databricks Rows instance via a type assertion, then use GetArrowBatches() to retrieve a batch iterator.
+If the ArrowBatchIterator is not closed it will leak resources, such as the underlying connection.
+Calling code must call Release() on records returned by DBSQLArrowBatchIterator.Next().
+
+Example usage:
+
+	import (
+		...
+		dbsqlrows "github.com/databricks/databricks-sql-go/rows"
+	)
+
+	func main() {
+		...
+		db := sql.OpenDB(connector)
+		defer db.Close()
+
+		conn, _ := db.Conn(context.BackGround())
+		defer conn.Close()
+
+		query := `select * from main.default.taxi_trip_data`
+
+		var rows driver.Rows
+		var err error
+		err = conn.Raw(func(d interface{}) error {
+			rows, err = d.(driver.QueryerContext).QueryContext(ctx, query, nil)
+			return err
+		})
+
+		if err != nil {
+			log.Fatalf("unable to run the query. err: %v", err)
+		}
+		defer rows.Close()
+
+		batches, err := rows.(dbsqlrows.Rows).GetArrowBatches(context.BackGround())
+		if err != nil {
+			log.Fatalf("unable to get arrow batches. err: %v", err)
+		}
+
+		var iBatch, nRows int
+		for batches.HasNext() {
+			b, err := batches.Next()
+			if err != nil {
+				log.Fatalf("Failure retrieving batch. err: %v", err)
+			}
+
+			log.Printf("batch %v: nRecords=%v\n", iBatch, b.NumRows())
+			iBatch += 1
+			nRows += int(b.NumRows())
+			b.Release()
+		}
+		log.Printf("NRows: %v\n", nRows)
+	}
 
 # Supported Data Types
 

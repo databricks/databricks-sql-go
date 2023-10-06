@@ -1,31 +1,37 @@
 package rowscanner
 
 import (
+	"context"
 	"database/sql/driver"
 	"strings"
 	"time"
 
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
+	"github.com/databricks/databricks-sql-go/internal/config"
 	dbsqlerrint "github.com/databricks/databricks-sql-go/internal/errors"
+	dbsqlrows "github.com/databricks/databricks-sql-go/rows"
 )
 
 // RowScanner is an interface defining the behaviours that are specific to
 // the formats in which query results can be returned.
 type RowScanner interface {
+	Delimiter
 	// ScanRow is called to populate the provided slice with the
 	// content of the current row. The provided slice will be the same
 	// size as the number of columns.
 	// The dest should not be written to outside of ScanRow. Care
 	// should be taken when closing a RowScanner not to modify
 	// a buffer held in dest.
-	ScanRow(dest []driver.Value, rowIndex int64) dbsqlerr.DBError
+	ScanRow(dest []driver.Value, rowNumber int64) dbsqlerr.DBError
 
 	// NRows returns the number of rows in the current result page
 	NRows() int64
 
 	// Close any open resources
 	Close()
+
+	GetArrowBatches(ctx context.Context, cfg config.Config, rpi ResultPageIterator) (dbsqlrows.ArrowBatchIterator, error)
 }
 
 // Expected formats for TIMESTAMP and DATE types when represented by a string value
@@ -42,6 +48,47 @@ func IsNull(nulls []byte, position int64) bool {
 		return (b & (1 << (uint)(position%8))) != 0
 	}
 	return false
+}
+
+type Delimiter interface {
+	Start() int64
+	End() int64
+	Count() int64
+	Contains(int64) bool
+	Direction(int64) Direction
+}
+
+func NewDelimiter(start, count int64) Delimiter {
+	return delimiter{
+		start: start,
+		count: count,
+		end:   start + count - 1,
+	}
+}
+
+type delimiter struct {
+	start int64
+	end   int64
+	count int64
+}
+
+func (d delimiter) Start() int64          { return d.start }
+func (d delimiter) End() int64            { return d.end }
+func (d delimiter) Count() int64          { return d.count }
+func (d delimiter) Contains(i int64) bool { return d.count > 0 && i >= d.start && i <= d.end }
+func (d delimiter) Direction(i int64) Direction {
+
+	if d.Contains(i) {
+		return DirNone
+	} else if i < d.Start() {
+		return DirBack
+	} else if i > d.End() {
+		return DirForward
+	} else if d.Count() == 0 {
+		return DirForward
+	} else {
+		return DirUnknown
+	}
 }
 
 var ErrRowsParseValue = "databricks: unable to parse %s value '%v' from column %s"

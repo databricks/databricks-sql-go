@@ -19,6 +19,7 @@ import (
 	"github.com/databricks/databricks-sql-go/internal/rows/columnbased"
 	"github.com/databricks/databricks-sql-go/internal/rows/rowscanner"
 	dbsqllog "github.com/databricks/databricks-sql-go/logger"
+	dbsqlrows "github.com/databricks/databricks-sql-go/rows"
 )
 
 // rows implements the following interfaces from database.sql.driver
@@ -31,22 +32,18 @@ type rows struct {
 	// The RowScanner is responsible for handling the different
 	// formats in which the query results can be returned
 	rowscanner.RowScanner
+	rowscanner.ResultPageIterator
 
 	// Handle for the associated database operation.
 	opHandle *cli_service.TOperationHandle
 
 	client cli_service.TCLIService
 
-	// Maximum number of rows to return from a single fetch operation
-	maxPageSize int64
-
 	location *time.Location
 
 	// Metadata for result set
 	resultSetMetadata *cli_service.TGetResultSetMetadataResp
 	schema            *cli_service.TTableSchema
-
-	hasMoreRows bool
 
 	config *config.Config
 
@@ -55,19 +52,8 @@ type rows struct {
 	connId        string
 	correlationId string
 
-	// Index in the current page of rows
-	nextRowIndex int64
-
 	// Row number within the overall result set
 	nextRowNumber int64
-
-	// starting row number of the current results page
-	pageStartingRowNum int64
-
-	// If the server returns an entire result set
-	// in the direct results it may have already
-	// closed the operation.
-	closedOnServer bool
 
 	logger_ *dbsqllog.DBSQLLogger
 
@@ -79,6 +65,7 @@ var _ driver.RowsColumnTypeScanType = (*rows)(nil)
 var _ driver.RowsColumnTypeDatabaseTypeName = (*rows)(nil)
 var _ driver.RowsColumnTypeNullable = (*rows)(nil)
 var _ driver.RowsColumnTypeLength = (*rows)(nil)
+var _ dbsqlrows.Rows = (*rows)(nil)
 
 func NewRows(
 	connId string,
@@ -121,10 +108,8 @@ func NewRows(
 		opHandle:      opHandle,
 		connId:        connId,
 		correlationId: correlationId,
-		maxPageSize:   pageSize,
 		location:      location,
 		config:        config,
-		hasMoreRows:   true,
 		logger_:       logger,
 		ctx:           ctx,
 	}
@@ -138,19 +123,33 @@ func NewRows(
 			r.schema = directResults.ResultSetMetadata.Schema
 		}
 
-		// If the entire query result set fits in direct results the server closes
-		// the operations.
-		if directResults.CloseOperation != nil {
-			logger.Debug().Msgf("databricks: creating Rows with server operation closed")
-			r.closedOnServer = true
-		}
-
 		// initialize the row scanner
 		err := r.makeRowScanner(directResults.ResultSet)
 		if err != nil {
 			return r, err
 		}
 	}
+
+	var d rowscanner.Delimiter
+	if r.RowScanner != nil {
+		d = rowscanner.NewDelimiter(r.RowScanner.Start(), r.RowScanner.Count())
+	} else {
+		d = rowscanner.NewDelimiter(0, 0)
+	}
+
+	// If the entire query result set fits in direct results the server closes
+	// the operations.
+	closedOnServer := directResults != nil && directResults.CloseOperation != nil
+	r.ResultPageIterator = rowscanner.NewResultPageIterator(
+		d,
+		pageSize,
+		opHandle,
+		closedOnServer,
+		client,
+		connId,
+		correlationId,
+		r.logger(),
+	)
 
 	return r, nil
 }
@@ -191,21 +190,12 @@ func (r *rows) Close() error {
 		r.RowScanner.Close()
 	}
 
-	if !r.closedOnServer {
+	if r.ResultPageIterator != nil {
 		r.logger().Debug().Msgf("databricks: closing Rows operation")
-
-		// if the operation hasn't already been closed on the server we
-		// need to do that now
-		r.closedOnServer = true
-
-		req := cli_service.TCloseOperationReq{
-			OperationHandle: r.opHandle,
-		}
-
-		_, err1 := r.client.CloseOperation(r.ctx, &req)
-		if err1 != nil {
-			r.logger().Err(err1).Msg(errRowsCloseFailed)
-			return dbsqlerr_int.NewRequestError(r.ctx, errRowsCloseFailed, err1)
+		err := r.ResultPageIterator.Close()
+		if err != nil {
+			r.logger().Err(err).Msg(errRowsCloseFailed)
+			return dbsqlerr_int.NewRequestError(r.ctx, errRowsCloseFailed, err)
 		}
 	}
 
@@ -243,12 +233,11 @@ func (r *rows) Next(dest []driver.Value) error {
 	}
 
 	// Put values into the destination slice
-	err = r.ScanRow(dest, r.nextRowIndex)
+	err = r.ScanRow(dest, r.nextRowNumber)
 	if err != nil {
 		return err
 	}
 
-	r.nextRowIndex++
 	r.nextRowNumber++
 
 	return nil
@@ -415,13 +404,7 @@ func (r *rows) isNextRowInPage() (bool, dbsqlerr.DBError) {
 		return false, nil
 	}
 
-	nRowsInPage := r.NRows()
-	if nRowsInPage == 0 {
-		return false, nil
-	}
-
-	startRowOffset := r.pageStartingRowNum
-	return r.nextRowNumber >= startRowOffset && r.nextRowNumber < (startRowOffset+nRowsInPage), nil
+	return r.RowScanner.Contains(r.nextRowNumber), nil
 }
 
 // getResultMetadata does a one time fetch of the result set schema
@@ -458,79 +441,42 @@ func (r *rows) fetchResultPage() error {
 		return err
 	}
 
-	r.logger().Debug().Msgf("databricks: fetching result page for row %d", r.nextRowNumber)
-
-	var b bool
-	var e dbsqlerr.DBError
-	for b, e = r.isNextRowInPage(); !b && e == nil; b, e = r.isNextRowInPage() {
-
-		// determine the direction of page fetching. Currently we only handle
-		// TFetchOrientation_FETCH_PRIOR and TFetchOrientation_FETCH_NEXT
-		var direction cli_service.TFetchOrientation = r.getPageFetchDirection()
-		if direction == cli_service.TFetchOrientation_FETCH_PRIOR {
-			// can't fetch rows previous to the start
-			if r.pageStartingRowNum == 0 {
-				return dbsqlerr_int.NewDriverError(r.ctx, errRowsFetchPriorToStart, nil)
-			}
-		} else if direction == cli_service.TFetchOrientation_FETCH_NEXT {
-			// can't fetch past the end of the query results
-			if !r.hasMoreRows {
-				return io.EOF
-			}
-		} else {
-			r.logger().Error().Msgf(errRowsUnandledFetchDirection(direction.String()))
-			return dbsqlerr_int.NewDriverError(r.ctx, errRowsUnandledFetchDirection(direction.String()), nil)
-		}
-
-		r.logger().Debug().Msgf("fetching next batch of up to %d rows, %s", r.maxPageSize, direction.String())
-
-		var includeResultSetMetadata = true
-		req := cli_service.TFetchResultsReq{
-			OperationHandle:          r.opHandle,
-			MaxRows:                  r.maxPageSize,
-			Orientation:              direction,
-			IncludeResultSetMetadata: &includeResultSetMetadata,
-		}
-		ctx := driverctx.NewContextWithCorrelationId(driverctx.NewContextWithConnId(context.Background(), r.connId), r.correlationId)
-
-		fetchResult, err := r.client.FetchResults(ctx, &req)
-		if err != nil {
-			r.logger().Err(err).Msg("databricks: Rows instance failed to retrieve results")
-			return dbsqlerr_int.NewRequestError(r.ctx, errRowsResultFetchFailed, err)
-		}
-
-		err1 := r.makeRowScanner(fetchResult)
-		if err1 != nil {
-			return err1
-		}
-
-		r.logger().Debug().Msgf("databricks: new result page startRow: %d, nRows: %v, hasMoreRows: %v", fetchResult.Results.StartRowOffset, r.NRows(), fetchResult.HasMoreRows)
+	if r.RowScanner != nil && r.RowScanner.Contains(r.nextRowNumber) {
+		return nil
 	}
 
-	if e != nil {
-		return e
+	if r.RowScanner != nil && r.nextRowNumber < r.RowScanner.Start() {
+		return dbsqlerr_int.NewDriverError(r.ctx, errRowsOnlyForward, nil)
 	}
 
-	// don't assume the next row is the first row in the page
-	r.nextRowIndex = r.nextRowNumber - r.pageStartingRowNum
+	// Close/release the existing row scanner before loading the next result page to
+	// help keep memory usage down.
+	if r.RowScanner != nil {
+		r.RowScanner.Close()
+		r.RowScanner = nil
+	}
+
+	if !r.ResultPageIterator.HasNext() {
+		return io.EOF
+	}
+
+	fetchResult, err1 := r.ResultPageIterator.Next()
+	if err1 != nil {
+		return err1
+	}
+
+	err1 = r.makeRowScanner(fetchResult)
+	if err1 != nil {
+		return err1
+	}
+
+	// We should be iterating over the rows so the next row number should be in the
+	// next result page
+	if !r.RowScanner.Contains(r.nextRowNumber) {
+		return dbsqlerr_int.NewDriverError(r.ctx, errInvalidRowNumberState, nil)
+	}
 
 	return nil
-}
-
-// getPageFetchDirection returns the cli_service.TFetchOrientation
-// necessary to fetch a result page containing the next row number.
-// Note: if the next row number is in the current page TFetchOrientation_FETCH_NEXT
-// is returned. Use rows.nextRowInPage to determine if a fetch is necessary
-func (r *rows) getPageFetchDirection() cli_service.TFetchOrientation {
-	if r == nil {
-		return cli_service.TFetchOrientation_FETCH_NEXT
-	}
-
-	if r.nextRowNumber < r.pageStartingRowNum {
-		return cli_service.TFetchOrientation_FETCH_PRIOR
-	}
-
-	return cli_service.TFetchOrientation_FETCH_NEXT
 }
 
 // makeRowScanner creates the embedded RowScanner instance based on the format
@@ -549,6 +495,7 @@ func (r *rows) makeRowScanner(fetchResults *cli_service.TFetchResultsResp) dbsql
 	var rs rowscanner.RowScanner
 	var err dbsqlerr.DBError
 	if fetchResults.Results != nil {
+
 		if fetchResults.Results.Columns != nil {
 			rs, err = columnbased.NewColumnRowScanner(schema, fetchResults.Results, r.config, r.logger(), r.ctx)
 		} else if fetchResults.Results.ArrowBatches != nil {
@@ -560,18 +507,16 @@ func (r *rows) makeRowScanner(fetchResults *cli_service.TFetchResultsResp) dbsql
 			err = dbsqlerr_int.NewDriverError(r.ctx, errRowsUnknowRowType, nil)
 		}
 
-		r.pageStartingRowNum = fetchResults.Results.StartRowOffset
 	} else {
 		r.logger().Error().Msg(errRowsUnknowRowType)
 		err = dbsqlerr_int.NewDriverError(r.ctx, errRowsUnknowRowType, nil)
 	}
 
-	r.RowScanner = rs
-	if fetchResults.HasMoreRows != nil {
-		r.hasMoreRows = *fetchResults.HasMoreRows
-	} else {
-		r.hasMoreRows = false
+	if r.RowScanner != nil {
+		r.RowScanner.Close()
 	}
+
+	r.RowScanner = rs
 
 	return err
 }
@@ -585,4 +530,17 @@ func (r *rows) logger() *dbsqllog.DBSQLLogger {
 		}
 	}
 	return r.logger_
+}
+
+func (r *rows) GetArrowBatches(ctx context.Context) (dbsqlrows.ArrowBatchIterator, error) {
+	// update context with correlationId and connectionId which will be used in logging and errors
+	ctx = driverctx.NewContextWithCorrelationId(driverctx.NewContextWithConnId(ctx, r.connId), r.correlationId)
+
+	// If a row scanner exists we use it to create the iterator, that way the iterator includes
+	// data returned as direct results
+	if r.RowScanner != nil {
+		return r.RowScanner.GetArrowBatches(ctx, *r.config, r.ResultPageIterator)
+	}
+
+	return arrowbased.NewArrowRecordIterator(ctx, r.ResultPageIterator, nil, nil, *r.config), nil
 }

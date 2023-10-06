@@ -31,6 +31,7 @@ func TestWorkflowExample(t *testing.T) {
 	)
 	state := &callState{}
 	// load basic responses
+	loadTestData(t, "GetResultSetMetadataNotStaging.json", &state.getResultSetMetadataResp)
 	loadTestData(t, "OpenSessionSuccess.json", &state.openSessionResp)
 	loadTestData(t, "CloseSessionSuccess.json", &state.closeSessionResp)
 	loadTestData(t, "CloseOperationSuccess.json", &state.closeOperationResp)
@@ -259,6 +260,7 @@ func TestContextTimeoutExample(t *testing.T) {
 	_ = logger.SetLogLevel("debug")
 	state := &callState{}
 	// load basic responses
+	loadTestData(t, "GetResultSetMetadataNotStaging.json", &state.getResultSetMetadataResp)
 	loadTestData(t, "OpenSessionSuccess.json", &state.openSessionResp)
 	loadTestData(t, "CloseSessionSuccess.json", &state.closeSessionResp)
 	loadTestData(t, "CloseOperationSuccess.json", &state.closeOperationResp)
@@ -308,6 +310,7 @@ func TestRetries(t *testing.T) {
 		_ = logger.SetLogLevel("debug")
 		state := &callState{}
 		// load basic responses
+		loadTestData(t, "GetResultSetMetadataNotStaging.json", &state.getResultSetMetadataResp)
 		loadTestData(t, "OpenSessionSuccess.json", &state.openSessionResp)
 		loadTestData(t, "CloseSessionSuccess.json", &state.closeSessionResp)
 		loadTestData(t, "CloseOperationSuccess.json", &state.closeOperationResp)
@@ -333,6 +336,7 @@ func TestRetries(t *testing.T) {
 		_ = logger.SetLogLevel("debug")
 		state := &callState{}
 		// load basic responses
+		loadTestData(t, "GetResultSetMetadataNotStaging.json", &state.getResultSetMetadataResp)
 		loadTestData(t, "OpenSessionSuccess.json", &state.openSessionResp)
 		loadTestData(t, "CloseSessionSuccess.json", &state.closeSessionResp)
 		loadTestData(t, "CloseOperationSuccess.json", &state.closeOperationResp)
@@ -358,6 +362,7 @@ func TestRetries(t *testing.T) {
 		_ = logger.SetLogLevel("debug")
 		state := &callState{}
 		// load basic responses
+		loadTestData(t, "GetResultSetMetadataNotStaging.json", &state.getResultSetMetadataResp)
 		loadTestData(t, "OpenSessionSuccess.json", &state.openSessionResp)
 		loadTestData(t, "CloseSessionSuccess.json", &state.closeSessionResp)
 		loadTestData(t, "CloseOperationSuccess.json", &state.closeOperationResp)
@@ -392,6 +397,7 @@ func TestRetries(t *testing.T) {
 		_ = logger.SetLogLevel("debug")
 		state := &callState{}
 		// load basic responses
+		loadTestData(t, "GetResultSetMetadataNotStaging.json", &state.getResultSetMetadataResp)
 		loadTestData(t, "OpenSessionSuccess.json", &state.openSessionResp)
 		loadTestData(t, "CloseSessionSuccess.json", &state.closeSessionResp)
 		loadTestData(t, "CloseOperationSuccess.json", &state.closeOperationResp)
@@ -426,6 +432,7 @@ func TestRetries(t *testing.T) {
 		_ = logger.SetLogLevel("debug")
 		state := &callState{}
 		// load basic responses
+		loadTestData(t, "GetResultSetMetadataNotStaging.json", &state.getResultSetMetadataResp)
 		loadTestData(t, "OpenSessionSuccess.json", &state.openSessionResp)
 		loadTestData(t, "CloseSessionSuccess.json", &state.closeSessionResp)
 		loadTestData(t, "CloseOperationSuccess.json", &state.closeOperationResp)

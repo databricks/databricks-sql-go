@@ -1,0 +1,122 @@
+package oauth
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+
+	"github.com/coreos/go-oidc/v3/oidc"
+	"golang.org/x/oauth2"
+)
+
+const (
+	azureTenantId = "4a67d088-db5c-48f1-9ff2-0aace800ae68"
+)
+
+func GetEndpoint(ctx context.Context, hostName string) (oauth2.Endpoint, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	cloud := InferCloudFromHost(hostName)
+
+	if cloud == Unknown {
+		return oauth2.Endpoint{}, errors.New("unsupported cloud type")
+	}
+
+	if cloud == Azure {
+		authURL := fmt.Sprintf("https://%s/oidc/oauth2/v2.0/authorize", hostName)
+		tokenURL := fmt.Sprintf("https://%s/oidc/oauth2/v2.0/token", hostName)
+		return oauth2.Endpoint{AuthURL: authURL, TokenURL: tokenURL}, nil
+	}
+
+	issuerURL := fmt.Sprintf("https://%s/oidc", hostName)
+	ctx = oidc.InsecureIssuerURLContext(ctx, issuerURL)
+	provider, err := oidc.NewProvider(ctx, issuerURL)
+	if err != nil {
+		return oauth2.Endpoint{}, err
+	}
+
+	endpoint := provider.Endpoint()
+
+	return endpoint, err
+}
+
+func GetScopes(hostName string, scopes []string) []string {
+	for _, s := range []string{oidc.ScopeOfflineAccess} {
+		if !hasScope(scopes, s) {
+			scopes = append(scopes, s)
+		}
+	}
+
+	cloudType := InferCloudFromHost(hostName)
+	if cloudType == Azure {
+		userImpersonationScope := fmt.Sprintf("%s/user_impersonation", azureTenantId)
+		if !hasScope(scopes, userImpersonationScope) {
+			scopes = append(scopes, userImpersonationScope)
+		}
+	} else {
+		if !hasScope(scopes, "sql") {
+			scopes = append(scopes, "sql")
+		}
+	}
+
+	return scopes
+}
+
+func hasScope(scopes []string, scope string) bool {
+	for _, s := range scopes {
+		if s == scope {
+			return true
+		}
+	}
+	return false
+}
+
+var databricksAWSDomains []string = []string{
+	".cloud.databricks.com",
+	".dev.databricks.com",
+}
+
+var databricksAzureDomains []string = []string{
+	".azuredatabricks.net",
+	".databricks.azure.cn",
+	".databricks.azure.us",
+}
+
+type CloudType int
+
+const (
+	AWS = iota
+	Azure
+	Unknown
+)
+
+func (cl CloudType) String() string {
+	switch cl {
+	case AWS:
+		return "AWS"
+	case Azure:
+		return "Azure"
+	}
+
+	return "Unknown"
+}
+
+func InferCloudFromHost(hostname string) CloudType {
+
+	for _, d := range databricksAzureDomains {
+		if strings.Contains(hostname, d) {
+			return Azure
+		}
+	}
+
+	for _, d := range databricksAWSDomains {
+		if strings.Contains(hostname, d) {
+			return AWS
+		}
+	}
+
+	return Unknown
+}

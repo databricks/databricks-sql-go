@@ -12,9 +12,9 @@ const (
 	// Driver errors
 	ErrNotImplemented           = "not implemented"
 	ErrTransactionsNotSupported = "transactions are not supported"
-	ErrParametersNotSupported   = "query parameters are not supported"
 	ErrReadQueryStatus          = "could not read query status"
 	ErrSentinelTimeout          = "sentinel timed out waiting for operation to complete"
+	ErrParametersNotSupported   = "query parameters are not supported by this server"
 
 	// Request error messages (connection, authentication, network error)
 	ErrCloseConnection = "failed to close connection"
@@ -22,12 +22,12 @@ const (
 	ErrInvalidURL      = "invalid URL"
 
 	ErrNoAuthenticationMethod = "no authentication method set"
+	ErrNoDefaultAuthenticator = "unable to create default authenticator"
 	ErrInvalidDSNFormat       = "invalid DSN: invalid format"
 	ErrInvalidDSNPort         = "invalid DSN: invalid DSN port"
 	ErrInvalidDSNPATIsEmpty   = "invalid DSN: empty token"
 	ErrBasicAuthNotSupported  = "invalid DSN: basic auth not enabled"
-	ErrInvalidDSNMaxRows      = "invalid DSN: maxRows param is not an integer"
-	ErrInvalidDSNTimeout      = "invalid DSN: timeout param is not an integer"
+	ErrInvalidDSNM2m          = "invalid DSN: clientId and clientSecret params required"
 
 	// Execution error messages (query failure)
 	ErrQueryExecution = "failed to execute query"
