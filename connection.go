@@ -333,7 +333,7 @@ func (c *conn) executeStatement(ctx context.Context, query string, args []driver
 			})
 
 			if err1 != nil {
-				log.Err(err).Msgf("databricks: cancel failed")
+				log.Err(err1).Msgf("databricks: cancel failed")
 			} else {
 				log.Debug().Msgf("databricks: cancel success")
 			}
