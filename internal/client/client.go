@@ -86,6 +86,7 @@ func (tsc *ThriftServiceClient) OpenSession(ctx context.Context, req *cli_servic
 
 	resp, err := tsc.TCLIServiceClient.OpenSession(ctx, req)
 	log, ctx = LoggerAndContext(ctx, resp)
+	logDisplayMessage(resp, log)
 	defer log.Duration(msg, start)
 	if err != nil {
 		err = handleClientMethodError(ctx, err)
@@ -106,6 +107,7 @@ func (tsc *ThriftServiceClient) CloseSession(ctx context.Context, req *cli_servi
 	defer log.Duration(logger.Track("CloseSession"))
 
 	resp, err := tsc.TCLIServiceClient.CloseSession(ctx, req)
+	logDisplayMessage(resp, log)
 	if err != nil {
 		err = handleClientMethodError(ctx, err)
 		return resp, err
@@ -125,6 +127,7 @@ func (tsc *ThriftServiceClient) FetchResults(ctx context.Context, req *cli_servi
 	defer log.Duration(logger.Track("FetchResults"))
 
 	resp, err := tsc.TCLIServiceClient.FetchResults(ctx, req)
+	logDisplayMessage(resp, log)
 	if err != nil {
 		err = handleClientMethodError(ctx, err)
 		return resp, err
@@ -144,6 +147,7 @@ func (tsc *ThriftServiceClient) GetResultSetMetadata(ctx context.Context, req *c
 	defer log.Duration(logger.Track("GetResultSetMetadata"))
 
 	resp, err := tsc.TCLIServiceClient.GetResultSetMetadata(ctx, req)
+	logDisplayMessage(resp, log)
 	if err != nil {
 		err = handleClientMethodError(ctx, err)
 		return resp, err
@@ -165,7 +169,9 @@ func (tsc *ThriftServiceClient) ExecuteStatement(ctx context.Context, req *cli_s
 	// We use context.Background to fix a problem where on context done the query would not be cancelled.
 	resp, err := tsc.TCLIServiceClient.ExecuteStatement(context.Background(), req)
 	log, ctx = LoggerAndContext(ctx, resp)
+	logDisplayMessage(resp, log)
 	logExecStatementState(resp, log)
+
 	defer log.Duration(msg, start)
 	if err != nil {
 		err = handleClientMethodError(ctx, err)
@@ -184,6 +190,7 @@ func (tsc *ThriftServiceClient) GetOperationStatus(ctx context.Context, req *cli
 	defer log.Duration(logger.Track("GetOperationStatus"))
 
 	resp, err := tsc.TCLIServiceClient.GetOperationStatus(ctx, req)
+	logDisplayMessage(resp, log)
 	if err != nil {
 		err = handleClientMethodError(driverctx.NewContextWithQueryId(ctx, SprintGuid(req.OperationHandle.OperationId.GUID)), err)
 		return resp, err
@@ -203,6 +210,7 @@ func (tsc *ThriftServiceClient) CloseOperation(ctx context.Context, req *cli_ser
 	defer log.Duration(logger.Track("CloseOperation"))
 
 	resp, err := tsc.TCLIServiceClient.CloseOperation(ctx, req)
+	logDisplayMessage(resp, log)
 	if err != nil {
 		err = handleClientMethodError(ctx, err)
 		return resp, err
@@ -222,6 +230,7 @@ func (tsc *ThriftServiceClient) CancelOperation(ctx context.Context, req *cli_se
 	defer log.Duration(logger.Track("CancelOperation"))
 
 	resp, err := tsc.TCLIServiceClient.CancelOperation(ctx, req)
+	logDisplayMessage(resp, log)
 	if err != nil {
 		err = handleClientMethodError(ctx, err)
 		return resp, err
@@ -439,10 +448,34 @@ func logExecStatementState(resp *cli_service.TExecuteStatementResp, log *logger.
 			log.Debug().Msgf("execute statement state: %s", state)
 			status := resp.DirectResults.GetOperationStatus().GetStatus().StatusCode
 			log.Debug().Msgf("execute statement status: %s", status)
+			logDisplayMessage(resp.DirectResults, log)
 		} else {
 			status := resp.GetStatus().StatusCode
 			log.Debug().Msgf("execute statement status: %s", status)
 		}
+	}
+}
+
+type hasGetStatus interface{ GetStatus() *cli_service.TStatus }
+type hasGetDisplayMessage interface{ GetDisplayMessage() string }
+type hasGetOperationStatus interface {
+	GetOperationStatus() *cli_service.TGetOperationStatusResp
+}
+
+func logDisplayMessage(c any, log *logger.DBSQLLogger) {
+	if c == nil || reflect.ValueOf(c).IsNil() {
+		return
+	}
+
+	if hd, ok := c.(hasGetDisplayMessage); ok {
+		dm := hd.GetDisplayMessage()
+		if dm != "" {
+			log.Debug().Msg(dm)
+		}
+	} else if gs, ok := c.(hasGetStatus); ok {
+		logDisplayMessage(gs.GetStatus(), log)
+	} else if gos, ok := c.(hasGetOperationStatus); ok {
+		logDisplayMessage(gos.GetOperationStatus(), log)
 	}
 }
 
