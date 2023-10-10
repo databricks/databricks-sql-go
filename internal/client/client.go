@@ -165,6 +165,7 @@ func (tsc *ThriftServiceClient) ExecuteStatement(ctx context.Context, req *cli_s
 	// We use context.Background to fix a problem where on context done the query would not be cancelled.
 	resp, err := tsc.TCLIServiceClient.ExecuteStatement(context.Background(), req)
 	log, ctx = LoggerAndContext(ctx, resp)
+	logExecStatementState(resp, log)
 	defer log.Duration(msg, start)
 	if err != nil {
 		err = handleClientMethodError(ctx, err)
@@ -429,6 +430,20 @@ func guidFromHasSessionHandle(c any) (guid string) {
 		}
 	}
 	return
+}
+
+func logExecStatementState(resp *cli_service.TExecuteStatementResp, log *logger.DBSQLLogger) {
+	if resp != nil {
+		if resp.DirectResults != nil {
+			state := resp.DirectResults.GetOperationStatus().GetOperationState()
+			log.Debug().Msgf("execute statement state: %s", state)
+			status := resp.DirectResults.GetOperationStatus().GetStatus().StatusCode
+			log.Debug().Msgf("execute statement status: %s", status)
+		} else {
+			status := resp.GetStatus().StatusCode
+			log.Debug().Msgf("execute statement status: %s", status)
+		}
+	}
 }
 
 var retryableStatusCodes = map[int]any{http.StatusTooManyRequests: struct{}{}, http.StatusServiceUnavailable: struct{}{}}

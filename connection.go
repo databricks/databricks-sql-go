@@ -317,7 +317,7 @@ func (c *conn) executeStatement(ctx context.Context, query string, args []driver
 			return false
 		}
 		hasHandle := resp.OperationHandle != nil
-		isOpen := resp.DirectResults != nil && resp.DirectResults.CloseOperation == nil
+		isOpen := resp.DirectResults == nil || resp.DirectResults.CloseOperation == nil
 		return hasHandle && isOpen
 	}
 
