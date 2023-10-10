@@ -46,13 +46,13 @@ func (f *concurrentFetcher[I, O]) Start() (<-chan O, context.CancelFunc, error) 
 			// increment wait group
 			wg.Add(1)
 
-			f.logger().Debug().Msgf("concurrent fetcher starting worker %d", i)
+			f.logger().Trace().Msgf("concurrent fetcher starting worker %d", i)
 			go func(x int) {
 				// when work function remove one from the wait group
 				defer wg.Done()
 				// do the actual work
 				work(f, x)
-				f.logger().Debug().Msgf("concurrent fetcher worker %d done", x)
+				f.logger().Trace().Msgf("concurrent fetcher worker %d done", x)
 			}(i)
 
 		}
@@ -62,7 +62,7 @@ func (f *concurrentFetcher[I, O]) Start() (<-chan O, context.CancelFunc, error) 
 		// be stuck waiting on the output channel.
 		go func() {
 			wg.Wait()
-			f.logger().Debug().Msg("concurrent fetcher closing output channel")
+			f.logger().Trace().Msg("concurrent fetcher closing output channel")
 			close(f.outChan)
 		}()
 
@@ -70,9 +70,9 @@ func (f *concurrentFetcher[I, O]) Start() (<-chan O, context.CancelFunc, error) 
 		// cancel fetching.
 		var cancelOnce sync.Once = sync.Once{}
 		f.cancelFunc = func() {
-			f.logger().Debug().Msg("concurrent fetcher cancel func")
+			f.logger().Trace().Msg("concurrent fetcher cancel func")
 			cancelOnce.Do(func() {
-				f.logger().Debug().Msg("concurrent fetcher closing cancel channel")
+				f.logger().Trace().Msg("concurrent fetcher closing cancel channel")
 				close(f.cancelChan)
 			})
 		}
@@ -142,19 +142,19 @@ func work[I FetchableItems[O], O any](f *concurrentFetcher[I, O], workerIndex in
 
 		case input, ok := <-f.inputChan:
 			if ok {
-				f.logger().Debug().Msgf("concurrent fetcher worker %d loading item", workerIndex)
+				f.logger().Trace().Msgf("concurrent fetcher worker %d loading item", workerIndex)
 				result, err := input.Fetch(f.ctx)
 				if err != nil {
-					f.logger().Debug().Msgf("concurrent fetcher worker %d received error", workerIndex)
+					f.logger().Trace().Msgf("concurrent fetcher worker %d received error", workerIndex)
 					f.setErr(err)
 					f.cancelFunc()
 					return
 				} else {
-					f.logger().Debug().Msgf("concurrent fetcher worker %d item loaded", workerIndex)
+					f.logger().Trace().Msgf("concurrent fetcher worker %d item loaded", workerIndex)
 					f.outChan <- result
 				}
 			} else {
-				f.logger().Debug().Msgf("concurrent fetcher ending %d", workerIndex)
+				f.logger().Trace().Msgf("concurrent fetcher ending %d", workerIndex)
 				return
 			}
 

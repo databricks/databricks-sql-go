@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/databricks/databricks-sql-go/logger"
+	"github.com/databricks/databricks-sql-go/internal/client"
 	"github.com/pkg/errors"
 )
 
@@ -84,6 +84,8 @@ func (s Sentinel) Watch(ctx context.Context, interval, timeout time.Duration) (W
 		}
 	}
 
+	log, _ := client.LoggerAndContext(ctx, nil)
+
 	// If the watch times out or is cancelled this function
 	// will stop the interval timer and call the cancel function
 	// if necessary.
@@ -93,9 +95,9 @@ func (s Sentinel) Watch(ctx context.Context, interval, timeout time.Duration) (W
 			s.onCancelFnCalled = true
 			_, err := s.OnCancelFn()
 			if err != nil {
-				logger.Err(err).Msg("databricks: cancel failed")
+				log.Err(err).Msg("databricks: cancel failed")
 			} else {
-				logger.Debug().Msgf("databricks: cancel success")
+				log.Debug().Msgf("databricks: cancel success")
 			}
 		}
 	}
@@ -122,11 +124,12 @@ func (s Sentinel) Watch(ctx context.Context, interval, timeout time.Duration) (W
 		case res := <-resCh:
 			return WatchSuccess, res, nil
 		case <-ctx.Done():
+			log.Debug().Msgf("sentinel <-ctx.Done: %s", ctx.Err().Error())
 			timeoutOrCancel()
 			return WatchCanceled, nil, ctx.Err()
 		case <-timeoutTimerCh:
 			msg := fmt.Sprintf("wait timed out after %s", timeout.String())
-			logger.Info().Msg(msg)
+			log.Info().Msg(msg)
 			timeoutOrCancel()
 			err := errors.New(msg)
 			return WatchTimeout, nil, err
