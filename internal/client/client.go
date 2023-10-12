@@ -12,6 +12,7 @@ import (
 	"net/http/httptrace"
 	"net/url"
 	"os"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -79,9 +80,14 @@ var clientMethodRequestErrorMsgs map[clientMethod]string = map[clientMethod]stri
 // OpenSession is a wrapper around the thrift operation OpenSession
 // If RecordResults is true, the results will be marshalled to JSON format and written to OpenSession<index>.json
 func (tsc *ThriftServiceClient) OpenSession(ctx context.Context, req *cli_service.TOpenSessionReq) (*cli_service.TOpenSessionResp, error) {
-	ctx = context.WithValue(ctx, ClientMethod, clientMethodOpenSession)
+	ctx = startClientMethod(ctx, clientMethodOpenSession)
+	var log *logger.DBSQLLogger
 	msg, start := logger.Track("OpenSession")
+
 	resp, err := tsc.TCLIServiceClient.OpenSession(ctx, req)
+	log, ctx = LoggerAndContext(ctx, resp)
+	logDisplayMessage(resp, log)
+	defer log.Duration(msg, start)
 	if err != nil {
 		err = handleClientMethodError(ctx, err)
 		return resp, err
@@ -89,19 +95,19 @@ func (tsc *ThriftServiceClient) OpenSession(ctx context.Context, req *cli_servic
 
 	recordResult(ctx, resp)
 
-	log := logger.WithContext(SprintGuid(resp.SessionHandle.SessionId.GUID), driverctx.CorrelationIdFromContext(ctx), "")
-	defer log.Duration(msg, start)
-
 	return resp, CheckStatus(resp)
 }
 
 // CloseSession is a wrapper around the thrift operation CloseSession
 // If RecordResults is true, the results will be marshalled to JSON format and written to CloseSession<index>.json
 func (tsc *ThriftServiceClient) CloseSession(ctx context.Context, req *cli_service.TCloseSessionReq) (*cli_service.TCloseSessionResp, error) {
-	ctx = context.WithValue(ctx, ClientMethod, clientMethodCloseSession)
-	log := logger.WithContext(driverctx.ConnIdFromContext(ctx), driverctx.CorrelationIdFromContext(ctx), "")
+	ctx = startClientMethod(ctx, clientMethodCloseSession)
+	var log *logger.DBSQLLogger
+	log, ctx = LoggerAndContext(ctx, req)
 	defer log.Duration(logger.Track("CloseSession"))
+
 	resp, err := tsc.TCLIServiceClient.CloseSession(ctx, req)
+	logDisplayMessage(resp, log)
 	if err != nil {
 		err = handleClientMethodError(ctx, err)
 		return resp, err
@@ -115,10 +121,13 @@ func (tsc *ThriftServiceClient) CloseSession(ctx context.Context, req *cli_servi
 // FetchResults is a wrapper around the thrift operation FetchResults
 // If RecordResults is true, the results will be marshalled to JSON format and written to FetchResults<index>.json
 func (tsc *ThriftServiceClient) FetchResults(ctx context.Context, req *cli_service.TFetchResultsReq) (*cli_service.TFetchResultsResp, error) {
-	ctx = context.WithValue(ctx, ClientMethod, clientMethodFetchResults)
-	log := logger.WithContext(driverctx.ConnIdFromContext(ctx), driverctx.CorrelationIdFromContext(ctx), SprintGuid(req.OperationHandle.OperationId.GUID))
+	ctx = startClientMethod(ctx, clientMethodFetchResults)
+	var log *logger.DBSQLLogger
+	log, ctx = LoggerAndContext(ctx, req)
 	defer log.Duration(logger.Track("FetchResults"))
+
 	resp, err := tsc.TCLIServiceClient.FetchResults(ctx, req)
+	logDisplayMessage(resp, log)
 	if err != nil {
 		err = handleClientMethodError(ctx, err)
 		return resp, err
@@ -132,10 +141,13 @@ func (tsc *ThriftServiceClient) FetchResults(ctx context.Context, req *cli_servi
 // GetResultSetMetadata is a wrapper around the thrift operation GetResultSetMetadata
 // If RecordResults is true, the results will be marshalled to JSON format and written to GetResultSetMetadata<index>.json
 func (tsc *ThriftServiceClient) GetResultSetMetadata(ctx context.Context, req *cli_service.TGetResultSetMetadataReq) (*cli_service.TGetResultSetMetadataResp, error) {
-	ctx = context.WithValue(ctx, ClientMethod, clientMethodGetResultSetMetadata)
-	log := logger.WithContext(driverctx.ConnIdFromContext(ctx), driverctx.CorrelationIdFromContext(ctx), SprintGuid(req.OperationHandle.OperationId.GUID))
+	ctx = startClientMethod(ctx, clientMethodGetResultSetMetadata)
+	var log *logger.DBSQLLogger
+	log, ctx = LoggerAndContext(ctx, req)
 	defer log.Duration(logger.Track("GetResultSetMetadata"))
+
 	resp, err := tsc.TCLIServiceClient.GetResultSetMetadata(ctx, req)
+	logDisplayMessage(resp, log)
 	if err != nil {
 		err = handleClientMethodError(ctx, err)
 		return resp, err
@@ -149,32 +161,36 @@ func (tsc *ThriftServiceClient) GetResultSetMetadata(ctx context.Context, req *c
 // ExecuteStatement is a wrapper around the thrift operation ExecuteStatement
 // If RecordResults is true, the results will be marshalled to JSON format and written to ExecuteStatement<index>.json
 func (tsc *ThriftServiceClient) ExecuteStatement(ctx context.Context, req *cli_service.TExecuteStatementReq) (*cli_service.TExecuteStatementResp, error) {
-	ctx = context.WithValue(ctx, ClientMethod, clientMethodExecuteStatement)
-	msg, start := logger.Track("ExecuteStatement")
+	ctx = startClientMethod(ctx, clientMethodExecuteStatement)
+	var log *logger.DBSQLLogger
+	log, ctx = LoggerAndContext(ctx, req)
+	msg, start := log.Track("ExecuteStatement")
 
 	// We use context.Background to fix a problem where on context done the query would not be cancelled.
 	resp, err := tsc.TCLIServiceClient.ExecuteStatement(context.Background(), req)
+	log, ctx = LoggerAndContext(ctx, resp)
+	logDisplayMessage(resp, log)
+	logExecStatementState(resp, log)
+
+	defer log.Duration(msg, start)
 	if err != nil {
 		err = handleClientMethodError(ctx, err)
 		return resp, err
 	}
 
-	recordResult(ctx, resp)
-
-	if resp != nil && resp.OperationHandle != nil {
-		log := logger.WithContext(driverctx.ConnIdFromContext(ctx), driverctx.CorrelationIdFromContext(ctx), SprintGuid(resp.OperationHandle.OperationId.GUID))
-		defer log.Duration(msg, start)
-	}
 	return resp, CheckStatus(resp)
 }
 
 // GetOperationStatus is a wrapper around the thrift operation GetOperationStatus
 // If RecordResults is true, the results will be marshalled to JSON format and written to GetOperationStatus<index>.json
 func (tsc *ThriftServiceClient) GetOperationStatus(ctx context.Context, req *cli_service.TGetOperationStatusReq) (*cli_service.TGetOperationStatusResp, error) {
-	ctx = context.WithValue(ctx, ClientMethod, clientMethodGetOperationStatus)
-	log := logger.WithContext(driverctx.ConnIdFromContext(ctx), driverctx.CorrelationIdFromContext(ctx), SprintGuid(req.OperationHandle.OperationId.GUID))
+	ctx = startClientMethod(ctx, clientMethodGetOperationStatus)
+	var log *logger.DBSQLLogger
+	log, ctx = LoggerAndContext(ctx, req)
 	defer log.Duration(logger.Track("GetOperationStatus"))
+
 	resp, err := tsc.TCLIServiceClient.GetOperationStatus(ctx, req)
+	logDisplayMessage(resp, log)
 	if err != nil {
 		err = handleClientMethodError(driverctx.NewContextWithQueryId(ctx, SprintGuid(req.OperationHandle.OperationId.GUID)), err)
 		return resp, err
@@ -188,10 +204,13 @@ func (tsc *ThriftServiceClient) GetOperationStatus(ctx context.Context, req *cli
 // CloseOperation is a wrapper around the thrift operation CloseOperation
 // If RecordResults is true, the results will be marshalled to JSON format and written to CloseOperation<index>.json
 func (tsc *ThriftServiceClient) CloseOperation(ctx context.Context, req *cli_service.TCloseOperationReq) (*cli_service.TCloseOperationResp, error) {
-	ctx = context.WithValue(ctx, ClientMethod, clientMethodCloseOperation)
-	log := logger.WithContext(driverctx.ConnIdFromContext(ctx), driverctx.CorrelationIdFromContext(ctx), SprintGuid(req.OperationHandle.OperationId.GUID))
+	ctx = startClientMethod(ctx, clientMethodCloseOperation)
+	var log *logger.DBSQLLogger
+	log, ctx = LoggerAndContext(ctx, req)
 	defer log.Duration(logger.Track("CloseOperation"))
+
 	resp, err := tsc.TCLIServiceClient.CloseOperation(ctx, req)
+	logDisplayMessage(resp, log)
 	if err != nil {
 		err = handleClientMethodError(ctx, err)
 		return resp, err
@@ -205,10 +224,13 @@ func (tsc *ThriftServiceClient) CloseOperation(ctx context.Context, req *cli_ser
 // CancelOperation is a wrapper around the thrift operation CancelOperation
 // If RecordResults is true, the results will be marshalled to JSON format and written to CancelOperation<index>.json
 func (tsc *ThriftServiceClient) CancelOperation(ctx context.Context, req *cli_service.TCancelOperationReq) (*cli_service.TCancelOperationResp, error) {
-	ctx = context.WithValue(ctx, ClientMethod, clientMethodCancelOperation)
-	log := logger.WithContext(driverctx.ConnIdFromContext(ctx), driverctx.CorrelationIdFromContext(ctx), SprintGuid(req.OperationHandle.OperationId.GUID))
+	ctx = startClientMethod(ctx, clientMethodCancelOperation)
+	var log *logger.DBSQLLogger
+	log, ctx = LoggerAndContext(ctx, req)
 	defer log.Duration(logger.Track("CancelOperation"))
+
 	resp, err := tsc.TCLIServiceClient.CancelOperation(ctx, req)
+	logDisplayMessage(resp, log)
 	if err != nil {
 		err = handleClientMethodError(ctx, err)
 		return resp, err
@@ -286,6 +308,13 @@ func InitThriftClient(cfg *config.Config, httpclient *http.Client) (*ThriftServi
 	return tsClient, nil
 }
 
+func startClientMethod(ctx context.Context, method clientMethod) context.Context {
+	ctx = context.WithValue(ctx, ClientMethod, method)
+	log, _ := LoggerAndContext(ctx, nil)
+	log.Debug().Msgf("client.%s", method.String())
+	return ctx
+}
+
 // handler function for errors returned by the thrift client methods
 func handleClientMethodError(ctx context.Context, err error) dbsqlerr.DBRequestError {
 	if err == nil {
@@ -303,7 +332,13 @@ func handleClientMethodError(ctx context.Context, err error) dbsqlerr.DBRequestE
 	method := getClientMethod(ctx)
 	msg := clientMethodRequestErrorMsgs[method]
 
-	return dbsqlerrint.NewRequestError(ctx, msg, err)
+	dbErr := dbsqlerrint.NewRequestError(ctx, msg, err)
+
+	log, _ := LoggerAndContext(ctx, nil)
+
+	log.Err(err).Msg("")
+
+	return dbErr
 }
 
 // Extract a clientMethod value from the given Context.
@@ -353,6 +388,95 @@ func SprintGuid(bts []byte) string {
 	}
 	logger.Warn().Msgf("GUID not valid: %x", bts)
 	return fmt.Sprintf("%x", bts)
+}
+
+// Create an updated context and a logger that includes query and connection id
+func LoggerAndContext(ctx context.Context, c any) (*logger.DBSQLLogger, context.Context) {
+	connId := driverctx.ConnIdFromContext(ctx)
+	corrId := driverctx.CorrelationIdFromContext(ctx)
+	queryId := driverctx.QueryIdFromContext(ctx)
+	if connId == "" {
+		connId = guidFromHasSessionHandle(c)
+		ctx = driverctx.NewContextWithConnId(ctx, connId)
+	}
+	if queryId == "" {
+		queryId = guidFromHasOpHandle(c)
+		ctx = driverctx.NewContextWithQueryId(ctx, queryId)
+	}
+	log := logger.WithContext(connId, corrId, queryId)
+
+	return log, ctx
+}
+
+type hasOpHandle interface {
+	GetOperationHandle() *cli_service.TOperationHandle
+}
+type hasSessionHandle interface {
+	GetSessionHandle() *cli_service.TSessionHandle
+}
+
+func guidFromHasOpHandle(c any) (guid string) {
+	if c == nil || reflect.ValueOf(c).IsNil() {
+		return
+	}
+	if ho, ok := c.(hasOpHandle); ok {
+		opHandle := ho.GetOperationHandle()
+		if opHandle != nil && opHandle.OperationId != nil && opHandle.OperationId.GUID != nil {
+			guid = SprintGuid(opHandle.OperationId.GUID)
+		}
+	}
+	return
+}
+
+func guidFromHasSessionHandle(c any) (guid string) {
+	if c == nil || reflect.ValueOf(c).IsNil() {
+		return
+	}
+	if ho, ok := c.(hasSessionHandle); ok {
+		sessionHandle := ho.GetSessionHandle()
+		if sessionHandle != nil && sessionHandle.SessionId != nil && sessionHandle.SessionId.GUID != nil {
+			guid = SprintGuid(sessionHandle.SessionId.GUID)
+		}
+	}
+	return
+}
+
+func logExecStatementState(resp *cli_service.TExecuteStatementResp, log *logger.DBSQLLogger) {
+	if resp != nil {
+		if resp.DirectResults != nil {
+			state := resp.DirectResults.GetOperationStatus().GetOperationState()
+			log.Debug().Msgf("execute statement state: %s", state)
+			status := resp.DirectResults.GetOperationStatus().GetStatus().StatusCode
+			log.Debug().Msgf("execute statement status: %s", status)
+			logDisplayMessage(resp.DirectResults, log)
+		} else {
+			status := resp.GetStatus().StatusCode
+			log.Debug().Msgf("execute statement status: %s", status)
+		}
+	}
+}
+
+type hasGetStatus interface{ GetStatus() *cli_service.TStatus }
+type hasGetDisplayMessage interface{ GetDisplayMessage() string }
+type hasGetOperationStatus interface {
+	GetOperationStatus() *cli_service.TGetOperationStatusResp
+}
+
+func logDisplayMessage(c any, log *logger.DBSQLLogger) {
+	if c == nil || reflect.ValueOf(c).IsNil() {
+		return
+	}
+
+	if hd, ok := c.(hasGetDisplayMessage); ok {
+		dm := hd.GetDisplayMessage()
+		if dm != "" {
+			log.Debug().Msg(dm)
+		}
+	} else if gs, ok := c.(hasGetStatus); ok {
+		logDisplayMessage(gs.GetStatus(), log)
+	} else if gos, ok := c.(hasGetOperationStatus); ok {
+		logDisplayMessage(gos.GetOperationStatus(), log)
+	}
 }
 
 var retryableStatusCodes = map[int]any{http.StatusTooManyRequests: struct{}{}, http.StatusServiceUnavailable: struct{}{}}
