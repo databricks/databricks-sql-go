@@ -390,7 +390,7 @@ func SprintGuid(bts []byte) string {
 	return fmt.Sprintf("%x", bts)
 }
 
-// Create an updated context and a logger that include query and connection id
+// Create an updated context and a logger that includes query and connection id
 func LoggerAndContext(ctx context.Context, c any) (*logger.DBSQLLogger, context.Context) {
 	connId := driverctx.ConnIdFromContext(ctx)
 	corrId := driverctx.CorrelationIdFromContext(ctx)
