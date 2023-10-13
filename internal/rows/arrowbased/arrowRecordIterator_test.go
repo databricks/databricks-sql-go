@@ -37,6 +37,7 @@ func TestArrowRecordIterator(t *testing.T) {
 			5000,
 			nil,
 			false,
+			true,
 			client,
 			"connectionId",
 			"correlationId",
@@ -55,7 +56,7 @@ func TestArrowRecordIterator(t *testing.T) {
 		assert.Nil(t, err)
 
 		cfg := *config.WithDefaults()
-		rs := NewArrowRecordIterator(context.Background(), rpi, bi, executeStatementResp.DirectResults.ResultSetMetadata.ArrowSchema, cfg)
+		rs := NewArrowRecordIterator(context.Background(), rpi, bi, executeStatementResp.DirectResults.ResultSetMetadata.ArrowSchema, cfg, nil, nil)
 		defer rs.Close()
 
 		hasNext := rs.HasNext()
@@ -127,13 +128,14 @@ func TestArrowRecordIterator(t *testing.T) {
 			5000,
 			nil,
 			false,
+			true,
 			client,
 			"connectionId",
 			"correlationId",
 			logger)
 
 		cfg := *config.WithDefaults()
-		rs := NewArrowRecordIterator(context.Background(), rpi, nil, nil, cfg)
+		rs := NewArrowRecordIterator(context.Background(), rpi, nil, nil, cfg, nil, nil)
 		defer rs.Close()
 
 		hasNext := rs.HasNext()

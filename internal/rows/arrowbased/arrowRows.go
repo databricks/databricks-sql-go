@@ -75,13 +75,21 @@ type arrowRowScanner struct {
 	ctx context.Context
 
 	batchIterator BatchIterator
+
+	pinger driver.Pinger
 }
 
 // Make sure arrowRowScanner fulfills the RowScanner interface
 var _ rowscanner.RowScanner = (*arrowRowScanner)(nil)
 
 // NewArrowRowScanner returns an instance of RowScanner which handles arrow format results
-func NewArrowRowScanner(resultSetMetadata *cli_service.TGetResultSetMetadataResp, rowSet *cli_service.TRowSet, cfg *config.Config, logger *dbsqllog.DBSQLLogger, ctx context.Context) (rowscanner.RowScanner, dbsqlerr.DBError) {
+func NewArrowRowScanner(
+	resultSetMetadata *cli_service.TGetResultSetMetadataResp,
+	rowSet *cli_service.TRowSet,
+	cfg *config.Config,
+	logger *dbsqllog.DBSQLLogger,
+	ctx context.Context,
+	pinger driver.Pinger) (rowscanner.RowScanner, dbsqlerr.DBError) {
 
 	// we take a passed in logger, rather than just using the global from dbsqllog, so that the containing rows
 	// instance can pass in a logger with context such as correlation ID and operation ID
@@ -115,7 +123,7 @@ func NewArrowRowScanner(resultSetMetadata *cli_service.TGetResultSetMetadataResp
 	var bl BatchLoader
 	var err2 dbsqlerr.DBError
 	if len(rowSet.ResultLinks) > 0 {
-		bl, err2 = NewCloudBatchLoader(context.Background(), rowSet.ResultLinks, rowSet.StartRowOffset, cfg)
+		bl, err2 = NewCloudBatchLoader(context.Background(), rowSet.ResultLinks, rowSet.StartRowOffset, cfg, pinger, logger)
 	} else {
 		bl, err2 = NewLocalBatchLoader(context.Background(), rowSet.ArrowBatches, rowSet.StartRowOffset, schemaBytes, cfg)
 	}
@@ -146,6 +154,7 @@ func NewArrowRowScanner(resultSetMetadata *cli_service.TGetResultSetMetadataResp
 		DBSQLLogger:         logger,
 		location:            location,
 		batchIterator:       bi,
+		pinger:              pinger,
 	}
 
 	return rs, nil
@@ -326,7 +335,7 @@ func (ars *arrowRowScanner) validateRowNumber(rowNumber int64) dbsqlerr.DBError 
 }
 
 func (ars *arrowRowScanner) GetArrowBatches(ctx context.Context, cfg config.Config, rpi rowscanner.ResultPageIterator) (dbsqlrows.ArrowBatchIterator, error) {
-	ri := NewArrowRecordIterator(ctx, rpi, ars.batchIterator, ars.arrowSchemaBytes, cfg)
+	ri := NewArrowRecordIterator(ctx, rpi, ars.batchIterator, ars.arrowSchemaBytes, cfg, ars.pinger, ars.DBSQLLogger)
 	return ri, nil
 }
 

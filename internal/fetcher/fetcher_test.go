@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pkg/errors"
+	"github.com/stretchr/testify/assert"
 )
 
 // Create a mock struct for FetchableItems
@@ -32,6 +32,13 @@ func (m *mockFetchableItem) Fetch(ctx context.Context) ([]*mockOutput, error) {
 
 var _ FetchableItems[[]*mockOutput] = (*mockFetchableItem)(nil)
 
+type testOverWatch struct {
+	started, stopped bool
+}
+
+func (ow *testOverWatch) Start() { ow.started = true }
+func (ow *testOverWatch) Stop()  { ow.stopped = true }
+
 func TestConcurrentFetcher(t *testing.T) {
 	t.Run("Comprehensively tests the concurrent fetcher", func(t *testing.T) {
 		ctx := context.Background()
@@ -43,8 +50,10 @@ func TestConcurrentFetcher(t *testing.T) {
 		}
 		close(inputChan)
 
+		ow := &testOverWatch{}
+
 		// Create a fetcher
-		fetcher, err := NewConcurrentFetcher[*mockFetchableItem](ctx, 3, 3, inputChan)
+		fetcher, err := NewConcurrentFetcher[*mockFetchableItem](ctx, 3, 3, inputChan, ow)
 		if err != nil {
 			t.Fatalf("Error creating fetcher: %v", err)
 		}
@@ -59,6 +68,9 @@ func TestConcurrentFetcher(t *testing.T) {
 		for result := range outChan {
 			results = append(results, result...)
 		}
+
+		assert.True(t, ow.started)
+		assert.True(t, ow.stopped)
 
 		// Check if the fetcher returned the expected results
 		expectedLen := 50
@@ -83,19 +95,20 @@ func TestConcurrentFetcher(t *testing.T) {
 
 	t.Run("Cancel the concurrent fetcher", func(t *testing.T) {
 		// Create a context with a timeout
-		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
 		// Create an input channel
-		inputChan := make(chan FetchableItems[[]*mockOutput], 3)
-		for i := 0; i < 3; i++ {
-			item := mockFetchableItem{item: i, wait: 1 * time.Second}
+		inputChan := make(chan FetchableItems[[]*mockOutput], 5)
+		for i := 0; i < 5; i++ {
+			item := mockFetchableItem{item: i, wait: 2 * time.Second}
 			inputChan <- &item
 		}
 		close(inputChan)
+		ow := &testOverWatch{}
 
 		// Create a new fetcher
-		fetcher, err := NewConcurrentFetcher[*mockFetchableItem](ctx, 2, 2, inputChan)
+		fetcher, err := NewConcurrentFetcher[*mockFetchableItem](ctx, 2, 2, inputChan, ow)
 		if err != nil {
 			t.Fatalf("Error creating fetcher: %v", err)
 		}
@@ -111,13 +124,106 @@ func TestConcurrentFetcher(t *testing.T) {
 			cancelFunc()
 		}()
 
+		var count int
 		for range outChan {
 			// Just drain the channel
+			count += 1
 		}
 
-		// Check if an error occurred
-		if err := fetcher.Err(); err != nil && !errors.Is(err, context.DeadlineExceeded) {
-			t.Fatalf("unexpected error: %v", err)
+		assert.Less(t, count, 5)
+
+		err = fetcher.Err()
+		assert.EqualError(t, err, "fetcher canceled")
+
+		assert.True(t, ow.started)
+		assert.True(t, ow.stopped)
+	})
+
+	t.Run("timeout the concurrent fetcher", func(t *testing.T) {
+		// Create a context with a timeout
+		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+		defer cancel()
+
+		// Create an input channel
+		inputChan := make(chan FetchableItems[[]*mockOutput], 10)
+		for i := 0; i < 10; i++ {
+			item := mockFetchableItem{item: i, wait: 1 * time.Second}
+			inputChan <- &item
 		}
+		close(inputChan)
+
+		ow := &testOverWatch{}
+
+		// Create a new fetcher
+		fetcher, err := NewConcurrentFetcher[*mockFetchableItem](ctx, 2, 2, inputChan, ow)
+		if err != nil {
+			t.Fatalf("Error creating fetcher: %v", err)
+		}
+
+		// Start the fetcher
+		outChan, _, err := fetcher.Start()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		var count int
+		for range outChan {
+			// Just drain the channel
+			count += 1
+		}
+
+		assert.Less(t, count, 10)
+
+		err = fetcher.Err()
+		assert.EqualError(t, err, "context deadline exceeded")
+
+		assert.True(t, ow.started)
+		assert.True(t, ow.stopped)
+	})
+
+	t.Run("context cancel the concurrent fetcher", func(t *testing.T) {
+		// Create a context with a timeout
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+
+		// Create an input channel
+		inputChan := make(chan FetchableItems[[]*mockOutput], 5)
+		for i := 0; i < 5; i++ {
+			item := mockFetchableItem{item: i, wait: 2 * time.Second}
+			inputChan <- &item
+		}
+		close(inputChan)
+
+		ow := &testOverWatch{}
+
+		// Create a new fetcher
+		fetcher, err := NewConcurrentFetcher[*mockFetchableItem](ctx, 2, 2, inputChan, ow)
+		if err != nil {
+			t.Fatalf("Error creating fetcher: %v", err)
+		}
+
+		// Start the fetcher
+		outChan, _, err := fetcher.Start()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// Ensure that the fetcher is cancelled successfully
+		go func() {
+			cancel()
+		}()
+
+		var count int
+		for range outChan {
+			// Just drain the channel
+			count += 1
+		}
+
+		assert.Less(t, count, 5)
+
+		err = fetcher.Err()
+		assert.EqualError(t, err, "context canceled")
+
+		assert.True(t, ow.started)
+		assert.True(t, ow.stopped)
 	})
 }

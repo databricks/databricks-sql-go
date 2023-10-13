@@ -32,6 +32,7 @@ type Config struct {
 	PollInterval              time.Duration
 	ClientTimeout             time.Duration // max time the http request can last
 	PingTimeout               time.Duration // max time allowed for ping
+	HeartbeatInterval         time.Duration
 	CanUseMultipleCatalogs    bool
 	DriverName                string
 	DriverVersion             string
@@ -70,6 +71,7 @@ func (c *Config) DeepCopy() *Config {
 		PollInterval:              c.PollInterval,
 		ClientTimeout:             c.ClientTimeout,
 		PingTimeout:               c.PingTimeout,
+		HeartbeatInterval:         c.HeartbeatInterval,
 		CanUseMultipleCatalogs:    c.CanUseMultipleCatalogs,
 		DriverName:                c.DriverName,
 		DriverVersion:             c.DriverVersion,
@@ -189,6 +191,7 @@ func WithDefaults() *Config {
 		PollInterval:              1 * time.Second,
 		ClientTimeout:             900 * time.Second,
 		PingTimeout:               60 * time.Second,
+		HeartbeatInterval:         30 * time.Second,
 		CanUseMultipleCatalogs:    true,
 		DriverName:                "godatabrickssqlconnector", // important. Do not change
 		ThriftProtocol:            "binary",
