@@ -104,3 +104,17 @@ func NewContextWithConnIdCallback(ctx context.Context, callback IdCallbackFunc) 
 func NewContextWithStagingInfo(ctx context.Context, stagingAllowedLocalPath []string) context.Context {
 	return context.WithValue(ctx, StagingAllowedLocalPathKey, stagingAllowedLocalPath)
 }
+
+func NewContextFromBackground(ctx context.Context) context.Context {
+	connId := ConnIdFromContext(ctx)
+	corrId := CorrelationIdFromContext(ctx)
+	queryId := QueryIdFromContext(ctx)
+	stagingPaths := StagingPathsFromContext(ctx)
+
+	newCtx := NewContextWithConnId(context.Background(), connId)
+	newCtx = NewContextWithCorrelationId(newCtx, corrId)
+	newCtx = NewContextWithQueryId(newCtx, queryId)
+	newCtx = NewContextWithStagingInfo(newCtx, stagingPaths)
+
+	return newCtx
+}

@@ -8,7 +8,9 @@ import (
 	"time"
 
 	"github.com/apache/thrift/lib/go/thrift"
+	"github.com/pkg/errors"
 
+	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/client"
 	"github.com/databricks/databricks-sql-go/internal/config"
@@ -1337,7 +1339,8 @@ func TestConn_Ping(t *testing.T) {
 		err := testConn.Ping(context.Background())
 
 		assert.Error(t, err)
-		assert.Equal(t, driver.ErrBadConn, err)
+		assert.True(t, errors.Is(err, driver.ErrBadConn))
+		assert.True(t, errors.Is(err, dbsqlerr.ExecutionError))
 		assert.Equal(t, 1, executeStatementCount)
 	})
 
