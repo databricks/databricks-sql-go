@@ -76,6 +76,7 @@ func hasScope(scopes []string, scope string) bool {
 
 var databricksAWSDomains []string = []string{
 	".cloud.databricks.com",
+	".cloud.databricks.us",
 	".dev.databricks.com",
 }
 
