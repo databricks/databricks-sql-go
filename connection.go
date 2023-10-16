@@ -493,7 +493,7 @@ func (c *conn) handleStagingGet(ctx context.Context, presignedUrl string, header
 	return nil
 }
 
-func (c *conn) handleStagingDelete(ctx context.Context, presignedUrl string, headers map[string]string) dbsqlerr.DBError {
+func (c *conn) handleStagingRemove(ctx context.Context, presignedUrl string, headers map[string]string) dbsqlerr.DBError {
 	client := &http.Client{}
 	req, _ := http.NewRequest("DELETE", presignedUrl, nil)
 	for k, v := range headers {
@@ -613,8 +613,8 @@ func (c *conn) execStagingOperation(
 		} else {
 			return dbsqlerrint.NewDriverError(ctx, "local file operations are restricted to paths within the configured stagingAllowedLocalPath", nil)
 		}
-	case "DELETE":
-		return c.handleStagingDelete(ctx, presignedUrl, headers)
+	case "REMOVE":
+		return c.handleStagingRemove(ctx, presignedUrl, headers)
 	default:
 		return dbsqlerrint.NewDriverError(ctx, fmt.Sprintf("operation %s is not supported. Supported operations are GET, PUT, and REMOVE", operation), nil)
 	}
