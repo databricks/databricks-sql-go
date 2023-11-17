@@ -17,7 +17,11 @@ import (
 )
 
 func NewAuthenticator(clientID, clientSecret, hostName string) auth.Authenticator {
-	scopes := oauth.GetScopes(hostName, []string{})
+	return NewAuthenticatorWithScopes(clientID, clientSecret, hostName, []string{})
+}
+
+func NewAuthenticatorWithScopes(clientID, clientSecret, hostName string, scopes []string) auth.Authenticator {
+	scopes = GetScopes(hostName, scopes)
 	return &authClient{
 		clientID:     clientID,
 		clientSecret: clientSecret,
@@ -88,4 +92,12 @@ func GetConfig(ctx context.Context, issuerURL, clientID, clientSecret string, sc
 	}
 
 	return config, nil
+}
+
+func GetScopes(hostName string, scopes []string) []string {
+	if !oauth.HasScope(scopes, "all-apis") {
+		scopes = append(scopes, "all-apis")
+	}
+
+	return scopes
 }

@@ -25,11 +25,11 @@ import (
 )
 
 const (
-	azureClientId   = "96eecda7-19ea-49cc-abb5-240097d554f5"
-	azureRedirctURL = "localhost:8030"
+	azureClientId    = "96eecda7-19ea-49cc-abb5-240097d554f5"
+	azureRedirectURL = "localhost:8030"
 
-	awsClientId   = "databricks-sql-connector"
-	awsRedirctURL = "localhost:8030"
+	awsClientId    = "databricks-sql-connector"
+	awsRedirectURL = "localhost:8030"
 )
 
 func NewAuthenticator(hostName string, timeout time.Duration) (auth.Authenticator, error) {
@@ -39,10 +39,10 @@ func NewAuthenticator(hostName string, timeout time.Duration) (auth.Authenticato
 	var clientID, redirectURL string
 	if cloud == oauth.AWS {
 		clientID = awsClientId
-		redirectURL = awsRedirctURL
+		redirectURL = awsRedirectURL
 	} else if cloud == oauth.Azure {
 		clientID = azureClientId
-		redirectURL = azureRedirctURL
+		redirectURL = azureRedirectURL
 	} else {
 		return nil, errors.New("unhandled cloud type: " + cloud.String())
 	}
