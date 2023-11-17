@@ -3,11 +3,13 @@ package arrowbased
 import (
 	"bytes"
 	"context"
+	"database/sql/driver"
 	"io"
 	"time"
 
 	"github.com/databricks/databricks-sql-go/internal/config"
 	"github.com/databricks/databricks-sql-go/internal/rows/rowscanner"
+	"github.com/databricks/databricks-sql-go/logger"
 	"github.com/pierrec/lz4/v4"
 	"github.com/pkg/errors"
 
@@ -41,7 +43,13 @@ func NewBatchIterator(batchLoader BatchLoader) (BatchIterator, dbsqlerr.DBError)
 	return bi, nil
 }
 
-func NewCloudBatchLoader(ctx context.Context, files []*cli_service.TSparkArrowResultLink, startRowOffset int64, cfg *config.Config) (*batchLoader[*cloudURL], dbsqlerr.DBError) {
+func NewCloudBatchLoader(
+	ctx context.Context,
+	files []*cli_service.TSparkArrowResultLink,
+	startRowOffset int64,
+	cfg *config.Config,
+	pinger driver.Pinger,
+	logger *logger.DBSQLLogger) (*batchLoader[*cloudURL], dbsqlerr.DBError) {
 
 	if cfg == nil {
 		cfg = config.WithDefaults()
@@ -68,7 +76,14 @@ func NewCloudBatchLoader(ctx context.Context, files []*cli_service.TSparkArrowRe
 	// make sure to close input channel or fetcher will block waiting for more inputs
 	close(inputChan)
 
-	f, _ := fetcher.NewConcurrentFetcher[*cloudURL](ctx, cfg.MaxDownloadThreads, cfg.MaxFilesInMemory, inputChan)
+	// If a Pinger was passed in create a heartbeat to keep the connection alive while cloud
+	// files are being downloaded.
+	var hb *heartBeat
+	if pinger != nil {
+		hb = &heartBeat{pinger: pinger, interval: cfg.HeartbeatInterval, logger: logger}
+	}
+
+	f, _ := fetcher.NewConcurrentFetcher[*cloudURL](ctx, cfg.MaxDownloadThreads, cfg.MaxFilesInMemory, inputChan, hb)
 	cbl := &batchLoader[*cloudURL]{
 		Delimiter: rowscanner.NewDelimiter(startRowOffset, rowCount),
 		fetcher:   f,
@@ -103,7 +118,7 @@ func NewLocalBatchLoader(ctx context.Context, batches []*cli_service.TSparkArrow
 	}
 	close(inputChan)
 
-	f, _ := fetcher.NewConcurrentFetcher[*localBatch](ctx, cfg.MaxDownloadThreads, cfg.MaxFilesInMemory, inputChan)
+	f, _ := fetcher.NewConcurrentFetcher[*localBatch](ctx, cfg.MaxDownloadThreads, cfg.MaxFilesInMemory, inputChan, nil)
 	cbl := &batchLoader[*localBatch]{
 		Delimiter: rowscanner.NewDelimiter(startRowOffset, rowCount),
 		fetcher:   f,
@@ -120,6 +135,8 @@ type batchLoader[T interface {
 	fetcher      fetcher.Fetcher[SparkArrowBatch]
 	arrowBatches []SparkArrowBatch
 	ctx          context.Context
+	cancelFetch  context.CancelFunc
+	batchChan    <-chan SparkArrowBatch
 }
 
 var _ BatchLoader = (*batchLoader[*localBatch])(nil)
@@ -132,7 +149,10 @@ func (cbl *batchLoader[T]) GetBatchFor(rowNumber int64) (SparkArrowBatch, dbsqle
 		}
 	}
 
-	batchChan, _, err := cbl.fetcher.Start()
+	batchChan, cancelFetch, err := cbl.fetcher.Start()
+	cbl.batchChan = batchChan
+	cbl.cancelFetch = cancelFetch
+
 	var emptyBatch SparkArrowBatch
 	if err != nil {
 		return emptyBatch, dbsqlerrint.NewDriverError(cbl.ctx, errArrowRowsInvalidRowNumber(rowNumber), err)
@@ -158,8 +178,19 @@ func (cbl *batchLoader[T]) GetBatchFor(rowNumber int64) (SparkArrowBatch, dbsqle
 }
 
 func (cbl *batchLoader[T]) Close() {
+	if cbl.cancelFetch != nil {
+		cbl.cancelFetch()
+	}
+
 	for i := range cbl.arrowBatches {
 		cbl.arrowBatches[i].Close()
+	}
+
+	// drain any batches in the fetcher output channel
+	if cbl.batchChan != nil {
+		for b := range cbl.batchChan {
+			b.Close()
+		}
 	}
 }
 
@@ -317,4 +348,60 @@ func (bi *batchIterator) Close() {
 	if bi != nil && bi.batchLoader != nil {
 		bi.batchLoader.Close()
 	}
+}
+
+// Once started heartBeat will call a StatusGetter at
+// a regular interval until it is stopped.
+type heartBeat struct {
+	pinger    driver.Pinger
+	stopChan  chan bool
+	interval  time.Duration
+	running   bool
+	logger    *logger.DBSQLLogger
+	err       error
+	beatCount int
+}
+
+var _ fetcher.Overwatch = (*heartBeat)(nil)
+
+func (hb *heartBeat) Start() {
+	hb.logger.Debug().Msg("heartbeat: starting")
+	hb.running = true
+	if hb.stopChan == nil {
+		hb.stopChan = make(chan bool)
+	}
+
+	go func() {
+		it := time.NewTimer(hb.interval)
+		defer it.Stop()
+
+		for {
+			select {
+			case <-it.C:
+				hb.beatCount += 1
+				err := hb.pinger.Ping(context.Background())
+				if err != nil {
+					hb.logger.Debug().Msg("heartbeat: ping failed")
+					hb.running = false
+					hb.err = err
+					return
+				}
+				hb.logger.Debug().Msg("heartbeat: ping success")
+				it.Reset(hb.interval)
+
+			case <-hb.stopChan:
+				hb.running = false
+				hb.logger.Debug().Msg("heartbeat: stopping")
+				return
+			}
+		}
+	}()
+}
+
+func (hb *heartBeat) Stop() {
+	if hb.stopChan == nil {
+		hb.stopChan = make(chan bool)
+	}
+
+	close(hb.stopChan)
 }

@@ -2,6 +2,7 @@ package fetcher
 
 import (
 	"context"
+	"errors"
 	"sync"
 
 	"github.com/databricks/databricks-sql-go/driverctx"
@@ -17,6 +18,13 @@ type Fetcher[OutputType any] interface {
 	Start() (<-chan OutputType, context.CancelFunc, error)
 }
 
+// An item that will be stopped/started in sync with
+// a fetcher
+type Overwatch interface {
+	Start()
+	Stop()
+}
+
 type concurrentFetcher[I FetchableItems[O], O any] struct {
 	cancelChan chan bool
 	inputChan  <-chan FetchableItems[O]
@@ -28,6 +36,7 @@ type concurrentFetcher[I FetchableItems[O], O any] struct {
 	ctx        context.Context
 	cancelFunc context.CancelFunc
 	*dbsqllog.DBSQLLogger
+	overWatch Overwatch
 }
 
 func (rf *concurrentFetcher[I, O]) Err() error {
@@ -40,6 +49,9 @@ func (f *concurrentFetcher[I, O]) Start() (<-chan O, context.CancelFunc, error) 
 	f.start.Do(func() {
 		// wait group for the worker routines
 		var wg sync.WaitGroup
+		if f.overWatch != nil {
+			f.overWatch.Start()
+		}
 
 		for i := 0; i < f.nWorkers; i++ {
 
@@ -64,6 +76,9 @@ func (f *concurrentFetcher[I, O]) Start() (<-chan O, context.CancelFunc, error) 
 			wg.Wait()
 			f.logger().Trace().Msg("concurrent fetcher closing output channel")
 			close(f.outChan)
+			if f.overWatch != nil {
+				f.overWatch.Stop()
+			}
 		}()
 
 		// We return a cancel function so that the client can
@@ -98,7 +113,7 @@ func (f *concurrentFetcher[I, O]) logger() *dbsqllog.DBSQLLogger {
 	return f.DBSQLLogger
 }
 
-func NewConcurrentFetcher[I FetchableItems[O], O any](ctx context.Context, nWorkers, maxItemsInMemory int, inputChan <-chan FetchableItems[O]) (Fetcher[O], error) {
+func NewConcurrentFetcher[I FetchableItems[O], O any](ctx context.Context, nWorkers, maxItemsInMemory int, inputChan <-chan FetchableItems[O], overWatch Overwatch) (Fetcher[O], error) {
 	if nWorkers < 1 {
 		nWorkers = 1
 	}
@@ -123,6 +138,7 @@ func NewConcurrentFetcher[I FetchableItems[O], O any](ctx context.Context, nWork
 		cancelChan: stopChannel,
 		ctx:        ctx,
 		nWorkers:   nWorkers,
+		overWatch:  overWatch,
 	}
 
 	return fetcher, nil
@@ -133,10 +149,12 @@ func work[I FetchableItems[O], O any](f *concurrentFetcher[I, O], workerIndex in
 	for {
 		select {
 		case <-f.cancelChan:
+			f.setErr(errors.New("fetcher canceled"))
 			f.logger().Debug().Msgf("concurrent fetcher worker %d received cancel signal", workerIndex)
 			return
 
 		case <-f.ctx.Done():
+			f.setErr(f.ctx.Err())
 			f.logger().Debug().Msgf("concurrent fetcher worker %d context done", workerIndex)
 			return
 

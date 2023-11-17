@@ -2,6 +2,7 @@ package arrowbased
 
 import (
 	"context"
+	"database/sql/driver"
 	"io"
 
 	"github.com/apache/arrow/go/v12/arrow"
@@ -9,16 +10,27 @@ import (
 	"github.com/databricks/databricks-sql-go/internal/config"
 	dbsqlerr "github.com/databricks/databricks-sql-go/internal/errors"
 	"github.com/databricks/databricks-sql-go/internal/rows/rowscanner"
+	"github.com/databricks/databricks-sql-go/logger"
 	"github.com/databricks/databricks-sql-go/rows"
 )
 
-func NewArrowRecordIterator(ctx context.Context, rpi rowscanner.ResultPageIterator, bi BatchIterator, arrowSchemaBytes []byte, cfg config.Config) rows.ArrowBatchIterator {
+func NewArrowRecordIterator(
+	ctx context.Context,
+	rpi rowscanner.ResultPageIterator,
+	bi BatchIterator,
+	arrowSchemaBytes []byte,
+	cfg config.Config,
+	pinger driver.Pinger,
+	logger *logger.DBSQLLogger) rows.ArrowBatchIterator {
+
 	ari := arrowRecordIterator{
 		cfg:                cfg,
 		batchIterator:      bi,
 		resultPageIterator: rpi,
 		ctx:                ctx,
 		arrowSchemaBytes:   arrowSchemaBytes,
+		pinger:             pinger,
+		logger:             logger,
 	}
 
 	return &ari
@@ -34,6 +46,8 @@ type arrowRecordIterator struct {
 	currentBatch       SparkArrowBatch
 	isFinished         bool
 	arrowSchemaBytes   []byte
+	pinger             driver.Pinger
+	logger             *logger.DBSQLLogger
 }
 
 var _ rows.ArrowBatchIterator = (*arrowRecordIterator)(nil)
@@ -175,7 +189,7 @@ func (ri *arrowRecordIterator) newBatchLoader(fr *cli_service.TFetchResultsResp)
 	var bl BatchLoader
 	var err error
 	if len(rowSet.ResultLinks) > 0 {
-		bl, err = NewCloudBatchLoader(ri.ctx, rowSet.ResultLinks, rowSet.StartRowOffset, &ri.cfg)
+		bl, err = NewCloudBatchLoader(ri.ctx, rowSet.ResultLinks, rowSet.StartRowOffset, &ri.cfg, ri.pinger, ri.logger)
 	} else {
 		bl, err = NewLocalBatchLoader(ri.ctx, rowSet.ArrowBatches, rowSet.StartRowOffset, ri.arrowSchemaBytes, &ri.cfg)
 	}

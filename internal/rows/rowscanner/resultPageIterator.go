@@ -49,6 +49,7 @@ func NewResultPageIterator(
 	maxPageSize int64,
 	opHandle *cli_service.TOperationHandle,
 	closedOnServer bool,
+	hasMoreRows bool,
 	client cli_service.TCLIService,
 	connectionId string,
 	correlationId string,
@@ -56,10 +57,12 @@ func NewResultPageIterator(
 ) ResultPageIterator {
 
 	// delimiter and hasMoreRows are used to set up the point in the paginated
-	// result set that this iterator starts from.
-	return &resultPageIterator{
+	// result set that this iterator starts from.  It is possible to have a
+	// case where hasMoreRows is false but the operation is not yet closed on
+	// the server so we have separate flags.
+	rpf := &resultPageIterator{
 		Delimiter:      delimiter,
-		isFinished:     closedOnServer,
+		isFinished:     !hasMoreRows,
 		maxPageSize:    maxPageSize,
 		opHandle:       opHandle,
 		closedOnServer: closedOnServer,
@@ -68,6 +71,8 @@ func NewResultPageIterator(
 		correlationId:  correlationId,
 		logger:         logger,
 	}
+
+	return rpf
 }
 
 type resultPageIterator struct {
@@ -168,6 +173,7 @@ func (rpf *resultPageIterator) Close() (err error) {
 	// need to do that now
 	if !rpf.closedOnServer {
 		rpf.closedOnServer = true
+		rpf.isFinished = true
 
 		req := cli_service.TCloseOperationReq{
 			OperationHandle: rpf.opHandle,

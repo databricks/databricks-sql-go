@@ -58,6 +58,8 @@ type rows struct {
 	logger_ *dbsqllog.DBSQLLogger
 
 	ctx context.Context
+
+	pinger driver.Pinger
 }
 
 var _ driver.Rows = (*rows)(nil)
@@ -101,6 +103,8 @@ func NewRows(
 		}
 	}
 
+	pinger := newStatusPinger(ctx, client, opHandle, logger)
+
 	logger.Debug().Msgf("databricks: creating Rows, pageSize: %d, location: %v", pageSize, location)
 
 	r := &rows{
@@ -112,8 +116,11 @@ func NewRows(
 		config:        config,
 		logger_:       logger,
 		ctx:           ctx,
+		pinger:        pinger,
 	}
 
+	var closedOnServer, hasMoreRows bool
+	hasMoreRows = true
 	// if we already have results for the query do some additional initialization
 	if directResults != nil {
 		logger.Debug().Msgf("databricks: creating Rows with direct results")
@@ -128,6 +135,11 @@ func NewRows(
 		if err != nil {
 			return r, err
 		}
+
+		closedOnServer = directResults.CloseOperation != nil
+		if directResults.ResultSet != nil {
+			hasMoreRows = directResults.ResultSet.GetHasMoreRows()
+		}
 	}
 
 	var d rowscanner.Delimiter
@@ -139,12 +151,13 @@ func NewRows(
 
 	// If the entire query result set fits in direct results the server closes
 	// the operations.
-	closedOnServer := directResults != nil && directResults.CloseOperation != nil
+
 	r.ResultPageIterator = rowscanner.NewResultPageIterator(
 		d,
 		pageSize,
 		opHandle,
 		closedOnServer,
+		hasMoreRows,
 		client,
 		connId,
 		correlationId,
@@ -495,13 +508,12 @@ func (r *rows) makeRowScanner(fetchResults *cli_service.TFetchResultsResp) dbsql
 	var rs rowscanner.RowScanner
 	var err dbsqlerr.DBError
 	if fetchResults.Results != nil {
-
 		if fetchResults.Results.Columns != nil {
 			rs, err = columnbased.NewColumnRowScanner(schema, fetchResults.Results, r.config, r.logger(), r.ctx)
 		} else if fetchResults.Results.ArrowBatches != nil {
-			rs, err = arrowbased.NewArrowRowScanner(r.resultSetMetadata, fetchResults.Results, r.config, r.logger(), r.ctx)
+			rs, err = arrowbased.NewArrowRowScanner(r.resultSetMetadata, fetchResults.Results, r.config, r.logger(), r.ctx, r.pinger)
 		} else if fetchResults.Results.ResultLinks != nil {
-			rs, err = arrowbased.NewArrowRowScanner(r.resultSetMetadata, fetchResults.Results, r.config, r.logger(), r.ctx)
+			rs, err = arrowbased.NewArrowRowScanner(r.resultSetMetadata, fetchResults.Results, r.config, r.logger(), r.ctx, r.pinger)
 		} else {
 			r.logger().Error().Msg(errRowsUnknowRowType)
 			err = dbsqlerr_int.NewDriverError(r.ctx, errRowsUnknowRowType, nil)
@@ -542,5 +554,26 @@ func (r *rows) GetArrowBatches(ctx context.Context) (dbsqlrows.ArrowBatchIterato
 		return r.RowScanner.GetArrowBatches(ctx, *r.config, r.ResultPageIterator)
 	}
 
-	return arrowbased.NewArrowRecordIterator(ctx, r.ResultPageIterator, nil, nil, *r.config), nil
+	return arrowbased.NewArrowRecordIterator(ctx, r.ResultPageIterator, nil, nil, *r.config, r.pinger, r.logger()), nil
+}
+
+// statusGetter implements driver.Ping by querying the operation status
+type statusGetter struct {
+	opHandle *cli_service.TOperationHandle
+	client   cli_service.TCLIService
+	ctx      context.Context
+	logger   *dbsqllog.DBSQLLogger
+}
+
+func (sg *statusGetter) Ping(ctx context.Context) error {
+	_, err := sg.client.GetOperationStatus(sg.ctx, &cli_service.TGetOperationStatusReq{OperationHandle: sg.opHandle})
+	if err != nil {
+		sg.logger.Err(err).Msg("databricks: status getter failed GetOperationStatus")
+	}
+
+	return err
+}
+
+func newStatusPinger(ctx context.Context, client cli_service.TCLIService, opHandle *cli_service.TOperationHandle, logger *dbsqllog.DBSQLLogger) driver.Pinger {
+	return &statusGetter{opHandle: opHandle, client: client, ctx: ctx, logger: logger}
 }
