@@ -68,6 +68,7 @@ var _ driver.RowsColumnTypeLength = (*rows)(nil)
 var _ dbsqlrows.Rows = (*rows)(nil)
 
 func NewRows(
+	ctx context.Context,
 	connId string,
 	correlationId string,
 	opHandle *cli_service.TOperationHandle,
@@ -77,12 +78,11 @@ func NewRows(
 ) (driver.Rows, dbsqlerr.DBError) {
 
 	var logger *dbsqllog.DBSQLLogger
-	var ctx context.Context
 	if opHandle != nil {
-		logger = dbsqllog.WithContext(connId, correlationId, dbsqlclient.SprintGuid(opHandle.OperationId.GUID))
+		logger = dbsqllog.AddContext(dbsqllog.Ctx(ctx), connId, correlationId, dbsqlclient.SprintGuid(opHandle.OperationId.GUID))
 		ctx = driverctx.NewContextWithQueryId(driverctx.NewContextWithCorrelationId(driverctx.NewContextWithConnId(context.Background(), connId), correlationId), dbsqlclient.SprintGuid(opHandle.OperationId.GUID))
 	} else {
-		logger = dbsqllog.WithContext(connId, correlationId, "")
+		logger = dbsqllog.AddContext(dbsqllog.Ctx(ctx), connId, correlationId, "")
 		ctx = driverctx.NewContextWithCorrelationId(driverctx.NewContextWithConnId(context.Background(), connId), correlationId)
 	}
 

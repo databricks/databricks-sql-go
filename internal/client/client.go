@@ -403,7 +403,7 @@ func LoggerAndContext(ctx context.Context, c any) (*logger.DBSQLLogger, context.
 		queryId = guidFromHasOpHandle(c)
 		ctx = driverctx.NewContextWithQueryId(ctx, queryId)
 	}
-	log := logger.WithContext(connId, corrId, queryId)
+	log := logger.AddContext(logger.Ctx(ctx), connId, corrId, queryId)
 
 	return log, ctx
 }
