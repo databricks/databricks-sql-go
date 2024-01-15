@@ -61,6 +61,7 @@ func (ri *arrowRecordIterator) Next() (arrow.Record, error) {
 
 // Indicate whether there are any more records available
 func (ri *arrowRecordIterator) HasNext() bool {
+	ri.checkFinished()
 	return !ri.isFinished
 }
 
@@ -83,7 +84,10 @@ func (ri *arrowRecordIterator) Close() {
 }
 
 func (ri *arrowRecordIterator) checkFinished() {
-	finished := !ri.currentBatch.HasNext() && !ri.batchIterator.HasNext() && !ri.resultPageIterator.HasNext()
+	finished := ri.isFinished ||
+		((ri.currentBatch == nil || !ri.currentBatch.HasNext()) &&
+			(ri.batchIterator == nil || !ri.batchIterator.HasNext()) &&
+			(ri.resultPageIterator == nil || !ri.resultPageIterator.HasNext()))
 
 	if finished {
 		// Reached end of result set so Close
