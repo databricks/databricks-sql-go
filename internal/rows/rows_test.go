@@ -920,6 +920,52 @@ func TestGetArrowBatches(t *testing.T) {
 		assert.Equal(t, fetchResp3.Results.ArrowBatches[1].RowCount, r6.NumRows())
 		r6.Release()
 	})
+
+	t.Run("with empty result set, no direct results", func(t *testing.T) {
+		fetchResp1 := cli_service.TFetchResultsResp{}
+		loadTestData(t, "zeroRows/zeroRowsFetchResult.json", &fetchResp1)
+
+		client := getSimpleClient([]cli_service.TFetchResultsResp{fetchResp1})
+		cfg := config.WithDefaults()
+		rows, err := NewRows("connId", "corrId", nil, client, cfg, nil)
+		assert.Nil(t, err)
+
+		rows2, ok := rows.(dbsqlrows.Rows)
+		assert.True(t, ok)
+
+		rs, err2 := rows2.GetArrowBatches(context.Background())
+		assert.Nil(t, err2)
+
+		hasNext := rs.HasNext()
+		assert.False(t, hasNext)
+		r7, err2 := rs.Next()
+		assert.Nil(t, r7)
+		assert.ErrorContains(t, err2, io.EOF.Error())
+
+	})
+
+	t.Run("with empty result set, direct results", func(t *testing.T) {
+		executeStatementResp := cli_service.TExecuteStatementResp{}
+		loadTestData(t, "zeroRows/zeroRowsDirectResults.json", &executeStatementResp)
+		executeStatementResp.DirectResults.ResultSet.Results.ArrowBatches = []*cli_service.TSparkArrowBatch{}
+
+		client := getSimpleClient([]cli_service.TFetchResultsResp{})
+		cfg := config.WithDefaults()
+		rows, err := NewRows("connId", "corrId", nil, client, cfg, executeStatementResp.DirectResults)
+		assert.Nil(t, err)
+
+		rows2, ok := rows.(dbsqlrows.Rows)
+		assert.True(t, ok)
+
+		rs, err2 := rows2.GetArrowBatches(context.Background())
+		assert.Nil(t, err2)
+
+		hasNext := rs.HasNext()
+		assert.False(t, hasNext)
+		r7, err2 := rs.Next()
+		assert.Nil(t, r7)
+		assert.ErrorContains(t, err2, io.EOF.Error())
+	})
 }
 
 type rowTestPagingResult struct {
