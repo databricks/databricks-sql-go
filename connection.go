@@ -112,9 +112,6 @@ func (c *conn) ExecContext(ctx context.Context, query string, args []driver.Name
 	defer log.Duration(msg, start)
 
 	corrId := driverctx.CorrelationIdFromContext(ctx)
-	if len(args) > 0 && c.session.ServerProtocolVersion < cli_service.TProtocolVersion_SPARK_CLI_SERVICE_PROTOCOL_V8 {
-		return nil, dbsqlerrint.NewDriverError(ctx, dbsqlerr.ErrParametersNotSupported, nil)
-	}
 
 	exStmtResp, opStatusResp, err := c.runQuery(ctx, query, args)
 	log, ctx = client.LoggerAndContext(ctx, exStmtResp)
@@ -158,10 +155,6 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 	ctx = driverctx.NewContextWithConnId(ctx, c.id)
 	log, _ := client.LoggerAndContext(ctx, nil)
 	msg, start := log.Track("QueryContext")
-
-	if len(args) > 0 && c.session.ServerProtocolVersion < cli_service.TProtocolVersion_SPARK_CLI_SERVICE_PROTOCOL_V8 {
-		return nil, dbsqlerrint.NewDriverError(ctx, dbsqlerr.ErrParametersNotSupported, nil)
-	}
 
 	// first we try to get the results synchronously.
 	// at any point in time that the context is done we must cancel and return
