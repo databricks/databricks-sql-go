@@ -1,0 +1,73 @@
+{
+ "status": {
+  "statusCode": "SUCCESS_STATUS"
+ },
+ "hasMoreRows": false,
+ "results": {
+  "startRowOffset": 0,
+  "rows": []
+ },
+ "resultSetMetadata": {
+  "status": {
+   "statusCode": "SUCCESS_STATUS"
+  },
+  "schema": {
+   "columns": [
+    {
+     "columnName": "id",
+     "typeDesc": {
+      "types": [
+       {
+        "primitiveEntry": {
+         "type": "INT_TYPE"
+        }
+       }
+      ]
+     },
+     "position": 1,
+     "comment": ""
+    },
+    {
+     "columnName": "deleted",
+     "typeDesc": {
+      "types": [
+       {
+        "primitiveEntry": {
+         "type": "BOOLEAN_TYPE"
+        }
+       }
+      ]
+     },
+     "position": 2,
+     "comment": ""
+    },
+    {
+     "columnName": "name",
+     "typeDesc": {
+      "types": [
+       {
+        "primitiveEntry": {
+         "type": "STRING_TYPE"
+        }
+       }
+      ]
+     },
+     "position": 3,
+     "comment": ""
+    }
+   ]
+  },
+  "resultFormat": "ARROW_BASED_SET",
+  "lz4Compressed": false,
+  "arrowSchema": "/////2ACAAAQAAAAAAAKAA4ABgANAAgACgAAAAAABAAQAAAAAAEKAAwAAAAIAAQACgAAAAgAAAAIAAAAAAAAAAMAAABsAQAArAAAAAQAAACy/v//FAAAAIgAAACIAAAAAAAFAYQAAAACAAAAQAAAAAQAAABo/v//CAAAABQAAAAIAAAAInN0cmluZyIAAAAAFwAAAFNwYXJrOkRhdGFUeXBlOkpzb25UeXBlAKD+//8IAAAAEAAAAAYAAABTVFJJTkcAABYAAABTcGFyazpEYXRhVHlwZTpTcWxOYW1lAAAAAAAAXP///wQAAABuYW1lAAAAAFb///8UAAAAiAAAAIwAAAAAAAYBiAAAAAIAAABAAAAABAAAAAz///8IAAAAFAAAAAkAAAAiYm9vbGVhbiIAAAAXAAAAU3Bhcms6RGF0YVR5cGU6SnNvblR5cGUARP///wgAAAAQAAAABwAAAEJPT0xFQU4AFgAAAFNwYXJrOkRhdGFUeXBlOlNxbE5hbWUAAAAAAAAEAAQABAAAAAcAAABkZWxldGVkAAAAEgAYABQAEwASAAwAAAAIAAQAEgAAABQAAACMAAAAlAAAAAAAAgGYAAAAAgAAAEgAAAAEAAAAyP///wgAAAAUAAAACQAAACJpbnRlZ2VyIgAAABcAAABTcGFyazpEYXRhVHlwZTpKc29uVHlwZQAIAAwACAAEAAgAAAAIAAAADAAAAAMAAABJTlQAFgAAAFNwYXJrOkRhdGFUeXBlOlNxbE5hbWUAAAAAAAAIAAwACAAHAAgAAAAAAAABIAAAAAIAAABpZAAAAAAAAA==",
+  "cacheLookupResult": "LOCAL_CACHE_HIT",
+  "uncompressedBytes": 0,
+  "compressedBytes": 0,
+  "isStagingOperation": false,
+  "reasonForNoCloudFetch": "CLOUD_FETCH_SUPPORT",
+  "cacheLookupLatency": 2,
+  "remoteResultCacheEnabled": true,
+  "isServerless": true,
+  "truncatedByThriftLimit": false
+ }
+}

@@ -98,12 +98,46 @@ type resultPageIterator struct {
 	correlationId string
 
 	logger *dbsqllog.DBSQLLogger
+
+	// In some cases we don't know whether there are any records until we fetch
+	// the first result page. So our behaviour is to fetch a result page as necessary
+	// before Next() is called.
+	nextResultPage *cli_service.TFetchResultsResp
+
+	// Hold on to errors so they can be returned by Next()
+	err error
 }
 
 var _ ResultPageIterator = (*resultPageIterator)(nil)
 
 // Returns true if there are more pages in the result set.
-func (rpf *resultPageIterator) HasNext() bool { return !rpf.isFinished }
+func (rpf *resultPageIterator) HasNext() bool {
+	if rpf.isFinished && rpf.nextResultPage == nil {
+		// There are no more pages to load and there isn't an already fetched
+		// page waiting to retrieved by Next()
+		rpf.err = io.EOF
+		return false
+	}
+
+	// If there isn't an already fetched result page try to fetch one now
+	if rpf.nextResultPage == nil {
+		nrp, err := rpf.getNextPage()
+		if err != nil {
+			rpf.Close()
+			rpf.isFinished = true
+			rpf.err = err
+			return false
+		}
+
+		rpf.err = nil
+		rpf.nextResultPage = nrp
+		if !nrp.GetHasMoreRows() {
+			rpf.Close()
+		}
+	}
+
+	return rpf.nextResultPage != nil
+}
 
 // Returns the next page of the result set. io.EOF will be returned if there are
 // no more pages.
@@ -113,7 +147,18 @@ func (rpf *resultPageIterator) Next() (*cli_service.TFetchResultsResp, error) {
 		return nil, dbsqlerrint.NewDriverError(context.Background(), errRowsNilResultPageFetcher, nil)
 	}
 
+	if !rpf.HasNext() && rpf.nextResultPage == nil {
+		return nil, rpf.err
+	}
+
+	nrp := rpf.nextResultPage
+	rpf.nextResultPage = nil
+	return nrp, rpf.err
+}
+
+func (rpf *resultPageIterator) getNextPage() (*cli_service.TFetchResultsResp, error) {
 	if rpf.isFinished {
+		// no more result pages to fetch
 		return nil, io.EOF
 	}
 
@@ -168,14 +213,16 @@ func (rpf *resultPageIterator) Close() (err error) {
 	// need to do that now
 	if !rpf.closedOnServer {
 		rpf.closedOnServer = true
+		if rpf.client != nil {
+			req := cli_service.TCloseOperationReq{
+				OperationHandle: rpf.opHandle,
+			}
 
-		req := cli_service.TCloseOperationReq{
-			OperationHandle: rpf.opHandle,
+			_, err = rpf.client.CloseOperation(context.Background(), &req)
+			return err
 		}
-
-		_, err = rpf.client.CloseOperation(context.Background(), &req)
-		return err
 	}
+
 	return
 }
 

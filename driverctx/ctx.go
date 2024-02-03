@@ -38,6 +38,7 @@ func CorrelationIdFromContext(ctx context.Context) string {
 }
 
 // NewContextWithConnId creates a new context with connectionId value.
+// The connection ID will be displayed in log messages and other dianostic information.
 func NewContextWithConnId(ctx context.Context, connId string) context.Context {
 	if callback, ok := ctx.Value(ConnIdCallbackKey).(IdCallbackFunc); ok {
 		callback(connId)
@@ -59,6 +60,7 @@ func ConnIdFromContext(ctx context.Context) string {
 }
 
 // NewContextWithQueryId creates a new context with queryId value.
+// The query id will be displayed in log messages and other diagnostic information.
 func NewContextWithQueryId(ctx context.Context, queryId string) context.Context {
 	if callback, ok := ctx.Value(QueryIdCallbackKey).(IdCallbackFunc); ok {
 		callback(queryId)

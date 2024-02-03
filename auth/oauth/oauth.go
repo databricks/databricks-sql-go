@@ -45,7 +45,7 @@ func GetEndpoint(ctx context.Context, hostName string) (oauth2.Endpoint, error) 
 
 func GetScopes(hostName string, scopes []string) []string {
 	for _, s := range []string{oidc.ScopeOfflineAccess} {
-		if !hasScope(scopes, s) {
+		if !HasScope(scopes, s) {
 			scopes = append(scopes, s)
 		}
 	}
@@ -53,11 +53,11 @@ func GetScopes(hostName string, scopes []string) []string {
 	cloudType := InferCloudFromHost(hostName)
 	if cloudType == Azure {
 		userImpersonationScope := fmt.Sprintf("%s/user_impersonation", azureTenantId)
-		if !hasScope(scopes, userImpersonationScope) {
+		if !HasScope(scopes, userImpersonationScope) {
 			scopes = append(scopes, userImpersonationScope)
 		}
 	} else {
-		if !hasScope(scopes, "sql") {
+		if !HasScope(scopes, "sql") {
 			scopes = append(scopes, "sql")
 		}
 	}
@@ -65,7 +65,7 @@ func GetScopes(hostName string, scopes []string) []string {
 	return scopes
 }
 
-func hasScope(scopes []string, scope string) bool {
+func HasScope(scopes []string, scope string) bool {
 	for _, s := range scopes {
 		if s == scope {
 			return true
@@ -76,6 +76,7 @@ func hasScope(scopes []string, scope string) bool {
 
 var databricksAWSDomains []string = []string{
 	".cloud.databricks.com",
+	".cloud.databricks.us",
 	".dev.databricks.com",
 }
 
