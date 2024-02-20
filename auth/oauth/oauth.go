@@ -86,11 +86,16 @@ var databricksAzureDomains []string = []string{
 	".databricks.azure.us",
 }
 
+var databricksGCPDomains []string = []string{
+	".gcp.databricks.com",
+}
+
 type CloudType int
 
 const (
 	AWS = iota
 	Azure
+	GCP
 	Unknown
 )
 
@@ -100,6 +105,8 @@ func (cl CloudType) String() string {
 		return "AWS"
 	case Azure:
 		return "Azure"
+	case GCP:
+		return "GCP"
 	}
 
 	return "Unknown"
@@ -119,5 +126,10 @@ func InferCloudFromHost(hostname string) CloudType {
 		}
 	}
 
+	for _, d := range databricksGCPDomains {
+		if strings.Contains(hostname, d) {
+			return GCP
+		}
+	}
 	return Unknown
 }

@@ -30,6 +30,9 @@ const (
 
 	awsClientId    = "databricks-sql-connector"
 	awsRedirectURL = "localhost:8030"
+
+	gcpClientId    = "databricks-sql-connector"
+	gcpRedirectURL = "localhost:8030"
 )
 
 func NewAuthenticator(hostName string, timeout time.Duration) (auth.Authenticator, error) {
@@ -43,6 +46,9 @@ func NewAuthenticator(hostName string, timeout time.Duration) (auth.Authenticato
 	} else if cloud == oauth.Azure {
 		clientID = azureClientId
 		redirectURL = azureRedirectURL
+	} else if cloud == oauth.GCP {
+		clientID = gcpClientId
+		redirectURL = gcpRedirectURL
 	} else {
 		return nil, errors.New("unhandled cloud type: " + cloud.String())
 	}
