@@ -201,7 +201,11 @@ The Go driver now supports staging operations. In order to use a staging operati
 
 After doing so, you can execute staging operations using this context using the exec context.
 
+    // Upload file to staging.
 	_, err1 := db.ExecContext(ctx, `PUT 'staging/file.csv' INTO '/Volumes/main/staging_test/e2etests/file.csv' OVERWRITE`)
+
+	// Retrieve file from staging.
+	_, err2 := db.ExecContext(ctx, `GET '/Volumes/main/staging_test/e2etests/file.csv' TO 'staging/file.csv'`)
 
 # Errors
 
