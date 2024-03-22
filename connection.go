@@ -1,7 +1,6 @@
 package dbsql
 
 import (
-	"bytes"
 	"context"
 	"database/sql/driver"
 	"encoding/json"
@@ -433,13 +432,13 @@ func (c *conn) handleStagingPut(ctx context.Context, presignedUrl string, header
 	}
 	client := &http.Client{}
 
-	dat, err := os.ReadFile(localFile)
-
+	dat, err := os.Open(localFile)
 	if err != nil {
 		return dbsqlerrint.NewDriverError(ctx, "error reading local file", err)
 	}
+	defer dat.Close()
 
-	req, _ := http.NewRequest("PUT", presignedUrl, bytes.NewReader(dat))
+	req, _ := http.NewRequest("PUT", presignedUrl, dat)
 
 	for k, v := range headers {
 		req.Header.Set(k, v)
