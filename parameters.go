@@ -33,6 +33,7 @@ const (
 	SqlBoolean
 	SqlIntervalMonth
 	SqlIntervalDay
+	SqlVoid
 )
 
 func (s SqlType) String() string {
@@ -63,6 +64,8 @@ func (s SqlType) String() string {
 		return "INTERVAL MONTH"
 	case SqlIntervalDay:
 		return "INTERVAL DAY"
+	case SqlVoid:
+		return "VOID"
 	}
 	return "unknown"
 }
@@ -133,6 +136,9 @@ func inferTypes(params []Parameter) {
 			case time.Time:
 				param.Value = value.String()
 				param.Type = SqlTimestamp
+			case nil:
+				param.Value = nil
+				param.Type = SqlVoid
 			default:
 				s := fmt.Sprintf("%s", param.Value)
 				param.Value = s
@@ -148,14 +154,21 @@ func convertNamedValuesToSparkParams(values []driver.NamedValue) []*cli_service.
 	inferTypes(sqlParams)
 	for i := range sqlParams {
 		sqlParam := sqlParams[i]
-		sparkParamValue := sqlParam.Value.(string)
+		sparkValue := new(cli_service.TSparkParameterValue)
+		if sqlParam.Type == SqlVoid {
+			sparkValue = nil
+		} else {
+			stringValue := sqlParam.Value.(string)
+			sparkValue = &cli_service.TSparkParameterValue{StringValue: &stringValue}
+		}
+
 		var sparkParamType string
 		if sqlParam.Type == SqlDecimal {
-			sparkParamType = inferDecimalType(sparkParamValue)
+			sparkParamType = inferDecimalType(sparkValue.GetStringValue())
 		} else {
 			sparkParamType = sqlParam.Type.String()
 		}
-		sparkParam := cli_service.TSparkParameter{Name: &sqlParam.Name, Type: &sparkParamType, Value: &cli_service.TSparkParameterValue{StringValue: &sparkParamValue}}
+		sparkParam := cli_service.TSparkParameter{Name: &sqlParam.Name, Type: &sparkParamType, Value: sparkValue}
 		sparkParams = append(sparkParams, &sparkParam)
 	}
 	return sparkParams
