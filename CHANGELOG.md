@@ -1,5 +1,7 @@
 # Release History
 
+- Bug fix for issue 193: convertNamedValuesToSparkParams was incorrectly creating a Spark parameter value as "%!s(<nil>)" when a named param was nil.
+
 ## v1.5.3 (2024-01-17)
 - Bug fix for ArrowBatchIterator.HasNext(). Incorrectly returned true for result sets with zero rows.
 
