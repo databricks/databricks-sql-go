@@ -577,8 +577,8 @@ func (c *conn) execStagingOperation(
 		return dbsqlerrint.NewDriverError(ctx, "error fetching staging operation results", err)
 	}
 	var stringValues []string = make([]string, 4)
-	for i := range stringValues {
-		if s, ok := sqlRow[i].(string); ok {
+	for i, val := range sqlRow { // this will either be 3 (remove op) or 4 (put/get) elements
+		if s, ok := val.(string); ok {
 			stringValues[i] = s
 		} else {
 			return dbsqlerrint.NewDriverError(ctx, "received unexpected response from the server.", nil)
