@@ -134,7 +134,7 @@ func inferTypes(params []Parameter) {
 				param.Value = strconv.FormatFloat(float64(value), 'f', -1, 32)
 				param.Type = SqlFloat
 			case time.Time:
-				param.Value = value.String()
+				param.Value = value.Format(time.RFC3339Nano)
 				param.Type = SqlTimestamp
 			case nil:
 				param.Value = nil
