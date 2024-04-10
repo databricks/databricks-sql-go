@@ -4,7 +4,7 @@ import (
 	"context"
 	"io"
 
-	"github.com/apache/arrow/go/v12/arrow"
+	"github.com/apache/arrow/go/v15/arrow"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/config"
 	dbsqlerr "github.com/databricks/databricks-sql-go/internal/errors"
