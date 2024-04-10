@@ -2,6 +2,13 @@
 
 - Bug fix for issue 193: convertNamedValuesToSparkParams was incorrectly creating a Spark parameter value as "%!s(<nil>)" when a named param was nil.
 
+## v1.5.4 (2024-04-10)
+
+- Added OAuth support for GCP (databricks/databricks-sql-go#189 by @rcypher-databricks)
+- Staging operations: stream files instead of loading into memory (databricks/databricks-sql-go#197 by @mdibaiee)
+- Staging operations: don't panic on REMOVE (databricks/databricks-sql-go#205 by @candiduslynx)
+- Fix formatting of Date/Time query parameters (databricks/databricks-sql-go#207 by @candiduslynx)
+
 ## v1.5.3 (2024-01-17)
 - Bug fix for ArrowBatchIterator.HasNext(). Incorrectly returned true for result sets with zero rows.
 
