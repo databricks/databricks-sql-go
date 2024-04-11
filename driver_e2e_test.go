@@ -504,6 +504,10 @@ func strPtr(s string) *string {
 	return &s
 }
 
+func float64Ptr(f float64) *float64 {
+	return &f
+}
+
 func loadTestData(t *testing.T, name string, v any) {
 	if f, err := os.ReadFile(fmt.Sprintf("testdata/%s", name)); err != nil {
 		t.Errorf("could not read data from: %s", name)
