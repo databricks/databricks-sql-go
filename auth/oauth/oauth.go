@@ -10,11 +10,6 @@ import (
 	"golang.org/x/oauth2"
 )
 
-type AzureTenant struct {
-	DnsZone            string
-	AzureApplicationID string
-}
-
 var azureTenants = map[string]string{
 	".dev.azuredatabricks.net":     "62a912ac-b58e-4c1d-89ea-b2dbfc7358fc",
 	".staging.azuredatabricks.net": "4a67d088-db5c-48f1-9ff2-0aace800ae68",
