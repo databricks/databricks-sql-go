@@ -3,6 +3,7 @@ package dbsql
 import (
 	"database/sql/driver"
 	"fmt"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -93,60 +94,74 @@ func inferTypes(params []Parameter) {
 	for i := range params {
 		param := &params[i]
 		if param.Type == SqlUnkown {
-			switch value := param.Value.(type) {
-			case bool:
-				param.Value = strconv.FormatBool(value)
-				param.Type = SqlBoolean
-			case string:
-				param.Value = value
-				param.Type = SqlString
-			case int:
-				param.Value = strconv.Itoa(value)
-				param.Type = SqlInteger
-			case uint:
-				param.Value = strconv.FormatUint(uint64(value), 10)
-				param.Type = SqlInteger
-			case int8:
-				param.Value = strconv.Itoa(int(value))
-				param.Type = SqlInteger
-			case uint8:
-				param.Value = strconv.FormatUint(uint64(value), 10)
-				param.Type = SqlInteger
-			case int16:
-				param.Value = strconv.Itoa(int(value))
-				param.Type = SqlInteger
-			case uint16:
-				param.Value = strconv.FormatUint(uint64(value), 10)
-				param.Type = SqlInteger
-			case int32:
-				param.Value = strconv.Itoa(int(value))
-				param.Type = SqlInteger
-			case uint32:
-				param.Value = strconv.FormatUint(uint64(value), 10)
-				param.Type = SqlInteger
-			case int64:
-				param.Value = strconv.Itoa(int(value))
-				param.Type = SqlInteger
-			case uint64:
-				param.Value = strconv.FormatUint(uint64(value), 10)
-				param.Type = SqlInteger
-			case float32:
-				param.Value = strconv.FormatFloat(float64(value), 'f', -1, 32)
-				param.Type = SqlFloat
-			case time.Time:
-				param.Value = value.Format(time.RFC3339Nano)
-				param.Type = SqlTimestamp
-			case nil:
-				param.Value = nil
-				param.Type = SqlVoid
-			default:
-				s := fmt.Sprintf("%s", param.Value)
-				param.Value = s
-				param.Type = SqlString
-			}
+			inferType(param)
 		}
 	}
 }
+
+func inferType(param *Parameter) {
+	if param.Value != nil && reflect.ValueOf(param.Value).Kind() == reflect.Ptr {
+		param.Value = reflect.ValueOf(param.Value).Elem().Interface()
+		inferType(param)
+		return
+	}
+
+	switch value := param.Value.(type) {
+	case bool:
+		param.Value = strconv.FormatBool(value)
+		param.Type = SqlBoolean
+	case string:
+		param.Value = value
+		param.Type = SqlString
+	case int:
+		param.Value = strconv.Itoa(value)
+		param.Type = SqlInteger
+	case uint:
+		param.Value = strconv.FormatUint(uint64(value), 10)
+		param.Type = SqlInteger
+	case int8:
+		param.Value = strconv.Itoa(int(value))
+		param.Type = SqlInteger
+	case uint8:
+		param.Value = strconv.FormatUint(uint64(value), 10)
+		param.Type = SqlInteger
+	case int16:
+		param.Value = strconv.Itoa(int(value))
+		param.Type = SqlInteger
+	case uint16:
+		param.Value = strconv.FormatUint(uint64(value), 10)
+		param.Type = SqlInteger
+	case int32:
+		param.Value = strconv.Itoa(int(value))
+		param.Type = SqlInteger
+	case uint32:
+		param.Value = strconv.FormatUint(uint64(value), 10)
+		param.Type = SqlInteger
+	case int64:
+		param.Value = strconv.Itoa(int(value))
+		param.Type = SqlInteger
+	case uint64:
+		param.Value = strconv.FormatUint(uint64(value), 10)
+		param.Type = SqlInteger
+	case float32:
+		param.Value = strconv.FormatFloat(float64(value), 'f', -1, 32)
+		param.Type = SqlFloat
+	case float64:
+		param.Value = strconv.FormatFloat(float64(value), 'f', -1, 64)
+		param.Type = SqlFloat
+	case time.Time:
+		param.Value = value.Format(time.RFC3339Nano)
+		param.Type = SqlTimestamp
+	case nil:
+		param.Value = nil
+		param.Type = SqlVoid
+	default:
+		s := fmt.Sprintf("%s", param.Value)
+		param.Value = s
+		param.Type = SqlString
+	}
+}
+
 func convertNamedValuesToSparkParams(values []driver.NamedValue) []*cli_service.TSparkParameter {
 	var sparkParams []*cli_service.TSparkParameter
 

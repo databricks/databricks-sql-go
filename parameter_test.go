@@ -12,13 +12,14 @@ import (
 
 func TestParameter_Inference(t *testing.T) {
 	t.Run("Should infer types correctly", func(t *testing.T) {
-		values := [6]driver.NamedValue{
+		values := [7]driver.NamedValue{
 			{Name: "", Value: float32(5.1)},
 			{Name: "", Value: time.Now()},
 			{Name: "", Value: int64(5)},
 			{Name: "", Value: true},
 			{Name: "", Value: Parameter{Value: "6.2", Type: SqlDecimal}},
 			{Name: "", Value: nil},
+			{Name: "", Value: Parameter{Value: float64Ptr(6.2), Type: SqlUnkown}},
 		}
 		parameters := convertNamedValuesToSparkParams(values[:])
 		assert.Equal(t, strconv.FormatFloat(float64(5.1), 'f', -1, 64), *parameters[0].Value.StringValue)
@@ -30,6 +31,7 @@ func TestParameter_Inference(t *testing.T) {
 		assert.Equal(t, string("6.2"), *parameters[4].Value.StringValue)
 		assert.Equal(t, string("VOID"), *parameters[5].Type)
 		assert.Nil(t, parameters[5].Value)
+		assert.Equal(t, &cli_service.TSparkParameterValue{StringValue: strPtr("6.2")}, parameters[6].Value)
 	})
 }
 func TestParameters_Names(t *testing.T) {
