@@ -438,7 +438,13 @@ func (c *conn) handleStagingPut(ctx context.Context, presignedUrl string, header
 	}
 	defer dat.Close()
 
+	info, err := dat.Stat()
+	if err != nil {
+		return dbsqlerrint.NewDriverError(ctx, "error reading local file info", err)
+	}
+
 	req, _ := http.NewRequest("PUT", presignedUrl, dat)
+	req.ContentLength = info.Size() // backend actually requires content length to be known
 
 	for k, v := range headers {
 		req.Header.Set(k, v)
