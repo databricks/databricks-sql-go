@@ -1,5 +1,7 @@
 # Release History
 
+- Fix formatting of *float64 parameters
+
 ## v1.5.4 (2024-04-10)
 
 - Added OAuth support for GCP (databricks/databricks-sql-go#189 by @rcypher-databricks)
