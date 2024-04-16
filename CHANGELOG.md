@@ -1,6 +1,7 @@
 # Release History
 
-- Fix formatting of *float64 parameters
+- Bug fix for issue 193: convertNamedValuesToSparkParams was incorrectly creating a Spark parameter value as "%!s(<nil>)" when a named param was nil (databricks/databricks-sql-go#199 by @esdrasbeleza)
+- Fix formatting of *float64 parameters (databricks/databricks-sql-go#215 by @esdrasbeleza)
 
 ## v1.5.4 (2024-04-10)
 
