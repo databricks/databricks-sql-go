@@ -1,7 +1,11 @@
 # Release History
 
-- Bug fix for issue 193: convertNamedValuesToSparkParams was incorrectly creating a Spark parameter value as "%!s(<nil>)" when a named param was nil (databricks/databricks-sql-go#199 by @esdrasbeleza)
+## v1.5.5 (2024-04-16)
+
+- Fix: handle `nil` values passed as query parameter (databricks/databricks-sql-go#199 by @esdrasbeleza)
+- Fix: provide content length on staging file put (databricks/databricks-sql-go#217 by @candiduslynx)
 - Fix formatting of *float64 parameters (databricks/databricks-sql-go#215 by @esdrasbeleza)
+- Fix: use correct tenant ID for different Azure domains (databricks/databricks-sql-go#210 by @tubiskasaroos)
 
 ## v1.5.4 (2024-04-10)
 
