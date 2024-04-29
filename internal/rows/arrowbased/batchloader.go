@@ -13,7 +13,7 @@ import (
 
 	"net/http"
 
-	"github.com/apache/arrow/go/v12/arrow/ipc"
+	"github.com/apache/arrow/go/v16/arrow/ipc"
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	dbsqlerrint "github.com/databricks/databricks-sql-go/internal/errors"
