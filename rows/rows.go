@@ -3,7 +3,7 @@ package rows
 import (
 	"context"
 
-	"github.com/apache/arrow/go/v12/arrow"
+	"github.com/apache/arrow/go/v16/arrow"
 )
 
 type Rows interface {

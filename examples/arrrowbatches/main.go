@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/apache/arrow/go/v12/arrow"
+	"github.com/apache/arrow/go/v16/arrow"
 	dbsql "github.com/databricks/databricks-sql-go"
 	dbsqlrows "github.com/databricks/databricks-sql-go/rows"
 	"github.com/joho/godotenv"
