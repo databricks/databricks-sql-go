@@ -413,7 +413,7 @@ func TestColumnsWithDirectResults(t *testing.T) {
 
 	client := getRowsTestSimpleClient(&getMetadataCount, &fetchResultsCount)
 
-	d, err := NewRows(context.Background(), "", "", nil, client, nil, nil)
+	d, err := NewRows("", "", nil, client, nil, nil, nil)
 	assert.Nil(t, err)
 
 	rowSet := d.(*rows)
@@ -708,7 +708,7 @@ func TestRowsCloseOptimization(t *testing.T) {
 	}
 
 	opHandle := &cli_service.TOperationHandle{OperationId: &cli_service.THandleIdentifier{GUID: []byte{'f', 'o'}}}
-	rowSet, _ := NewRows(context.Background(), "", "", opHandle, client, nil, nil)
+	rowSet, _ := NewRows("", "", opHandle, client, nil, nil, nil)
 
 	// rowSet has no direct results calling Close should result in call to client to close operation
 	err := rowSet.Close()
@@ -721,7 +721,7 @@ func TestRowsCloseOptimization(t *testing.T) {
 		ResultSet:         &cli_service.TFetchResultsResp{Results: &cli_service.TRowSet{Columns: []*cli_service.TColumn{}}},
 	}
 	closeCount = 0
-	rowSet, _ = NewRows(context.Background(), "", "", opHandle, client, nil, directResults)
+	rowSet, _ = NewRows("", "", opHandle, client, nil, directResults, nil)
 	err = rowSet.Close()
 	assert.Nil(t, err, "rows.Close should not throw an error")
 	assert.Equal(t, 1, closeCount)
@@ -734,7 +734,7 @@ func TestRowsCloseOptimization(t *testing.T) {
 		ResultSetMetadata: &cli_service.TGetResultSetMetadataResp{Schema: &cli_service.TTableSchema{}},
 		ResultSet:         &cli_service.TFetchResultsResp{Results: &cli_service.TRowSet{Columns: []*cli_service.TColumn{}}},
 	}
-	rowSet, _ = NewRows(context.Background(), "", "", opHandle, client, nil, directResults)
+	rowSet, _ = NewRows("", "", opHandle, client, nil, directResults, nil)
 	err = rowSet.Close()
 	assert.Nil(t, err, "rows.Close should not throw an error")
 	assert.Equal(t, 0, closeCount)
@@ -799,7 +799,7 @@ func TestGetArrowBatches(t *testing.T) {
 
 		client := getSimpleClient([]cli_service.TFetchResultsResp{fetchResp1, fetchResp2})
 		cfg := config.WithDefaults()
-		rows, err := NewRows(context.Background(), "connId", "corrId", nil, client, cfg, executeStatementResp.DirectResults)
+		rows, err := NewRows("connId", "corrId", nil, client, cfg, executeStatementResp.DirectResults, nil)
 		assert.Nil(t, err)
 
 		rows2, ok := rows.(dbsqlrows.Rows)
@@ -869,7 +869,7 @@ func TestGetArrowBatches(t *testing.T) {
 
 		client := getSimpleClient([]cli_service.TFetchResultsResp{fetchResp1, fetchResp2, fetchResp3})
 		cfg := config.WithDefaults()
-		rows, err := NewRows(context.Background(), "connId", "corrId", nil, client, cfg, nil)
+		rows, err := NewRows("connId", "corrId", nil, client, cfg, nil, nil)
 		assert.Nil(t, err)
 
 		rows2, ok := rows.(dbsqlrows.Rows)
@@ -927,7 +927,7 @@ func TestGetArrowBatches(t *testing.T) {
 
 		client := getSimpleClient([]cli_service.TFetchResultsResp{fetchResp1})
 		cfg := config.WithDefaults()
-		rows, err := NewRows("connId", "corrId", nil, client, cfg, nil)
+		rows, err := NewRows("connId", "corrId", nil, client, cfg, nil, nil)
 		assert.Nil(t, err)
 
 		rows2, ok := rows.(dbsqlrows.Rows)
@@ -951,7 +951,7 @@ func TestGetArrowBatches(t *testing.T) {
 
 		client := getSimpleClient([]cli_service.TFetchResultsResp{})
 		cfg := config.WithDefaults()
-		rows, err := NewRows("connId", "corrId", nil, client, cfg, executeStatementResp.DirectResults)
+		rows, err := NewRows("connId", "corrId", nil, client, cfg, executeStatementResp.DirectResults, nil)
 		assert.Nil(t, err)
 
 		rows2, ok := rows.(dbsqlrows.Rows)
