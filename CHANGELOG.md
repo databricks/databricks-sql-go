@@ -1,5 +1,39 @@
 # Release History
 
+## v1.5.4 (2024-04-10)
+
+- Added OAuth support for GCP (databricks/databricks-sql-go#189 by @rcypher-databricks)
+- Staging operations: stream files instead of loading into memory (databricks/databricks-sql-go#197 by @mdibaiee)
+- Staging operations: don't panic on REMOVE (databricks/databricks-sql-go#205 by @candiduslynx)
+- Fix formatting of Date/Time query parameters (databricks/databricks-sql-go#207 by @candiduslynx)
+
+## v1.5.3 (2024-01-17)
+- Bug fix for ArrowBatchIterator.HasNext(). Incorrectly returned true for result sets with zero rows.
+
+## v1.5.2 (2023-11-17)
+- Added .us domain to inference list for AWS OAuth
+- Bug fix for OAuth m2m scopes, updated m2m authenticator to use "all-apis" scope.
+
+## v1.5.1 (2023-10-17)
+- Logging improvements
+- Added handling for staging remove
+
+## v1.5.0 (2023-10-02)
+- Named parameter support
+- Better handling of bad connection errors and specifying server protocol
+- OAuth implementation
+- Expose Arrow batches to users
+- Add support for staging operations
+
+## v1.4.0 (2023-08-09)
+- Improve error information when query terminates in unexpected state
+- Do not override global logger time format
+- Enable Transport configuration for http client
+- fix: update arrow to v12
+- Updated doc.go for retrieving query id and connection id
+- Bug fix issue 147: BUG with reading table that contains copied map
+- Allow WithServerHostname to specify protocol
+
 ## v1.3.1 (2023-06-23)
 
 - bug fix for panic when executing non record producing statements using DB.Query()/DB.QueryExec()

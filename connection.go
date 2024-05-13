@@ -1,7 +1,6 @@
 package dbsql
 
 import (
-	"bytes"
 	"context"
 	"database/sql/driver"
 	"encoding/json"
@@ -112,9 +111,6 @@ func (c *conn) ExecContext(ctx context.Context, query string, args []driver.Name
 	defer log.Duration(msg, start)
 
 	corrId := driverctx.CorrelationIdFromContext(ctx)
-	if len(args) > 0 && c.session.ServerProtocolVersion < cli_service.TProtocolVersion_SPARK_CLI_SERVICE_PROTOCOL_V8 {
-		return nil, dbsqlerrint.NewDriverError(ctx, dbsqlerr.ErrParametersNotSupported, nil)
-	}
 
 	exStmtResp, opStatusResp, err := c.runQuery(ctx, query, args)
 	log, ctx = client.LoggerAndContext(ctx, exStmtResp)
@@ -161,10 +157,6 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 	ctx = driverctx.NewContextWithConnId(ctx, c.id)
 	log, _ := client.LoggerAndContext(ctx, nil)
 	msg, start := log.Track("QueryContext")
-
-	if len(args) > 0 && c.session.ServerProtocolVersion < cli_service.TProtocolVersion_SPARK_CLI_SERVICE_PROTOCOL_V8 {
-		return nil, dbsqlerrint.NewDriverError(ctx, dbsqlerr.ErrParametersNotSupported, nil)
-	}
 
 	// first we try to get the results synchronously.
 	// at any point in time that the context is done we must cancel and return
@@ -443,13 +435,13 @@ func (c *conn) handleStagingPut(ctx context.Context, presignedUrl string, header
 	}
 	client := &http.Client{}
 
-	dat, err := os.ReadFile(localFile)
-
+	dat, err := os.Open(localFile)
 	if err != nil {
 		return dbsqlerrint.NewDriverError(ctx, "error reading local file", err)
 	}
+	defer dat.Close()
 
-	req, _ := http.NewRequest("PUT", presignedUrl, bytes.NewReader(dat))
+	req, _ := http.NewRequest("PUT", presignedUrl, dat)
 
 	for k, v := range headers {
 		req.Header.Set(k, v)
@@ -587,8 +579,8 @@ func (c *conn) execStagingOperation(
 		return dbsqlerrint.NewDriverError(ctx, "error fetching staging operation results", err)
 	}
 	var stringValues []string = make([]string, 4)
-	for i := range stringValues {
-		if s, ok := sqlRow[i].(string); ok {
+	for i, val := range sqlRow { // this will either be 3 (remove op) or 4 (put/get) elements
+		if s, ok := val.(string); ok {
 			stringValues[i] = s
 		} else {
 			return dbsqlerrint.NewDriverError(ctx, "received unexpected response from the server.", nil)
