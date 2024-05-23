@@ -2,6 +2,7 @@ package dbsql
 
 import (
 	"context"
+	"crypto/tls"
 	"database/sql/driver"
 	"fmt"
 	"net/http"
@@ -104,6 +105,13 @@ func NewConnector(options ...connOption) (driver.Connector, error) {
 func withUserConfig(ucfg config.UserConfig) connOption {
 	return func(c *config.Config) {
 		c.UserConfig = ucfg
+	}
+}
+
+// WithServerHostname sets up the server hostname. Mandatory.
+func WithSkipInsecureSkipVerify(host string) connOption {
+	return func(c *config.Config) {
+		c.TLSConfig = &tls.Config{InsecureSkipVerify: true}
 	}
 }
 
