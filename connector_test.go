@@ -6,7 +6,9 @@ import (
 	"time"
 
 	"github.com/databricks/databricks-sql-go/auth/pat"
+	"github.com/databricks/databricks-sql-go/internal/client"
 	"github.com/databricks/databricks-sql-go/internal/config"
+	"github.com/hashicorp/go-retryablehttp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -38,6 +40,7 @@ func TestNewConnector(t *testing.T) {
 			WithTransport(roundTripper),
 			WithCloudFetch(true),
 			WithMaxDownloadThreads(15),
+			WithSkipTLSHostVerify(),
 		)
 		expectedCloudFetchConfig := config.CloudFetchConfig{
 			UseCloudFetch:      true,
@@ -67,6 +70,7 @@ func TestNewConnector(t *testing.T) {
 		expectedCfg := config.WithDefaults()
 		expectedCfg.DriverVersion = DriverVersion
 		expectedCfg.UserConfig = expectedUserConfig
+		expectedCfg.TLSConfig.InsecureSkipVerify = true
 		coni, ok := con.(*connector)
 		require.True(t, ok)
 		assert.Nil(t, err)
@@ -183,6 +187,28 @@ func TestNewConnector(t *testing.T) {
 			require.Equal(t, c.host, userConfig.Host)
 		}
 
+	})
+
+	t.Run("Connector test WithSkipTLSHostVerify with PoolClient", func(t *testing.T) {
+		hostname := "databricks-host"
+		con, err := NewConnector(
+			WithServerHostname(hostname),
+			WithSkipTLSHostVerify(),
+		)
+		assert.Nil(t, err)
+
+		coni, ok := con.(*connector)
+		require.True(t, ok)
+		userConfig := coni.cfg.UserConfig
+		require.Equal(t, hostname, userConfig.Host)
+
+		httpClient, ok := coni.client.Transport.(*retryablehttp.RoundTripper)
+		require.True(t, ok)
+		poolClient, ok := httpClient.Client.HTTPClient.Transport.(*client.Transport)
+		require.True(t, ok)
+		internalClient, ok := poolClient.Base.(*http.Transport)
+		require.True(t, ok)
+		require.True(t, internalClient.TLSClientConfig.InsecureSkipVerify)
 	})
 }
 
