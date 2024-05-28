@@ -2,6 +2,7 @@ package dbsql
 
 import (
 	"context"
+	"crypto/tls"
 	"database/sql/driver"
 	"fmt"
 	"net/http"
@@ -230,6 +231,20 @@ func WithSessionParams(params map[string]string) connOption {
 			}
 		}
 		c.SessionParams = params
+	}
+}
+
+// WithSkipTLSHostVerify disables the verification of the hostname in the TLS certificate.
+// WARNING:
+// When this option is used, TLS is susceptible to machine-in-the-middle attacks.
+// Please only use this option when the hostname is an internal private link hostname
+func WithSkipTLSHostVerify() connOption {
+	return func(c *config.Config) {
+		if c.TLSConfig == nil {
+			c.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: true} // #nosec G402
+		} else {
+			c.TLSConfig.InsecureSkipVerify = true // #nosec G402
+		}
 	}
 }
 
