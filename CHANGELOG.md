@@ -1,5 +1,9 @@
 # Release History
 
+## v1.5.6 (2024-05-28)
+
+- Added connection option `WithSkipTLSHostVerify` (databricks/databricks-sql-go#225 by @jackyhu-db)
+
 ## v1.5.5 (2024-04-16)
 
 - Fix: handle `nil` values passed as query parameter (databricks/databricks-sql-go#199 by @esdrasbeleza)
