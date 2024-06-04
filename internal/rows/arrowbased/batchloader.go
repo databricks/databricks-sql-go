@@ -18,6 +18,7 @@ import (
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	dbsqlerrint "github.com/databricks/databricks-sql-go/internal/errors"
 	"github.com/databricks/databricks-sql-go/internal/fetcher"
+	"github.com/databricks/databricks-sql-go/logger"
 )
 
 type BatchIterator interface {
@@ -126,15 +127,22 @@ var _ BatchLoader = (*batchLoader[*localBatch])(nil)
 
 func (cbl *batchLoader[T]) GetBatchFor(rowNumber int64) (SparkArrowBatch, dbsqlerr.DBError) {
 
+	logger.Debug().Msgf("batchLoader.GetBatchFor(%d)", rowNumber)
+
 	for i := range cbl.arrowBatches {
+		logger.Debug().Msgf("  trying batch for range [%d..%d]", cbl.arrowBatches[i].Start(), cbl.arrowBatches[i].End())
 		if cbl.arrowBatches[i].Contains(rowNumber) {
+			logger.Debug().Msgf("  found batch containing the requested row %d", rowNumber)
 			return cbl.arrowBatches[i], nil
 		}
 	}
 
+	logger.Debug().Msgf("  batch not found, trying to download more")
+
 	batchChan, _, err := cbl.fetcher.Start()
 	var emptyBatch SparkArrowBatch
 	if err != nil {
+		logger.Debug().Msgf("  no batch found for row %d", rowNumber)
 		return emptyBatch, dbsqlerrint.NewDriverError(cbl.ctx, errArrowRowsInvalidRowNumber(rowNumber), err)
 	}
 
@@ -143,16 +151,21 @@ func (cbl *batchLoader[T]) GetBatchFor(rowNumber int64) (SparkArrowBatch, dbsqle
 		if !ok {
 			err := cbl.fetcher.Err()
 			if err != nil {
+				logger.Debug().Msgf("  no batch found for row %d", rowNumber)
 				return emptyBatch, dbsqlerrint.NewDriverError(cbl.ctx, errArrowRowsInvalidRowNumber(rowNumber), err)
 			}
 			break
 		}
 
 		cbl.arrowBatches = append(cbl.arrowBatches, batch)
+		logger.Debug().Msgf("  trying newly downloaded batch for range [%d..%d]", batch.Start(), batch.End())
 		if batch.Contains(rowNumber) {
+			logger.Debug().Msgf("  found batch containing the requested row %d", rowNumber)
 			return batch, nil
 		}
 	}
+
+	logger.Debug().Msgf("  no batch found for row %d", rowNumber)
 
 	return emptyBatch, dbsqlerrint.NewDriverError(cbl.ctx, errArrowRowsInvalidRowNumber(rowNumber), err)
 }
