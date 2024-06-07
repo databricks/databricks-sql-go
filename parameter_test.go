@@ -45,3 +45,20 @@ func TestParameters_Names(t *testing.T) {
 		assert.Equal(t, string("DECIMAL(2,1)"), *parameters[1].Type)
 	})
 }
+func TestParameter_Ordinals(t *testing.T) {
+	t.Run("Should infer types correctly", func(t *testing.T) {
+		values := [7]driver.NamedValue{
+			{Ordinal: 0},
+			{Ordinal: 1},
+			{Ordinal: 2},
+			{Ordinal: 3},
+			{Ordinal: 4},
+		}
+		parameters := convertNamedValuesToSparkParams(values[:])
+		assert.Equal(t, int32(0), *parameters[0].Ordinal)
+		assert.Equal(t, int32(1), *parameters[1].Ordinal)
+		assert.Equal(t, int32(2), *parameters[2].Ordinal)
+		assert.Equal(t, int32(3), *parameters[3].Ordinal)
+		assert.Equal(t, int32(4), *parameters[4].Ordinal)
+	})
+}
