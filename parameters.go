@@ -12,9 +12,10 @@ import (
 )
 
 type Parameter struct {
-	Name  string
-	Type  SqlType
-	Value any
+	Ordinal int32
+	Name    string
+	Type    SqlType
+	Value   any
 }
 
 type SqlType int
@@ -85,6 +86,7 @@ func valuesToParameters(namedValues []driver.NamedValue) []Parameter {
 			newParam.Name = namedValue.Name
 			newParam.Value = namedValue.Value
 		}
+		newParam.Ordinal = int32(namedValue.Ordinal)
 		params = append(params, newParam)
 	}
 	return params
@@ -183,7 +185,9 @@ func convertNamedValuesToSparkParams(values []driver.NamedValue) []*cli_service.
 		} else {
 			sparkParamType = sqlParam.Type.String()
 		}
-		sparkParam := cli_service.TSparkParameter{Name: &sqlParam.Name, Type: &sparkParamType, Value: sparkValue}
+		sparkParam := cli_service.TSparkParameter{
+			Ordinal: &sqlParam.Ordinal, Name: &sqlParam.Name, Type: &sparkParamType, Value: sparkValue,
+		}
 		sparkParams = append(sparkParams, &sparkParam)
 	}
 	return sparkParams
