@@ -109,6 +109,13 @@ func withUserConfig(ucfg config.UserConfig) connOption {
 }
 
 // WithServerHostname sets up the server hostname. Mandatory.
+func WithSkipInsecureSkipVerify(host string) connOption {
+	return func(c *config.Config) {
+		c.TLSConfig = &tls.Config{InsecureSkipVerify: true}
+	}
+}
+
+// WithServerHostname sets up the server hostname. Mandatory.
 func WithServerHostname(host string) connOption {
 	return func(c *config.Config) {
 		protocol, hostname := parseHostName(host)
