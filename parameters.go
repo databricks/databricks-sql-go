@@ -20,7 +20,7 @@ type Parameter struct {
 type SqlType int
 
 const (
-	SqlUnkown SqlType = iota
+	SqlUnknown SqlType = iota
 	SqlString
 	SqlDate
 	SqlTimestamp

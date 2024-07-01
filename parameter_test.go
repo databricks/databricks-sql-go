@@ -19,7 +19,7 @@ func TestParameter_Inference(t *testing.T) {
 			{Name: "", Value: true},
 			{Name: "", Value: Parameter{Value: "6.2", Type: SqlDecimal}},
 			{Name: "", Value: nil},
-			{Name: "", Value: Parameter{Value: float64Ptr(6.2), Type: SqlUnkown}},
+			{Name: "", Value: Parameter{Value: float64Ptr(6.2), Type: SqlUnknown}},
 		}
 		parameters := convertNamedValuesToSparkParams(values[:])
 		assert.Equal(t, strconv.FormatFloat(float64(5.1), 'f', -1, 64), *parameters[0].Value.StringValue)
