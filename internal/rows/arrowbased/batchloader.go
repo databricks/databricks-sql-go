@@ -33,16 +33,35 @@ type BatchLoader interface {
 	Close()
 }
 
-func NewBatchIterator(batchLoader BatchLoader) (BatchIterator, dbsqlerr.DBError) {
+func NewCloudBatchIterator(ctx context.Context, files []*cli_service.TSparkArrowResultLink, startRowOffset int64, cfg *config.Config) (BatchIterator, dbsqlerr.DBError) {
+	bl, err := newCloudBatchLoader(ctx, files, startRowOffset, cfg)
+	if err != nil {
+		return nil, err
+	}
+
 	bi := &batchIterator{
-		nextBatchStart: batchLoader.Start(),
-		batchLoader:    batchLoader,
+		nextBatchStart: bl.Start(),
+		batchLoader:    bl,
 	}
 
 	return bi, nil
 }
 
-func NewCloudBatchLoader(ctx context.Context, files []*cli_service.TSparkArrowResultLink, startRowOffset int64, cfg *config.Config) (*batchLoader[*cloudURL], dbsqlerr.DBError) {
+func NewLocalBatchIterator(ctx context.Context, batches []*cli_service.TSparkArrowBatch, startRowOffset int64, arrowSchemaBytes []byte, cfg *config.Config) (BatchIterator, dbsqlerr.DBError) {
+	bl, err := newLocalBatchLoader(ctx, batches, startRowOffset, arrowSchemaBytes, cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	bi := &batchIterator{
+		nextBatchStart: bl.Start(),
+		batchLoader:    bl,
+	}
+
+	return bi, nil
+}
+
+func newCloudBatchLoader(ctx context.Context, files []*cli_service.TSparkArrowResultLink, startRowOffset int64, cfg *config.Config) (*batchLoader[*cloudURL], dbsqlerr.DBError) {
 
 	if cfg == nil {
 		cfg = config.WithDefaults()
@@ -79,7 +98,7 @@ func NewCloudBatchLoader(ctx context.Context, files []*cli_service.TSparkArrowRe
 	return cbl, nil
 }
 
-func NewLocalBatchLoader(ctx context.Context, batches []*cli_service.TSparkArrowBatch, startRowOffset int64, arrowSchemaBytes []byte, cfg *config.Config) (*batchLoader[*localBatch], dbsqlerr.DBError) {
+func newLocalBatchLoader(ctx context.Context, batches []*cli_service.TSparkArrowBatch, startRowOffset int64, arrowSchemaBytes []byte, cfg *config.Config) (*batchLoader[*localBatch], dbsqlerr.DBError) {
 
 	if cfg == nil {
 		cfg = config.WithDefaults()

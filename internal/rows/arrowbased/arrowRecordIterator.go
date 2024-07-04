@@ -163,29 +163,10 @@ func (ri *arrowRecordIterator) getBatchIterator() error {
 
 // Create a new batch iterator from a page of the result set
 func (ri *arrowRecordIterator) newBatchIterator(fr *cli_service.TFetchResultsResp) (BatchIterator, error) {
-	bl, err := ri.newBatchLoader(fr)
-	if err != nil {
-		return nil, err
-	}
-
-	bi, err := NewBatchIterator(bl)
-
-	return bi, err
-}
-
-// Create a new batch loader from a page of the result set
-func (ri *arrowRecordIterator) newBatchLoader(fr *cli_service.TFetchResultsResp) (BatchLoader, error) {
 	rowSet := fr.Results
-	var bl BatchLoader
-	var err error
 	if len(rowSet.ResultLinks) > 0 {
-		bl, err = NewCloudBatchLoader(ri.ctx, rowSet.ResultLinks, rowSet.StartRowOffset, &ri.cfg)
+		return NewCloudBatchIterator(ri.ctx, rowSet.ResultLinks, rowSet.StartRowOffset, &ri.cfg)
 	} else {
-		bl, err = NewLocalBatchLoader(ri.ctx, rowSet.ArrowBatches, rowSet.StartRowOffset, ri.arrowSchemaBytes, &ri.cfg)
+		return NewLocalBatchIterator(ri.ctx, rowSet.ArrowBatches, rowSet.StartRowOffset, ri.arrowSchemaBytes, &ri.cfg)
 	}
-	if err != nil {
-		return nil, err
-	}
-
-	return bl, nil
 }
