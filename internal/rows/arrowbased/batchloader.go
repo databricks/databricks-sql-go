@@ -135,8 +135,7 @@ func (bi *cloudBatchIterator) Next() (SparkArrowBatch, error) {
 			ctx:               bi.ctx,
 			useLz4Compression: bi.cfg.UseLz4Compression,
 			link:              link,
-			resultChan:        make(chan SparkArrowBatch),
-			errorChan:         make(chan error),
+			resultChan:        make(chan cloudFetchDownloadTaskResult),
 			minTimeToExpiry:   bi.cfg.MinTimeToExpiry,
 		}
 		task.Run()
@@ -161,70 +160,74 @@ func (bi *cloudBatchIterator) Close() {
 	bi.downloadTasks.Clear() // Clear the list
 }
 
+type cloudFetchDownloadTaskResult struct {
+	batch SparkArrowBatch
+	err   error
+}
+
 type cloudFetchDownloadTask struct {
 	ctx               context.Context
 	useLz4Compression bool
 	minTimeToExpiry   time.Duration
 	link              *cli_service.TSparkArrowResultLink
-	resultChan        chan SparkArrowBatch
-	errorChan         chan error
+	resultChan        chan cloudFetchDownloadTaskResult
 }
 
 func (cft *cloudFetchDownloadTask) GetResult() (SparkArrowBatch, error) {
 	link := cft.link
 
-	select {
-	case batch, ok := <-cft.resultChan:
-		if ok {
-			logger.Debug().Msgf(
-				"CloudFetch: received data for link at offset %d row count %d",
-				link.StartRowOffset,
-				link.RowCount,
-			)
-			return batch, nil
-		}
-	case err, ok := <-cft.errorChan:
-		if ok {
+	result, ok := <-cft.resultChan
+	if ok {
+		if result.err != nil {
 			logger.Debug().Msgf(
 				"CloudFetch: failed to download link at offset %d row count %d",
 				link.StartRowOffset,
 				link.RowCount,
 			)
-			return nil, err
+			return nil, result.err
 		}
+		logger.Debug().Msgf(
+			"CloudFetch: received data for link at offset %d row count %d",
+			link.StartRowOffset,
+			link.RowCount,
+		)
+		return result.batch, nil
 	}
 
 	logger.Debug().Msgf(
-		"CloudFetch: this should never happen; link at offset %d row count %d",
+		"CloudFetch: channel was closed before result was received; link at offset %d row count %d",
 		link.StartRowOffset,
 		link.RowCount,
 	)
-	return nil, nil // TODO: ???
+	return nil, nil // TODO: return error?
 }
 
 func (cft *cloudFetchDownloadTask) Run() {
 	go func() {
-		link := cft.link
-
 		logger.Debug().Msgf(
 			"CloudFetch: start downloading link at offset %d row count %d",
-			link.StartRowOffset,
-			link.RowCount,
+			cft.link.StartRowOffset,
+			cft.link.RowCount,
 		)
-		data, err := cft.fetchBatchBytes()
+		data, err := fetchBatchBytes(cft.ctx, cft.link, cft.minTimeToExpiry)
 		if err != nil {
-			cft.errorChan <- err
+			cft.resultChan <- cloudFetchDownloadTaskResult{batch: nil, err: err}
 			return
 		}
 
 		// TODO: error handling?
 		defer data.Close()
 
+		logger.Debug().Msgf(
+			"CloudFetch: reading records for link at offset %d row count %d",
+			cft.link.StartRowOffset,
+			cft.link.RowCount,
+		)
 		reader := getReader(data, cft.useLz4Compression)
 
 		records, err := getArrowRecords(reader, cft.link.StartRowOffset)
 		if err != nil {
-			cft.errorChan <- err
+			cft.resultChan <- cloudFetchDownloadTaskResult{batch: nil, err: err}
 			return
 		}
 
@@ -232,17 +235,21 @@ func (cft *cloudFetchDownloadTask) Run() {
 			Delimiter:    rowscanner.NewDelimiter(cft.link.StartRowOffset, cft.link.RowCount),
 			arrowRecords: records,
 		}
-		cft.resultChan <- &batch
+		cft.resultChan <- cloudFetchDownloadTaskResult{batch: &batch, err: nil}
 	}()
 }
 
-func (cft *cloudFetchDownloadTask) fetchBatchBytes() (io.ReadCloser, error) {
-	if isLinkExpired(cft.link.ExpiryTime, cft.minTimeToExpiry) {
+func fetchBatchBytes(
+	ctx context.Context,
+	link *cli_service.TSparkArrowResultLink,
+	minTimeToExpiry time.Duration,
+) (io.ReadCloser, error) {
+	if isLinkExpired(link.ExpiryTime, minTimeToExpiry) {
 		return nil, errors.New(dbsqlerr.ErrLinkExpired)
 	}
 
 	// TODO: Retry on HTTP errors
-	req, err := http.NewRequestWithContext(cft.ctx, "GET", cft.link.FileLink, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", link.FileLink, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -253,7 +260,7 @@ func (cft *cloudFetchDownloadTask) fetchBatchBytes() (io.ReadCloser, error) {
 		return nil, err
 	}
 	if res.StatusCode != http.StatusOK {
-		return nil, dbsqlerrint.NewDriverError(cft.ctx, errArrowRowsCloudFetchDownloadFailure, err)
+		return nil, dbsqlerrint.NewDriverError(ctx, errArrowRowsCloudFetchDownloadFailure, err)
 	}
 
 	return res.Body, nil
