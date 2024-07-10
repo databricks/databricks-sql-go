@@ -211,16 +211,19 @@ func (cft *cloudFetchDownloadTask) GetResult() (SparkArrowBatch, error) {
 		return result.batch, nil
 	}
 
+	// This branch should never be reached. If you see this message - something got really wrong
 	logger.Debug().Msgf(
 		"CloudFetch: channel was closed before result was received; link at offset %d row count %d",
 		link.StartRowOffset,
 		link.RowCount,
 	)
-	return nil, nil // TODO: return error?
+	return nil, nil
 }
 
 func (cft *cloudFetchDownloadTask) Run() {
 	go func() {
+		defer close(cft.resultChan)
+
 		logger.Debug().Msgf(
 			"CloudFetch: start downloading link at offset %d row count %d",
 			cft.link.StartRowOffset,
@@ -232,7 +235,7 @@ func (cft *cloudFetchDownloadTask) Run() {
 			return
 		}
 
-		// TODO: error handling?
+		// io.ReadCloser.Close() may return an error, but in this case it should be safe to ignore (I hope so)
 		defer data.Close()
 
 		logger.Debug().Msgf(
