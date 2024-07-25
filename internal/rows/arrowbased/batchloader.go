@@ -3,6 +3,7 @@ package arrowbased
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"time"
 
@@ -106,7 +107,9 @@ func (bi *localBatchIterator) Next() (SparkArrowBatch, error) {
 }
 
 func (bi *localBatchIterator) HasNext() bool {
-	return bi.index < len(bi.batches)
+	// `Next()` will first increment an index, and only then return a batch
+	// So `HasNext` should check if index can be incremented and still be within array
+	return bi.index+1 < len(bi.batches)
 }
 
 func (bi *localBatchIterator) Close() {
@@ -280,7 +283,8 @@ func fetchBatchBytes(
 		return nil, err
 	}
 	if res.StatusCode != http.StatusOK {
-		return nil, dbsqlerrint.NewDriverError(ctx, errArrowRowsCloudFetchDownloadFailure, err)
+		msg := fmt.Sprintf("%s: %s %d", errArrowRowsCloudFetchDownloadFailure, "HTTP error", res.StatusCode)
+		return nil, dbsqlerrint.NewDriverError(ctx, msg, err)
 	}
 
 	return res.Body, nil
