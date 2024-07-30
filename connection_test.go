@@ -1370,9 +1370,14 @@ func TestConn_Ping(t *testing.T) {
 			return getOperationStatusResp, nil
 		}
 
+		var closeCount int
 		testClient := &client.TestClient{
 			FnExecuteStatement:   executeStatement,
 			FnGetOperationStatus: getOperationStatus,
+			FnCloseOperation: func(ctx context.Context, req *cli_service.TCloseOperationReq) (_r *cli_service.TCloseOperationResp, _err error) {
+				closeCount++
+				return nil, nil
+			},
 		}
 
 		testConn := &conn{
@@ -1384,6 +1389,7 @@ func TestConn_Ping(t *testing.T) {
 
 		assert.Nil(t, err)
 		assert.Equal(t, 1, executeStatementCount)
+		assert.Equal(t, 1, closeCount)
 	})
 }
 

@@ -78,11 +78,12 @@ func (c *conn) Ping(ctx context.Context) error {
 
 	ctx1, cancel := context.WithTimeout(ctx, c.cfg.PingTimeout)
 	defer cancel()
-	_, err := c.QueryContext(ctx1, "select 1", nil)
+	rows, err := c.QueryContext(ctx1, "select 1", nil)
 	if err != nil {
 		log.Err(err).Msg("databricks: failed to ping")
 		return dbsqlerrint.NewBadConnectionError(err)
 	}
+	defer rows.Close()
 
 	log.Debug().Msg("databricks: ping successful")
 	return nil
