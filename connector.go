@@ -236,7 +236,7 @@ func WithSessionParams(params map[string]string) ConnOption {
 // WARNING:
 // When this option is used, TLS is susceptible to machine-in-the-middle attacks.
 // Please only use this option when the hostname is an internal private link hostname
-func WithSkipTLSHostVerify() connOption {
+func WithSkipTLSHostVerify() ConnOption {
 	return func(c *config.Config) {
 		if c.TLSConfig == nil {
 			c.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: true} // #nosec G402
