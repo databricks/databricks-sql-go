@@ -1,5 +1,14 @@
 # Release History
 
+## v1.5.7 (2024-06-05)
+
+- Reverted dependencies upgrade because of compatibility issues (databricks/databricks-sql-go#228)
+- Add more debug logging (databricks/databricks-sql-go#227)
+
+## v1.5.6 (2024-05-28)
+
+- Added connection option `WithSkipTLSHostVerify` (databricks/databricks-sql-go#225 by @jackyhu-db)
+
 ## v1.5.5 (2024-04-16)
 
 - Fix: handle `nil` values passed as query parameter (databricks/databricks-sql-go#199 by @esdrasbeleza)
