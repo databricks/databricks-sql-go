@@ -1,5 +1,11 @@
 # Release History
 
+## v1.6.0 (2024-07-31)
+
+- Security: Resolve HIGH vulnerability in x/net (CVE-2023-39325) (databricks/databricks-sql-go#233 by @anthonycrobinson)
+- Expose `dbsql.ConnOption` type (databricks/databricks-sql-go#202 by @shelldandy)
+- Fix a connection leak in PingContext (databricks/databricks-sql-go#240 by @jackyhu-db)
+
 ## v1.5.7 (2024-06-05)
 
 - Reverted dependencies upgrade because of compatibility issues (databricks/databricks-sql-go#228)
