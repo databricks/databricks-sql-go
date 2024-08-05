@@ -167,8 +167,7 @@ func (tsc *ThriftServiceClient) ExecuteStatement(ctx context.Context, req *cli_s
 	log, ctx = LoggerAndContext(ctx, req)
 	msg, start := log.Track("ExecuteStatement")
 
-	// We use context.Background to fix a problem where on context done the query would not be cancelled.
-	resp, err := tsc.TCLIServiceClient.ExecuteStatement(context.Background(), req)
+	resp, err := tsc.TCLIServiceClient.ExecuteStatement(ctx, req)
 	log, ctx = LoggerAndContext(ctx, resp)
 	logDisplayMessage(resp, log)
 	logExecStatementState(resp, log)
