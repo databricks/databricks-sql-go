@@ -1,8 +1,5 @@
 package m2m
 
-// clientid e92aa085-4875-42fe-ad75-ba38fb3c9706
-// secretid vUdzecmn4aUi2jRDamaBOy3qThu9LSgeV_BW4UnQ
-
 import (
 	"context"
 	"fmt"
