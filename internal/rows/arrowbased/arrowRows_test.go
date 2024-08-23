@@ -469,7 +469,6 @@ func TestArrowRowScanner(t *testing.T) {
 	})
 
 	t.Run("Create column value holders on first batch load", func(t *testing.T) {
-
 		rowSet := &cli_service.TRowSet{
 			ArrowBatches: []*cli_service.TSparkArrowBatch{
 				{RowCount: 5},
@@ -494,13 +493,13 @@ func TestArrowRowScanner(t *testing.T) {
 			&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(2, 3), Record: &fakeRecord{}}}}
 		b2 := &sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(5, 3), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(5, 3), Record: &fakeRecord{}}}}
 		b3 := &sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(8, 7), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(8, 7), Record: &fakeRecord{}}}}
-		fbl := &fakeBatchLoader{
-			Delimiter: rowscanner.NewDelimiter(0, 15),
+
+		fbi := &fakeBatchIterator{
 			batches:   []SparkArrowBatch{b1, b2, b3},
+			index:     -1,
+			callCount: 0,
 		}
-		var e dbsqlerr.DBError
-		ars.batchIterator, e = NewBatchIterator(fbl)
-		assert.Nil(t, e)
+		ars.batchIterator = fbi
 
 		var callCount int
 		ars.valueContainerMaker = &fakeValueContainerMaker{fnMakeColumnValuesContainers: func(ars *arrowRowScanner, d rowscanner.Delimiter) dbsqlerr.DBError {
@@ -517,25 +516,25 @@ func TestArrowRowScanner(t *testing.T) {
 		assert.Nil(t, err)
 		assert.Equal(t, len(metadataResp.Schema.Columns), ars.rowValues.NColumns())
 		assert.Equal(t, 1, callCount)
-		assert.Equal(t, 1, fbl.callCount)
+		assert.Equal(t, 1, fbi.callCount)
 
 		err = ars.loadBatchFor(1)
 		assert.Nil(t, err)
 		assert.Equal(t, len(metadataResp.Schema.Columns), ars.rowValues.NColumns())
 		assert.Equal(t, 1, callCount)
-		assert.Equal(t, 1, fbl.callCount)
+		assert.Equal(t, 1, fbi.callCount)
 
 		err = ars.loadBatchFor(2)
 		assert.Nil(t, err)
 		assert.Equal(t, len(metadataResp.Schema.Columns), ars.rowValues.NColumns())
 		assert.Equal(t, 1, callCount)
-		assert.Equal(t, 1, fbl.callCount)
+		assert.Equal(t, 1, fbi.callCount)
 
 		err = ars.loadBatchFor(5)
 		assert.Nil(t, err)
 		assert.Equal(t, len(metadataResp.Schema.Columns), ars.rowValues.NColumns())
 		assert.Equal(t, 1, callCount)
-		assert.Equal(t, 2, fbl.callCount)
+		assert.Equal(t, 2, fbi.callCount)
 
 	})
 
@@ -557,25 +556,24 @@ func TestArrowRowScanner(t *testing.T) {
 
 		var ars *arrowRowScanner = d.(*arrowRowScanner)
 
-		fbl := &fakeBatchLoader{
-			Delimiter: rowscanner.NewDelimiter(0, 15),
+		fbi := &fakeBatchIterator{
 			batches: []SparkArrowBatch{
 				&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(0, 5), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(0, 5), Record: &fakeRecord{}}}},
 				&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(5, 3), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(5, 3), Record: &fakeRecord{}}}},
 				&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(8, 7), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(8, 7), Record: &fakeRecord{}}}},
 			},
+			index:     -1,
+			callCount: 0,
 		}
-		var e dbsqlerr.DBError
-		ars.batchIterator, e = NewBatchIterator(fbl)
-		assert.Nil(t, e)
+		ars.batchIterator = fbi
 
 		err := ars.loadBatchFor(0)
 		assert.Nil(t, err)
-		assert.Equal(t, 1, fbl.callCount)
+		assert.Equal(t, 1, fbi.callCount)
 
 		err = ars.loadBatchFor(0)
 		assert.Nil(t, err)
-		assert.Equal(t, 1, fbl.callCount)
+		assert.Equal(t, 1, fbi.callCount)
 	})
 
 	t.Run("loadBatch index out of bounds", func(t *testing.T) {
@@ -596,17 +594,16 @@ func TestArrowRowScanner(t *testing.T) {
 
 		var ars *arrowRowScanner = d.(*arrowRowScanner)
 
-		fbl := &fakeBatchLoader{
-			Delimiter: rowscanner.NewDelimiter(0, 15),
+		fbi := &fakeBatchIterator{
 			batches: []SparkArrowBatch{
 				&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(0, 5), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(0, 5), Record: &fakeRecord{}}}},
 				&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(5, 3), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(5, 3), Record: &fakeRecord{}}}},
 				&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(8, 7), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(8, 7), Record: &fakeRecord{}}}},
 			},
+			index:     -1,
+			callCount: 0,
 		}
-		var e dbsqlerr.DBError
-		ars.batchIterator, e = NewBatchIterator(fbl)
-		assert.Nil(t, e)
+		ars.batchIterator = fbi
 
 		err := ars.loadBatchFor(-1)
 		assert.NotNil(t, err)
@@ -636,17 +633,16 @@ func TestArrowRowScanner(t *testing.T) {
 
 		var ars *arrowRowScanner = d.(*arrowRowScanner)
 
-		fbl := &fakeBatchLoader{
-			Delimiter: rowscanner.NewDelimiter(0, 15),
+		fbi := &fakeBatchIterator{
 			batches: []SparkArrowBatch{
 				&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(0, 5), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(0, 5), Record: &fakeRecord{}}}},
 				&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(5, 3), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(5, 3), Record: &fakeRecord{}}}},
 				&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(8, 7), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(8, 7), Record: &fakeRecord{}}}},
 			},
+			index:     -1,
+			callCount: 0,
 		}
-		var e dbsqlerr.DBError
-		ars.batchIterator, e = NewBatchIterator(fbl)
-		assert.Nil(t, e)
+		ars.batchIterator = fbi
 
 		ars.valueContainerMaker = &fakeValueContainerMaker{
 			fnMakeColumnValuesContainers: func(ars *arrowRowScanner, d rowscanner.Delimiter) dbsqlerr.DBError {
@@ -657,7 +653,6 @@ func TestArrowRowScanner(t *testing.T) {
 		err := ars.loadBatchFor(0)
 		assert.NotNil(t, err)
 		assert.ErrorContains(t, err, "error making containers")
-
 	})
 
 	t.Run("loadBatch record read failure", func(t *testing.T) {
@@ -679,18 +674,17 @@ func TestArrowRowScanner(t *testing.T) {
 
 		var ars *arrowRowScanner = d.(*arrowRowScanner)
 
-		fbl := &fakeBatchLoader{
-			Delimiter: rowscanner.NewDelimiter(0, 15),
+		fbi := &fakeBatchIterator{
 			batches: []SparkArrowBatch{
 				&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(0, 5), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(0, 5), Record: &fakeRecord{}}}},
 				&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(5, 3), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(5, 3), Record: &fakeRecord{}}}},
 				&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(8, 7), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(8, 7), Record: &fakeRecord{}}}},
 			},
-			err: dbsqlerrint.NewDriverError(context.TODO(), "error reading record", nil),
+			index:     -1,
+			callCount: 0,
+			err:       dbsqlerrint.NewDriverError(context.TODO(), "error reading record", nil),
 		}
-		var e dbsqlerr.DBError
-		ars.batchIterator, e = NewBatchIterator(fbl)
-		assert.Nil(t, e)
+		ars.batchIterator = fbi
 
 		err := ars.loadBatchFor(0)
 		assert.NotNil(t, err)
@@ -716,40 +710,39 @@ func TestArrowRowScanner(t *testing.T) {
 
 		var ars *arrowRowScanner = d.(*arrowRowScanner)
 
-		fbl := &fakeBatchLoader{
-			Delimiter: rowscanner.NewDelimiter(0, 15),
+		fbi := &fakeBatchIterator{
 			batches: []SparkArrowBatch{
 				&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(0, 5), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(0, 5), Record: &fakeRecord{}}}},
 				&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(5, 3), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(5, 3), Record: &fakeRecord{}}}},
 				&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(8, 7), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(8, 7), Record: &fakeRecord{}}}},
 			},
+			index:     -1,
+			callCount: 0,
 		}
-		var e dbsqlerr.DBError
-		ars.batchIterator, e = NewBatchIterator(fbl)
-		assert.Nil(t, e)
+		ars.batchIterator = fbi
 
 		for _, i := range []int64{0, 1, 2, 3, 4} {
 			err := ars.loadBatchFor(i)
 			assert.Nil(t, err)
-			assert.NotNil(t, fbl.lastReadBatch)
-			assert.Equal(t, 1, fbl.callCount)
-			assert.Equal(t, int64(0), fbl.lastReadBatch.Start())
+			assert.NotNil(t, fbi.lastReadBatch)
+			assert.Equal(t, 1, fbi.callCount)
+			assert.Equal(t, int64(0), fbi.lastReadBatch.Start())
 		}
 
 		for _, i := range []int64{5, 6, 7} {
 			err := ars.loadBatchFor(i)
 			assert.Nil(t, err)
-			assert.NotNil(t, fbl.lastReadBatch)
-			assert.Equal(t, 2, fbl.callCount)
-			assert.Equal(t, int64(5), fbl.lastReadBatch.Start())
+			assert.NotNil(t, fbi.lastReadBatch)
+			assert.Equal(t, 2, fbi.callCount)
+			assert.Equal(t, int64(5), fbi.lastReadBatch.Start())
 		}
 
 		for _, i := range []int64{8, 9, 10, 11, 12, 13, 14} {
 			err := ars.loadBatchFor(i)
 			assert.Nil(t, err)
-			assert.NotNil(t, fbl.lastReadBatch)
-			assert.Equal(t, 3, fbl.callCount)
-			assert.Equal(t, int64(8), fbl.lastReadBatch.Start())
+			assert.NotNil(t, fbi.lastReadBatch)
+			assert.Equal(t, 3, fbi.callCount)
+			assert.Equal(t, int64(8), fbi.lastReadBatch.Start())
 		}
 
 		err := ars.loadBatchFor(-1)
@@ -869,17 +862,16 @@ func TestArrowRowScanner(t *testing.T) {
 			ars.UseArrowNativeDecimal = true
 			ars.UseArrowNativeIntervalTypes = true
 
-			fbl := &fakeBatchLoader{
-				Delimiter: rowscanner.NewDelimiter(0, 15),
+			fbi := &fakeBatchIterator{
 				batches: []SparkArrowBatch{
 					&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(0, 5), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(0, 5), Record: &fakeRecord{}}}},
 					&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(5, 3), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(5, 3), Record: &fakeRecord{}}}},
 					&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(8, 7), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(8, 7), Record: &fakeRecord{}}}},
 				},
+				index:     -1,
+				callCount: 0,
 			}
-			var e dbsqlerr.DBError
-			ars.batchIterator, e = NewBatchIterator(fbl)
-			assert.Nil(t, e)
+			ars.batchIterator = fbi
 
 			ars.valueContainerMaker = &fakeValueContainerMaker{fnMakeColumnValuesContainers: func(ars *arrowRowScanner, d rowscanner.Delimiter) dbsqlerr.DBError {
 				columnValueHolders := make([]columnValues, len(ars.arrowSchema.Fields()))
@@ -1049,17 +1041,13 @@ func TestArrowRowScanner(t *testing.T) {
 		ars := d.(*arrowRowScanner)
 		assert.Equal(t, int64(53940), ars.NRows())
 
-		bi, ok := ars.batchIterator.(*batchIterator)
+		bi, ok := ars.batchIterator.(*localBatchIterator)
 		assert.True(t, ok)
-		bl := bi.batchLoader
-		fbl := &batchLoaderWrapper{
-			Delimiter: rowscanner.NewDelimiter(bl.Start(), bl.Count()),
-			bl:        bl,
+		fbi := &batchIteratorWrapper{
+			bi: bi,
 		}
 
-		var e dbsqlerr.DBError
-		ars.batchIterator, e = NewBatchIterator(fbl)
-		assert.Nil(t, e)
+		ars.batchIterator = fbi
 
 		dest := make([]driver.Value, len(executeStatementResp.DirectResults.ResultSetMetadata.Schema.Columns))
 		for i := int64(0); i < ars.NRows(); i = i + 1 {
@@ -1079,7 +1067,7 @@ func TestArrowRowScanner(t *testing.T) {
 			}
 		}
 
-		assert.Equal(t, 54, fbl.callCount)
+		assert.Equal(t, 54, fbi.callCount)
 	})
 
 	t.Run("Retrieve values - native arrow schema", func(t *testing.T) {
@@ -1647,47 +1635,66 @@ func (cv *fakeColumnValues) SetValueArray(colData arrow.ArrayData) error {
 	return nil
 }
 
-type fakeBatchLoader struct {
-	rowscanner.Delimiter
+type fakeBatchIterator struct {
 	batches       []SparkArrowBatch
+	index         int
 	callCount     int
 	err           dbsqlerr.DBError
 	lastReadBatch SparkArrowBatch
 }
 
-var _ BatchLoader = (*fakeBatchLoader)(nil)
+var _ BatchIterator = (*fakeBatchIterator)(nil)
 
-func (fbl *fakeBatchLoader) Close() {}
-func (fbl *fakeBatchLoader) GetBatchFor(recordNum int64) (SparkArrowBatch, dbsqlerr.DBError) {
-	fbl.callCount += 1
-	if fbl.err != nil {
-		return nil, fbl.err
-	}
-	for i := range fbl.batches {
-		if fbl.batches[i].Contains(recordNum) {
-			fbl.lastReadBatch = fbl.batches[i]
-			return fbl.batches[i], nil
-		}
+func (fbi *fakeBatchIterator) Next() (SparkArrowBatch, error) {
+	fbi.callCount += 1
 
+	if fbi.err != nil {
+		return nil, fbi.err
 	}
-	return nil, dbsqlerrint.NewDriverError(context.Background(), errArrowRowsInvalidRowNumber(recordNum), nil)
+
+	cnt := len(fbi.batches)
+	fbi.index++
+	if fbi.index < cnt {
+		fbi.lastReadBatch = fbi.batches[fbi.index]
+		return fbi.lastReadBatch, nil
+	}
+
+	fbi.lastReadBatch = nil
+	return nil, io.EOF
 }
 
-type batchLoaderWrapper struct {
-	rowscanner.Delimiter
-	bl              BatchLoader
+func (fbi *fakeBatchIterator) HasNext() bool {
+	// `Next()` will first increment an index, and only then return a batch
+	// So `HasNext` should check if index can be incremented and still be within array
+	return fbi.index+1 < len(fbi.batches)
+}
+
+func (fbi *fakeBatchIterator) Close() {
+	fbi.index = len(fbi.batches)
+	fbi.lastReadBatch = nil
+}
+
+type batchIteratorWrapper struct {
+	bi              BatchIterator
 	callCount       int
 	lastLoadedBatch SparkArrowBatch
 }
 
-var _ BatchLoader = (*batchLoaderWrapper)(nil)
+var _ BatchIterator = (*batchIteratorWrapper)(nil)
 
-func (fbl *batchLoaderWrapper) Close() { fbl.bl.Close() }
-func (fbl *batchLoaderWrapper) GetBatchFor(recordNum int64) (SparkArrowBatch, dbsqlerr.DBError) {
-	fbl.callCount += 1
-	batch, err := fbl.bl.GetBatchFor(recordNum)
-	fbl.lastLoadedBatch = batch
+func (biw *batchIteratorWrapper) Next() (SparkArrowBatch, error) {
+	biw.callCount += 1
+	batch, err := biw.bi.Next()
+	biw.lastLoadedBatch = batch
 	return batch, err
+}
+
+func (biw *batchIteratorWrapper) HasNext() bool {
+	return biw.bi.HasNext()
+}
+
+func (biw *batchIteratorWrapper) Close() {
+	biw.bi.Close()
 }
 
 type fakeRecord struct {
