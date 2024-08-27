@@ -1,5 +1,9 @@
 # Release History
 
+## v1.6.1 (2024-08-27)
+
+- Fix CloudFetch "row number N is not contained in any arrow batch" error (databricks/databricks-sql-go#234)
+
 ## v1.6.0 (2024-07-31)
 
 - Security: Resolve HIGH vulnerability in x/net (CVE-2023-39325) (databricks/databricks-sql-go#233 by @anthonycrobinson)
