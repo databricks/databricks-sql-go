@@ -183,7 +183,13 @@ func convertNamedValuesToSparkParams(values []driver.NamedValue) []*cli_service.
 		} else {
 			sparkParamType = sqlParam.Type.String()
 		}
-		sparkParam := cli_service.TSparkParameter{Name: &sqlParam.Name, Type: &sparkParamType, Value: sparkValue}
+
+		sparkParamName := &sqlParam.Name
+		if sqlParam.Name == "" {
+			sparkParamName = nil
+		}
+
+		sparkParam := cli_service.TSparkParameter{Name: sparkParamName, Type: &sparkParamType, Value: sparkValue}
 		sparkParams = append(sparkParams, &sparkParam)
 	}
 	return sparkParams
