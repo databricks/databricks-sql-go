@@ -154,6 +154,18 @@ The result log may look like this:
 
 	{"level":"debug","connId":"01ed6545-5669-1ec7-8c7e-6d8a1ea0ab16","corrId":"workflow-example","queryId":"01ed6545-57cc-188a-bfc5-d9c0eaf8e189","time":1668558402,"message":"Run Main elapsed time: 1.298712292s"}
 
+You may customize the log by passing it using Zerolog's context support. This allows customziation of the output, as well as inclusion of additionl metadata.
+
+For example,
+
+	log := zerolog.New(DefaultLogOutput).With("service_id", "workflow-example")).Logger()
+	ctx = log.WithContext(context.Background())
+	...
+	db, err := sql.Open("databricks", "<dsn_string>")
+	...
+	rows, err := db.QueryContext(ctx, `select * from sometable`)
+	...
+
 # Programmatically Retrieving Connection and Query Id
 
 Use the driverctx package under driverctx/ctx.go to add callbacks to the query context to receive the connection id and query id.
