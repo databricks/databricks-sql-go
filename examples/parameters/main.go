@@ -54,11 +54,11 @@ func queryWithPositionalParameters(db *sql.DB) {
 
 	err := db.QueryRow(`
 		SELECT
-			:p_bool AS col_bool,
-			:p_int AS col_int,
-			:p_double AS col_double,
-			:p_float AS col_float,
-			:p_date AS col_date
+			? AS col_bool,
+			? AS col_int,
+			? AS col_double,
+			? AS col_float,
+			? AS col_date
 		`,
 		true,
 		int(1234),
