@@ -8,7 +8,9 @@ import (
 	"strings"
 	"time"
 
+	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
+	"github.com/pkg/errors"
 )
 
 type Parameter struct {
@@ -162,10 +164,14 @@ func inferType(param *Parameter) {
 	}
 }
 
-func convertNamedValuesToSparkParams(values []driver.NamedValue) []*cli_service.TSparkParameter {
+func convertNamedValuesToSparkParams(values []driver.NamedValue) ([]*cli_service.TSparkParameter, error) {
 	var sparkParams []*cli_service.TSparkParameter
 
 	sqlParams := valuesToParameters(values)
+
+	hasNamedParams := false
+	hasPositionalParams := false
+
 	inferTypes(sqlParams)
 	for i := range sqlParams {
 		sqlParam := sqlParams[i]
@@ -184,15 +190,23 @@ func convertNamedValuesToSparkParams(values []driver.NamedValue) []*cli_service.
 			sparkParamType = sqlParam.Type.String()
 		}
 
-		sparkParamName := &sqlParam.Name
-		if sqlParam.Name == "" {
+		var sparkParamName *string
+		if sqlParam.Name != "" {
+			sparkParamName = &sqlParam.Name
+			hasNamedParams = true
+		} else {
 			sparkParamName = nil
+			hasPositionalParams = true
+		}
+
+		if hasNamedParams && hasPositionalParams {
+			return nil, errors.New(dbsqlerr.ErrMixedNamedAndPositionalParameters)
 		}
 
 		sparkParam := cli_service.TSparkParameter{Name: sparkParamName, Type: &sparkParamType, Value: sparkValue}
 		sparkParams = append(sparkParams, &sparkParam)
 	}
-	return sparkParams
+	return sparkParams, nil
 }
 
 func inferDecimalType(d string) (t string) {
