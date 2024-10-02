@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"database/sql"
 	"fmt"
 	"log"
@@ -11,6 +10,74 @@ import (
 	dbsql "github.com/databricks/databricks-sql-go"
 	"github.com/joho/godotenv"
 )
+
+func queryWithNamedParameters(db *sql.DB) {
+	var p_bool bool
+	var p_int int
+	var p_double float64
+	var p_float float32
+	var p_date string
+
+	err := db.QueryRow(`
+		SELECT
+			:p_bool AS col_bool,
+			:p_int AS col_int,
+			:p_double AS col_double,
+			:p_float AS col_float,
+			:p_date AS col_date
+		`,
+		dbsql.Parameter{Name: "p_bool", Value: true},
+		dbsql.Parameter{Name: "p_int", Value: int(1234)},
+		dbsql.Parameter{Name: "p_double", Type: dbsql.SqlDouble, Value: "3.14"},
+		dbsql.Parameter{Name: "p_float", Type: dbsql.SqlFloat, Value: "3.14"},
+		dbsql.Parameter{Name: "p_date", Type: dbsql.SqlDate, Value: "2017-07-23 00:00:00"},
+	).Scan(&p_bool, &p_int, &p_double, &p_float, &p_date)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			fmt.Println("not found")
+			return
+		} else {
+			fmt.Printf("err: %v\n", err)
+		}
+	} else {
+		fmt.Println(p_bool, p_int, p_double, p_float, p_date)
+	}
+}
+
+func queryWithPositionalParameters(db *sql.DB) {
+	var p_bool bool
+	var p_int int
+	var p_double float64
+	var p_float float32
+	var p_date string
+
+	err := db.QueryRow(`
+		SELECT
+			:p_bool AS col_bool,
+			:p_int AS col_int,
+			:p_double AS col_double,
+			:p_float AS col_float,
+			:p_date AS col_date
+		`,
+		true,
+		int(1234),
+		"3.14",
+		dbsql.Parameter{Type: dbsql.SqlFloat, Value: "3.14"},
+		dbsql.Parameter{Type: dbsql.SqlDate, Value: "2017-07-23 00:00:00"},
+	).Scan(&p_bool, &p_int, &p_double, &p_float, &p_date)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			fmt.Println("not found")
+			return
+		} else {
+			fmt.Printf("err: %v\n", err)
+		}
+	} else {
+		fmt.Println(p_bool, p_int, p_double, p_float, p_date)
+	}
+}
 
 func main() {
 	// Opening a driver typically will not attempt to connect to the database.
@@ -36,33 +103,7 @@ func main() {
 	}
 	db := sql.OpenDB(connector)
 	defer db.Close()
-	// ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	// defer cancel()
-	ctx := context.Background()
-	var p_bool bool
-	var p_int int
-	var p_double float64
-	var p_float float32
-	var p_date string
-	err1 := db.QueryRowContext(ctx, `SELECT
-	:p_bool AS col_bool,
-	:p_int AS col_int,
-	:p_double AS col_double,
-	:p_float AS col_float,
-	:p_date AS col_date`,
-		dbsql.Parameter{Name: "p_bool", Value: true},
-		dbsql.Parameter{Name: "p_int", Value: int(1234)},
-		dbsql.Parameter{Name: "p_double", Type: dbsql.SqlDouble, Value: "3.14"},
-		dbsql.Parameter{Name: "p_float", Type: dbsql.SqlFloat, Value: "3.14"},
-		dbsql.Parameter{Name: "p_date", Type: dbsql.SqlDate, Value: "2017-07-23 00:00:00"}).Scan(&p_bool, &p_int, &p_double, &p_float, &p_date)
 
-	if err1 != nil {
-		if err1 == sql.ErrNoRows {
-			fmt.Println("not found")
-			return
-		} else {
-			fmt.Printf("err: %v\n", err1)
-		}
-	}
-
+	queryWithNamedParameters(db)
+	queryWithPositionalParameters(db)
 }
