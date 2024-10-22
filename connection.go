@@ -275,6 +275,11 @@ func invalidOperationState(ctx context.Context, opStatus *cli_service.TGetOperat
 func (c *conn) executeStatement(ctx context.Context, query string, args []driver.NamedValue) (*cli_service.TExecuteStatementResp, error) {
 	ctx = driverctx.NewContextWithConnId(ctx, c.id)
 
+	parameters, err := convertNamedValuesToSparkParams(args)
+	if err != nil {
+		return nil, err
+	}
+
 	req := cli_service.TExecuteStatementReq{
 		SessionHandle: c.session.SessionHandle,
 		Statement:     query,
@@ -284,7 +289,7 @@ func (c *conn) executeStatement(ctx context.Context, query string, args []driver
 			MaxRows: int64(c.cfg.MaxRows),
 		},
 		CanDecompressLZ4Result_: &c.cfg.UseLz4Compression,
-		Parameters:              convertNamedValuesToSparkParams(args),
+		Parameters:              parameters,
 	}
 
 	if c.cfg.UseArrowBatches {
