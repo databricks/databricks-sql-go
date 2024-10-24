@@ -59,6 +59,7 @@ func NewCloudBatchLoader(ctx context.Context, files []*cli_service.TSparkArrowRe
 			expiryTime:        f.ExpiryTime,
 			minTimeToExpiry:   cfg.MinTimeToExpiry,
 			compressibleBatch: compressibleBatch{useLz4Compression: cfg.UseLz4Compression},
+			httpHeaders:       f.HttpHeaders,
 		}
 		inputChan <- li
 
@@ -180,6 +181,7 @@ type cloudURL struct {
 	fileLink        string
 	expiryTime      int64
 	minTimeToExpiry time.Duration
+	httpHeaders     map[string]string
 }
 
 func (cu *cloudURL) Fetch(ctx context.Context) (SparkArrowBatch, error) {
@@ -192,6 +194,12 @@ func (cu *cloudURL) Fetch(ctx context.Context) (SparkArrowBatch, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", cu.fileLink, nil)
 	if err != nil {
 		return sab, err
+	}
+
+	if cu.httpHeaders != nil {
+		for key, value := range cu.httpHeaders {
+			req.Header.Set(key, value)
+		}
 	}
 
 	client := http.DefaultClient

@@ -28,6 +28,9 @@ func TestCloudURLFetch(t *testing.T) {
 		handler(w, r)
 	}))
 	defer server.Close()
+	cloudFetchHeaders := map[string]string{
+		"foo": "bar",
+	}
 	testTable := []struct {
 		name             string
 		response         func(w http.ResponseWriter, r *http.Request)
@@ -39,6 +42,14 @@ func TestCloudURLFetch(t *testing.T) {
 			name: "cloud-fetch-happy-case",
 			response: func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusOK)
+				for name, value := range cloudFetchHeaders {
+					if values, ok := r.Header[name]; ok {
+						if values[0] != value {
+							panic(errors.New("Missing auth headers"))
+						}
+					}
+				}
+
 				_, err := w.Write(generateMockArrowBytes(generateArrowRecord()))
 				if err != nil {
 					panic(err)
@@ -91,9 +102,10 @@ func TestCloudURLFetch(t *testing.T) {
 			}
 
 			cu := &cloudURL{
-				Delimiter:  rowscanner.NewDelimiter(0, 3),
-				fileLink:   server.URL,
-				expiryTime: expiryTime.Unix(),
+				Delimiter:   rowscanner.NewDelimiter(0, 3),
+				fileLink:    server.URL,
+				expiryTime:  expiryTime.Unix(),
+				httpHeaders: cloudFetchHeaders,
 			}
 
 			ctx := context.Background()
