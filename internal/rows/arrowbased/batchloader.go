@@ -277,6 +277,12 @@ func fetchBatchBytes(
 		return nil, err
 	}
 
+	if link.HttpHeaders != nil {
+		for key, value := range link.HttpHeaders {
+			req.Header.Set(key, value)
+		}
+	}
+
 	client := http.DefaultClient
 	res, err := client.Do(req)
 	if err != nil {
