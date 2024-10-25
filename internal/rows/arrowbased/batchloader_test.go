@@ -4,13 +4,15 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
-	"github.com/databricks/databricks-sql-go/internal/cli_service"
-	"github.com/databricks/databricks-sql-go/internal/config"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
+	"github.com/databricks/databricks-sql-go/internal/cli_service"
+	"github.com/databricks/databricks-sql-go/internal/config"
+	"github.com/pkg/errors"
 
 	"github.com/apache/arrow/go/v12/arrow"
 	"github.com/apache/arrow/go/v12/arrow/array"
@@ -28,8 +30,19 @@ func TestCloudFetchIterator(t *testing.T) {
 	defer server.Close()
 
 	t.Run("should fetch all the links", func(t *testing.T) {
+		cloudFetchHeaders := map[string]string{
+			"foo": "bar",
+		}
+
 		handler = func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
+			for name, value := range cloudFetchHeaders {
+				if values, ok := r.Header[name]; ok {
+					if values[0] != value {
+						panic(errors.New("Missing auth headers"))
+					}
+				}
+			}
 			_, err := w.Write(generateMockArrowBytes(generateArrowRecord()))
 			if err != nil {
 				panic(err)
@@ -44,12 +57,14 @@ func TestCloudFetchIterator(t *testing.T) {
 				ExpiryTime:     time.Now().Add(10 * time.Minute).Unix(),
 				StartRowOffset: startRowOffset,
 				RowCount:       1,
+				HttpHeaders:    cloudFetchHeaders,
 			},
 			{
 				FileLink:       server.URL,
 				ExpiryTime:     time.Now().Add(10 * time.Minute).Unix(),
 				StartRowOffset: startRowOffset + 1,
 				RowCount:       1,
+				HttpHeaders:    cloudFetchHeaders,
 			},
 		}
 
