@@ -78,11 +78,12 @@ func (c *conn) Ping(ctx context.Context) error {
 
 	ctx1, cancel := context.WithTimeout(ctx, c.cfg.PingTimeout)
 	defer cancel()
-	_, err := c.QueryContext(ctx1, "select 1", nil)
+	rows, err := c.QueryContext(ctx1, "select 1", nil)
 	if err != nil {
 		log.Err(err).Msg("databricks: failed to ping")
 		return dbsqlerrint.NewBadConnectionError(err)
 	}
+	defer rows.Close()
 
 	log.Debug().Msg("databricks: ping successful")
 	return nil
@@ -274,6 +275,11 @@ func invalidOperationState(ctx context.Context, opStatus *cli_service.TGetOperat
 func (c *conn) executeStatement(ctx context.Context, query string, args []driver.NamedValue) (*cli_service.TExecuteStatementResp, error) {
 	ctx = driverctx.NewContextWithConnId(ctx, c.id)
 
+	parameters, err := convertNamedValuesToSparkParams(args)
+	if err != nil {
+		return nil, err
+	}
+
 	req := cli_service.TExecuteStatementReq{
 		SessionHandle: c.session.SessionHandle,
 		Statement:     query,
@@ -283,7 +289,7 @@ func (c *conn) executeStatement(ctx context.Context, query string, args []driver
 			MaxRows: int64(c.cfg.MaxRows),
 		},
 		CanDecompressLZ4Result_: &c.cfg.UseLz4Compression,
-		Parameters:              convertNamedValuesToSparkParams(args),
+		Parameters:              parameters,
 	}
 
 	if c.cfg.UseArrowBatches {

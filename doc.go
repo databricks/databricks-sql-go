@@ -188,10 +188,16 @@ Use the driverctx package under driverctx/ctx.go to add callbacks to the query c
 
 Passing parameters to a query is supported when run against servers with version DBR 14.1.
 
+	// Named parameters:
 	p := dbsql.Parameter{Name: "p_bool", Value: true},
-	rows, err1 := db.QueryContext(ctx, `select * from sometable where condition=:p_bool`,dbsql.Parameter{Name: "p_bool", Value: true})
+	rows, err := db.QueryContext(ctx, `select * from sometable where condition=:p_bool`,dbsql.Parameter{Name: "p_bool", Value: true})
+
+	// Positional parameters - both `dbsql.Parameter` and plain values can be used:
+	rows, err := db.Query(`select *, ? from sometable where field=?`,dbsql.Parameter{Value: "123.456"}, "another parameter")
 
 For complex types, you can specify the SQL type using the dbsql.Parameter type field. If this field is set, the value field MUST be set to a string.
+
+Please note that named and positional parameters cannot be used together in the single query.
 
 # Staging Ingestion
 

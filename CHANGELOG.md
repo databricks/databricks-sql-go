@@ -1,7 +1,30 @@
 # Release History
 
-- Bug fix for issue 193: convertNamedValuesToSparkParams was incorrectly creating a Spark parameter value as "%!s(<nil>)" when a named param was nil (databricks/databricks-sql-go#199 by @esdrasbeleza)
+## v1.6.1 (2024-08-27)
+
+- Fix CloudFetch "row number N is not contained in any arrow batch" error (databricks/databricks-sql-go#234)
+
+## v1.6.0 (2024-07-31)
+
+- Security: Resolve HIGH vulnerability in x/net (CVE-2023-39325) (databricks/databricks-sql-go#233 by @anthonycrobinson)
+- Expose `dbsql.ConnOption` type (databricks/databricks-sql-go#202 by @shelldandy)
+- Fix a connection leak in PingContext (databricks/databricks-sql-go#240 by @jackyhu-db)
+
+## v1.5.7 (2024-06-05)
+
+- Reverted dependencies upgrade because of compatibility issues (databricks/databricks-sql-go#228)
+- Add more debug logging (databricks/databricks-sql-go#227)
+
+## v1.5.6 (2024-05-28)
+
+- Added connection option `WithSkipTLSHostVerify` (databricks/databricks-sql-go#225 by @jackyhu-db)
+
+## v1.5.5 (2024-04-16)
+
+- Fix: handle `nil` values passed as query parameter (databricks/databricks-sql-go#199 by @esdrasbeleza)
+- Fix: provide content length on staging file put (databricks/databricks-sql-go#217 by @candiduslynx)
 - Fix formatting of *float64 parameters (databricks/databricks-sql-go#215 by @esdrasbeleza)
+- Fix: use correct tenant ID for different Azure domains (databricks/databricks-sql-go#210 by @tubiskasaroos)
 
 ## v1.5.4 (2024-04-10)
 

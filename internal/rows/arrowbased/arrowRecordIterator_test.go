@@ -19,6 +19,8 @@ import (
 func TestArrowRecordIterator(t *testing.T) {
 
 	t.Run("with direct results", func(t *testing.T) {
+		logger := dbsqllog.WithContext("connectionId", "correlationId", "")
+
 		executeStatementResp := cli_service.TExecuteStatementResp{}
 		loadTestData2(t, "directResultsMultipleFetch/ExecuteStatement.json", &executeStatementResp)
 
@@ -30,32 +32,37 @@ func TestArrowRecordIterator(t *testing.T) {
 
 		var fetchesInfo []fetchResultsInfo
 
-		client := getSimpleClient(&fetchesInfo, []cli_service.TFetchResultsResp{fetchResp1, fetchResp2})
-		logger := dbsqllog.WithContext("connectionId", "correlationId", "")
+		simpleClient := getSimpleClient(&fetchesInfo, []cli_service.TFetchResultsResp{fetchResp1, fetchResp2})
 		rpi := rowscanner.NewResultPageIterator(
 			rowscanner.NewDelimiter(0, 7311),
 			5000,
 			nil,
 			false,
-			client,
+			simpleClient,
 			"connectionId",
 			"correlationId",
-			logger)
+			logger,
+		)
 
-		bl, err := NewLocalBatchLoader(
+		cfg := *config.WithDefaults()
+
+		bi, err := NewLocalBatchIterator(
 			context.Background(),
 			executeStatementResp.DirectResults.ResultSet.Results.ArrowBatches,
 			0,
 			executeStatementResp.DirectResults.ResultSetMetadata.ArrowSchema,
-			nil,
+			&cfg,
 		)
+
 		assert.Nil(t, err)
 
-		bi, err := NewBatchIterator(bl)
-		assert.Nil(t, err)
-
-		cfg := *config.WithDefaults()
-		rs := NewArrowRecordIterator(context.Background(), rpi, bi, executeStatementResp.DirectResults.ResultSetMetadata.ArrowSchema, cfg)
+		rs := NewArrowRecordIterator(
+			context.Background(),
+			rpi,
+			bi,
+			executeStatementResp.DirectResults.ResultSetMetadata.ArrowSchema,
+			cfg,
+		)
 		defer rs.Close()
 
 		hasNext := rs.HasNext()
@@ -108,6 +115,7 @@ func TestArrowRecordIterator(t *testing.T) {
 	})
 
 	t.Run("no direct results", func(t *testing.T) {
+		logger := dbsqllog.WithContext("connectionId", "correlationId", "")
 
 		fetchResp1 := cli_service.TFetchResultsResp{}
 		loadTestData2(t, "multipleFetch/FetchResults1.json", &fetchResp1)
@@ -120,17 +128,17 @@ func TestArrowRecordIterator(t *testing.T) {
 
 		var fetchesInfo []fetchResultsInfo
 
-		client := getSimpleClient(&fetchesInfo, []cli_service.TFetchResultsResp{fetchResp1, fetchResp2, fetchResp3})
-		logger := dbsqllog.WithContext("connectionId", "correlationId", "")
+		simpleClient := getSimpleClient(&fetchesInfo, []cli_service.TFetchResultsResp{fetchResp1, fetchResp2, fetchResp3})
 		rpi := rowscanner.NewResultPageIterator(
 			rowscanner.NewDelimiter(0, 0),
 			5000,
 			nil,
 			false,
-			client,
+			simpleClient,
 			"connectionId",
 			"correlationId",
-			logger)
+			logger,
+		)
 
 		cfg := *config.WithDefaults()
 		rs := NewArrowRecordIterator(context.Background(), rpi, nil, nil, cfg)

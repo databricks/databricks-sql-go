@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
@@ -166,8 +167,7 @@ func (tsc *ThriftServiceClient) ExecuteStatement(ctx context.Context, req *cli_s
 	log, ctx = LoggerAndContext(ctx, req)
 	msg, start := log.Track("ExecuteStatement")
 
-	// We use context.Background to fix a problem where on context done the query would not be cancelled.
-	resp, err := tsc.TCLIServiceClient.ExecuteStatement(context.Background(), req)
+	resp, err := tsc.TCLIServiceClient.ExecuteStatement(ctx, req)
 	log, ctx = LoggerAndContext(ctx, resp)
 	logDisplayMessage(resp, log)
 	logExecStatementState(resp, log)
@@ -545,7 +545,12 @@ func RetryableClient(cfg *config.Config) *http.Client {
 	return retryableClient.StandardClient()
 }
 
-func PooledTransport() *http.Transport {
+func PooledTransport(cfg *config.Config) *http.Transport {
+	var tlsConfig *tls.Config
+	if (cfg.TLSConfig != nil) && cfg.TLSConfig.InsecureSkipVerify {
+		tlsConfig = cfg.TLSConfig
+	}
+
 	transport := &http.Transport{
 		Proxy: http.ProxyFromEnvironment,
 		DialContext: (&net.Dialer{
@@ -553,6 +558,7 @@ func PooledTransport() *http.Transport {
 			KeepAlive: 30 * time.Second,
 			DualStack: true,
 		}).DialContext,
+		TLSClientConfig:       tlsConfig,
 		ForceAttemptHTTP2:     true,
 		MaxIdleConns:          100,
 		IdleConnTimeout:       180 * time.Second,
@@ -577,7 +583,7 @@ func PooledClient(cfg *config.Config) *http.Client {
 		}
 	} else {
 		tr = &Transport{
-			Base:  PooledTransport(),
+			Base:  PooledTransport(cfg),
 			Authr: cfg.Authenticator,
 		}
 	}
