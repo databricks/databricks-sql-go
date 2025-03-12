@@ -1506,3 +1506,30 @@ func getSimpleClient(fetchResults []cli_service.TFetchResultsResp) cli_service.T
 
 	return client
 }
+
+func getErroringClient(err error) cli_service.TCLIService {
+	fetchResultsFn := func(ctx context.Context, req *cli_service.TFetchResultsReq) (_r *cli_service.TFetchResultsResp, _err error) {
+		return nil, err
+	}
+
+	client := &client.TestClient{
+		FnFetchResults: fetchResultsFn,
+	}
+
+	return client
+}
+
+func TestFetchResultPage_PropagatesGetNextPageError(t *testing.T) {
+	errorMsg := "Error thrown while calling TFetchResults in getNextPage"
+	expectedErr := errors.New(errorMsg)
+
+	client := getErroringClient(expectedErr)
+
+	executeStatementResp := cli_service.TExecuteStatementResp{}
+	cfg := config.WithDefaults()
+	rows, _ := NewRows("connId", "corrId", nil, client, cfg, executeStatementResp.DirectResults)
+	// Call Next and ensure it propagates the error from getNextPage
+	actualErr := rows.Next(nil)
+
+	assert.ErrorContains(t, actualErr, errorMsg)
+}
