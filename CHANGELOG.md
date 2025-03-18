@@ -1,5 +1,13 @@
 # Release History
 
+## v1.6.2 (2025-03-18)
+
+- Support positional query parameters (databricks/databricks-sql-go#247)
+- Add custom auth headers into cloud fetch request (databricks/databricks-sql-go#249)
+- Security: GO-2024-2947 - Update go-retryablehttp (databricks/databricks-sql-go#251)
+- Security: CVE-2025-27144 - Resolve vulnerability in go-jose (databricks/databricks-sql-go#258)
+- Bugfix: Handle incorrect EOF in fetchResultPage when TFetchResults call fails with an error (databricks/databricks-sql-go#255)
+
 ## v1.6.1 (2024-08-27)
 
 - Fix CloudFetch "row number N is not contained in any arrow batch" error (databricks/databricks-sql-go#234)
