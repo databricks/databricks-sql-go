@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
-	"io"
 	"math"
 	"reflect"
 	"time"
@@ -454,10 +453,6 @@ func (r *rows) fetchResultPage() error {
 	if r.RowScanner != nil {
 		r.RowScanner.Close()
 		r.RowScanner = nil
-	}
-
-	if !r.ResultPageIterator.HasNext() {
-		return io.EOF
 	}
 
 	fetchResult, err1 := r.ResultPageIterator.Next()
