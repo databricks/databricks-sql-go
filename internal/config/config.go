@@ -471,7 +471,7 @@ type CloudFetchConfig struct {
 }
 
 func (cfg CloudFetchConfig) WithDefaults() CloudFetchConfig {
-	cfg.UseCloudFetch = false
+	cfg.UseCloudFetch = true
 
 	if cfg.MaxDownloadThreads <= 0 {
 		cfg.MaxDownloadThreads = 10
