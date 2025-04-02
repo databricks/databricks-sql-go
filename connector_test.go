@@ -89,7 +89,7 @@ func TestNewConnector(t *testing.T) {
 			WithHTTPPath(httpPath),
 		)
 		expectedCloudFetchConfig := config.CloudFetchConfig{
-			UseCloudFetch:      false,
+			UseCloudFetch:      true,
 			MaxDownloadThreads: 10,
 			MaxFilesInMemory:   10,
 			MinTimeToExpiry:    0 * time.Second,
@@ -130,7 +130,7 @@ func TestNewConnector(t *testing.T) {
 			WithRetries(-1, 0, 0),
 		)
 		expectedCloudFetchConfig := config.CloudFetchConfig{
-			UseCloudFetch:      false,
+			UseCloudFetch:      true,
 			MaxDownloadThreads: 10,
 			MaxFilesInMemory:   10,
 			MinTimeToExpiry:    0 * time.Second,
