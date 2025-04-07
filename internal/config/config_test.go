@@ -648,7 +648,7 @@ func TestConfig_DeepCopy(t *testing.T) {
 			DriverVersion:             "0.9.0",
 			ThriftProtocol:            "binary",
 			ThriftTransport:           "http",
-			ThriftProtocolVersion:     cli_service.TProtocolVersion_SPARK_CLI_SERVICE_PROTOCOL_V6,
+			ThriftProtocolVersion:     cli_service.TProtocolVersion_SPARK_CLI_SERVICE_PROTOCOL_V8,
 			ThriftDebugClientProtocol: false,
 		}
 

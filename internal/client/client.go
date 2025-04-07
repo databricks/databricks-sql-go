@@ -94,6 +94,11 @@ func (tsc *ThriftServiceClient) OpenSession(ctx context.Context, req *cli_servic
 		return resp, err
 	}
 
+	// Log the server protocol version
+	if resp != nil {
+		log.Debug().Msgf("Server protocol version: 0x%X", resp.ServerProtocolVersion)
+	}
+
 	recordResult(ctx, resp)
 
 	return resp, CheckStatus(resp)

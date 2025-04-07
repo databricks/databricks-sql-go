@@ -10,6 +10,9 @@ import (
 var ErrNotImplemented = errors.New("databricks: not implemented")
 
 type TestClient struct {
+	// Default server protocol version to use in tests
+	ServerProtocolVersion cli_service.TProtocolVersion
+
 	FnOpenSession           func(ctx context.Context, req *cli_service.TOpenSessionReq) (_r *cli_service.TOpenSessionResp, _err error)
 	FnCloseSession          func(ctx context.Context, req *cli_service.TCloseSessionReq) (_r *cli_service.TCloseSessionResp, _err error)
 	FnGetInfo               func(ctx context.Context, req *cli_service.TGetInfoReq) (_r *cli_service.TGetInfoResp, _err error)
@@ -39,7 +42,20 @@ func (c *TestClient) OpenSession(ctx context.Context, req *cli_service.TOpenSess
 	if c.FnOpenSession != nil {
 		return c.FnOpenSession(ctx, req)
 	}
-	return nil, ErrNotImplemented
+
+	// Default implementation for test client
+	resp := &cli_service.TOpenSessionResp{
+		Status:                &cli_service.TStatus{StatusCode: cli_service.TStatusCode_SUCCESS_STATUS},
+		ServerProtocolVersion: c.ServerProtocolVersion,
+		SessionHandle: &cli_service.TSessionHandle{
+			SessionId: &cli_service.THandleIdentifier{
+				GUID:   []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16},
+				Secret: []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16},
+			},
+		},
+	}
+
+	return resp, nil
 }
 func (c *TestClient) CloseSession(ctx context.Context, req *cli_service.TCloseSessionReq) (_r *cli_service.TCloseSessionResp, _err error) {
 	if c.FnCloseSession != nil {
