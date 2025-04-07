@@ -18,9 +18,9 @@ import (
 	"github.com/databricks/databricks-sql-go/internal/client"
 	"github.com/databricks/databricks-sql-go/internal/config"
 	dbsqlerrint "github.com/databricks/databricks-sql-go/internal/errors"
-	"github.com/databricks/databricks-sql-go/internal/thrift_protocol"
 	"github.com/databricks/databricks-sql-go/internal/rows"
 	"github.com/databricks/databricks-sql-go/internal/sentinel"
+	"github.com/databricks/databricks-sql-go/internal/thrift_protocol"
 	"github.com/databricks/databricks-sql-go/logger"
 	"github.com/pkg/errors"
 )
