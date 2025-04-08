@@ -20,6 +20,7 @@ import (
 	dbsqlerrint "github.com/databricks/databricks-sql-go/internal/errors"
 	"github.com/databricks/databricks-sql-go/internal/rows"
 	"github.com/databricks/databricks-sql-go/internal/sentinel"
+	"github.com/databricks/databricks-sql-go/internal/thrift_protocol"
 	"github.com/databricks/databricks-sql-go/logger"
 	"github.com/pkg/errors"
 )
@@ -285,14 +286,30 @@ func (c *conn) executeStatement(ctx context.Context, query string, args []driver
 		Statement:     query,
 		RunAsync:      true,
 		QueryTimeout:  int64(c.cfg.QueryTimeout / time.Second),
-		GetDirectResults: &cli_service.TSparkGetDirectResults{
-			MaxRows: int64(c.cfg.MaxRows),
-		},
-		CanDecompressLZ4Result_: &c.cfg.UseLz4Compression,
-		Parameters:              parameters,
 	}
 
-	if c.cfg.UseArrowBatches {
+	// Check protocol version for feature support
+	serverProtocolVersion := c.session.ServerProtocolVersion
+
+	// Add direct results if supported
+	if thrift_protocol.SupportsDirectResults(serverProtocolVersion) {
+		req.GetDirectResults = &cli_service.TSparkGetDirectResults{
+			MaxRows: int64(c.cfg.MaxRows),
+		}
+	}
+
+	// Add LZ4 compression if supported and enabled
+	if thrift_protocol.SupportsLz4Compression(serverProtocolVersion) && c.cfg.UseLz4Compression {
+		req.CanDecompressLZ4Result_ = &c.cfg.UseLz4Compression
+	}
+
+	// Add cloud fetch if supported and enabled
+	if thrift_protocol.SupportsCloudFetch(serverProtocolVersion) && c.cfg.UseCloudFetch {
+		req.CanDownloadResult_ = &c.cfg.UseCloudFetch
+	}
+
+	// Add Arrow support if supported and enabled
+	if thrift_protocol.SupportsArrow(serverProtocolVersion) && c.cfg.UseArrowBatches {
 		req.CanReadArrowResult_ = &c.cfg.UseArrowBatches
 		req.UseArrowNativeTypes = &cli_service.TSparkArrowTypes{
 			DecimalAsArrow:       &c.cfg.UseArrowNativeDecimal,
@@ -302,8 +319,9 @@ func (c *conn) executeStatement(ctx context.Context, query string, args []driver
 		}
 	}
 
-	if c.cfg.UseCloudFetch {
-		req.CanDownloadResult_ = &c.cfg.UseCloudFetch
+	// Add parameters if supported and provided
+	if thrift_protocol.SupportsParameterizedQueries(serverProtocolVersion) && len(parameters) > 0 {
+		req.Parameters = parameters
 	}
 
 	resp, err := c.client.ExecuteStatement(ctx, &req)
