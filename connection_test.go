@@ -14,6 +14,7 @@ import (
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/client"
 	"github.com/databricks/databricks-sql-go/internal/config"
+	"github.com/databricks/databricks-sql-go/internal/thrift_protocol"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -329,6 +330,167 @@ func TestConn_executeStatement(t *testing.T) {
 		assert.Equal(t, 1, cancelOperationCount)
 	})
 
+}
+
+func TestConn_executeStatement_ProtocolFeatures(t *testing.T) {
+	t.Parallel()
+
+	protocols := []cli_service.TProtocolVersion{
+		cli_service.TProtocolVersion_SPARK_CLI_SERVICE_PROTOCOL_V1,
+		cli_service.TProtocolVersion_SPARK_CLI_SERVICE_PROTOCOL_V2,
+		cli_service.TProtocolVersion_SPARK_CLI_SERVICE_PROTOCOL_V3,
+		cli_service.TProtocolVersion_SPARK_CLI_SERVICE_PROTOCOL_V4,
+		cli_service.TProtocolVersion_SPARK_CLI_SERVICE_PROTOCOL_V5,
+		cli_service.TProtocolVersion_SPARK_CLI_SERVICE_PROTOCOL_V6,
+		cli_service.TProtocolVersion_SPARK_CLI_SERVICE_PROTOCOL_V7,
+		cli_service.TProtocolVersion_SPARK_CLI_SERVICE_PROTOCOL_V8,
+	}
+
+	testCases := []struct {
+		cfg                          *config.Config
+		supportsDirectResults        func(version cli_service.TProtocolVersion) bool
+		supportsLz4Compression       func(version cli_service.TProtocolVersion) bool
+		supportsCloudFetch           func(version cli_service.TProtocolVersion) bool
+		supportsArrow                func(version cli_service.TProtocolVersion) bool
+		supportsParameterizedQueries func(version cli_service.TProtocolVersion) bool
+		hasParameters                bool
+	}{
+		{
+			cfg: func() *config.Config {
+				cfg := config.WithDefaults()
+				cfg.UseLz4Compression = true
+				cfg.UseCloudFetch = true
+				cfg.UseArrowBatches = true
+				cfg.UseArrowNativeDecimal = true
+				cfg.UseArrowNativeTimestamp = true
+				cfg.UseArrowNativeComplexTypes = true
+				cfg.UseArrowNativeIntervalTypes = true
+				return cfg
+			}(),
+			supportsDirectResults:        thrift_protocol.SupportsDirectResults,
+			supportsLz4Compression:       thrift_protocol.SupportsLz4Compression,
+			supportsCloudFetch:           thrift_protocol.SupportsCloudFetch,
+			supportsArrow:                thrift_protocol.SupportsArrow,
+			supportsParameterizedQueries: thrift_protocol.SupportsParameterizedQueries,
+			hasParameters:                true,
+		},
+		{
+			cfg: func() *config.Config {
+				cfg := config.WithDefaults()
+				cfg.UseLz4Compression = false
+				cfg.UseCloudFetch = false
+				cfg.UseArrowBatches = false
+				return cfg
+			}(),
+			supportsDirectResults:        thrift_protocol.SupportsDirectResults,
+			supportsLz4Compression:       thrift_protocol.SupportsLz4Compression,
+			supportsCloudFetch:           thrift_protocol.SupportsCloudFetch,
+			supportsArrow:                thrift_protocol.SupportsArrow,
+			supportsParameterizedQueries: thrift_protocol.SupportsParameterizedQueries,
+			hasParameters:                false,
+		},
+	}
+
+	for _, tc := range testCases {
+		for _, version := range protocols {
+			t.Run(fmt.Sprintf("protocol_v%d_withParams_%v", version, tc.hasParameters), func(t *testing.T) {
+				var capturedReq *cli_service.TExecuteStatementReq
+				executeStatement := func(ctx context.Context, req *cli_service.TExecuteStatementReq) (r *cli_service.TExecuteStatementResp, err error) {
+					capturedReq = req
+					executeStatementResp := &cli_service.TExecuteStatementResp{
+						Status: &cli_service.TStatus{
+							StatusCode: cli_service.TStatusCode_SUCCESS_STATUS,
+						},
+						OperationHandle: &cli_service.TOperationHandle{
+							OperationId: &cli_service.THandleIdentifier{
+								GUID:   []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16},
+								Secret: []byte("secret"),
+							},
+						},
+						DirectResults: &cli_service.TSparkDirectResults{
+							OperationStatus: &cli_service.TGetOperationStatusResp{
+								Status: &cli_service.TStatus{
+									StatusCode: cli_service.TStatusCode_SUCCESS_STATUS,
+								},
+								OperationState: cli_service.TOperationStatePtr(cli_service.TOperationState_FINISHED_STATE),
+							},
+						},
+					}
+					return executeStatementResp, nil
+				}
+
+				session := getTestSession()
+				session.ServerProtocolVersion = version
+
+				testClient := &client.TestClient{
+					FnExecuteStatement: executeStatement,
+				}
+
+				testConn := &conn{
+					session: session,
+					client:  testClient,
+					cfg:     tc.cfg,
+				}
+
+				var args []driver.NamedValue
+				if tc.hasParameters {
+					args = []driver.NamedValue{
+						{Name: "param1", Value: "value1"},
+					}
+				}
+
+				_, err := testConn.executeStatement(context.Background(), "SELECT 1", args)
+				assert.NoError(t, err)
+
+				// Verify direct results
+				hasDirectResults := tc.supportsDirectResults(version)
+				assert.Equal(t, hasDirectResults, capturedReq.GetDirectResults != nil, "Direct results should be enabled if protocol supports it")
+
+				// Verify LZ4 compression
+				shouldHaveLz4 := tc.supportsLz4Compression(version) && tc.cfg.UseLz4Compression
+				if shouldHaveLz4 {
+					assert.NotNil(t, capturedReq.CanDecompressLZ4Result_)
+					assert.True(t, *capturedReq.CanDecompressLZ4Result_)
+				} else {
+					assert.Nil(t, capturedReq.CanDecompressLZ4Result_)
+				}
+
+				// Verify cloud fetch
+				shouldHaveCloudFetch := tc.supportsCloudFetch(version) && tc.cfg.UseCloudFetch
+				if shouldHaveCloudFetch {
+					assert.NotNil(t, capturedReq.CanDownloadResult_)
+					assert.True(t, *capturedReq.CanDownloadResult_)
+				} else {
+					assert.Nil(t, capturedReq.CanDownloadResult_)
+				}
+
+				// Verify Arrow support
+				shouldHaveArrow := tc.supportsArrow(version) && tc.cfg.UseArrowBatches
+				if shouldHaveArrow {
+					assert.NotNil(t, capturedReq.CanReadArrowResult_)
+					assert.True(t, *capturedReq.CanReadArrowResult_)
+					assert.NotNil(t, capturedReq.UseArrowNativeTypes)
+					assert.Equal(t, tc.cfg.UseArrowNativeDecimal, *capturedReq.UseArrowNativeTypes.DecimalAsArrow)
+					assert.Equal(t, tc.cfg.UseArrowNativeTimestamp, *capturedReq.UseArrowNativeTypes.TimestampAsArrow)
+					assert.Equal(t, tc.cfg.UseArrowNativeComplexTypes, *capturedReq.UseArrowNativeTypes.ComplexTypesAsArrow)
+					assert.Equal(t, tc.cfg.UseArrowNativeIntervalTypes, *capturedReq.UseArrowNativeTypes.IntervalTypesAsArrow)
+				} else {
+					assert.Nil(t, capturedReq.CanReadArrowResult_)
+					assert.Nil(t, capturedReq.UseArrowNativeTypes)
+				}
+
+				// Verify parameters
+				shouldHaveParams := tc.supportsParameterizedQueries(version) && tc.hasParameters
+				if shouldHaveParams {
+					assert.NotNil(t, capturedReq.Parameters)
+					assert.Len(t, capturedReq.Parameters, 1)
+				} else if tc.hasParameters {
+					// Even if we have parameters but protocol doesn't support it, we shouldn't set them
+					assert.Nil(t, capturedReq.Parameters)
+				}
+			})
+		}
+	}
 }
 
 func TestConn_pollOperation(t *testing.T) {
