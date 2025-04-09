@@ -1,5 +1,10 @@
 # Release History
 
+## v1.7.0 (2025-04-09)
+
+- Enable cloud fetch mode by default (databricks/databricks-sql-go#260)
+- Handle thrift protocol version for conditional feature support (direct results, LZ4 compression, Arrow support, parameterized queries) (databricks/databricks-sql-go#261)
+
 ## v1.6.2 (2025-03-18)
 
 - Support positional query parameters (databricks/databricks-sql-go#247)
