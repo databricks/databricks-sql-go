@@ -1677,6 +1677,100 @@ func TestConn_PrepareContext(t *testing.T) {
 	})
 }
 
+func TestConn_execStagingOperation(t *testing.T) {
+	t.Run("handles nil IsStagingOperation from DirectResults", func(t *testing.T) {
+		testClient := &client.TestClient{}
+		testConn := &conn{
+			session: getTestSession(),
+			client:  testClient,
+			cfg:     config.WithDefaults(),
+		}
+
+		// Create response with nil IsStagingOperation in DirectResults
+		exStmtResp := &cli_service.TExecuteStatementResp{
+			Status: &cli_service.TStatus{
+				StatusCode: cli_service.TStatusCode_SUCCESS_STATUS,
+			},
+			OperationHandle: &cli_service.TOperationHandle{
+				OperationId: &cli_service.THandleIdentifier{
+					GUID:   []byte{1, 2, 3, 4, 2, 23, 4, 2, 3, 1, 2, 3, 4, 223, 34, 54},
+					Secret: []byte("b"),
+				},
+			},
+			DirectResults: &cli_service.TSparkDirectResults{
+				ResultSetMetadata: &cli_service.TGetResultSetMetadataResp{
+					Status: &cli_service.TStatus{
+						StatusCode: cli_service.TStatusCode_SUCCESS_STATUS,
+					},
+					// IsStagingOperation is nil
+				},
+			},
+		}
+
+		// Mock GetResultSetMetadata to return false for IsStagingOperation
+		var getResultSetMetadataCount int
+		getResultSetMetadata := func(ctx context.Context, req *cli_service.TGetResultSetMetadataReq) (_r *cli_service.TGetResultSetMetadataResp, _err error) {
+			getResultSetMetadataCount++
+			var falseVal = false
+			return &cli_service.TGetResultSetMetadataResp{
+				Status: &cli_service.TStatus{
+					StatusCode: cli_service.TStatusCode_SUCCESS_STATUS,
+				},
+				IsStagingOperation: &falseVal,
+			}, nil
+		}
+		testClient.FnGetResultSetMetadata = getResultSetMetadata
+
+		ctx := context.Background()
+		err := testConn.execStagingOperation(exStmtResp, ctx)
+
+		assert.Nil(t, err)
+		assert.Equal(t, 0, getResultSetMetadataCount) // should not be called since DirectResults.ResultSetMetadata exists
+	})
+
+	t.Run("handles nil IsStagingOperation from GetResultSetMetadata", func(t *testing.T) {
+		testClient := &client.TestClient{}
+		testConn := &conn{
+			session: getTestSession(),
+			client:  testClient,
+			cfg:     config.WithDefaults(),
+		}
+
+		// Create response with nil DirectResults.ResultSetMetadata
+		exStmtResp := &cli_service.TExecuteStatementResp{
+			Status: &cli_service.TStatus{
+				StatusCode: cli_service.TStatusCode_SUCCESS_STATUS,
+			},
+			OperationHandle: &cli_service.TOperationHandle{
+				OperationId: &cli_service.THandleIdentifier{
+					GUID:   []byte{1, 2, 3, 4, 2, 23, 4, 2, 3, 1, 2, 3, 4, 223, 34, 54},
+					Secret: []byte("b"),
+				},
+			},
+			// DirectResults.ResultSetMetadata is nil
+		}
+
+		// Mock GetResultSetMetadata to return nil for IsStagingOperation
+		var getResultSetMetadataCount int
+		getResultSetMetadata := func(ctx context.Context, req *cli_service.TGetResultSetMetadataReq) (_r *cli_service.TGetResultSetMetadataResp, _err error) {
+			getResultSetMetadataCount++
+			return &cli_service.TGetResultSetMetadataResp{
+				Status: &cli_service.TStatus{
+					StatusCode: cli_service.TStatusCode_SUCCESS_STATUS,
+				},
+				// IsStagingOperation is nil
+			}, nil
+		}
+		testClient.FnGetResultSetMetadata = getResultSetMetadata
+
+		ctx := context.Background()
+		err := testConn.execStagingOperation(exStmtResp, ctx)
+
+		assert.Nil(t, err)
+		assert.Equal(t, 1, getResultSetMetadataCount) // should be called since DirectResults.ResultSetMetadata is nil
+	})
+}
+
 func getTestSession() *cli_service.TOpenSessionResp {
 	return &cli_service.TOpenSessionResp{SessionHandle: &cli_service.TSessionHandle{
 		SessionId: &cli_service.THandleIdentifier{
