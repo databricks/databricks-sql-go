@@ -571,8 +571,8 @@ func (c *conn) execStagingOperation(
 	var err error
 
 	var isStagingOperation bool
-	if exStmtResp.DirectResults != nil && exStmtResp.DirectResults.ResultSetMetadata != nil && exStmtResp.DirectResults.ResultSetMetadata.IsStagingOperation != nil {
-		isStagingOperation = *exStmtResp.DirectResults.ResultSetMetadata.IsStagingOperation
+	if exStmtResp.DirectResults != nil && exStmtResp.DirectResults.ResultSetMetadata != nil {
+		isStagingOperation = exStmtResp.DirectResults.ResultSetMetadata.IsStagingOperation != nil && *exStmtResp.DirectResults.ResultSetMetadata.IsStagingOperation
 	} else {
 		req := cli_service.TGetResultSetMetadataReq{
 			OperationHandle: exStmtResp.OperationHandle,
@@ -581,7 +581,7 @@ func (c *conn) execStagingOperation(
 		if err != nil {
 			return dbsqlerrint.NewDriverError(ctx, "error performing staging operation", err)
 		}
-		isStagingOperation = *resp.IsStagingOperation
+		isStagingOperation = resp.IsStagingOperation != nil && *resp.IsStagingOperation
 	}
 
 	if !isStagingOperation {
