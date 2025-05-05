@@ -188,6 +188,135 @@ func TestArrowRecordIterator(t *testing.T) {
 	})
 }
 
+func TestArrowRecordIteratorSchema(t *testing.T) {
+	// Test with arrowSchemaBytes available
+	t.Run("schema with initial schema bytes", func(t *testing.T) {
+		logger := dbsqllog.WithContext("connectionId", "correlationId", "")
+
+		executeStatementResp := cli_service.TExecuteStatementResp{}
+		loadTestData2(t, "directResultsMultipleFetch/ExecuteStatement.json", &executeStatementResp)
+
+		fetchResp1 := cli_service.TFetchResultsResp{}
+		loadTestData2(t, "directResultsMultipleFetch/FetchResults1.json", &fetchResp1)
+
+		var fetchesInfo []fetchResultsInfo
+		simpleClient := getSimpleClient(&fetchesInfo, []cli_service.TFetchResultsResp{fetchResp1})
+		rpi := rowscanner.NewResultPageIterator(
+			rowscanner.NewDelimiter(0, 0),
+			5000,
+			nil,
+			false,
+			simpleClient,
+			"connectionId",
+			"correlationId",
+			logger,
+		)
+
+		cfg := *config.WithDefaults()
+
+		bi, err := NewLocalBatchIterator(
+			context.Background(),
+			executeStatementResp.DirectResults.ResultSet.Results.ArrowBatches,
+			0,
+			executeStatementResp.DirectResults.ResultSetMetadata.ArrowSchema,
+			&cfg,
+		)
+		assert.Nil(t, err)
+
+		// Create arrowRecordIterator with schema bytes already available
+		rs := NewArrowRecordIterator(
+			context.Background(),
+			rpi,
+			bi,
+			executeStatementResp.DirectResults.ResultSetMetadata.ArrowSchema,
+			cfg,
+		)
+		defer rs.Close()
+
+		// Test Schema() method
+		schema, schemaErr := rs.Schema()
+		assert.NoError(t, schemaErr)
+		assert.NotNil(t, schema)
+
+		// Cache works - we should get same schema object on second call
+		secondSchema, schemaErr2 := rs.Schema()
+		assert.NoError(t, schemaErr2)
+		assert.Same(t, schema, secondSchema)
+	})
+
+	// Test with arrowSchemaBytes that needs to be populated via a batch
+	t.Run("schema with lazy loading", func(t *testing.T) {
+		logger := dbsqllog.WithContext("connectionId", "correlationId", "")
+
+		fetchResp1 := cli_service.TFetchResultsResp{}
+		loadTestData2(t, "multipleFetch/FetchResults1.json", &fetchResp1)
+
+		var fetchesInfo []fetchResultsInfo
+		simpleClient := getSimpleClient(&fetchesInfo, []cli_service.TFetchResultsResp{fetchResp1})
+		rpi := rowscanner.NewResultPageIterator(
+			rowscanner.NewDelimiter(0, 0),
+			5000,
+			nil,
+			false,
+			simpleClient,
+			"connectionId",
+			"correlationId",
+			logger,
+		)
+
+		cfg := *config.WithDefaults()
+
+		// Create arrowRecordIterator without initial schema bytes
+		rs := NewArrowRecordIterator(context.Background(), rpi, nil, nil, cfg)
+		defer rs.Close()
+
+		// Schema() should trigger loading a batch to get schema
+		schema, schemaErr := rs.Schema()
+		assert.NoError(t, schemaErr)
+		assert.NotNil(t, schema)
+
+		// Cache works - we should get same schema object on second call
+		secondSchema, schemaErr2 := rs.Schema()
+		assert.NoError(t, schemaErr2)
+		assert.Same(t, schema, secondSchema)
+	})
+
+	// Test with no schema available
+	t.Run("schema with no data available", func(t *testing.T) {
+		logger := dbsqllog.WithContext("connectionId", "correlationId", "")
+
+		// Instead of using an empty response list, let's create a custom client
+		// that returns an error when trying to fetch results
+		failingClient := &client.TestClient{
+			FnFetchResults: func(ctx context.Context, req *cli_service.TFetchResultsReq) (*cli_service.TFetchResultsResp, error) {
+				return nil, fmt.Errorf("no data available")
+			},
+		}
+
+		rpi := rowscanner.NewResultPageIterator(
+			rowscanner.NewDelimiter(0, 0),
+			5000,
+			nil,
+			false,
+			failingClient,
+			"connectionId",
+			"correlationId",
+			logger,
+		)
+
+		cfg := *config.WithDefaults()
+
+		// Create arrowRecordIterator without schema bytes and with failing client
+		rs := NewArrowRecordIterator(context.Background(), rpi, nil, nil, cfg)
+		defer rs.Close()
+
+		// Schema() should return error since no schema can be obtained
+		schema, schemaErr := rs.Schema()
+		assert.Error(t, schemaErr)
+		assert.Nil(t, schema)
+	})
+}
+
 type fetchResultsInfo struct {
 	direction      cli_service.TFetchOrientation
 	resultStartRec int

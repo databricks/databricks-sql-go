@@ -20,4 +20,7 @@ type ArrowBatchIterator interface {
 
 	// Release any resources in use by the iterator.
 	Close()
+
+	// Return the schema of the records.
+	Schema() (*arrow.Schema, error)
 }
