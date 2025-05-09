@@ -1,10 +1,13 @@
 package arrowbased
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"io"
 
 	"github.com/apache/arrow/go/v12/arrow"
+	"github.com/apache/arrow/go/v12/arrow/ipc"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/config"
 	dbsqlerr "github.com/databricks/databricks-sql-go/internal/errors"
@@ -34,6 +37,7 @@ type arrowRecordIterator struct {
 	currentBatch       SparkArrowBatch
 	isFinished         bool
 	arrowSchemaBytes   []byte
+	arrowSchema        *arrow.Schema
 }
 
 var _ rows.ArrowBatchIterator = (*arrowRecordIterator)(nil)
@@ -169,4 +173,37 @@ func (ri *arrowRecordIterator) newBatchIterator(fr *cli_service.TFetchResultsRes
 	} else {
 		return NewLocalBatchIterator(ri.ctx, rowSet.ArrowBatches, rowSet.StartRowOffset, ri.arrowSchemaBytes, &ri.cfg)
 	}
+}
+
+// Return the schema of the records.
+func (ri *arrowRecordIterator) Schema() (*arrow.Schema, error) {
+	// Return cached schema if available
+	if ri.arrowSchema != nil {
+		return ri.arrowSchema, nil
+	}
+
+	// Try to get schema bytes if not already available
+	if ri.arrowSchemaBytes == nil {
+		if ri.HasNext() {
+			if err := ri.getCurrentBatch(); err != nil {
+				return nil, err
+			}
+		}
+
+		// If still no schema bytes, we can't create a schema
+		if ri.arrowSchemaBytes == nil {
+			return nil, fmt.Errorf("no schema available")
+		}
+	}
+
+	// Convert schema bytes to Arrow schema
+	reader, err := ipc.NewReader(bytes.NewReader(ri.arrowSchemaBytes))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Arrow IPC reader: %w", err)
+	}
+	defer reader.Release()
+
+	// Cache and return the schema
+	ri.arrowSchema = reader.Schema()
+	return ri.arrowSchema, nil
 }
