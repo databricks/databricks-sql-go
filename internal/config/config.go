@@ -15,6 +15,7 @@ import (
 
 	"github.com/databricks/databricks-sql-go/auth"
 	"github.com/databricks/databricks-sql-go/auth/noop"
+	"github.com/databricks/databricks-sql-go/auth/oauth"
 	"github.com/databricks/databricks-sql-go/auth/oauth/m2m"
 	"github.com/databricks/databricks-sql-go/auth/oauth/u2m"
 	"github.com/databricks/databricks-sql-go/auth/pat"
@@ -101,6 +102,17 @@ type UserConfig struct {
 	Transport         http.RoundTripper
 	UseLz4Compression bool
 	CloudFetchConfig
+	OAuthConfig
+}
+
+// OAuthConfig contains OAuth-specific configuration options
+type OAuthConfig struct {
+	// UseTokenCache enables or disables token caching
+	UseTokenCache bool
+	// TokenCachePath specifies a custom path for the token cache
+	TokenCachePath string
+	// OAuthScopes defines the OAuth scopes to request
+	OAuthScopes []string
 }
 
 // DeepCopy returns a true deep copy of UserConfig
@@ -120,6 +132,12 @@ func (ucfg UserConfig) DeepCopy() UserConfig {
 			logger.Warn().Msg("could not copy location")
 		}
 
+	}
+
+	// Copy OAuth scopes
+	oauthScopes := make([]string, len(ucfg.OAuthScopes))
+	if len(ucfg.OAuthScopes) > 0 {
+		copy(oauthScopes, ucfg.OAuthScopes)
 	}
 
 	return UserConfig{
@@ -142,6 +160,11 @@ func (ucfg UserConfig) DeepCopy() UserConfig {
 		Transport:         ucfg.Transport,
 		UseLz4Compression: ucfg.UseLz4Compression,
 		CloudFetchConfig:  ucfg.CloudFetchConfig,
+		OAuthConfig: OAuthConfig{
+			UseTokenCache:   ucfg.UseTokenCache,
+			TokenCachePath:  ucfg.TokenCachePath,
+			OAuthScopes:     oauthScopes,
+		},
 	}
 }
 
@@ -176,6 +199,12 @@ func (ucfg UserConfig) WithDefaults() UserConfig {
 	}
 	ucfg.UseLz4Compression = false
 	ucfg.CloudFetchConfig = CloudFetchConfig{}.WithDefaults()
+	
+	// Set default OAuth config
+	if ucfg.OAuthScopes == nil {
+		ucfg.OAuthScopes = []string{}
+	}
+	ucfg.UseTokenCache = true
 
 	return ucfg
 }
@@ -255,6 +284,22 @@ func ParseDSN(dsn string) (UserConfig, error) {
 	}
 	if schema, ok := params.extract("schema"); ok {
 		ucfg.Schema = schema
+	}
+
+	// OAuth configuration parameters
+	if useTokenCache, ok, err := params.extractAsBool("useTokenCache"); ok {
+		if err != nil {
+			return UserConfig{}, err
+		}
+		ucfg.UseTokenCache = useTokenCache
+	}
+
+	if tokenCachePath, ok := params.extract("tokenCachePath"); ok {
+		ucfg.TokenCachePath = tokenCachePath
+	}
+
+	if oauthScopes, ok := params.extract("oauthScopes"); ok && oauthScopes != "" {
+		ucfg.OAuthScopes = strings.Split(oauthScopes, ",")
 	}
 
 	// Cloud Fetch parameters
@@ -363,7 +408,22 @@ func addOauthM2MAuthenticator(clientId, clientSecret string, config *UserConfig)
 }
 
 func addOauthU2MAuthenticator(config *UserConfig) error {
-	u2m, err := u2m.NewAuthenticator(config.Host, 0)
+	// Create options for the U2M authenticator
+	var options []u2m.AuthOption
+	
+	// Configure token caching
+	if !config.UseTokenCache {
+		options = append(options, u2m.DisableTokenCache())
+	} else if config.TokenCachePath != "" {
+		options = append(options, u2m.WithTokenCache(oauth.NewFileTokenCache(config.TokenCachePath)))
+	}
+	
+	// Add scopes if specified
+	if len(config.OAuthScopes) > 0 {
+		options = append(options, u2m.WithScopes(config.OAuthScopes))
+	}
+	
+	u2m, err := u2m.NewAuthenticator(config.Host, 0, options...)
 	if err == nil {
 		config.Authenticator = u2m
 	}
