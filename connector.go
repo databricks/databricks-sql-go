@@ -10,7 +10,9 @@ import (
 	"time"
 
 	"github.com/databricks/databricks-sql-go/auth"
+	"github.com/databricks/databricks-sql-go/auth/oauth"
 	"github.com/databricks/databricks-sql-go/auth/oauth/m2m"
+	"github.com/databricks/databricks-sql-go/auth/oauth/u2m"
 	"github.com/databricks/databricks-sql-go/auth/pat"
 	"github.com/databricks/databricks-sql-go/driverctx"
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
@@ -281,5 +283,50 @@ func WithClientCredentials(clientID, clientSecret string) ConnOption {
 			authr := m2m.NewAuthenticator(clientID, clientSecret, c.Host)
 			c.Authenticator = authr
 		}
+	}
+}
+
+// WithUserAuthentication sets up OAuth User-to-Machine (U2M) authentication
+func WithUserAuthentication(timeout time.Duration) ConnOption {
+	return func(c *config.Config) {
+		authr, err := u2m.NewAuthenticator(c.Host, timeout)
+		if err == nil {
+			c.Authenticator = authr
+		} else {
+			logger.Error().Err(err).Msg("Failed to create U2M authenticator")
+		}
+	}
+}
+
+// WithUserAuthenticationOptions sets up OAuth User-to-Machine (U2M) authentication with options
+func WithUserAuthenticationOptions(timeout time.Duration, options ...u2m.AuthOption) ConnOption {
+	return func(c *config.Config) {
+		authr, err := u2m.NewAuthenticator(c.Host, timeout, options...)
+		if err == nil {
+			c.Authenticator = authr
+		} else {
+			logger.Error().Err(err).Msg("Failed to create U2M authenticator with options")
+		}
+	}
+}
+
+// WithTokenCache enables or disables token caching for OAuth authentication
+func WithTokenCache(enabled bool) ConnOption {
+	return func(c *config.Config) {
+		c.UseTokenCache = enabled
+	}
+}
+
+// WithTokenCachePath sets a custom path for the OAuth token cache
+func WithTokenCachePath(path string) ConnOption {
+	return func(c *config.Config) {
+		c.TokenCachePath = path
+	}
+}
+
+// WithOAuthScopes sets the OAuth scopes for authentication
+func WithOAuthScopes(scopes []string) ConnOption {
+	return func(c *config.Config) {
+		c.OAuthScopes = scopes
 	}
 }
