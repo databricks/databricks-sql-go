@@ -1,5 +1,12 @@
 # Release History
 
+## v1.7.1 (2025-05-20)
+
+- Add schema to ArrowBatchIterator (databricks/databricks-sql-go#267)
+- Update thrift client library after cleaning up unused fields and structs (databricks/databricks-sql-go#268)
+- Add nil handling for isStagingOperation to handle older DBR versions (databricks/databricks-sql-go#266)
+- Security: Fix CVE-2024-45337 - Update golang.org/x/crypto (databricks/databricks-sql-go#264)
+
 ## v1.7.0 (2025-04-09)
 
 - Enable cloud fetch mode by default (databricks/databricks-sql-go#260)
