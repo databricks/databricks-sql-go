@@ -35,7 +35,7 @@ help:  ## Show this help.
 all: gen fmt lint test coverage  ## format and test everything
 
 bin/golangci-lint: go.mod go.sum
-	curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b ./bin v1.48.0
+	curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b ./bin v1.51.2
 
 bin/gotestsum: go.mod go.sum
 	@mkdir -p bin/

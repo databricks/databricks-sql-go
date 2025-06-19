@@ -24,7 +24,7 @@ jobs:
       - name: Lint
         uses: golangci/golangci-lint-action@v4
         with:
-          version: 'v1.51'
+          version: 'v1.51.2'
   build-and-test:
     name: Test and Build
     strategy:
