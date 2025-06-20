@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"fmt"
 	"math"
 	"reflect"
 	"time"
@@ -527,6 +528,14 @@ func (r *rows) logger() *dbsqllog.DBSQLLogger {
 	return r.logger_
 }
 
+// getArrowSchemaBytes converts the table schema to Arrow IPC format bytes
+func (r *rows) getArrowSchemaBytes(schema *cli_service.TTableSchema) ([]byte, error) {
+	// We need to use the arrow-based row scanner's conversion methods
+	// This is a temporary solution - ideally this would be refactored to share code
+	// For now, delegate to the arrowbased package
+	return nil, fmt.Errorf("schema conversion not yet implemented - use ArrowSchema from metadata")
+}
+
 func (r *rows) GetArrowBatches(ctx context.Context) (dbsqlrows.ArrowBatchIterator, error) {
 	// update context with correlationId and connectionId which will be used in logging and errors
 	ctx = driverctx.NewContextWithCorrelationId(driverctx.NewContextWithConnId(ctx, r.connId), r.correlationId)
@@ -538,4 +547,38 @@ func (r *rows) GetArrowBatches(ctx context.Context) (dbsqlrows.ArrowBatchIterato
 	}
 
 	return arrowbased.NewArrowRecordIterator(ctx, r.ResultPageIterator, nil, nil, *r.config), nil
+}
+
+// GetIPCStreams returns an iterator that provides raw Arrow IPC streams
+func (r *rows) GetIPCStreams(ctx context.Context) (dbsqlrows.IPCStreamIterator, error) {
+	// Update context with correlationId and connectionId
+	ctx = driverctx.NewContextWithCorrelationId(driverctx.NewContextWithConnId(ctx, r.connId), r.correlationId)
+
+	// First try to get Arrow schema bytes from metadata if available
+	var schemaBytes []byte
+	if r.resultSetMetadata != nil && r.resultSetMetadata.ArrowSchema != nil {
+		schemaBytes = r.resultSetMetadata.ArrowSchema
+	} else {
+		// Fall back to generating from table schema
+		schema, err := r.getResultSetSchema()
+		if err != nil {
+			return nil, dbsqlerr_int.NewDriverError(ctx, "failed to get result set schema", err)
+		}
+
+		// Convert schema to IPC format bytes
+		var err2 error
+		schemaBytes, err2 = r.getArrowSchemaBytes(schema)
+		if err2 != nil {
+			return nil, dbsqlerr_int.NewDriverError(ctx, "failed to convert schema to IPC format", err2)
+		}
+	}
+
+	// Create IPC stream iterator
+	return arrowbased.NewIPCStreamIterator(
+		ctx,
+		r.ResultPageIterator,
+		nil, // We don't have access to initial row set here
+		schemaBytes,
+		r.config,
+	)
 }
