@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"fmt"
 	"math"
 	"reflect"
 	"time"
@@ -57,6 +58,9 @@ type rows struct {
 	logger_ *dbsqllog.DBSQLLogger
 
 	ctx context.Context
+
+	// Initial row set from direct results
+	initialRowSet *cli_service.TRowSet
 }
 
 var _ driver.Rows = (*rows)(nil)
@@ -120,6 +124,11 @@ func NewRows(
 		if directResults.ResultSetMetadata != nil {
 			r.resultSetMetadata = directResults.ResultSetMetadata
 			r.schema = directResults.ResultSetMetadata.Schema
+		}
+
+		// Store the initial row set from direct results
+		if directResults.ResultSet != nil && directResults.ResultSet.Results != nil {
+			r.initialRowSet = directResults.ResultSet.Results
 		}
 
 		// initialize the row scanner
@@ -527,6 +536,22 @@ func (r *rows) logger() *dbsqllog.DBSQLLogger {
 	return r.logger_
 }
 
+// getArrowSchemaBytes converts the table schema to Arrow IPC format bytes
+func (r *rows) getArrowSchemaBytes(schema *cli_service.TTableSchema) ([]byte, error) {
+	// We need to use the arrow-based row scanner's conversion methods
+	// This is a temporary solution - ideally this would be refactored to share code
+	// For now, delegate to the arrowbased package
+	return nil, fmt.Errorf("schema conversion not yet implemented - use ArrowSchema from metadata")
+}
+
+// getCurrentRowSet returns the current row set if available
+func (r *rows) getCurrentRowSet() *cli_service.TRowSet {
+	// If we have direct results stored, return them
+	// This assumes the rows struct has access to the initial TRowSet from direct results
+	// For now, we'll need to store this during initialization
+	return r.initialRowSet
+}
+
 func (r *rows) GetArrowBatches(ctx context.Context) (dbsqlrows.ArrowBatchIterator, error) {
 	// update context with correlationId and connectionId which will be used in logging and errors
 	ctx = driverctx.NewContextWithCorrelationId(driverctx.NewContextWithConnId(ctx, r.connId), r.correlationId)
@@ -538,4 +563,45 @@ func (r *rows) GetArrowBatches(ctx context.Context) (dbsqlrows.ArrowBatchIterato
 	}
 
 	return arrowbased.NewArrowRecordIterator(ctx, r.ResultPageIterator, nil, nil, *r.config), nil
+}
+
+// GetIPCStreams returns an iterator that provides raw Arrow IPC streams
+func (r *rows) GetIPCStreams(ctx context.Context) (dbsqlrows.IPCStreamIterator, error) {
+	// Update context with correlationId and connectionId
+	ctx = driverctx.NewContextWithCorrelationId(driverctx.NewContextWithConnId(ctx, r.connId), r.correlationId)
+
+	// First try to get Arrow schema bytes from metadata if available
+	var schemaBytes []byte
+	if r.resultSetMetadata != nil && r.resultSetMetadata.ArrowSchema != nil {
+		schemaBytes = r.resultSetMetadata.ArrowSchema
+	} else {
+		// Fall back to generating from table schema
+		schema, err := r.getResultSetSchema()
+		if err != nil {
+			return nil, dbsqlerr_int.NewDriverError(ctx, "failed to get result set schema", err)
+		}
+
+		// Convert schema to IPC format bytes
+		var err2 error
+		schemaBytes, err2 = r.getArrowSchemaBytes(schema)
+		if err2 != nil {
+			return nil, dbsqlerr_int.NewDriverError(ctx, "failed to convert schema to IPC format", err2)
+		}
+	}
+
+	// Initialize rowset for the iterator
+	var initialRowSet *cli_service.TRowSet
+	if r.initialRowSet != nil {
+		// If we have direct results, use them
+		initialRowSet = r.initialRowSet
+	}
+
+	// Create IPC stream iterator
+	return arrowbased.NewIPCStreamIterator(
+		ctx,
+		r.ResultPageIterator,
+		initialRowSet,
+		schemaBytes,
+		r.config,
+	)
 }
