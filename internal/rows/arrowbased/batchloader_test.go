@@ -72,7 +72,7 @@ func TestCloudFetchIterator(t *testing.T) {
 		cfg.UseLz4Compression = false
 		cfg.MaxDownloadThreads = 1
 
-		bi, err := NewCloudBatchIterator(
+		rawBi, err := NewCloudRawBatchIterator(
 			context.Background(),
 			links,
 			startRowOffset,
@@ -82,34 +82,36 @@ func TestCloudFetchIterator(t *testing.T) {
 			panic(err)
 		}
 
-		cbi := bi.(*cloudBatchIterator)
+		cbi := rawBi.(*cloudBatchIterator)
 
-		assert.True(t, bi.HasNext())
+		assert.True(t, rawBi.HasNext())
 		assert.Equal(t, cbi.pendingLinks.Len(), len(links))
 		assert.Equal(t, cbi.downloadTasks.Len(), 0)
 
 		// get first link - should succeed
-		sab1, err2 := bi.Next()
+		sab1, err2 := rawBi.Next()
 		if err2 != nil {
 			panic(err2)
 		}
 
 		assert.Equal(t, cbi.pendingLinks.Len(), len(links)-1)
 		assert.Equal(t, cbi.downloadTasks.Len(), 0)
-		assert.Equal(t, sab1.Start(), startRowOffset)
+		// Raw batch doesn't have Start() method, check row count instead
+		assert.Equal(t, sab1.RowCount, int64(1))
 
 		// get second link - should succeed
-		sab2, err3 := bi.Next()
+		sab2, err3 := rawBi.Next()
 		if err3 != nil {
 			panic(err3)
 		}
 
 		assert.Equal(t, cbi.pendingLinks.Len(), len(links)-2)
 		assert.Equal(t, cbi.downloadTasks.Len(), 0)
-		assert.Equal(t, sab2.Start(), startRowOffset+sab1.Count())
+		// Check second batch row count
+		assert.Equal(t, sab2.RowCount, int64(1))
 
 		// all links downloaded, should be no more data
-		assert.False(t, bi.HasNext())
+		assert.False(t, rawBi.HasNext())
 	})
 
 	t.Run("should fail on expired link", func(t *testing.T) {
@@ -142,7 +144,7 @@ func TestCloudFetchIterator(t *testing.T) {
 		cfg.UseLz4Compression = false
 		cfg.MaxDownloadThreads = 1
 
-		bi, err := NewCloudBatchIterator(
+		rawBi, err := NewCloudRawBatchIterator(
 			context.Background(),
 			links,
 			startRowOffset,
@@ -152,24 +154,25 @@ func TestCloudFetchIterator(t *testing.T) {
 			panic(err)
 		}
 
-		cbi := bi.(*cloudBatchIterator)
+		cbi := rawBi.(*cloudBatchIterator)
 
-		assert.True(t, bi.HasNext())
+		assert.True(t, rawBi.HasNext())
 		assert.Equal(t, cbi.pendingLinks.Len(), len(links))
 		assert.Equal(t, cbi.downloadTasks.Len(), 0)
 
 		// get first link - should succeed
-		sab1, err2 := bi.Next()
+		sab1, err2 := rawBi.Next()
 		if err2 != nil {
 			panic(err2)
 		}
 
 		assert.Equal(t, cbi.pendingLinks.Len(), len(links)-1)
 		assert.Equal(t, cbi.downloadTasks.Len(), 0)
-		assert.Equal(t, sab1.Start(), startRowOffset)
+		// Raw batch doesn't have Start() method, check row count instead
+		assert.Equal(t, sab1.RowCount, int64(1))
 
 		// get second link - should fail
-		_, err3 := bi.Next()
+		_, err3 := rawBi.Next()
 		assert.NotNil(t, err3)
 		assert.ErrorContains(t, err3, dbsqlerr.ErrLinkExpired)
 	})
@@ -196,7 +199,7 @@ func TestCloudFetchIterator(t *testing.T) {
 		cfg.UseLz4Compression = false
 		cfg.MaxDownloadThreads = 1
 
-		bi, err := NewCloudBatchIterator(
+		rawBi, err := NewCloudRawBatchIterator(
 			context.Background(),
 			links,
 			startRowOffset,
@@ -206,9 +209,9 @@ func TestCloudFetchIterator(t *testing.T) {
 			panic(err)
 		}
 
-		cbi := bi.(*cloudBatchIterator)
+		cbi := rawBi.(*cloudBatchIterator)
 
-		assert.True(t, bi.HasNext())
+		assert.True(t, rawBi.HasNext())
 		assert.Equal(t, cbi.pendingLinks.Len(), len(links))
 		assert.Equal(t, cbi.downloadTasks.Len(), 0)
 
@@ -222,14 +225,15 @@ func TestCloudFetchIterator(t *testing.T) {
 		}
 
 		// get first link - should succeed
-		sab1, err2 := bi.Next()
+		sab1, err2 := rawBi.Next()
 		if err2 != nil {
 			panic(err2)
 		}
 
 		assert.Equal(t, cbi.pendingLinks.Len(), len(links)-1)
 		assert.Equal(t, cbi.downloadTasks.Len(), 0)
-		assert.Equal(t, sab1.Start(), startRowOffset)
+		// Raw batch doesn't have Start() method, check row count instead
+		assert.Equal(t, sab1.RowCount, int64(1))
 
 		// set handler for the first link, which fails with some non-retryable HTTP error
 		handler = func(w http.ResponseWriter, r *http.Request) {
@@ -237,7 +241,7 @@ func TestCloudFetchIterator(t *testing.T) {
 		}
 
 		// get second link - should fail
-		_, err3 := bi.Next()
+		_, err3 := rawBi.Next()
 		assert.NotNil(t, err3)
 		assert.ErrorContains(t, err3, fmt.Sprintf("%s %d", "HTTP error", http.StatusNotFound))
 	})

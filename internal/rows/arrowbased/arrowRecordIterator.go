@@ -168,11 +168,17 @@ func (ri *arrowRecordIterator) getBatchIterator() error {
 // Create a new batch iterator from a page of the result set
 func (ri *arrowRecordIterator) newBatchIterator(fr *cli_service.TFetchResultsResp) (BatchIterator, error) {
 	rowSet := fr.Results
+	var rawBi RawBatchIterator
+	var err error
 	if len(rowSet.ResultLinks) > 0 {
-		return NewCloudBatchIterator(ri.ctx, rowSet.ResultLinks, rowSet.StartRowOffset, &ri.cfg)
+		rawBi, err = NewCloudRawBatchIterator(ri.ctx, rowSet.ResultLinks, rowSet.StartRowOffset, &ri.cfg)
 	} else {
-		return NewLocalBatchIterator(ri.ctx, rowSet.ArrowBatches, rowSet.StartRowOffset, ri.arrowSchemaBytes, &ri.cfg)
+		rawBi, err = NewLocalRawBatchIterator(ri.ctx, rowSet.ArrowBatches, rowSet.StartRowOffset, ri.arrowSchemaBytes, &ri.cfg)
 	}
+	if err != nil {
+		return nil, err
+	}
+	return NewBatchIterator(rawBi, ri.arrowSchemaBytes, &ri.cfg), nil
 }
 
 // Return the schema of the records.

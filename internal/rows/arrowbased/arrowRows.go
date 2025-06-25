@@ -113,18 +113,22 @@ func NewArrowRowScanner(resultSetMetadata *cli_service.TGetResultSetMetadataResp
 	}
 
 	var bi BatchIterator
-	var err2 dbsqlerr.DBError
 	if len(rowSet.ResultLinks) > 0 {
 		logger.Debug().Msgf("Initialize CloudFetch loader, row set start offset: %d, file list:", rowSet.StartRowOffset)
 		for _, resultLink := range rowSet.ResultLinks {
 			logger.Debug().Msgf("- start row offset: %d, row count: %d", resultLink.StartRowOffset, resultLink.RowCount)
 		}
-		bi, err2 = NewCloudBatchIterator(context.Background(), rowSet.ResultLinks, rowSet.StartRowOffset, cfg)
+		rawBi, err2 := NewCloudRawBatchIterator(context.Background(), rowSet.ResultLinks, rowSet.StartRowOffset, cfg)
+		if err2 != nil {
+			return nil, err2
+		}
+		bi = NewBatchIterator(rawBi, schemaBytes, cfg)
 	} else {
-		bi, err2 = NewLocalBatchIterator(context.Background(), rowSet.ArrowBatches, rowSet.StartRowOffset, schemaBytes, cfg)
-	}
-	if err2 != nil {
-		return nil, err2
+		rawBi, err2 := NewLocalRawBatchIterator(context.Background(), rowSet.ArrowBatches, rowSet.StartRowOffset, schemaBytes, cfg)
+		if err2 != nil {
+			return nil, err2
+		}
+		bi = NewBatchIterator(rawBi, schemaBytes, cfg)
 	}
 
 	var location *time.Location = time.UTC

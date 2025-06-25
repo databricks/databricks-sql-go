@@ -21,24 +21,89 @@ import (
 	"github.com/databricks/databricks-sql-go/logger"
 )
 
+type RawBatchIterator interface {
+	Next() (*cli_service.TSparkArrowBatch, error)
+	HasNext() bool
+	Close()
+	GetStartRowOffset() int64
+}
+
+// BatchIterator provides parsed Arrow batches
 type BatchIterator interface {
 	Next() (SparkArrowBatch, error)
 	HasNext() bool
 	Close()
 }
 
-func NewCloudBatchIterator(
+// batchIterator wraps a RawBatchIterator and parses the raw batches
+type batchIterator struct {
+	rawIterator      RawBatchIterator
+	arrowSchemaBytes []byte
+	cfg              *config.Config
+}
+
+var _ BatchIterator = (*batchIterator)(nil)
+
+func (bi *batchIterator) Next() (SparkArrowBatch, error) {
+	rawBatch, err := bi.rawIterator.Next()
+	if err != nil {
+		return nil, err
+	}
+
+	// GetStartRowOffset returns the start offset of the last returned batch
+	startOffset := bi.rawIterator.GetStartRowOffset()
+
+	reader := io.MultiReader(
+		bytes.NewReader(bi.arrowSchemaBytes),
+		getReader(bytes.NewReader(rawBatch.Batch), bi.cfg.UseLz4Compression),
+	)
+
+	records, err := getArrowRecords(reader, startOffset)
+	if err != nil {
+		return nil, err
+	}
+
+	batch := sparkArrowBatch{
+		Delimiter:    rowscanner.NewDelimiter(startOffset, rawBatch.RowCount),
+		arrowRecords: records,
+	}
+
+	return &batch, nil
+}
+
+func (bi *batchIterator) HasNext() bool {
+	return bi.rawIterator.HasNext()
+}
+
+func (bi *batchIterator) Close() {
+	bi.rawIterator.Close()
+}
+
+// NewBatchIterator creates a BatchIterator from a RawBatchIterator
+func NewBatchIterator(
+	rawIterator RawBatchIterator,
+	arrowSchemaBytes []byte,
+	cfg *config.Config,
+) BatchIterator {
+	return &batchIterator{
+		rawIterator:      rawIterator,
+		arrowSchemaBytes: arrowSchemaBytes,
+		cfg:              cfg,
+	}
+}
+
+func NewCloudRawBatchIterator(
 	ctx context.Context,
 	files []*cli_service.TSparkArrowResultLink,
 	startRowOffset int64,
 	cfg *config.Config,
-) (BatchIterator, dbsqlerr.DBError) {
+) (RawBatchIterator, dbsqlerr.DBError) {
 	bi := &cloudBatchIterator{
-		ctx:            ctx,
-		cfg:            cfg,
-		startRowOffset: startRowOffset,
-		pendingLinks:   NewQueue[cli_service.TSparkArrowResultLink](),
-		downloadTasks:  NewQueue[cloudFetchDownloadTask](),
+		ctx:              ctx,
+		cfg:              cfg,
+		currentRowOffset: startRowOffset,
+		pendingLinks:     NewQueue[cli_service.TSparkArrowResultLink](),
+		downloadTasks:    NewQueue[cloudFetchDownloadTask](),
 	}
 
 	for _, link := range files {
@@ -48,16 +113,16 @@ func NewCloudBatchIterator(
 	return bi, nil
 }
 
-func NewLocalBatchIterator(
+func NewLocalRawBatchIterator(
 	ctx context.Context,
 	batches []*cli_service.TSparkArrowBatch,
 	startRowOffset int64,
 	arrowSchemaBytes []byte,
 	cfg *config.Config,
-) (BatchIterator, dbsqlerr.DBError) {
+) (RawBatchIterator, dbsqlerr.DBError) {
 	bi := &localBatchIterator{
 		cfg:              cfg,
-		startRowOffset:   startRowOffset,
+		currentRowOffset: startRowOffset,
 		arrowSchemaBytes: arrowSchemaBytes,
 		batches:          batches,
 		index:            -1,
@@ -68,38 +133,22 @@ func NewLocalBatchIterator(
 
 type localBatchIterator struct {
 	cfg              *config.Config
-	startRowOffset   int64
+	currentRowOffset int64  // Tracks the start offset of the last returned batch
 	arrowSchemaBytes []byte
 	batches          []*cli_service.TSparkArrowBatch
 	index            int
 }
 
-var _ BatchIterator = (*localBatchIterator)(nil)
+var _ RawBatchIterator = (*localBatchIterator)(nil)
 
-func (bi *localBatchIterator) Next() (SparkArrowBatch, error) {
+func (bi *localBatchIterator) Next() (*cli_service.TSparkArrowBatch, error) {
 	cnt := len(bi.batches)
 	bi.index++
 	if bi.index < cnt {
 		ab := bi.batches[bi.index]
-
-		reader := io.MultiReader(
-			bytes.NewReader(bi.arrowSchemaBytes),
-			getReader(bytes.NewReader(ab.Batch), bi.cfg.UseLz4Compression),
-		)
-
-		records, err := getArrowRecords(reader, bi.startRowOffset)
-		if err != nil {
-			return &sparkArrowBatch{}, err
-		}
-
-		batch := sparkArrowBatch{
-			Delimiter:    rowscanner.NewDelimiter(bi.startRowOffset, ab.RowCount),
-			arrowRecords: records,
-		}
-
-		bi.startRowOffset += ab.RowCount // advance to beginning of the next batch
-
-		return &batch, nil
+		// Update offset after returning the batch
+		bi.currentRowOffset += ab.RowCount
+		return ab, nil
 	}
 
 	bi.index = cnt
@@ -116,17 +165,28 @@ func (bi *localBatchIterator) Close() {
 	bi.index = len(bi.batches)
 }
 
-type cloudBatchIterator struct {
-	ctx            context.Context
-	cfg            *config.Config
-	startRowOffset int64
-	pendingLinks   Queue[cli_service.TSparkArrowResultLink]
-	downloadTasks  Queue[cloudFetchDownloadTask]
+func (bi *localBatchIterator) GetStartRowOffset() int64 {
+	// Return the offset of the last returned batch
+	if bi.index >= 0 && bi.index < len(bi.batches) {
+		// currentRowOffset points to after the last returned batch
+		// so subtract the current batch's row count to get its start
+		return bi.currentRowOffset - bi.batches[bi.index].RowCount
+	}
+	return bi.currentRowOffset
 }
 
-var _ BatchIterator = (*cloudBatchIterator)(nil)
+type cloudBatchIterator struct {
+	ctx              context.Context
+	cfg              *config.Config
+	currentRowOffset int64  // Tracks the offset after the last returned batch
+	lastBatchRowCount int64 // Tracks the row count of the last returned batch
+	pendingLinks     Queue[cli_service.TSparkArrowResultLink]
+	downloadTasks    Queue[cloudFetchDownloadTask]
+}
 
-func (bi *cloudBatchIterator) Next() (SparkArrowBatch, error) {
+var _ RawBatchIterator = (*cloudBatchIterator)(nil)
+
+func (bi *cloudBatchIterator) Next() (*cli_service.TSparkArrowBatch, error) {
 	for (bi.downloadTasks.Len() < bi.cfg.MaxDownloadThreads) && (bi.pendingLinks.Len() > 0) {
 		link := bi.pendingLinks.Dequeue()
 		logger.Debug().Msgf(
@@ -153,7 +213,7 @@ func (bi *cloudBatchIterator) Next() (SparkArrowBatch, error) {
 		return nil, io.EOF
 	}
 
-	batch, err := task.GetResult()
+	batchData, rowCount, err := task.GetResult()
 
 	// once we've got an errored out task - cancel the remaining ones
 	if err != nil {
@@ -163,6 +223,14 @@ func (bi *cloudBatchIterator) Next() (SparkArrowBatch, error) {
 
 	// explicitly call cancel function on successfully completed task to avoid context leak
 	task.cancel()
+	
+	// Create TSparkArrowBatch from the downloaded data
+	batch := &cli_service.TSparkArrowBatch{
+		Batch:    batchData,
+		RowCount: rowCount,
+	}
+	bi.lastBatchRowCount = rowCount
+	bi.currentRowOffset += rowCount
 	return batch, nil
 }
 
@@ -178,9 +246,15 @@ func (bi *cloudBatchIterator) Close() {
 	}
 }
 
+func (bi *cloudBatchIterator) GetStartRowOffset() int64 {
+	// Return the start offset of the last returned batch
+	return bi.currentRowOffset - bi.lastBatchRowCount
+}
+
 type cloudFetchDownloadTaskResult struct {
-	batch SparkArrowBatch
-	err   error
+	batchData []byte
+	rowCount  int64
+	err       error
 }
 
 type cloudFetchDownloadTask struct {
@@ -192,7 +266,7 @@ type cloudFetchDownloadTask struct {
 	resultChan        chan cloudFetchDownloadTaskResult
 }
 
-func (cft *cloudFetchDownloadTask) GetResult() (SparkArrowBatch, error) {
+func (cft *cloudFetchDownloadTask) GetResult() ([]byte, int64, error) {
 	link := cft.link
 
 	result, ok := <-cft.resultChan
@@ -204,14 +278,14 @@ func (cft *cloudFetchDownloadTask) GetResult() (SparkArrowBatch, error) {
 				link.RowCount,
 				result.err.Error(),
 			)
-			return nil, result.err
+			return nil, 0, result.err
 		}
 		logger.Debug().Msgf(
 			"CloudFetch: received data for link at offset %d row count %d",
 			link.StartRowOffset,
 			link.RowCount,
 		)
-		return result.batch, nil
+		return result.batchData, result.rowCount, nil
 	}
 
 	// This branch should never be reached. If you see this message - something got really wrong
@@ -220,7 +294,7 @@ func (cft *cloudFetchDownloadTask) GetResult() (SparkArrowBatch, error) {
 		link.StartRowOffset,
 		link.RowCount,
 	)
-	return nil, nil
+	return nil, 0, nil
 }
 
 func (cft *cloudFetchDownloadTask) Run() {
@@ -234,31 +308,29 @@ func (cft *cloudFetchDownloadTask) Run() {
 		)
 		data, err := fetchBatchBytes(cft.ctx, cft.link, cft.minTimeToExpiry)
 		if err != nil {
-			cft.resultChan <- cloudFetchDownloadTaskResult{batch: nil, err: err}
+			cft.resultChan <- cloudFetchDownloadTaskResult{batchData: nil, rowCount: 0, err: err}
 			return
 		}
 
-		// io.ReadCloser.Close() may return an error, but in this case it should be safe to ignore (I hope so)
-		defer data.Close()
+		// Read all data into memory
+		batchData, err := io.ReadAll(data)
+		data.Close() // Close after reading
+		if err != nil {
+			cft.resultChan <- cloudFetchDownloadTaskResult{batchData: nil, rowCount: 0, err: err}
+			return
+		}
 
 		logger.Debug().Msgf(
-			"CloudFetch: reading records for link at offset %d row count %d",
+			"CloudFetch: received batch data for link at offset %d row count %d",
 			cft.link.StartRowOffset,
 			cft.link.RowCount,
 		)
-		reader := getReader(data, cft.useLz4Compression)
 
-		records, err := getArrowRecords(reader, cft.link.StartRowOffset)
-		if err != nil {
-			cft.resultChan <- cloudFetchDownloadTaskResult{batch: nil, err: err}
-			return
+		cft.resultChan <- cloudFetchDownloadTaskResult{
+			batchData: batchData,
+			rowCount:  cft.link.RowCount,
+			err:       nil,
 		}
-
-		batch := sparkArrowBatch{
-			Delimiter:    rowscanner.NewDelimiter(cft.link.StartRowOffset, cft.link.RowCount),
-			arrowRecords: records,
-		}
-		cft.resultChan <- cloudFetchDownloadTaskResult{batch: &batch, err: nil}
 	}()
 }
 
@@ -306,6 +378,114 @@ func getReader(r io.Reader, useLz4Compression bool) io.Reader {
 func isLinkExpired(expiryTime int64, linkExpiryBuffer time.Duration) bool {
 	bufferSecs := int64(linkExpiryBuffer.Seconds())
 	return expiryTime-bufferSecs < time.Now().Unix()
+}
+
+// pagedRawBatchIterator wraps a result page iterator and provides raw batches
+type pagedRawBatchIterator struct {
+	ctx                context.Context
+	resultPageIterator rowscanner.ResultPageIterator
+	currentIterator    RawBatchIterator
+	cfg                *config.Config
+	startRowOffset     int64
+}
+
+// NewPagedRawBatchIterator creates a raw batch iterator from a result page iterator
+func NewPagedRawBatchIterator(
+	ctx context.Context,
+	resultPageIterator rowscanner.ResultPageIterator,
+	cfg *config.Config,
+) RawBatchIterator {
+	return &pagedRawBatchIterator{
+		ctx:                ctx,
+		resultPageIterator: resultPageIterator,
+		cfg:                cfg,
+		startRowOffset:     0,
+	}
+}
+
+func (pi *pagedRawBatchIterator) Next() (*cli_service.TSparkArrowBatch, error) {
+	// If we have a current iterator and it has more batches, use it
+	if pi.currentIterator != nil && pi.currentIterator.HasNext() {
+		return pi.currentIterator.Next()
+	}
+
+	// Need to fetch next page
+	if pi.resultPageIterator == nil || !pi.resultPageIterator.HasNext() {
+		return nil, io.EOF
+	}
+
+	fetchResult, err := pi.resultPageIterator.Next()
+	if err != nil {
+		return nil, err
+	}
+
+	if fetchResult == nil || fetchResult.Results == nil {
+		return nil, io.EOF
+	}
+
+	rowSet := fetchResult.Results
+	
+	// Create appropriate iterator based on result type
+	if len(rowSet.ResultLinks) > 0 {
+		pi.currentIterator, err = NewCloudRawBatchIterator(pi.ctx, rowSet.ResultLinks, rowSet.StartRowOffset, pi.cfg)
+	} else if len(rowSet.ArrowBatches) > 0 {
+		// Note: we don't have schema bytes here, but raw iterator doesn't need them
+		pi.currentIterator, err = NewLocalRawBatchIterator(pi.ctx, rowSet.ArrowBatches, rowSet.StartRowOffset, nil, pi.cfg)
+	} else {
+		return nil, io.EOF
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	// Now get the first batch from the new iterator
+	return pi.currentIterator.Next()
+}
+
+func (pi *pagedRawBatchIterator) HasNext() bool {
+	return (pi.currentIterator != nil && pi.currentIterator.HasNext()) ||
+		(pi.resultPageIterator != nil && pi.resultPageIterator.HasNext())
+}
+
+func (pi *pagedRawBatchIterator) Close() {
+	if pi.currentIterator != nil {
+		pi.currentIterator.Close()
+	}
+}
+
+func (pi *pagedRawBatchIterator) GetStartRowOffset() int64 {
+	if pi.currentIterator != nil {
+		return pi.currentIterator.GetStartRowOffset()
+	}
+	return pi.startRowOffset
+}
+
+// Legacy wrapper functions for backward compatibility with tests
+func NewCloudBatchIterator(
+	ctx context.Context,
+	files []*cli_service.TSparkArrowResultLink,
+	startRowOffset int64,
+	cfg *config.Config,
+) (BatchIterator, dbsqlerr.DBError) {
+	// For cloud iterator, we don't have schema bytes at this level
+	// The schema will need to be provided when creating the BatchIterator wrapper
+	// This is a temporary compatibility function for tests
+	return nil, dbsqlerrint.NewDriverError(ctx, "NewCloudBatchIterator is deprecated, use NewCloudRawBatchIterator + NewBatchIterator", nil)
+}
+
+func NewLocalBatchIterator(
+	ctx context.Context,
+	batches []*cli_service.TSparkArrowBatch,
+	startRowOffset int64,
+	arrowSchemaBytes []byte,
+	cfg *config.Config,
+) (BatchIterator, dbsqlerr.DBError) {
+	rawIterator, err := NewLocalRawBatchIterator(ctx, batches, startRowOffset, arrowSchemaBytes, cfg)
+	if err != nil {
+		return nil, err
+	}
+	return NewBatchIterator(rawIterator, arrowSchemaBytes, cfg), nil
 }
 
 func getArrowRecords(r io.Reader, startRowOffset int64) ([]SparkArrowRecord, error) {

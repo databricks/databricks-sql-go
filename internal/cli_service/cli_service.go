@@ -6926,7 +6926,7 @@ func (p *TDBSqlResultFormat) String() string {
 }
 
 func (p *TDBSqlResultFormat) Validate() error {
-  return nil
+    return nil
 }
 // Attributes:
 //  - Batch

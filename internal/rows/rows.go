@@ -573,12 +573,13 @@ func (r *rows) GetIPCStreams(ctx context.Context) (dbsqlrows.IPCStreamIterator, 
 		}
 	}
 
+	// Create a raw batch iterator from the result page iterator
+	rawIterator := arrowbased.NewPagedRawBatchIterator(ctx, r.ResultPageIterator, r.config)
+	
 	// Create IPC stream iterator
 	return arrowbased.NewIPCStreamIterator(
-		ctx,
-		r.ResultPageIterator,
-		nil, // We don't have access to initial row set here
+		rawIterator,
 		schemaBytes,
 		r.config,
-	)
+	), nil
 }
