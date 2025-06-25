@@ -74,7 +74,7 @@ func (rv *rowValues) NColumns() int { return len(rv.columnValueHolders) }
 func (rv *rowValues) SetDelimiter(d rowscanner.Delimiter) { rv.Delimiter = d }
 
 type valueContainerMaker interface {
-	makeColumnValuesContainers(ars *arrowRowScanner, d rowscanner.Delimiter) error
+	makeColumnValuesContainers(ars *ArrowRowScanner, d rowscanner.Delimiter) error
 }
 
 // columnValues is the interface for accessing the values for a column

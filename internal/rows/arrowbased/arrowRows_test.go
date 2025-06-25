@@ -205,7 +205,7 @@ func TestArrowRowScanner(t *testing.T) {
 
 	t.Run("NRows", func(t *testing.T) {
 		// test counting the number of rows by summing individual batches
-		var dummy *arrowRowScanner
+		var dummy *ArrowRowScanner
 		assert.Equal(t, int64(0), dummy.NRows())
 
 		rowSet := &cli_service.TRowSet{}
@@ -238,7 +238,7 @@ func TestArrowRowScanner(t *testing.T) {
 
 		d, _ := NewArrowRowScanner(metadataResp, rowSet, nil, nil, context.Background())
 
-		var ars *arrowRowScanner = d.(*arrowRowScanner)
+		var ars *ArrowRowScanner = d.(*ArrowRowScanner)
 
 		err := ars.makeColumnValuesContainers(ars, rowscanner.NewDelimiter(0, 1))
 		require.Nil(t, err)
@@ -314,7 +314,7 @@ func TestArrowRowScanner(t *testing.T) {
 
 		d, _ := NewArrowRowScanner(metadataResp, rowSet, &cfg, nil, context.Background())
 
-		var ars *arrowRowScanner = d.(*arrowRowScanner)
+		var ars *ArrowRowScanner = d.(*ArrowRowScanner)
 
 		err := ars.makeColumnValuesContainers(ars, rowscanner.NewDelimiter(0, 1))
 		require.Nil(t, err)
@@ -416,7 +416,7 @@ func TestArrowRowScanner(t *testing.T) {
 		d, err1 := NewArrowRowScanner(metadataResp, rowSet, &cfg, nil, context.Background())
 		require.Nil(t, err1)
 
-		var ars *arrowRowScanner = d.(*arrowRowScanner)
+		var ars *ArrowRowScanner = d.(*ArrowRowScanner)
 
 		err := ars.makeColumnValuesContainers(ars, rowscanner.NewDelimiter(0, 0))
 		require.Nil(t, err)
@@ -424,7 +424,7 @@ func TestArrowRowScanner(t *testing.T) {
 		dest := make([]driver.Value, 1)
 		err = ars.ScanRow(dest, 0)
 		require.NotNil(t, err)
-		assert.True(t, strings.Contains(err.Error(), "databricks: driver error: "+errArrowRowsInvalidRowNumber(0)))
+		assert.True(t, strings.Contains(err.Error(), errArrowRowsNoArrowBatches))
 	})
 
 	t.Run("Close releases column values", func(t *testing.T) {
@@ -447,7 +447,7 @@ func TestArrowRowScanner(t *testing.T) {
 		require.Nil(t, err)
 		d.Close()
 
-		ars := d.(*arrowRowScanner)
+		ars := d.(*ArrowRowScanner)
 		var releaseCount int
 		fc := &fakeColumnValues{fnRelease: func() { releaseCount++ }}
 		ars.rowValues = NewRowValues(rowscanner.NewDelimiter(0, 1), []columnValues{fc, fc, fc})
@@ -456,12 +456,12 @@ func TestArrowRowScanner(t *testing.T) {
 	})
 
 	t.Run("loadBatch invalid row scanner", func(t *testing.T) {
-		var ars *arrowRowScanner
+		var ars *ArrowRowScanner
 		err := ars.loadBatchFor(0)
 		assert.NotNil(t, err)
 		assert.ErrorContains(t, err, errArrowRowsNoArrowBatches)
 
-		ars = &arrowRowScanner{}
+		ars = &ArrowRowScanner{}
 		ars.DBSQLLogger = dbsqllog.Logger
 		err = ars.loadBatchFor(0)
 		assert.NotNil(t, err)
@@ -484,7 +484,7 @@ func TestArrowRowScanner(t *testing.T) {
 
 		d, _ := NewArrowRowScanner(metadataResp, rowSet, &cfg, nil, context.Background())
 
-		var ars *arrowRowScanner = d.(*arrowRowScanner)
+		var ars *ArrowRowScanner = d.(*ArrowRowScanner)
 
 		assert.Nil(t, ars.rowValues)
 
@@ -502,7 +502,7 @@ func TestArrowRowScanner(t *testing.T) {
 		ars.batchIterator = fbi
 
 		var callCount int
-		ars.valueContainerMaker = &fakeValueContainerMaker{fnMakeColumnValuesContainers: func(ars *arrowRowScanner, d rowscanner.Delimiter) dbsqlerr.DBError {
+		ars.valueContainerMaker = &fakeValueContainerMaker{fnMakeColumnValuesContainers: func(ars *ArrowRowScanner, d rowscanner.Delimiter) dbsqlerr.DBError {
 			callCount += 1
 			columnValueHolders := make([]columnValues, len(ars.arrowSchema.Fields()))
 			for i := range ars.arrowSchema.Fields() {
@@ -554,7 +554,7 @@ func TestArrowRowScanner(t *testing.T) {
 
 		d, _ := NewArrowRowScanner(metadataResp, rowSet, &cfg, nil, nil)
 
-		var ars *arrowRowScanner = d.(*arrowRowScanner)
+		var ars *ArrowRowScanner = d.(*ArrowRowScanner)
 
 		fbi := &fakeBatchIterator{
 			batches: []SparkArrowBatch{
@@ -592,7 +592,7 @@ func TestArrowRowScanner(t *testing.T) {
 
 		d, _ := NewArrowRowScanner(metadataResp, rowSet, &cfg, nil, nil)
 
-		var ars *arrowRowScanner = d.(*arrowRowScanner)
+		var ars *ArrowRowScanner = d.(*ArrowRowScanner)
 
 		fbi := &fakeBatchIterator{
 			batches: []SparkArrowBatch{
@@ -631,7 +631,7 @@ func TestArrowRowScanner(t *testing.T) {
 
 		d, _ := NewArrowRowScanner(metadataResp, rowSet, &cfg, nil, nil)
 
-		var ars *arrowRowScanner = d.(*arrowRowScanner)
+		var ars *ArrowRowScanner = d.(*ArrowRowScanner)
 
 		fbi := &fakeBatchIterator{
 			batches: []SparkArrowBatch{
@@ -645,7 +645,7 @@ func TestArrowRowScanner(t *testing.T) {
 		ars.batchIterator = fbi
 
 		ars.valueContainerMaker = &fakeValueContainerMaker{
-			fnMakeColumnValuesContainers: func(ars *arrowRowScanner, d rowscanner.Delimiter) dbsqlerr.DBError {
+			fnMakeColumnValuesContainers: func(ars *ArrowRowScanner, d rowscanner.Delimiter) dbsqlerr.DBError {
 				return dbsqlerrint.NewDriverError(context.TODO(), "error making containers", nil)
 			},
 		}
@@ -672,7 +672,7 @@ func TestArrowRowScanner(t *testing.T) {
 
 		d, _ := NewArrowRowScanner(metadataResp, rowSet, &cfg, nil, nil)
 
-		var ars *arrowRowScanner = d.(*arrowRowScanner)
+		var ars *ArrowRowScanner = d.(*ArrowRowScanner)
 
 		fbi := &fakeBatchIterator{
 			batches: []SparkArrowBatch{
@@ -708,7 +708,7 @@ func TestArrowRowScanner(t *testing.T) {
 
 		d, _ := NewArrowRowScanner(metadataResp, rowSet, &cfg, nil, context.Background())
 
-		var ars *arrowRowScanner = d.(*arrowRowScanner)
+		var ars *ArrowRowScanner = d.(*ArrowRowScanner)
 
 		fbi := &fakeBatchIterator{
 			batches: []SparkArrowBatch{
@@ -857,7 +857,7 @@ func TestArrowRowScanner(t *testing.T) {
 
 			d, _ := NewArrowRowScanner(metadataResp, rowSet, &cfg, nil, context.Background())
 
-			var ars *arrowRowScanner = d.(*arrowRowScanner)
+			var ars *ArrowRowScanner = d.(*ArrowRowScanner)
 			ars.UseArrowNativeComplexTypes = true
 			ars.UseArrowNativeDecimal = true
 			ars.UseArrowNativeIntervalTypes = true
@@ -873,7 +873,7 @@ func TestArrowRowScanner(t *testing.T) {
 			}
 			ars.batchIterator = fbi
 
-			ars.valueContainerMaker = &fakeValueContainerMaker{fnMakeColumnValuesContainers: func(ars *arrowRowScanner, d rowscanner.Delimiter) dbsqlerr.DBError {
+			ars.valueContainerMaker = &fakeValueContainerMaker{fnMakeColumnValuesContainers: func(ars *ArrowRowScanner, d rowscanner.Delimiter) dbsqlerr.DBError {
 				columnValueHolders := make([]columnValues, len(ars.arrowSchema.Fields()))
 				for i := range ars.arrowSchema.Fields() {
 					columnValueHolders[i] = &fakeColumnValues{}
@@ -935,7 +935,7 @@ func TestArrowRowScanner(t *testing.T) {
 			d, err := NewArrowRowScanner(executeStatementResp.DirectResults.ResultSetMetadata, executeStatementResp.DirectResults.ResultSet.Results, config, nil, context.Background())
 			assert.Nil(t, err)
 
-			ars := d.(*arrowRowScanner)
+			ars := d.(*ArrowRowScanner)
 
 			dest := make([]driver.Value, len(executeStatementResp.DirectResults.ResultSetMetadata.Schema.Columns))
 			err = ars.ScanRow(dest, 0)
@@ -963,7 +963,7 @@ func TestArrowRowScanner(t *testing.T) {
 			d, err := NewArrowRowScanner(executeStatementResp.DirectResults.ResultSetMetadata, executeStatementResp.DirectResults.ResultSet.Results, config, nil, context.Background())
 			assert.Nil(t, err)
 
-			ars := d.(*arrowRowScanner)
+			ars := d.(*ArrowRowScanner)
 
 			dest := make([]driver.Value, len(executeStatementResp.DirectResults.ResultSetMetadata.Schema.Columns))
 			err = ars.ScanRow(dest, 1)
@@ -986,7 +986,7 @@ func TestArrowRowScanner(t *testing.T) {
 		d, err := NewArrowRowScanner(executeStatementResp.DirectResults.ResultSetMetadata, executeStatementResp.DirectResults.ResultSet.Results, config, nil, context.Background())
 		assert.Nil(t, err)
 
-		ars := d.(*arrowRowScanner)
+		ars := d.(*ArrowRowScanner)
 
 		dest := []driver.Value{
 			true, int8(4), int16(3), int32(2), int64(1), float32(3.3), float64(2.2), "stringval",
@@ -1018,7 +1018,7 @@ func TestArrowRowScanner(t *testing.T) {
 		d, err := NewArrowRowScanner(executeStatementResp.DirectResults.ResultSetMetadata, executeStatementResp.DirectResults.ResultSet.Results, config, nil, context.Background())
 		assert.Nil(t, err)
 
-		ars := d.(*arrowRowScanner)
+		ars := d.(*ArrowRowScanner)
 
 		dest := make([]driver.Value, len(executeStatementResp.DirectResults.ResultSetMetadata.Schema.Columns))
 		err = ars.ScanRow(dest, 2)
@@ -1038,19 +1038,24 @@ func TestArrowRowScanner(t *testing.T) {
 		d, err := NewArrowRowScanner(executeStatementResp.DirectResults.ResultSetMetadata, executeStatementResp.DirectResults.ResultSet.Results, config, nil, context.Background())
 		assert.Nil(t, err)
 
-		ars := d.(*arrowRowScanner)
+		ars := d.(*ArrowRowScanner)
 		assert.Equal(t, int64(53940), ars.NRows())
 
-		// TODO: Update test to work with new architecture
-		// The batchIterator is now wrapped, so we can't cast to localBatchIterator directly
-		fbi := &batchIteratorWrapper{
-			bi: ars.batchIterator,
-		}
+		dest := make([]driver.Value, len(executeStatementResp.DirectResults.ResultSetMetadata.Schema.Columns))
 
+		// Trigger creation of batchIterator by attempting to scan the first row
+		err = ars.ScanRow(dest, 0)
+		assert.Nil(t, err)
+
+		// Now wrap the initialized batchIterator
+		fbi := &batchIteratorWrapper{
+			bi:        ars.batchIterator,
+			callCount: 1, // Already loaded one batch for row 0
+		}
 		ars.batchIterator = fbi
 
-		dest := make([]driver.Value, len(executeStatementResp.DirectResults.ResultSetMetadata.Schema.Columns))
-		for i := int64(0); i < ars.NRows(); i = i + 1 {
+		// Continue from row 1 since we already scanned row 0
+		for i := int64(1); i < ars.NRows(); i = i + 1 {
 			err := ars.ScanRow(dest, i)
 			assert.Nil(t, err)
 			assert.Equal(t, int32(i+1), dest[0])
@@ -1110,7 +1115,7 @@ func TestArrowRowScanner(t *testing.T) {
 		d, err := NewArrowRowScanner(executeStatementResp.DirectResults.ResultSetMetadata, executeStatementResp.DirectResults.ResultSet.Results, config, nil, context.Background())
 		assert.Nil(t, err)
 
-		ars := d.(*arrowRowScanner)
+		ars := d.(*ArrowRowScanner)
 
 		dest := make([]driver.Value, len(executeStatementResp.DirectResults.ResultSetMetadata.Schema.Columns))
 		// err = ars.ScanRow(dest, 0)
@@ -1138,7 +1143,7 @@ func TestArrowRowScanner(t *testing.T) {
 		d, err := NewArrowRowScanner(executeStatementResp.DirectResults.ResultSetMetadata, executeStatementResp.DirectResults.ResultSet.Results, config, nil, context.Background())
 		assert.Nil(t, err)
 
-		ars := d.(*arrowRowScanner)
+		ars := d.(*ArrowRowScanner)
 
 		dest := make([]driver.Value, len(executeStatementResp.DirectResults.ResultSetMetadata.Schema.Columns))
 		err = ars.ScanRow(dest, 0)
@@ -1190,7 +1195,7 @@ func TestArrowRowScanner(t *testing.T) {
 		d, err1 := NewArrowRowScanner(executeStatementResp.DirectResults.ResultSetMetadata, executeStatementResp.DirectResults.ResultSet.Results, config, nil, context.Background())
 		assert.Nil(t, err1)
 
-		ars := d.(*arrowRowScanner)
+		ars := d.(*ArrowRowScanner)
 
 		dest := make([]driver.Value, len(executeStatementResp.DirectResults.ResultSetMetadata.Schema.Columns))
 		err1 = ars.ScanRow(dest, 1)
@@ -1231,7 +1236,7 @@ func TestArrowRowScanner(t *testing.T) {
 		d, err := NewArrowRowScanner(executeStatementResp.DirectResults.ResultSetMetadata, executeStatementResp.DirectResults.ResultSet.Results, config, nil, context.Background())
 		assert.Nil(t, err)
 
-		ars := d.(*arrowRowScanner)
+		ars := d.(*ArrowRowScanner)
 
 		dest := make([]driver.Value, len(executeStatementResp.DirectResults.ResultSetMetadata.Schema.Columns))
 		err = ars.ScanRow(dest, 0)
@@ -1290,7 +1295,7 @@ func TestArrowRowScanner(t *testing.T) {
 		d, err := NewArrowRowScanner(executeStatementResp.DirectResults.ResultSetMetadata, executeStatementResp.DirectResults.ResultSet.Results, config, nil, context.Background())
 		assert.Nil(t, err)
 
-		ars := d.(*arrowRowScanner)
+		ars := d.(*ArrowRowScanner)
 
 		dest := make([]driver.Value, len(executeStatementResp.DirectResults.ResultSetMetadata.Schema.Columns))
 		err = ars.ScanRow(dest, 0)
@@ -1323,7 +1328,7 @@ func TestArrowRowScanner(t *testing.T) {
 		d, err := NewArrowRowScanner(executeStatementResp.DirectResults.ResultSetMetadata, executeStatementResp.DirectResults.ResultSet.Results, config, nil, context.Background())
 		assert.Nil(t, err)
 
-		ars := d.(*arrowRowScanner)
+		ars := d.(*ArrowRowScanner)
 
 		dest := make([]driver.Value, len(executeStatementResp.DirectResults.ResultSetMetadata.Schema.Columns))
 		err = ars.ScanRow(dest, 0)
@@ -1362,7 +1367,7 @@ func TestArrowRowScanner(t *testing.T) {
 		d, err := NewArrowRowScanner(executeStatementResp.DirectResults.ResultSetMetadata, executeStatementResp.DirectResults.ResultSet.Results, config, nil, context.Background())
 		assert.Nil(t, err)
 
-		ars := d.(*arrowRowScanner)
+		ars := d.(*ArrowRowScanner)
 
 		dest := make([]driver.Value, len(executeStatementResp.DirectResults.ResultSetMetadata.Schema.Columns))
 
@@ -1401,7 +1406,7 @@ func TestArrowRowScanner(t *testing.T) {
 		d, err := NewArrowRowScanner(executeStatementResp.DirectResults.ResultSetMetadata, executeStatementResp.DirectResults.ResultSet.Results, config, nil, context.Background())
 		assert.Nil(t, err)
 
-		ars := d.(*arrowRowScanner)
+		ars := d.(*ArrowRowScanner)
 
 		dest := make([]driver.Value, len(executeStatementResp.DirectResults.ResultSetMetadata.Schema.Columns))
 		err = ars.ScanRow(dest, 0)
@@ -1437,7 +1442,7 @@ func TestArrowRowScanner(t *testing.T) {
 		d, err := NewArrowRowScanner(executeStatementResp.DirectResults.ResultSetMetadata, executeStatementResp.DirectResults.ResultSet.Results, config, nil, context.Background())
 		assert.Nil(t, err)
 
-		ars := d.(*arrowRowScanner)
+		ars := d.(*ArrowRowScanner)
 
 		dest := make([]driver.Value, len(executeStatementResp.DirectResults.ResultSetMetadata.Schema.Columns))
 		err = ars.ScanRow(dest, 0)
@@ -1997,12 +2002,12 @@ func getAllTypesSchema() *cli_service.TTableSchema {
 }
 
 type fakeValueContainerMaker struct {
-	fnMakeColumnValuesContainers func(ars *arrowRowScanner, d rowscanner.Delimiter) dbsqlerr.DBError
+	fnMakeColumnValuesContainers func(ars *ArrowRowScanner, d rowscanner.Delimiter) dbsqlerr.DBError
 }
 
 var _ valueContainerMaker = (*fakeValueContainerMaker)(nil)
 
-func (vcm *fakeValueContainerMaker) makeColumnValuesContainers(ars *arrowRowScanner, d rowscanner.Delimiter) error {
+func (vcm *fakeValueContainerMaker) makeColumnValuesContainers(ars *ArrowRowScanner, d rowscanner.Delimiter) error {
 	if vcm.fnMakeColumnValuesContainers != nil {
 		return vcm.fnMakeColumnValuesContainers(ars, d)
 	}

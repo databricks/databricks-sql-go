@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql/driver"
+	"fmt"
 	"io"
 	"time"
 
@@ -42,8 +43,8 @@ type colInfo struct {
 	dbType    cli_service.TTypeId
 }
 
-// arrowRowScanner handles extracting values from arrow records
-type arrowRowScanner struct {
+// ArrowRowScanner handles extracting values from arrow records
+type ArrowRowScanner struct {
 	rowscanner.Delimiter
 	valueContainerMaker
 
@@ -74,11 +75,12 @@ type arrowRowScanner struct {
 
 	ctx context.Context
 
-	batchIterator BatchIterator
+	rawBatchIterator RawBatchIterator // Direct results raw batch iterator
+	batchIterator    BatchIterator    // Lazy-initialized for row scanning
 }
 
-// Make sure arrowRowScanner fulfills the RowScanner interface
-var _ rowscanner.RowScanner = (*arrowRowScanner)(nil)
+// Make sure ArrowRowScanner fulfills the RowScanner interface
+var _ rowscanner.RowScanner = (*ArrowRowScanner)(nil)
 
 // NewArrowRowScanner returns an instance of RowScanner which handles arrow format results
 func NewArrowRowScanner(resultSetMetadata *cli_service.TGetResultSetMetadataResp, rowSet *cli_service.TRowSet, cfg *config.Config, logger *dbsqllog.DBSQLLogger, ctx context.Context) (rowscanner.RowScanner, dbsqlerr.DBError) {
@@ -112,23 +114,23 @@ func NewArrowRowScanner(resultSetMetadata *cli_service.TGetResultSetMetadataResp
 		return nil, dbsqlerrint.NewDriverError(ctx, errArrowRowsToTimestampFn, err)
 	}
 
-	var bi BatchIterator
+	var rawBi RawBatchIterator
 	if len(rowSet.ResultLinks) > 0 {
 		logger.Debug().Msgf("Initialize CloudFetch loader, row set start offset: %d, file list:", rowSet.StartRowOffset)
 		for _, resultLink := range rowSet.ResultLinks {
 			logger.Debug().Msgf("- start row offset: %d, row count: %d", resultLink.StartRowOffset, resultLink.RowCount)
 		}
-		rawBi, err2 := NewCloudRawBatchIterator(context.Background(), rowSet.ResultLinks, rowSet.StartRowOffset, cfg)
+		var err2 dbsqlerr.DBError
+		rawBi, err2 = NewCloudRawBatchIterator(context.Background(), rowSet.ResultLinks, rowSet.StartRowOffset, cfg)
 		if err2 != nil {
 			return nil, err2
 		}
-		bi = NewBatchIterator(rawBi, schemaBytes, cfg)
-	} else {
-		rawBi, err2 := NewLocalRawBatchIterator(context.Background(), rowSet.ArrowBatches, rowSet.StartRowOffset, schemaBytes, cfg)
+	} else if len(rowSet.ArrowBatches) > 0 {
+		var err2 dbsqlerr.DBError
+		rawBi, err2 = NewLocalRawBatchIterator(context.Background(), rowSet.ArrowBatches, rowSet.StartRowOffset, schemaBytes, cfg)
 		if err2 != nil {
 			return nil, err2
 		}
-		bi = NewBatchIterator(rawBi, schemaBytes, cfg)
 	}
 
 	var location *time.Location = time.UTC
@@ -138,7 +140,7 @@ func NewArrowRowScanner(resultSetMetadata *cli_service.TGetResultSetMetadataResp
 		}
 	}
 
-	rs := &arrowRowScanner{
+	rs := &ArrowRowScanner{
 		Delimiter:           rowscanner.NewDelimiter(rowSet.StartRowOffset, rowscanner.CountRows(rowSet)),
 		valueContainerMaker: &arrowValueContainerMaker{},
 		ArrowConfig:         arrowConfig,
@@ -148,20 +150,22 @@ func NewArrowRowScanner(resultSetMetadata *cli_service.TGetResultSetMetadataResp
 		colInfo:             colInfos,
 		DBSQLLogger:         logger,
 		location:            location,
-		batchIterator:       bi,
+		rawBatchIterator:    rawBi,
 	}
 
 	return rs, nil
 }
 
 // Close is called when the Rows instance is closed.
-func (ars *arrowRowScanner) Close() {
+func (ars *ArrowRowScanner) Close() {
 	if ars.rowValues != nil {
 		ars.rowValues.Close()
 	}
 
 	if ars.batchIterator != nil {
 		ars.batchIterator.Close()
+	} else if ars.rawBatchIterator != nil {
+		ars.rawBatchIterator.Close()
 	}
 
 	if ars.currentBatch != nil {
@@ -170,7 +174,7 @@ func (ars *arrowRowScanner) Close() {
 }
 
 // NRows returns the number of rows in the current set of batches
-func (ars *arrowRowScanner) NRows() int64 {
+func (ars *ArrowRowScanner) NRows() int64 {
 	if ars != nil {
 		return ars.Count()
 	}
@@ -193,7 +197,7 @@ var intervalTypes map[cli_service.TTypeId]struct{} = map[cli_service.TTypeId]str
 // The dest should not be written to outside of ScanRow. Care
 // should be taken when closing a RowScanner not to modify
 // a buffer held in dest.
-func (ars *arrowRowScanner) ScanRow(
+func (ars *ArrowRowScanner) ScanRow(
 	destination []driver.Value,
 	rowNumber int64) dbsqlerr.DBError {
 
@@ -245,10 +249,17 @@ func isIntervalType(typeId cli_service.TTypeId) bool {
 }
 
 // loadBatchFor loads the batch containing the specified row if necessary
-func (ars *arrowRowScanner) loadBatchFor(rowNumber int64) dbsqlerr.DBError {
+func (ars *ArrowRowScanner) loadBatchFor(rowNumber int64) dbsqlerr.DBError {
 
 	if ars == nil {
 		return dbsqlerrint.NewDriverError(context.Background(), errArrowRowsNoArrowBatches, nil)
+	}
+
+	// Create batch iterator on demand from raw iterator
+	if ars.batchIterator == nil && ars.rawBatchIterator != nil {
+		ars.batchIterator = NewBatchIterator(ars.rawBatchIterator, ars.arrowSchemaBytes, &config.Config{
+			ArrowConfig: ars.ArrowConfig,
+		})
 	}
 
 	if ars.batchIterator == nil {
@@ -321,15 +332,42 @@ func (ars *arrowRowScanner) loadBatchFor(rowNumber int64) dbsqlerr.DBError {
 
 // Check that the row number falls within the range of this row scanner and that
 // it is not moving backwards.
-func (ars *arrowRowScanner) validateRowNumber(rowNumber int64) dbsqlerr.DBError {
+func (ars *ArrowRowScanner) validateRowNumber(rowNumber int64) dbsqlerr.DBError {
 	if rowNumber < 0 || rowNumber > ars.End() || (ars.currentBatch != nil && ars.currentBatch.Direction(rowNumber) == rowscanner.DirBack) {
 		return dbsqlerrint.NewDriverError(ars.ctx, errArrowRowsInvalidRowNumber(rowNumber), nil)
 	}
 	return nil
 }
 
-func (ars *arrowRowScanner) GetArrowBatches(ctx context.Context, cfg config.Config, rpi rowscanner.ResultPageIterator) (dbsqlrows.ArrowBatchIterator, error) {
-	ri := NewArrowRecordIterator(ctx, rpi, ars.batchIterator, ars.arrowSchemaBytes, cfg)
+// GetRawBatchIterator returns the raw batch iterator for direct results
+func (ars *ArrowRowScanner) GetRawBatchIterator() RawBatchIterator {
+	return ars.rawBatchIterator
+}
+
+func (ars *ArrowRowScanner) GetArrowBatches(ctx context.Context, cfg config.Config, rpi rowscanner.ResultPageIterator) (dbsqlrows.ArrowBatchIterator, error) {
+	// Create a unified raw batch iterator that combines direct results and pagination
+	var unifiedRawIterator RawBatchIterator
+
+	if ars.rawBatchIterator != nil && rpi != nil {
+		// Both direct results and pagination - compose them
+		pagedRawIterator := NewPagedRawBatchIterator(ctx, rpi, &cfg)
+		unifiedRawIterator = NewInitialThenPagedRawIterator(ars.rawBatchIterator, pagedRawIterator)
+	} else if ars.rawBatchIterator != nil {
+		// Only direct results
+		unifiedRawIterator = ars.rawBatchIterator
+	} else if rpi != nil {
+		// Only pagination
+		unifiedRawIterator = NewPagedRawBatchIterator(ctx, rpi, &cfg)
+	} else {
+		// No data
+		return nil, fmt.Errorf("no data available")
+	}
+
+	// Create batch iterator wrapper
+	batchIterator := NewBatchIterator(unifiedRawIterator, ars.arrowSchemaBytes, &cfg)
+
+	// Create arrow record iterator with the unified batch iterator
+	ri := NewArrowRecordIterator(ctx, nil, batchIterator, ars.arrowSchemaBytes, cfg)
 	return ri, nil
 }
 
@@ -560,7 +598,7 @@ type arrowValueContainerMaker struct{}
 var _ valueContainerMaker = (*arrowValueContainerMaker)(nil)
 
 // makeColumnValuesContainers creates appropriately typed  column values holders for each column
-func (vcm *arrowValueContainerMaker) makeColumnValuesContainers(ars *arrowRowScanner, d rowscanner.Delimiter) error {
+func (vcm *arrowValueContainerMaker) makeColumnValuesContainers(ars *ArrowRowScanner, d rowscanner.Delimiter) error {
 	if ars.rowValues == nil {
 		columnValueHolders := make([]columnValues, len(ars.colInfo))
 		for i, field := range ars.arrowSchema.Fields() {

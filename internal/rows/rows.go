@@ -573,9 +573,36 @@ func (r *rows) GetIPCStreams(ctx context.Context) (dbsqlrows.IPCStreamIterator, 
 		}
 	}
 
-	// Create a raw batch iterator from the result page iterator
-	rawIterator := arrowbased.NewPagedRawBatchIterator(ctx, r.ResultPageIterator, r.config)
-	
+	// Create a unified raw batch iterator
+	var rawIterator arrowbased.RawBatchIterator
+
+	// Check if we have direct results from the row scanner
+	if r.RowScanner != nil {
+		// Try to get the raw batch iterator from the row scanner
+		if arrowScanner, ok := r.RowScanner.(*arrowbased.ArrowRowScanner); ok && arrowScanner.GetRawBatchIterator() != nil {
+			directRawIterator := arrowScanner.GetRawBatchIterator()
+
+			if r.ResultPageIterator != nil {
+				// Compose direct results with pagination
+				pagedIterator := arrowbased.NewPagedRawBatchIterator(ctx, r.ResultPageIterator, r.config)
+				rawIterator = arrowbased.NewInitialThenPagedRawIterator(directRawIterator, pagedIterator)
+			} else {
+				// Only direct results
+				rawIterator = directRawIterator
+			}
+		} else if r.ResultPageIterator != nil {
+			// No direct results, only pagination
+			rawIterator = arrowbased.NewPagedRawBatchIterator(ctx, r.ResultPageIterator, r.config)
+		}
+	} else if r.ResultPageIterator != nil {
+		// No row scanner, only pagination
+		rawIterator = arrowbased.NewPagedRawBatchIterator(ctx, r.ResultPageIterator, r.config)
+	}
+
+	if rawIterator == nil {
+		return nil, dbsqlerr_int.NewDriverError(ctx, "no data available", nil)
+	}
+
 	// Create IPC stream iterator
 	return arrowbased.NewIPCStreamIterator(
 		rawIterator,
