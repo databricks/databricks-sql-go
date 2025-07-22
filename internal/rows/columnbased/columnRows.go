@@ -144,3 +144,10 @@ func (crs *columnRowScanner) GetArrowBatches(
 	rpi rowscanner.ResultPageIterator) (dbsqlrows.ArrowBatchIterator, error) {
 	return nil, dbsqlerr_int.NewDriverError(ctx, "databricks: result set is not in arrow format", nil)
 }
+
+func (crs *columnRowScanner) GetArrowIPCStreams(
+	ctx context.Context,
+	cfg config.Config,
+	rpi rowscanner.ResultPageIterator) (dbsqlrows.ArrowIPCStreamIterator, error) {
+	return nil, dbsqlerr_int.NewDriverError(ctx, "databricks: result set is not in arrow format", nil)
+}

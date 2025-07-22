@@ -1041,10 +1041,8 @@ func TestArrowRowScanner(t *testing.T) {
 		ars := d.(*arrowRowScanner)
 		assert.Equal(t, int64(53940), ars.NRows())
 
-		bi, ok := ars.batchIterator.(*localBatchIterator)
-		assert.True(t, ok)
-		fbi := &batchIteratorWrapper{
-			bi: bi,
+		fbi := &testBatchIteratorWrapper{
+			bi: ars.batchIterator,
 		}
 
 		ars.batchIterator = fbi
@@ -1674,26 +1672,26 @@ func (fbi *fakeBatchIterator) Close() {
 	fbi.lastReadBatch = nil
 }
 
-type batchIteratorWrapper struct {
+type testBatchIteratorWrapper struct {
 	bi              BatchIterator
 	callCount       int
 	lastLoadedBatch SparkArrowBatch
 }
 
-var _ BatchIterator = (*batchIteratorWrapper)(nil)
+var _ BatchIterator = (*testBatchIteratorWrapper)(nil)
 
-func (biw *batchIteratorWrapper) Next() (SparkArrowBatch, error) {
+func (biw *testBatchIteratorWrapper) Next() (SparkArrowBatch, error) {
 	biw.callCount += 1
 	batch, err := biw.bi.Next()
 	biw.lastLoadedBatch = batch
 	return batch, err
 }
 
-func (biw *batchIteratorWrapper) HasNext() bool {
+func (biw *testBatchIteratorWrapper) HasNext() bool {
 	return biw.bi.HasNext()
 }
 
-func (biw *batchIteratorWrapper) Close() {
+func (biw *testBatchIteratorWrapper) Close() {
 	biw.bi.Close()
 }
 

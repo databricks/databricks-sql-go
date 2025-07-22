@@ -539,3 +539,16 @@ func (r *rows) GetArrowBatches(ctx context.Context) (dbsqlrows.ArrowBatchIterato
 
 	return arrowbased.NewArrowRecordIterator(ctx, r.ResultPageIterator, nil, nil, *r.config), nil
 }
+
+func (r *rows) GetArrowIPCStreams(ctx context.Context) (dbsqlrows.ArrowIPCStreamIterator, error) {
+	// update context with correlationId and connectionId which will be used in logging and errors
+	ctx = driverctx.NewContextWithCorrelationId(driverctx.NewContextWithConnId(ctx, r.connId), r.correlationId)
+
+	// If a row scanner exists we use it to create the iterator, that way the iterator includes
+	// data returned as direct results
+	if r.RowScanner != nil {
+		return r.RowScanner.GetArrowIPCStreams(ctx, *r.config, r.ResultPageIterator)
+	}
+
+	return arrowbased.NewArrowIPCStreamIterator(ctx, r.ResultPageIterator, nil, nil, *r.config), nil
+}

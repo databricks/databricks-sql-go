@@ -32,6 +32,7 @@ type RowScanner interface {
 	Close()
 
 	GetArrowBatches(ctx context.Context, cfg config.Config, rpi ResultPageIterator) (dbsqlrows.ArrowBatchIterator, error)
+	GetArrowIPCStreams(ctx context.Context, cfg config.Config, rpi ResultPageIterator) (dbsqlrows.ArrowIPCStreamIterator, error)
 }
 
 // Expected formats for TIMESTAMP and DATE types when represented by a string value

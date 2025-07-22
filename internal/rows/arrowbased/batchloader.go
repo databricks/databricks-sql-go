@@ -21,19 +21,19 @@ import (
 	"github.com/databricks/databricks-sql-go/logger"
 )
 
-type BatchIterator interface {
-	Next() (SparkArrowBatch, error)
+type IPCStreamIterator interface {
+	Next() (io.Reader, error)
 	HasNext() bool
 	Close()
 }
 
-func NewCloudBatchIterator(
+func NewCloudIPCStreamIterator(
 	ctx context.Context,
 	files []*cli_service.TSparkArrowResultLink,
 	startRowOffset int64,
 	cfg *config.Config,
-) (BatchIterator, dbsqlerr.DBError) {
-	bi := &cloudBatchIterator{
+) (IPCStreamIterator, dbsqlerr.DBError) {
+	bi := &cloudIPCStreamIterator{
 		ctx:            ctx,
 		cfg:            cfg,
 		startRowOffset: startRowOffset,
@@ -48,14 +48,28 @@ func NewCloudBatchIterator(
 	return bi, nil
 }
 
-func NewLocalBatchIterator(
+// NewCloudBatchIterator creates a cloud-based BatchIterator for backward compatibility
+func NewCloudBatchIterator(
+	ctx context.Context,
+	files []*cli_service.TSparkArrowResultLink,
+	startRowOffset int64,
+	cfg *config.Config,
+) (BatchIterator, dbsqlerr.DBError) {
+	ipcIterator, err := NewCloudIPCStreamIterator(ctx, files, startRowOffset, cfg)
+	if err != nil {
+		return nil, err
+	}
+	return NewBatchIterator(ipcIterator, startRowOffset), nil
+}
+
+func NewLocalIPCStreamIterator(
 	ctx context.Context,
 	batches []*cli_service.TSparkArrowBatch,
 	startRowOffset int64,
 	arrowSchemaBytes []byte,
 	cfg *config.Config,
-) (BatchIterator, dbsqlerr.DBError) {
-	bi := &localBatchIterator{
+) (IPCStreamIterator, dbsqlerr.DBError) {
+	bi := &localIPCStreamIterator{
 		cfg:              cfg,
 		startRowOffset:   startRowOffset,
 		arrowSchemaBytes: arrowSchemaBytes,
@@ -66,7 +80,22 @@ func NewLocalBatchIterator(
 	return bi, nil
 }
 
-type localBatchIterator struct {
+// NewLocalBatchIterator creates a local BatchIterator for backward compatibility
+func NewLocalBatchIterator(
+	ctx context.Context,
+	batches []*cli_service.TSparkArrowBatch,
+	startRowOffset int64,
+	arrowSchemaBytes []byte,
+	cfg *config.Config,
+) (BatchIterator, dbsqlerr.DBError) {
+	ipcIterator, err := NewLocalIPCStreamIterator(ctx, batches, startRowOffset, arrowSchemaBytes, cfg)
+	if err != nil {
+		return nil, err
+	}
+	return NewBatchIterator(ipcIterator, startRowOffset), nil
+}
+
+type localIPCStreamIterator struct {
 	cfg              *config.Config
 	startRowOffset   int64
 	arrowSchemaBytes []byte
@@ -74,9 +103,9 @@ type localBatchIterator struct {
 	index            int
 }
 
-var _ BatchIterator = (*localBatchIterator)(nil)
+var _ IPCStreamIterator = (*localIPCStreamIterator)(nil)
 
-func (bi *localBatchIterator) Next() (SparkArrowBatch, error) {
+func (bi *localIPCStreamIterator) Next() (io.Reader, error) {
 	cnt := len(bi.batches)
 	bi.index++
 	if bi.index < cnt {
@@ -87,36 +116,24 @@ func (bi *localBatchIterator) Next() (SparkArrowBatch, error) {
 			getReader(bytes.NewReader(ab.Batch), bi.cfg.UseLz4Compression),
 		)
 
-		records, err := getArrowRecords(reader, bi.startRowOffset)
-		if err != nil {
-			return &sparkArrowBatch{}, err
-		}
-
-		batch := sparkArrowBatch{
-			Delimiter:    rowscanner.NewDelimiter(bi.startRowOffset, ab.RowCount),
-			arrowRecords: records,
-		}
-
-		bi.startRowOffset += ab.RowCount // advance to beginning of the next batch
-
-		return &batch, nil
+		return reader, nil
 	}
 
 	bi.index = cnt
 	return nil, io.EOF
 }
 
-func (bi *localBatchIterator) HasNext() bool {
+func (bi *localIPCStreamIterator) HasNext() bool {
 	// `Next()` will first increment an index, and only then return a batch
 	// So `HasNext` should check if index can be incremented and still be within array
 	return bi.index+1 < len(bi.batches)
 }
 
-func (bi *localBatchIterator) Close() {
+func (bi *localIPCStreamIterator) Close() {
 	bi.index = len(bi.batches)
 }
 
-type cloudBatchIterator struct {
+type cloudIPCStreamIterator struct {
 	ctx            context.Context
 	cfg            *config.Config
 	startRowOffset int64
@@ -124,9 +141,9 @@ type cloudBatchIterator struct {
 	downloadTasks  Queue[cloudFetchDownloadTask]
 }
 
-var _ BatchIterator = (*cloudBatchIterator)(nil)
+var _ IPCStreamIterator = (*cloudIPCStreamIterator)(nil)
 
-func (bi *cloudBatchIterator) Next() (SparkArrowBatch, error) {
+func (bi *cloudIPCStreamIterator) Next() (io.Reader, error) {
 	for (bi.downloadTasks.Len() < bi.cfg.MaxDownloadThreads) && (bi.pendingLinks.Len() > 0) {
 		link := bi.pendingLinks.Dequeue()
 		logger.Debug().Msgf(
@@ -153,7 +170,7 @@ func (bi *cloudBatchIterator) Next() (SparkArrowBatch, error) {
 		return nil, io.EOF
 	}
 
-	batch, err := task.GetResult()
+	data, err := task.GetResult()
 
 	// once we've got an errored out task - cancel the remaining ones
 	if err != nil {
@@ -163,14 +180,14 @@ func (bi *cloudBatchIterator) Next() (SparkArrowBatch, error) {
 
 	// explicitly call cancel function on successfully completed task to avoid context leak
 	task.cancel()
-	return batch, nil
+	return data, nil
 }
 
-func (bi *cloudBatchIterator) HasNext() bool {
+func (bi *cloudIPCStreamIterator) HasNext() bool {
 	return (bi.pendingLinks.Len() > 0) || (bi.downloadTasks.Len() > 0)
 }
 
-func (bi *cloudBatchIterator) Close() {
+func (bi *cloudIPCStreamIterator) Close() {
 	bi.pendingLinks.Clear()
 	for bi.downloadTasks.Len() > 0 {
 		task := bi.downloadTasks.Dequeue()
@@ -179,8 +196,8 @@ func (bi *cloudBatchIterator) Close() {
 }
 
 type cloudFetchDownloadTaskResult struct {
-	batch SparkArrowBatch
-	err   error
+	data io.Reader
+	err  error
 }
 
 type cloudFetchDownloadTask struct {
@@ -192,7 +209,7 @@ type cloudFetchDownloadTask struct {
 	resultChan        chan cloudFetchDownloadTaskResult
 }
 
-func (cft *cloudFetchDownloadTask) GetResult() (SparkArrowBatch, error) {
+func (cft *cloudFetchDownloadTask) GetResult() (io.Reader, error) {
 	link := cft.link
 
 	result, ok := <-cft.resultChan
@@ -211,7 +228,7 @@ func (cft *cloudFetchDownloadTask) GetResult() (SparkArrowBatch, error) {
 			link.StartRowOffset,
 			link.RowCount,
 		)
-		return result.batch, nil
+		return result.data, nil
 	}
 
 	// This branch should never be reached. If you see this message - something got really wrong
@@ -234,31 +251,25 @@ func (cft *cloudFetchDownloadTask) Run() {
 		)
 		data, err := fetchBatchBytes(cft.ctx, cft.link, cft.minTimeToExpiry)
 		if err != nil {
-			cft.resultChan <- cloudFetchDownloadTaskResult{batch: nil, err: err}
+			cft.resultChan <- cloudFetchDownloadTaskResult{data: nil, err: err}
 			return
 		}
 
-		// io.ReadCloser.Close() may return an error, but in this case it should be safe to ignore (I hope so)
-		defer data.Close()
+		// Read all data into memory before closing
+		buf, err := io.ReadAll(getReader(data, cft.useLz4Compression))
+		data.Close()
+		if err != nil {
+			cft.resultChan <- cloudFetchDownloadTaskResult{data: nil, err: err}
+			return
+		}
 
 		logger.Debug().Msgf(
-			"CloudFetch: reading records for link at offset %d row count %d",
+			"CloudFetch: downloaded data for link at offset %d row count %d",
 			cft.link.StartRowOffset,
 			cft.link.RowCount,
 		)
-		reader := getReader(data, cft.useLz4Compression)
 
-		records, err := getArrowRecords(reader, cft.link.StartRowOffset)
-		if err != nil {
-			cft.resultChan <- cloudFetchDownloadTaskResult{batch: nil, err: err}
-			return
-		}
-
-		batch := sparkArrowBatch{
-			Delimiter:    rowscanner.NewDelimiter(cft.link.StartRowOffset, cft.link.RowCount),
-			arrowRecords: records,
-		}
-		cft.resultChan <- cloudFetchDownloadTaskResult{batch: &batch, err: nil}
+		cft.resultChan <- cloudFetchDownloadTaskResult{data: bytes.NewReader(buf), err: nil}
 	}()
 }
 
@@ -340,4 +351,59 @@ func getArrowRecords(r io.Reader, startRowOffset int64) ([]SparkArrowRecord, err
 	}
 
 	return records, nil
+}
+
+// BatchIterator is the interface for iterating through Arrow batches
+type BatchIterator interface {
+	Next() (SparkArrowBatch, error)
+	HasNext() bool
+	Close()
+}
+
+// batchIterator wraps IPCStreamIterator to provide backward compatibility
+type batchIterator struct {
+	ipcIterator    IPCStreamIterator
+	startRowOffset int64
+}
+
+// NewBatchIterator creates a BatchIterator from an IPCStreamIterator
+func NewBatchIterator(ipcIterator IPCStreamIterator, startRowOffset int64) BatchIterator {
+	return &batchIterator{
+		ipcIterator:    ipcIterator,
+		startRowOffset: startRowOffset,
+	}
+}
+
+func (bi *batchIterator) Next() (SparkArrowBatch, error) {
+	reader, err := bi.ipcIterator.Next()
+	if err != nil {
+		return nil, err
+	}
+
+	records, err := getArrowRecords(reader, bi.startRowOffset)
+	if err != nil {
+		return nil, err
+	}
+
+	// Calculate total rows in this batch
+	totalRows := int64(0)
+	for _, record := range records {
+		totalRows += record.NumRows()
+	}
+
+	batch := &sparkArrowBatch{
+		Delimiter:    rowscanner.NewDelimiter(bi.startRowOffset, totalRows),
+		arrowRecords: records,
+	}
+
+	bi.startRowOffset += totalRows
+	return batch, nil
+}
+
+func (bi *batchIterator) HasNext() bool {
+	return bi.ipcIterator.HasNext()
+}
+
+func (bi *batchIterator) Close() {
+	bi.ipcIterator.Close()
 }
