@@ -1,5 +1,8 @@
 # Release History
 
+## v1.8.0 (2025-07-24)
+- Add Arrow IPC Iterator
+
 ## v1.7.1 (2025-05-20)
 
 - Add schema to ArrowBatchIterator (databricks/databricks-sql-go#267)
