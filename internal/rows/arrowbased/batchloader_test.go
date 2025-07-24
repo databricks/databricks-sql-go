@@ -82,7 +82,11 @@ func TestCloudFetchIterator(t *testing.T) {
 			panic(err)
 		}
 
-		cbi := bi.(*cloudBatchIterator)
+		// Access the internal structure through the wrapper
+		wrapper, ok := bi.(*batchIterator)
+		assert.True(t, ok)
+		cbi, ok := wrapper.ipcIterator.(*cloudIPCStreamIterator)
+		assert.True(t, ok)
 
 		assert.True(t, bi.HasNext())
 		assert.Equal(t, cbi.pendingLinks.Len(), len(links))
@@ -152,7 +156,11 @@ func TestCloudFetchIterator(t *testing.T) {
 			panic(err)
 		}
 
-		cbi := bi.(*cloudBatchIterator)
+		// Access the internal structure through the wrapper
+		wrapper, ok := bi.(*batchIterator)
+		assert.True(t, ok)
+		cbi, ok := wrapper.ipcIterator.(*cloudIPCStreamIterator)
+		assert.True(t, ok)
 
 		assert.True(t, bi.HasNext())
 		assert.Equal(t, cbi.pendingLinks.Len(), len(links))
@@ -206,7 +214,11 @@ func TestCloudFetchIterator(t *testing.T) {
 			panic(err)
 		}
 
-		cbi := bi.(*cloudBatchIterator)
+		// Access the internal structure through the wrapper
+		wrapper, ok := bi.(*batchIterator)
+		assert.True(t, ok)
+		cbi, ok := wrapper.ipcIterator.(*cloudIPCStreamIterator)
+		assert.True(t, ok)
 
 		assert.True(t, bi.HasNext())
 		assert.Equal(t, cbi.pendingLinks.Len(), len(links))

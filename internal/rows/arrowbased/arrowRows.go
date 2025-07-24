@@ -329,6 +329,20 @@ func (ars *arrowRowScanner) GetArrowBatches(ctx context.Context, cfg config.Conf
 	return ri, nil
 }
 
+func (ars *arrowRowScanner) GetArrowIPCStreams(ctx context.Context, cfg config.Config, rpi rowscanner.ResultPageIterator) (dbsqlrows.ArrowIPCStreamIterator, error) {
+	// Get the underlying IPC stream iterator from the batch iterator
+	var ipcIterator IPCStreamIterator
+	if ars.batchIterator != nil {
+		// If we have a batch iterator, extract its IPC stream iterator
+		if wrapper, ok := ars.batchIterator.(*batchIterator); ok {
+			ipcIterator = wrapper.ipcIterator
+		}
+	}
+
+	ri := NewArrowIPCStreamIterator(ctx, rpi, ipcIterator, ars.arrowSchemaBytes, cfg)
+	return ri, nil
+}
+
 // getArrowSchemaBytes returns the serialized schema in ipc format
 func getArrowSchemaBytes(schema *arrow.Schema, ctx context.Context) ([]byte, dbsqlerr.DBError) {
 	if schema == nil {
