@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/databricks/databricks-sql-go/internal/config"
@@ -154,12 +155,13 @@ func (bi *cloudIPCStreamIterator) Next() (io.Reader, error) {
 
 		cancelCtx, cancelFn := context.WithCancel(bi.ctx)
 		task := &cloudFetchDownloadTask{
-			ctx:               cancelCtx,
-			cancel:            cancelFn,
-			useLz4Compression: bi.cfg.UseLz4Compression,
-			link:              link,
-			resultChan:        make(chan cloudFetchDownloadTaskResult),
-			minTimeToExpiry:   bi.cfg.MinTimeToExpiry,
+			ctx:                cancelCtx,
+			cancel:             cancelFn,
+			useLz4Compression:  bi.cfg.UseLz4Compression,
+			link:               link,
+			resultChan:         make(chan cloudFetchDownloadTaskResult),
+			minTimeToExpiry:    bi.cfg.MinTimeToExpiry,
+			speedThresholdMbps: bi.cfg.CloudFetchSpeedThresholdMbps,
 		}
 		task.Run()
 		bi.downloadTasks.Enqueue(task)
@@ -201,12 +203,13 @@ type cloudFetchDownloadTaskResult struct {
 }
 
 type cloudFetchDownloadTask struct {
-	ctx               context.Context
-	cancel            context.CancelFunc
-	useLz4Compression bool
-	minTimeToExpiry   time.Duration
-	link              *cli_service.TSparkArrowResultLink
-	resultChan        chan cloudFetchDownloadTaskResult
+	ctx                context.Context
+	cancel             context.CancelFunc
+	useLz4Compression  bool
+	minTimeToExpiry    time.Duration
+	link               *cli_service.TSparkArrowResultLink
+	resultChan         chan cloudFetchDownloadTaskResult
+	speedThresholdMbps float64
 }
 
 func (cft *cloudFetchDownloadTask) GetResult() (io.Reader, error) {
@@ -249,7 +252,7 @@ func (cft *cloudFetchDownloadTask) Run() {
 			cft.link.StartRowOffset,
 			cft.link.RowCount,
 		)
-		data, err := fetchBatchBytes(cft.ctx, cft.link, cft.minTimeToExpiry)
+		data, err := fetchBatchBytes(cft.ctx, cft.link, cft.minTimeToExpiry, cft.speedThresholdMbps)
 		if err != nil {
 			cft.resultChan <- cloudFetchDownloadTaskResult{data: nil, err: err}
 			return
@@ -273,10 +276,30 @@ func (cft *cloudFetchDownloadTask) Run() {
 	}()
 }
 
+// logCloudFetchSpeed calculates and logs download speed metrics
+func logCloudFetchSpeed(fullURL string, contentLength int64, duration time.Duration, speedThresholdMbps float64) {
+	if contentLength > 0 && duration.Seconds() > 0 {
+		// Extract base URL (up to first ?)
+		baseURL := fullURL
+		if idx := strings.Index(baseURL, "?"); idx != -1 {
+			baseURL = baseURL[:idx]
+		}
+
+		speedMbps := float64(contentLength) / (1024 * 1024) / duration.Seconds()
+
+		logger.Info().Msgf("CloudFetch: Result File Download speed from cloud storage %s %.4f Mbps", baseURL, speedMbps)
+
+		if speedMbps < speedThresholdMbps {
+			logger.Warn().Msgf("CloudFetch: Results download is slower than threshold speed of %.4f Mbps", speedThresholdMbps)
+		}
+	}
+}
+
 func fetchBatchBytes(
 	ctx context.Context,
 	link *cli_service.TSparkArrowResultLink,
 	minTimeToExpiry time.Duration,
+	speedThresholdMbps float64,
 ) (io.ReadCloser, error) {
 	if isLinkExpired(link.ExpiryTime, minTimeToExpiry) {
 		return nil, errors.New(dbsqlerr.ErrLinkExpired)
@@ -294,6 +317,7 @@ func fetchBatchBytes(
 		}
 	}
 
+	startTime := time.Now()
 	client := http.DefaultClient
 	res, err := client.Do(req)
 	if err != nil {
@@ -303,6 +327,9 @@ func fetchBatchBytes(
 		msg := fmt.Sprintf("%s: %s %d", errArrowRowsCloudFetchDownloadFailure, "HTTP error", res.StatusCode)
 		return nil, dbsqlerrint.NewDriverError(ctx, msg, err)
 	}
+
+	// Log download speed metrics
+	logCloudFetchSpeed(link.FileLink, res.ContentLength, time.Since(startTime), speedThresholdMbps)
 
 	return res.Body, nil
 }

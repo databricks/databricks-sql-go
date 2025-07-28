@@ -464,10 +464,11 @@ func (arrowConfig ArrowConfig) DeepCopy() ArrowConfig {
 }
 
 type CloudFetchConfig struct {
-	UseCloudFetch      bool
-	MaxDownloadThreads int
-	MaxFilesInMemory   int
-	MinTimeToExpiry    time.Duration
+	UseCloudFetch                bool
+	MaxDownloadThreads           int
+	MaxFilesInMemory             int
+	MinTimeToExpiry              time.Duration
+	CloudFetchSpeedThresholdMbps float64 // Minimum download speed in MBps before WARN logging (default: 0.1)
 }
 
 func (cfg CloudFetchConfig) WithDefaults() CloudFetchConfig {
@@ -485,14 +486,19 @@ func (cfg CloudFetchConfig) WithDefaults() CloudFetchConfig {
 		cfg.MinTimeToExpiry = 0 * time.Second
 	}
 
+	if cfg.CloudFetchSpeedThresholdMbps <= 0 {
+		cfg.CloudFetchSpeedThresholdMbps = 0.1
+	}
+
 	return cfg
 }
 
 func (cfg CloudFetchConfig) DeepCopy() CloudFetchConfig {
 	return CloudFetchConfig{
-		UseCloudFetch:      cfg.UseCloudFetch,
-		MaxDownloadThreads: cfg.MaxDownloadThreads,
-		MaxFilesInMemory:   cfg.MaxFilesInMemory,
-		MinTimeToExpiry:    cfg.MinTimeToExpiry,
+		UseCloudFetch:                cfg.UseCloudFetch,
+		MaxDownloadThreads:           cfg.MaxDownloadThreads,
+		MaxFilesInMemory:             cfg.MaxFilesInMemory,
+		MinTimeToExpiry:              cfg.MinTimeToExpiry,
+		CloudFetchSpeedThresholdMbps: cfg.CloudFetchSpeedThresholdMbps,
 	}
 }
