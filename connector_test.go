@@ -43,10 +43,11 @@ func TestNewConnector(t *testing.T) {
 			WithSkipTLSHostVerify(),
 		)
 		expectedCloudFetchConfig := config.CloudFetchConfig{
-			UseCloudFetch:      true,
-			MaxDownloadThreads: 15,
-			MaxFilesInMemory:   10,
-			MinTimeToExpiry:    0 * time.Second,
+			UseCloudFetch:                true,
+			MaxDownloadThreads:           15,
+			MaxFilesInMemory:             10,
+			MinTimeToExpiry:              0 * time.Second,
+			CloudFetchSpeedThresholdMbps: 0.1,
 		}
 		expectedUserConfig := config.UserConfig{
 			Host:             host,
@@ -89,10 +90,11 @@ func TestNewConnector(t *testing.T) {
 			WithHTTPPath(httpPath),
 		)
 		expectedCloudFetchConfig := config.CloudFetchConfig{
-			UseCloudFetch:      true,
-			MaxDownloadThreads: 10,
-			MaxFilesInMemory:   10,
-			MinTimeToExpiry:    0 * time.Second,
+			UseCloudFetch:                true,
+			MaxDownloadThreads:           10,
+			MaxFilesInMemory:             10,
+			MinTimeToExpiry:              0 * time.Second,
+			CloudFetchSpeedThresholdMbps: 0.1,
 		}
 		expectedUserConfig := config.UserConfig{
 			Host:             host,
@@ -130,10 +132,11 @@ func TestNewConnector(t *testing.T) {
 			WithRetries(-1, 0, 0),
 		)
 		expectedCloudFetchConfig := config.CloudFetchConfig{
-			UseCloudFetch:      true,
-			MaxDownloadThreads: 10,
-			MaxFilesInMemory:   10,
-			MinTimeToExpiry:    0 * time.Second,
+			UseCloudFetch:                true,
+			MaxDownloadThreads:           10,
+			MaxFilesInMemory:             10,
+			MinTimeToExpiry:              0 * time.Second,
+			CloudFetchSpeedThresholdMbps: 0.1,
 		}
 		expectedUserConfig := config.UserConfig{
 			Host:             host,

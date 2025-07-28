@@ -138,12 +138,12 @@ func (bi *cloudBatchIterator) Next() (SparkArrowBatch, error) {
 
 		cancelCtx, cancelFn := context.WithCancel(bi.ctx)
 		task := &cloudFetchDownloadTask{
-			ctx:               cancelCtx,
-			cancel:            cancelFn,
-			useLz4Compression: bi.cfg.UseLz4Compression,
-			link:              link,
-			resultChan:        make(chan cloudFetchDownloadTaskResult),
-			minTimeToExpiry:   bi.cfg.MinTimeToExpiry,
+			ctx:                cancelCtx,
+			cancel:             cancelFn,
+			useLz4Compression:  bi.cfg.UseLz4Compression,
+			link:               link,
+			resultChan:         make(chan cloudFetchDownloadTaskResult),
+			minTimeToExpiry:    bi.cfg.MinTimeToExpiry,
 			speedThresholdMbps: bi.cfg.CloudFetchSpeedThresholdMbps,
 		}
 		task.Run()
@@ -186,12 +186,12 @@ type cloudFetchDownloadTaskResult struct {
 }
 
 type cloudFetchDownloadTask struct {
-	ctx               context.Context
-	cancel            context.CancelFunc
-	useLz4Compression bool
-	minTimeToExpiry   time.Duration
-	link              *cli_service.TSparkArrowResultLink
-	resultChan        chan cloudFetchDownloadTaskResult
+	ctx                context.Context
+	cancel             context.CancelFunc
+	useLz4Compression  bool
+	minTimeToExpiry    time.Duration
+	link               *cli_service.TSparkArrowResultLink
+	resultChan         chan cloudFetchDownloadTaskResult
 	speedThresholdMbps float64
 }
 
