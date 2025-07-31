@@ -35,7 +35,42 @@ const (
 	gcpRedirectURL = "localhost:8030"
 )
 
-func NewAuthenticator(hostName string, timeout time.Duration) (auth.Authenticator, error) {
+// AuthOption is a function that configures an authenticator
+type AuthOption func(*u2mAuthenticator)
+
+// WithTokenCache sets a custom token cache
+func WithTokenCache(cache oauth.TokenCache) AuthOption {
+	return func(a *u2mAuthenticator) {
+		a.tokenCache = cache
+	}
+}
+
+// WithScopes sets the OAuth scopes
+func WithScopes(scopes []string) AuthOption {
+	return func(a *u2mAuthenticator) {
+		a.scopes = scopes
+	}
+}
+
+// DisableTokenCache disables token caching
+func DisableTokenCache() AuthOption {
+	return func(a *u2mAuthenticator) {
+		a.tokenCache = nil
+	}
+}
+
+func NewAuthenticator(hostName string, timeout time.Duration, options ...AuthOption) (auth.Authenticator, error) {
+	// Create the authenticator with default values
+	auth := &u2mAuthenticator{
+		hostName:    hostName,
+		scopes:      nil,
+		useTokenCache: true,
+	}
+	
+	// Apply any options
+	for _, option := range options {
+		option(auth)
+	}
 
 	cloud := oauth.InferCloudFromHost(hostName)
 
@@ -53,28 +88,52 @@ func NewAuthenticator(hostName string, timeout time.Duration) (auth.Authenticato
 		return nil, errors.New("unhandled cloud type: " + cloud.String())
 	}
 
+	auth.clientID = clientID
+
+	// If token caching is enabled but no cache is provided, create a default one
+	if auth.useTokenCache && auth.tokenCache == nil {
+		cachePath := oauth.GetCacheFilePath(hostName, clientID, auth.scopes)
+		auth.tokenCache = oauth.NewFileTokenCache(cachePath)
+		log.Debug().Str("path", cachePath).Msg("Created default token cache")
+	}
+
 	// Get an oauth2 config
-	config, err := GetConfig(context.Background(), hostName, clientID, "", redirectURL, nil)
+	config, err := GetConfig(context.Background(), hostName, clientID, "", redirectURL, auth.scopes)
 	if err != nil {
 		return nil, fmt.Errorf("unable to generate oauth2.Config: %w", err)
 	}
 
-	tsp, err := GetTokenSourceProvider(context.Background(), config, timeout)
+	// Try to load token from cache first
+	if auth.tokenCache != nil {
+		token, err := auth.tokenCache.Load()
+		if err == nil && token != nil && token.Valid() {
+			// Create a token source from the cached token
+			auth.tokenSource = config.TokenSource(context.Background(), token)
+			log.Debug().Msg("Using cached token for authentication")
+		}
+	}
 
-	return &u2mAuthenticator{
-		clientID: clientID,
-		hostName: hostName,
-		tsp:      tsp,
-	}, err
+	// Only create token source provider if we don't have a valid token
+	if auth.tokenSource == nil {
+		tsp, err := GetTokenSourceProvider(context.Background(), config, timeout)
+		if err != nil {
+			return nil, err
+		}
+		auth.tsp = tsp
+	}
+
+	return auth, nil
 }
 
 type u2mAuthenticator struct {
-	clientID string
-	hostName string
-	// scopes      []string
-	tokenSource oauth2.TokenSource
-	tsp         *tokenSourceProvider
-	mx          sync.Mutex
+	clientID      string
+	hostName      string
+	scopes        []string
+	tokenSource   oauth2.TokenSource
+	tsp           *tokenSourceProvider
+	tokenCache    oauth.TokenCache
+	useTokenCache bool
+	mx            sync.Mutex
 }
 
 // Auth will start the OAuth Authorization Flow to authenticate the cli client
@@ -82,6 +141,8 @@ type u2mAuthenticator struct {
 func (c *u2mAuthenticator) Authenticate(r *http.Request) error {
 	c.mx.Lock()
 	defer c.mx.Unlock()
+	
+	// If we already have a token source, try to use it
 	if c.tokenSource != nil {
 		token, err := c.tokenSource.Token()
 		if err == nil {
@@ -90,24 +151,36 @@ func (c *u2mAuthenticator) Authenticate(r *http.Request) error {
 		} else if !strings.Contains(err.Error(), "invalid_grant") {
 			return err
 		}
-
-		token.SetAuthHeader(r)
-		return nil
+		
+		// If we get here, the token is invalid and we need a new one
+		log.Warn().Err(err).Msg("Token is invalid, obtaining a new one")
 	}
 
+	// If we don't have a token source provider, we can't get a new token
+	if c.tsp == nil {
+		return errors.New("no token source provider available")
+	}
+
+	// Get a new token source
 	tokenSource, err := c.tsp.GetTokenSource()
 	if err != nil {
 		return fmt.Errorf("unable to get token source: %w", err)
 	}
+	
+	// Wrap the token source with caching if enabled
+	if c.tokenCache != nil {
+		tokenSource = oauth.NewCachingTokenSource(tokenSource, c.tokenCache)
+	}
+	
 	c.tokenSource = tokenSource
-
+	
+	// Get a token and set the auth header
 	token, err := tokenSource.Token()
 	if err != nil {
-		return fmt.Errorf("unable to get token source: %w", err)
+		return fmt.Errorf("unable to get token: %w", err)
 	}
-
+	
 	token.SetAuthHeader(r)
-
 	return nil
 }
 
