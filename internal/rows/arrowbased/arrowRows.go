@@ -222,12 +222,6 @@ func (ars *arrowRowScanner) ScanRow(
 				ars.Error().Msgf(errArrowRowsUnsupportedNativeType(dbType.String()))
 				return dbsqlerrint.NewDriverError(ars.ctx, errArrowRowsUnsupportedNativeType(dbType.String()), nil)
 			}
-			// if (dbType == cli_service.TTypeId_DECIMAL_TYPE && ars.UseArrowNativeDecimal) ||
-			// 	(isIntervalType(dbType) && ars.UseArrowNativeIntervalTypes) {
-			// 	//	not yet fully supported
-			// 	ars.Error().Msgf(errArrowRowsUnsupportedNativeType(dbType.String()))
-			// 	return dbsqlerrint.NewDriverError(ars.ctx, errArrowRowsUnsupportedNativeType(dbType.String()), nil)
-			// }
 
 			// get the value from the column values holder
 			var err1 error
