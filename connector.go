@@ -44,7 +44,7 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 	protocolVersion := int64(c.cfg.ThriftProtocolVersion)
 	session, err := tclient.OpenSession(ctx, &cli_service.TOpenSessionReq{
 		ClientProtocolI64: &protocolVersion,
-		Configuration:     make(map[string]string),
+		Configuration:     c.cfg.SessionParams,
 		InitialNamespace: &cli_service.TNamespace{
 			CatalogName: catalogName,
 			SchemaName:  schemaName,
@@ -65,14 +65,6 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 
 	log.Info().Msgf("connect: host=%s port=%d httpPath=%s serverProtocolVersion=0x%X", c.cfg.Host, c.cfg.Port, c.cfg.HTTPPath, session.ServerProtocolVersion)
 
-	for k, v := range c.cfg.SessionParams {
-		setStmt := fmt.Sprintf("SET `%s` = `%s`;", k, v)
-		_, err := conn.ExecContext(ctx, setStmt, []driver.NamedValue{})
-		if err != nil {
-			return nil, dbsqlerrint.NewExecutionError(ctx, fmt.Sprintf("error setting session param: %s", setStmt), err, nil)
-		}
-		log.Info().Msgf("set session parameter: param=%s value=%s", k, v)
-	}
 	return conn, nil
 }
 
@@ -215,8 +207,7 @@ func WithUserAgentEntry(entry string) ConnOption {
 	}
 }
 
-// Sessions params will be set upon opening the session by calling SET function.
-// If using connection pool, session params can avoid successive calls of "SET ..."
+// Session parameters are passed directly in TOpenSessionReq.Configuration during session creation.
 func WithSessionParams(params map[string]string) ConnOption {
 	return func(c *config.Config) {
 		for k, v := range params {

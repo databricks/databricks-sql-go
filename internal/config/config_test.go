@@ -129,7 +129,7 @@ func TestParseConfig(t *testing.T) {
 		},
 		{
 			name: "with query params and session params",
-			args: args{dsn: "token:supersecret@example.cloud.databricks.com:8000/sql/1.0/endpoints/12346a5b5b0e123a?timeout=100&maxRows=1000&timezone=America/Vancouver"},
+			args: args{dsn: "token:supersecret@example.cloud.databricks.com:8000/sql/1.0/endpoints/12346a5b5b0e123a?timeout=100&maxRows=1000&timezone=America/Vancouver&QUERY_TAGS=team:testing,driver:go"},
 			wantCfg: UserConfig{
 				Protocol:         "https",
 				Host:             "example.cloud.databricks.com",
@@ -140,7 +140,7 @@ func TestParseConfig(t *testing.T) {
 				QueryTimeout:     100 * time.Second,
 				MaxRows:          1000,
 				Location:         tz,
-				SessionParams:    map[string]string{"timezone": "America/Vancouver"},
+				SessionParams:    map[string]string{"timezone": "America/Vancouver", "QUERY_TAGS": "team:testing,driver:go"},
 				RetryMax:         4,
 				RetryWaitMin:     1 * time.Second,
 				RetryWaitMax:     30 * time.Second,
