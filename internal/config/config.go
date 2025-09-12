@@ -10,8 +10,9 @@ import (
 	"strings"
 	"time"
 
-	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 	"github.com/pkg/errors"
+
+	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 
 	"github.com/databricks/databricks-sql-go/auth"
 	"github.com/databricks/databricks-sql-go/auth/noop"
@@ -174,7 +175,6 @@ func (ucfg UserConfig) WithDefaults() UserConfig {
 	if ucfg.RetryWaitMax == 0 {
 		ucfg.RetryWaitMax = 30 * time.Second
 	}
-	ucfg.UseLz4Compression = false
 	ucfg.CloudFetchConfig = CloudFetchConfig{}.WithDefaults()
 
 	return ucfg
@@ -270,6 +270,20 @@ func ParseDSN(dsn string) (UserConfig, error) {
 			return UserConfig{}, err
 		}
 		ucfg.MaxDownloadThreads = numThreads
+	}
+
+	if maxBytesPerFile, ok, err := params.extractAsInt("maxBytesPerFile"); ok {
+		if err != nil {
+			return UserConfig{}, err
+		}
+		ucfg.MaxBytesPerFile = int64(maxBytesPerFile)
+	}
+
+	if useLz4Compression, ok, err := params.extractAsBool("useLz4Compression"); ok {
+		if err != nil {
+			return UserConfig{}, err
+		}
+		ucfg.UseLz4Compression = useLz4Compression
 	}
 
 	// for timezone we do a case insensitive key match.
@@ -469,6 +483,7 @@ type CloudFetchConfig struct {
 	MaxFilesInMemory             int
 	MinTimeToExpiry              time.Duration
 	CloudFetchSpeedThresholdMbps float64 // Minimum download speed in MBps before WARN logging (default: 0.1)
+	MaxBytesPerFile              int64
 }
 
 func (cfg CloudFetchConfig) WithDefaults() CloudFetchConfig {
@@ -490,6 +505,10 @@ func (cfg CloudFetchConfig) WithDefaults() CloudFetchConfig {
 		cfg.CloudFetchSpeedThresholdMbps = 0.1
 	}
 
+	if cfg.MaxBytesPerFile <= 0 {
+		cfg.MaxBytesPerFile = 100 * 1024 * 1024 // 100 MB
+	}
+
 	return cfg
 }
 
@@ -500,5 +519,6 @@ func (cfg CloudFetchConfig) DeepCopy() CloudFetchConfig {
 		MaxFilesInMemory:             cfg.MaxFilesInMemory,
 		MinTimeToExpiry:              cfg.MinTimeToExpiry,
 		CloudFetchSpeedThresholdMbps: cfg.CloudFetchSpeedThresholdMbps,
+		MaxBytesPerFile:              cfg.MaxBytesPerFile,
 	}
 }

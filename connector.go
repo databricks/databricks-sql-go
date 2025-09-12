@@ -265,6 +265,20 @@ func WithMaxDownloadThreads(numThreads int) ConnOption {
 	}
 }
 
+// WithMaxBytesPerFile sets up maximum bytes per file for cloud fetch. Default is 100MB.
+func WithMaxBytesPerFile(maxBytes int64) ConnOption {
+	return func(c *config.Config) {
+		c.MaxBytesPerFile = maxBytes
+	}
+}
+
+// WithUseLz4Compression sets up whether to use lz4 compression for cloud fetch. Default is false.
+func WithUseLz4Compression(useLz4 bool) ConnOption {
+	return func(c *config.Config) {
+		c.UseLz4Compression = useLz4
+	}
+}
+
 // Setup of Oauth M2m authentication
 func WithClientCredentials(clientID, clientSecret string) ConnOption {
 	return func(c *config.Config) {

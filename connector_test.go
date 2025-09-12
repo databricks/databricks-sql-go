@@ -5,12 +5,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/databricks/databricks-sql-go/auth/pat"
-	"github.com/databricks/databricks-sql-go/internal/client"
-	"github.com/databricks/databricks-sql-go/internal/config"
 	"github.com/hashicorp/go-retryablehttp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/databricks/databricks-sql-go/auth/pat"
+	"github.com/databricks/databricks-sql-go/internal/client"
+	"github.com/databricks/databricks-sql-go/internal/config"
 )
 
 func TestNewConnector(t *testing.T) {
@@ -40,6 +41,7 @@ func TestNewConnector(t *testing.T) {
 			WithTransport(roundTripper),
 			WithCloudFetch(true),
 			WithMaxDownloadThreads(15),
+			WithMaxBytesPerFile(10*1024*1024),
 			WithSkipTLSHostVerify(),
 		)
 		expectedCloudFetchConfig := config.CloudFetchConfig{
@@ -48,6 +50,7 @@ func TestNewConnector(t *testing.T) {
 			MaxFilesInMemory:             10,
 			MinTimeToExpiry:              0 * time.Second,
 			CloudFetchSpeedThresholdMbps: 0.1,
+			MaxBytesPerFile:              10 * 1024 * 1024,
 		}
 		expectedUserConfig := config.UserConfig{
 			Host:             host,
@@ -95,6 +98,7 @@ func TestNewConnector(t *testing.T) {
 			MaxFilesInMemory:             10,
 			MinTimeToExpiry:              0 * time.Second,
 			CloudFetchSpeedThresholdMbps: 0.1,
+			MaxBytesPerFile:              100 * 1024 * 1024,
 		}
 		expectedUserConfig := config.UserConfig{
 			Host:             host,
@@ -137,6 +141,7 @@ func TestNewConnector(t *testing.T) {
 			MaxFilesInMemory:             10,
 			MinTimeToExpiry:              0 * time.Second,
 			CloudFetchSpeedThresholdMbps: 0.1,
+			MaxBytesPerFile:              100 * 1024 * 1024,
 		}
 		expectedUserConfig := config.UserConfig{
 			Host:             host,

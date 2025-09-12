@@ -5,17 +5,19 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/http"
 	"strings"
+	"sync"
 	"time"
 
-	"github.com/databricks/databricks-sql-go/internal/config"
-	"github.com/databricks/databricks-sql-go/internal/rows/rowscanner"
 	"github.com/pierrec/lz4/v4"
 	"github.com/pkg/errors"
 
-	"net/http"
+	"github.com/databricks/databricks-sql-go/internal/config"
+	"github.com/databricks/databricks-sql-go/internal/rows/rowscanner"
 
 	"github.com/apache/arrow/go/v12/arrow/ipc"
+
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	dbsqlerrint "github.com/databricks/databricks-sql-go/internal/errors"
@@ -40,11 +42,13 @@ func NewCloudIPCStreamIterator(
 		startRowOffset: startRowOffset,
 		pendingLinks:   NewQueue[cli_service.TSparkArrowResultLink](),
 		downloadTasks:  NewQueue[cloudFetchDownloadTask](),
+		results:        make(chan cloudFetchDownloadTaskResult, cfg.MaxDownloadThreads*2),
 	}
 
 	for _, link := range files {
 		bi.pendingLinks.Enqueue(link)
 	}
+	go bi.startDownloads()
 
 	return bi, nil
 }
@@ -140,49 +144,90 @@ type cloudIPCStreamIterator struct {
 	startRowOffset int64
 	pendingLinks   Queue[cli_service.TSparkArrowResultLink]
 	downloadTasks  Queue[cloudFetchDownloadTask]
+	results        chan cloudFetchDownloadTaskResult
+	wg             sync.WaitGroup
 }
 
 var _ IPCStreamIterator = (*cloudIPCStreamIterator)(nil)
 
-func (bi *cloudIPCStreamIterator) Next() (io.Reader, error) {
-	for (bi.downloadTasks.Len() < bi.cfg.MaxDownloadThreads) && (bi.pendingLinks.Len() > 0) {
-		link := bi.pendingLinks.Dequeue()
-		logger.Debug().Msgf(
-			"CloudFetch: schedule link at offset %d row count %d",
-			link.StartRowOffset,
-			link.RowCount,
-		)
+func (bi *cloudIPCStreamIterator) startDownloads() {
+	defer func() {
+		bi.wg.Wait()
+		close(bi.results)
+	}()
 
-		cancelCtx, cancelFn := context.WithCancel(bi.ctx)
-		task := &cloudFetchDownloadTask{
-			ctx:                cancelCtx,
-			cancel:             cancelFn,
-			useLz4Compression:  bi.cfg.UseLz4Compression,
-			link:               link,
-			resultChan:         make(chan cloudFetchDownloadTaskResult),
-			minTimeToExpiry:    bi.cfg.MinTimeToExpiry,
-			speedThresholdMbps: bi.cfg.CloudFetchSpeedThresholdMbps,
+	// Start tasks while we have capacity and work
+	for bi.pendingLinks.Len() > 0 || bi.downloadTasks.Len() > 0 {
+		// Fill up to MaxDownloadThreads
+		for bi.pendingLinks.Len() > 0 && bi.downloadTasks.Len() < bi.cfg.MaxDownloadThreads {
+			link := bi.pendingLinks.Dequeue()
+
+			cancelCtx, cancelFn := context.WithCancel(bi.ctx)
+			task := &cloudFetchDownloadTask{
+				ctx:               cancelCtx,
+				cancel:            cancelFn,
+				useLz4Compression: bi.cfg.UseLz4Compression,
+				link:              link,
+				resultChan:        make(chan cloudFetchDownloadTaskResult),
+				minTimeToExpiry:   bi.cfg.MinTimeToExpiry,
+			}
+			bi.downloadTasks.Enqueue(task)
+
+			bi.wg.Add(1)
+			go func(t *cloudFetchDownloadTask) {
+				defer bi.wg.Done()
+				defer func() {
+					if r := recover(); r != nil {
+						// Don’t block indefinitely on shutdown
+						select {
+						case bi.results <- cloudFetchDownloadTaskResult{nil, fmt.Errorf("panic: %v", r)}:
+						case <-bi.ctx.Done():
+						}
+					}
+				}()
+
+				// Do the real work inside the goroutine
+				t.Run()                   // starts and completes the download
+				res, err := t.GetResult() // or blocks until ready
+
+				// Publish result unless shutting down
+				select {
+				case bi.results <- cloudFetchDownloadTaskResult{res, err}:
+				case <-bi.ctx.Done():
+				}
+
+				// Mark this task as no longer active
+				_ = bi.downloadTasks.Dequeue()
+			}(task)
 		}
-		task.Run()
-		bi.downloadTasks.Enqueue(task)
-	}
 
-	task := bi.downloadTasks.Dequeue()
-	if task == nil {
+		// Wait for either: context canceled, or a small state change window
+		select {
+		case <-bi.ctx.Done():
+			// Cancel all in-flight tasks and exit
+			for bi.downloadTasks.Len() > 0 {
+				t := bi.downloadTasks.Dequeue()
+				t.cancel()
+			}
+			return
+		default:
+			// Yield briefly; avoids tight spin while allowing quick refills
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+}
+
+func (bi *cloudIPCStreamIterator) Next() (io.Reader, error) {
+	result, ok := <-bi.results
+	if !ok {
+		// Channel closed, no more results
 		return nil, io.EOF
 	}
-
-	data, err := task.GetResult()
-
-	// once we've got an errored out task - cancel the remaining ones
-	if err != nil {
+	if result.err != nil {
 		bi.Close()
-		return nil, err
+		return nil, result.err
 	}
-
-	// explicitly call cancel function on successfully completed task to avoid context leak
-	task.cancel()
-	return data, nil
+	return result.data, nil
 }
 
 func (bi *cloudIPCStreamIterator) HasNext() bool {

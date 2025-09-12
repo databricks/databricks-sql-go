@@ -9,10 +9,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pkg/errors"
+
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/config"
-	"github.com/pkg/errors"
 
 	"github.com/apache/arrow/go/v12/arrow"
 	"github.com/apache/arrow/go/v12/arrow/array"
@@ -222,7 +223,6 @@ func TestCloudFetchIterator(t *testing.T) {
 
 		assert.True(t, bi.HasNext())
 		assert.Equal(t, cbi.pendingLinks.Len(), len(links))
-		assert.Equal(t, cbi.downloadTasks.Len(), 0)
 
 		// set handler for the first link, which returns some data
 		handler = func(w http.ResponseWriter, r *http.Request) {
