@@ -1,5 +1,9 @@
 # Release History
 
+## v1.9.0 (2025-09-17)
+- Added support for query tags
+- Passing session params in open session request instead of SET commands (databricks/databricks-sql-go#283)
+
 ## v1.8.0 (2025-07-24)
 - Add Arrow IPC Iterator
 
