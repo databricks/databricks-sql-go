@@ -448,6 +448,7 @@ func (ucfg ArrowConfig) WithDefaults() ArrowConfig {
 	ucfg.UseArrowBatches = true
 	ucfg.UseArrowNativeTimestamp = true
 	ucfg.UseArrowNativeComplexTypes = true
+	ucfg.UseArrowNativeDecimal = true
 
 	return ucfg
 }

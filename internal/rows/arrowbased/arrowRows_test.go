@@ -886,7 +886,7 @@ func TestArrowRowScanner(t *testing.T) {
 
 			err := ars.ScanRow(dest, 0)
 
-			if i < 3 {
+			if i < 4 {
 				assert.Nil(t, err)
 			} else {
 				assert.NotNil(t, err)
