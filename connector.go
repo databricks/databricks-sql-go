@@ -41,10 +41,21 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 	if err != nil {
 		return nil, dbsqlerrint.NewDriverError(ctx, dbsqlerr.ErrThriftClient, err)
 	}
+
+	// Prepare session configuration
+	sessionParams := make(map[string]string)
+	for k, v := range c.cfg.SessionParams {
+		sessionParams[k] = v
+	}
+
+	if c.cfg.EnableMetricViewMetadata {
+		sessionParams["spark.sql.thriftserver.metadata.metricview.enabled"] = "true"
+	}
+
 	protocolVersion := int64(c.cfg.ThriftProtocolVersion)
 	session, err := tclient.OpenSession(ctx, &cli_service.TOpenSessionReq{
 		ClientProtocolI64: &protocolVersion,
-		Configuration:     c.cfg.SessionParams,
+		Configuration:     sessionParams,
 		InitialNamespace: &cli_service.TNamespace{
 			CatalogName: catalogName,
 			SchemaName:  schemaName,
@@ -262,6 +273,14 @@ func WithCloudFetch(useCloudFetch bool) ConnOption {
 func WithMaxDownloadThreads(numThreads int) ConnOption {
 	return func(c *config.Config) {
 		c.MaxDownloadThreads = numThreads
+	}
+}
+
+// WithEnableMetricViewMetadata enables metric view metadata support. Default is false.
+// When enabled, adds spark.sql.thriftserver.metadata.metricview.enabled=true to session configuration.
+func WithEnableMetricViewMetadata(enable bool) ConnOption {
+	return func(c *config.Config) {
+		c.EnableMetricViewMetadata = enable
 	}
 }
 

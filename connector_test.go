@@ -213,6 +213,39 @@ func TestNewConnector(t *testing.T) {
 		require.True(t, ok)
 		require.True(t, internalClient.TLSClientConfig.InsecureSkipVerify)
 	})
+
+	t.Run("Connector test WithEnableMetricViewMetadata enabled", func(t *testing.T) {
+		host := "databricks-host"
+		accessToken := "token"
+		httpPath := "http-path"
+		con, err := NewConnector(
+			WithServerHostname(host),
+			WithAccessToken(accessToken),
+			WithHTTPPath(httpPath),
+			WithEnableMetricViewMetadata(true),
+		)
+		assert.Nil(t, err)
+
+		coni, ok := con.(*connector)
+		require.True(t, ok)
+		assert.True(t, coni.cfg.EnableMetricViewMetadata)
+	})
+
+	t.Run("Connector test WithEnableMetricViewMetadata disabled by default", func(t *testing.T) {
+		host := "databricks-host"
+		accessToken := "token"
+		httpPath := "http-path"
+		con, err := NewConnector(
+			WithServerHostname(host),
+			WithAccessToken(accessToken),
+			WithHTTPPath(httpPath),
+		)
+		assert.Nil(t, err)
+
+		coni, ok := con.(*connector)
+		require.True(t, ok)
+		assert.False(t, coni.cfg.EnableMetricViewMetadata)
+	})
 }
 
 type mockRoundTripper struct{}
