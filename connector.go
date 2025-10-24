@@ -43,19 +43,12 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 	}
 
 	// Prepare session configuration
-	sessionParams := c.cfg.SessionParams
+	sessionParams := make(map[string]string)
+	for k, v := range c.cfg.SessionParams {
+		sessionParams[k] = v
+	}
+
 	if c.cfg.EnableMetricViewMetadata {
-		// Make a copy of session params and add metric view metadata config
-		if sessionParams == nil {
-			sessionParams = make(map[string]string)
-		} else {
-			// Create a copy to avoid modifying the original
-			paramsCopy := make(map[string]string, len(sessionParams)+1)
-			for k, v := range sessionParams {
-				paramsCopy[k] = v
-			}
-			sessionParams = paramsCopy
-		}
 		sessionParams["spark.sql.thriftserver.metadata.metricview.enabled"] = "true"
 	}
 
