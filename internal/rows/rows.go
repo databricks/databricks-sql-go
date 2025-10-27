@@ -67,22 +67,22 @@ var _ driver.RowsColumnTypeLength = (*rows)(nil)
 var _ dbsqlrows.Rows = (*rows)(nil)
 
 func NewRows(
-	connId string,
-	correlationId string,
+	ctx context.Context,
 	opHandle *cli_service.TOperationHandle,
 	client cli_service.TCLIService,
 	config *config.Config,
 	directResults *cli_service.TSparkDirectResults,
 ) (driver.Rows, dbsqlerr.DBError) {
 
+	connId := driverctx.ConnIdFromContext(ctx)
+	correlationId := driverctx.CorrelationIdFromContext(ctx)
+
 	var logger *dbsqllog.DBSQLLogger
-	var ctx context.Context
 	if opHandle != nil {
 		logger = dbsqllog.WithContext(connId, correlationId, dbsqlclient.SprintGuid(opHandle.OperationId.GUID))
-		ctx = driverctx.NewContextWithQueryId(driverctx.NewContextWithCorrelationId(driverctx.NewContextWithConnId(context.Background(), connId), correlationId), dbsqlclient.SprintGuid(opHandle.OperationId.GUID))
+		ctx = driverctx.NewContextWithQueryId(ctx, dbsqlclient.SprintGuid(opHandle.OperationId.GUID))
 	} else {
 		logger = dbsqllog.WithContext(connId, correlationId, "")
-		ctx = driverctx.NewContextWithCorrelationId(driverctx.NewContextWithConnId(context.Background(), connId), correlationId)
 	}
 
 	if client == nil {
@@ -140,13 +140,12 @@ func NewRows(
 	// the operations.
 	closedOnServer := directResults != nil && directResults.CloseOperation != nil
 	r.ResultPageIterator = rowscanner.NewResultPageIterator(
+		ctx,
 		d,
 		pageSize,
 		opHandle,
 		closedOnServer,
 		client,
-		connId,
-		correlationId,
 		r.logger(),
 	)
 
@@ -417,9 +416,8 @@ func (r *rows) getResultSetSchema() (*cli_service.TTableSchema, dbsqlerr.DBError
 		req := cli_service.TGetResultSetMetadataReq{
 			OperationHandle: r.opHandle,
 		}
-		ctx := driverctx.NewContextWithCorrelationId(driverctx.NewContextWithConnId(context.Background(), r.connId), r.correlationId)
 
-		resp, err2 := r.client.GetResultSetMetadata(ctx, &req)
+		resp, err2 := r.client.GetResultSetMetadata(r.ctx, &req)
 		if err2 != nil {
 			r.logger().Err(err2).Msg(err2.Error())
 			return nil, dbsqlerr_int.NewRequestError(r.ctx, errRowsMetadataFetchFailed, err)
