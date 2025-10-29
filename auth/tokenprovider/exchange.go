@@ -175,7 +175,6 @@ func (p *FederationProvider) tryTokenExchange(ctx context.Context, subjectToken 
 }
 
 // isSameHost compares two URLs to see if they have the same host
-// This matches Python's behavior: ignores port differences (e.g., :443 vs no port for HTTPS)
 func (p *FederationProvider) isSameHost(url1, url2 string) bool {
 	// Add scheme to url2 if it doesn't have one (databricksHost may not have scheme)
 	parsedURL2 := url2
