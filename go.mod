@@ -2,8 +2,6 @@ module github.com/databricks/databricks-sql-go
 
 go 1.21
 
-toolchain go1.24.7
-
 require (
 	github.com/apache/arrow/go/v12 v12.0.1
 	github.com/apache/thrift v0.17.0
