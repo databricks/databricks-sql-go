@@ -127,7 +127,7 @@ func TestFederationProvider_TokenExchangeSuccess(t *testing.T) {
 			"scope":        "sql",
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(response)
+		_ = json.NewEncoder(w).Encode(response)
 	}))
 	defer server.Close()
 
@@ -167,7 +167,7 @@ func TestFederationProvider_TokenExchangeWithClientID(t *testing.T) {
 			"expires_in":   3600,
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(response)
+		_ = json.NewEncoder(w).Encode(response)
 	}))
 	defer server.Close()
 
@@ -187,7 +187,7 @@ func TestFederationProvider_TokenExchangeFailureFallback(t *testing.T) {
 	// Create mock server that returns error
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte(`{"error": "invalid_request"}`))
+		_, _ = w.Write([]byte(`{"error": "invalid_request"}`))
 	}))
 	defer server.Close()
 
@@ -264,7 +264,7 @@ func TestFederationProvider_CachedIntegration(t *testing.T) {
 			"expires_in":   3600,
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(response)
+		_ = json.NewEncoder(w).Encode(response)
 	}))
 	defer server.Close()
 
@@ -325,12 +325,12 @@ func TestFederationProvider_InvalidJWT(t *testing.T) {
 func TestFederationProvider_RealWorldIssuers(t *testing.T) {
 	// Test with real-world identity provider issuers
 	issuers := map[string]string{
-		"azure_ad":       "https://login.microsoftonline.com/72f988bf-86f1-41af-91ab-2d7cd011db47/v2.0",
-		"google":         "https://accounts.google.com",
-		"aws_cognito":    "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_example",
-		"okta":           "https://dev-12345.okta.com/oauth2/default",
-		"auth0":          "https://dev-12345.auth0.com/",
-		"github":         "https://token.actions.githubusercontent.com",
+		"azure_ad":    "https://login.microsoftonline.com/72f988bf-86f1-41af-91ab-2d7cd011db47/v2.0",
+		"google":      "https://accounts.google.com",
+		"aws_cognito": "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_example",
+		"okta":        "https://dev-12345.okta.com/oauth2/default",
+		"auth0":       "https://dev-12345.auth0.com/",
+		"github":      "https://token.actions.githubusercontent.com",
 	}
 
 	databricksHost := "test.databricks.com"
