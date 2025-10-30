@@ -85,6 +85,8 @@ var databricksAWSDomains []string = []string{
 }
 
 var databricksAzureDomains []string = []string{
+	".staging.azuredatabricks.net",
+	".dev.azuredatabricks.net",
 	".azuredatabricks.net",
 	".databricks.azure.cn",
 	".databricks.azure.us",
