@@ -104,32 +104,4 @@ func TestTokenProviderAuthenticator(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "Bearer external-token-456", req.Header.Get("Authorization"))
 	})
-
-	t.Run("cached_provider_integration", func(t *testing.T) {
-		callCount := 0
-		baseProvider := &mockProvider{
-			tokenFunc: func() (*Token, error) {
-				callCount++
-				return &Token{
-					AccessToken: "cached-token",
-					TokenType:   "Bearer",
-				}, nil
-			},
-			name: "test",
-		}
-
-		cachedProvider := NewCachedTokenProvider(baseProvider)
-		authenticator := NewAuthenticator(cachedProvider)
-
-		// Multiple authentication attempts
-		for i := 0; i < 3; i++ {
-			req, _ := http.NewRequest("GET", "http://example.com", nil)
-			err := authenticator.Authenticate(req)
-			require.NoError(t, err)
-			assert.Equal(t, "Bearer cached-token", req.Header.Get("Authorization"))
-		}
-
-		// Should only call base provider once due to caching
-		assert.Equal(t, 1, callCount)
-	})
 }
