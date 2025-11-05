@@ -67,10 +67,11 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 	}
 
 	conn := &conn{
-		id:      client.SprintGuid(session.SessionHandle.GetSessionId().GUID),
-		cfg:     c.cfg,
-		client:  tclient,
-		session: session,
+		id:         client.SprintGuid(session.SessionHandle.GetSessionId().GUID),
+		cfg:        c.cfg,
+		client:     tclient,
+		session:    session,
+		autoCommit: true, // Initialize autocommit cache to true (default state)
 	}
 	log := logger.WithContext(conn.id, driverctx.CorrelationIdFromContext(ctx), "")
 
