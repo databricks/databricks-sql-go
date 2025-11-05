@@ -38,8 +38,8 @@ const (
 type tagExportScope int
 
 const (
-	exportNone tagExportScope = 0
-	exportLocal               = 1 << iota
+	exportNone  tagExportScope = 0
+	exportLocal                = 1 << iota
 	exportDatabricks
 	exportAll = exportLocal | exportDatabricks
 )
