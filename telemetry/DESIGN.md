@@ -4,6 +4,8 @@
 
 This document outlines a **telemetry design** for the Databricks SQL Go driver that collects usage metrics and exports them to the Databricks telemetry service. The design leverages Go's `context.Context` and middleware patterns to instrument driver operations without impacting performance.
 
+**Important Note:** Telemetry is **disabled by default** and will be enabled only after full testing and validation is complete.
+
 **Key Objectives:**
 - Collect driver usage metrics and performance data
 - Export aggregated metrics to Databricks telemetry service
@@ -1364,9 +1366,10 @@ type Config struct {
 }
 
 // DefaultConfig returns default telemetry configuration.
+// Note: Telemetry is disabled by default and will be enabled after full testing and validation.
 func DefaultConfig() *Config {
 	return &Config{
-		Enabled:                 true,
+		Enabled:                 false, // Disabled by default until testing is complete
 		BatchSize:               100,
 		FlushInterval:           5 * time.Second,
 		MaxRetries:              3,
@@ -1733,11 +1736,11 @@ func BenchmarkInterceptor_Disabled(b *testing.B) {
 
 ## 11. Implementation Checklist
 
-### Phase 1: Core Infrastructure
-- [ ] Create `telemetry` package structure
-- [ ] Implement `config.go` with configuration types
-- [ ] Implement `tags.go` with tag definitions and filtering
-- [ ] Add unit tests for configuration and tags
+### Phase 1: Core Infrastructure ✅ COMPLETED (PECOBLR-1145)
+- [x] Create `telemetry` package structure
+- [x] Implement `config.go` with configuration types
+- [x] Implement `tags.go` with tag definitions and filtering
+- [x] Add unit tests for configuration and tags
 
 ### Phase 2: Per-Host Management
 - [ ] Implement `featureflag.go` with caching and reference counting
