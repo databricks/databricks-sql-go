@@ -45,32 +45,34 @@ func (d Direction) String() string {
 
 // Create a new result page iterator.
 func NewResultPageIterator(
+	ctx context.Context,
 	delimiter Delimiter,
 	maxPageSize int64,
 	opHandle *cli_service.TOperationHandle,
 	closedOnServer bool,
 	client cli_service.TCLIService,
-	connectionId string,
-	correlationId string,
 	logger *dbsqllog.DBSQLLogger,
 ) ResultPageIterator {
 
 	// delimiter and hasMoreRows are used to set up the point in the paginated
 	// result set that this iterator starts from.
 	return &resultPageIterator{
+		ctx:            ctx,
 		Delimiter:      delimiter,
 		isFinished:     closedOnServer,
 		maxPageSize:    maxPageSize,
 		opHandle:       opHandle,
 		closedOnServer: closedOnServer,
 		client:         client,
-		connectionId:   connectionId,
-		correlationId:  correlationId,
+		connectionId:   driverctx.ConnIdFromContext(ctx),
+		correlationId:  driverctx.CorrelationIdFromContext(ctx),
 		logger:         logger,
 	}
 }
 
 type resultPageIterator struct {
+	ctx context.Context
+
 	// Gives the parameters of the current result page
 	Delimiter
 
@@ -167,7 +169,6 @@ func (rpf *resultPageIterator) getNextPage() (*cli_service.TFetchResultsResp, er
 	nextPageStartRow := rpf.Start() + rpf.Count()
 
 	rpf.logger.Debug().Msgf("databricks: fetching result page for row %d", nextPageStartRow)
-	ctx := driverctx.NewContextWithCorrelationId(driverctx.NewContextWithConnId(context.Background(), rpf.connectionId), rpf.correlationId)
 
 	// Keep fetching in the appropriate direction until we have the expected page.
 	var fetchResult *cli_service.TFetchResultsResp
@@ -175,7 +176,7 @@ func (rpf *resultPageIterator) getNextPage() (*cli_service.TFetchResultsResp, er
 	for b = rpf.Contains(nextPageStartRow); !b; b = rpf.Contains(nextPageStartRow) {
 
 		direction := rpf.Direction(nextPageStartRow)
-		err := rpf.checkDirectionValid(ctx, direction)
+		err := rpf.checkDirectionValid(direction)
 		if err != nil {
 			return nil, err
 		}
@@ -190,10 +191,10 @@ func (rpf *resultPageIterator) getNextPage() (*cli_service.TFetchResultsResp, er
 			IncludeResultSetMetadata: &includeResultSetMetadata,
 		}
 
-		fetchResult, err = rpf.client.FetchResults(ctx, &req)
+		fetchResult, err = rpf.client.FetchResults(rpf.ctx, &req)
 		if err != nil {
 			rpf.logger.Err(err).Msg("databricks: Rows instance failed to retrieve results")
-			return nil, dbsqlerrint.NewRequestError(ctx, errRowsResultFetchFailed, err)
+			return nil, dbsqlerrint.NewRequestError(rpf.ctx, errRowsResultFetchFailed, err)
 		}
 
 		rpf.Delimiter = NewDelimiter(fetchResult.Results.StartRowOffset, CountRows(fetchResult.Results))
@@ -218,7 +219,7 @@ func (rpf *resultPageIterator) Close() (err error) {
 				OperationHandle: rpf.opHandle,
 			}
 
-			_, err = rpf.client.CloseOperation(context.Background(), &req)
+			_, err = rpf.client.CloseOperation(rpf.ctx, &req)
 			return err
 		}
 	}
@@ -283,11 +284,11 @@ func CountRows(rowSet *cli_service.TRowSet) int64 {
 }
 
 // Check if trying to fetch in the specified direction creates an error condition.
-func (rpf *resultPageIterator) checkDirectionValid(ctx context.Context, direction Direction) error {
+func (rpf *resultPageIterator) checkDirectionValid(direction Direction) error {
 	if direction == DirBack {
 		// can't fetch rows previous to the start
 		if rpf.Start() == 0 {
-			return dbsqlerrint.NewDriverError(ctx, ErrRowsFetchPriorToStart, nil)
+			return dbsqlerrint.NewDriverError(rpf.ctx, ErrRowsFetchPriorToStart, nil)
 		}
 	} else if direction == DirForward {
 		// can't fetch past the end of the query results
@@ -296,7 +297,7 @@ func (rpf *resultPageIterator) checkDirectionValid(ctx context.Context, directio
 		}
 	} else {
 		rpf.logger.Error().Msgf(errRowsUnandledFetchDirection(direction.String()))
-		return dbsqlerrint.NewDriverError(ctx, errRowsUnandledFetchDirection(direction.String()), nil)
+		return dbsqlerrint.NewDriverError(rpf.ctx, errRowsUnandledFetchDirection(direction.String()), nil)
 	}
 	return nil
 }

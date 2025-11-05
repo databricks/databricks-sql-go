@@ -55,7 +55,7 @@ func (c *conn) Close() error {
 
 	if err != nil {
 		log.Err(err).Msg("databricks: failed to close connection")
-		return dbsqlerrint.NewRequestError(ctx, dbsqlerr.ErrCloseConnection, err)
+		return dbsqlerrint.NewBadConnectionError(err)
 	}
 	return nil
 }
@@ -168,9 +168,7 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 		return nil, dbsqlerrint.NewExecutionError(ctx, dbsqlerr.ErrQueryExecution, err, opStatusResp)
 	}
 
-	corrId := driverctx.CorrelationIdFromContext(ctx)
-	rows, err := rows.NewRows(c.id, corrId, exStmtResp.OperationHandle, c.client, c.cfg, exStmtResp.DirectResults)
-
+	rows, err := rows.NewRows(ctx, exStmtResp.OperationHandle, c.client, c.cfg, exStmtResp.DirectResults)
 	return rows, err
 
 }
@@ -367,7 +365,7 @@ func (c *conn) pollOperation(ctx context.Context, opHandle *cli_service.TOperati
 	log := logger.WithContext(c.id, corrId, client.SprintGuid(opHandle.OperationId.GUID))
 	var statusResp *cli_service.TGetOperationStatusResp
 	ctx = driverctx.NewContextWithConnId(ctx, c.id)
-	newCtx := driverctx.NewContextWithCorrelationId(driverctx.NewContextWithConnId(context.Background(), c.id), corrId)
+	newCtx := context.WithoutCancel(ctx)
 	pollSentinel := sentinel.Sentinel{
 		OnDoneFn: func(statusResp any) (any, error) {
 			return statusResp, nil
@@ -566,7 +564,6 @@ func (c *conn) execStagingOperation(
 		return nil
 	}
 
-	corrId := driverctx.CorrelationIdFromContext(ctx)
 	var row driver.Rows
 	var err error
 
@@ -589,7 +586,7 @@ func (c *conn) execStagingOperation(
 	}
 
 	if len(driverctx.StagingPathsFromContext(ctx)) != 0 {
-		row, err = rows.NewRows(c.id, corrId, exStmtResp.OperationHandle, c.client, c.cfg, exStmtResp.DirectResults)
+		row, err = rows.NewRows(ctx, exStmtResp.OperationHandle, c.client, c.cfg, exStmtResp.DirectResults)
 		if err != nil {
 			return dbsqlerrint.NewDriverError(ctx, "error reading row.", err)
 		}

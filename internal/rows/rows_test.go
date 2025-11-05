@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/databricks/databricks-sql-go/driverctx"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/client"
 	"github.com/databricks/databricks-sql-go/internal/config"
@@ -217,14 +218,16 @@ func TestRowsFetchResultPageNoDirectResults(t *testing.T) {
 	client := getRowsTestSimpleClient(&getMetadataCount, &fetchResultsCount)
 	rowSet := &rows{client: client}
 
+	ctx := driverctx.NewContextWithConnId(context.Background(), "connId")
+	ctx = driverctx.NewContextWithCorrelationId(ctx, "corrId")
+
 	resultPageIterator := rowscanner.NewResultPageIterator(
+		ctx,
 		rowscanner.NewDelimiter(0, 0),
 		1000,
 		nil,
 		false,
 		client,
-		"connId",
-		"corrId",
 		rowSet.logger(),
 	)
 	rowSet.ResultPageIterator = resultPageIterator
@@ -311,14 +314,16 @@ func TestRowsFetchResultPageWithDirectResults(t *testing.T) {
 	err1 := rowSet.makeRowScanner(firstPage)
 	assert.Nil(t, err1)
 
+	ctx := driverctx.NewContextWithConnId(context.Background(), "connId")
+	ctx = driverctx.NewContextWithCorrelationId(ctx, "corrId")
+
 	resultPageIterator := rowscanner.NewResultPageIterator(
+		ctx,
 		rowscanner.NewDelimiter(rowSet.RowScanner.Start(), rowSet.RowScanner.Count()),
 		1000,
 		nil,
 		false,
 		client,
-		"connId",
-		"corrId",
 		rowSet.logger(),
 	)
 	rowSet.ResultPageIterator = resultPageIterator
@@ -413,7 +418,10 @@ func TestColumnsWithDirectResults(t *testing.T) {
 
 	client := getRowsTestSimpleClient(&getMetadataCount, &fetchResultsCount)
 
-	d, err := NewRows("", "", nil, client, nil, nil)
+	ctx := driverctx.NewContextWithConnId(context.Background(), "connId")
+	ctx = driverctx.NewContextWithCorrelationId(ctx, "corrId")
+
+	d, err := NewRows(ctx, nil, client, nil, nil)
 	assert.Nil(t, err)
 
 	rowSet := d.(*rows)
@@ -460,14 +468,16 @@ func TestNextNoDirectResults(t *testing.T) {
 	client := getRowsTestSimpleClient(&getMetadataCount, &fetchResultsCount)
 	rowSet.client = client
 
+	ctx := driverctx.NewContextWithConnId(context.Background(), "connId")
+	ctx = driverctx.NewContextWithCorrelationId(ctx, "corrId")
+
 	resultPageIterator := rowscanner.NewResultPageIterator(
+		ctx,
 		rowscanner.NewDelimiter(0, 0),
 		1000,
 		nil,
 		false,
 		client,
-		"connId",
-		"corrId",
 		rowSet.logger(),
 	)
 	rowSet.ResultPageIterator = resultPageIterator
@@ -707,8 +717,10 @@ func TestRowsCloseOptimization(t *testing.T) {
 		},
 	}
 
+	ctx := driverctx.NewContextWithConnId(context.Background(), "connId")
+	ctx = driverctx.NewContextWithCorrelationId(ctx, "corrId")
 	opHandle := &cli_service.TOperationHandle{OperationId: &cli_service.THandleIdentifier{GUID: []byte{'f', 'o'}}}
-	rowSet, _ := NewRows("", "", opHandle, client, nil, nil)
+	rowSet, _ := NewRows(ctx, opHandle, client, nil, nil)
 
 	// rowSet has no direct results calling Close should result in call to client to close operation
 	err := rowSet.Close()
@@ -721,7 +733,7 @@ func TestRowsCloseOptimization(t *testing.T) {
 		ResultSet:         &cli_service.TFetchResultsResp{Results: &cli_service.TRowSet{Columns: []*cli_service.TColumn{}}},
 	}
 	closeCount = 0
-	rowSet, _ = NewRows("", "", opHandle, client, nil, directResults)
+	rowSet, _ = NewRows(ctx, opHandle, client, nil, directResults)
 	err = rowSet.Close()
 	assert.Nil(t, err, "rows.Close should not throw an error")
 	assert.Equal(t, 1, closeCount)
@@ -734,7 +746,7 @@ func TestRowsCloseOptimization(t *testing.T) {
 		ResultSetMetadata: &cli_service.TGetResultSetMetadataResp{Schema: &cli_service.TTableSchema{}},
 		ResultSet:         &cli_service.TFetchResultsResp{Results: &cli_service.TRowSet{Columns: []*cli_service.TColumn{}}},
 	}
-	rowSet, _ = NewRows("", "", opHandle, client, nil, directResults)
+	rowSet, _ = NewRows(ctx, opHandle, client, nil, directResults)
 	err = rowSet.Close()
 	assert.Nil(t, err, "rows.Close should not throw an error")
 	assert.Equal(t, 0, closeCount)
@@ -752,17 +764,19 @@ func TestFetchResultsWithRetries(t *testing.T) {
 	// across multiple result pages.
 	fetches := []fetch{}
 
+	ctx := driverctx.NewContextWithConnId(context.Background(), "connId")
+	ctx = driverctx.NewContextWithCorrelationId(ctx, "corrId")
+
 	client := getRowsTestSimpleClient2(&fetches)
 	rowSet := &rows{client: client}
 
 	resultPageIterator := rowscanner.NewResultPageIterator(
+		ctx,
 		rowscanner.NewDelimiter(0, 0),
 		1000,
 		nil,
 		false,
 		client,
-		"connId",
-		"corrId",
 		rowSet.logger(),
 	)
 	rowSet.ResultPageIterator = resultPageIterator
@@ -797,9 +811,12 @@ func TestGetArrowBatches(t *testing.T) {
 		fetchResp2 := cli_service.TFetchResultsResp{}
 		loadTestData(t, "directResultsMultipleFetch/FetchResults2.json", &fetchResp2)
 
+		ctx := driverctx.NewContextWithConnId(context.Background(), "connId")
+		ctx = driverctx.NewContextWithCorrelationId(ctx, "corrId")
+
 		client := getSimpleClient([]cli_service.TFetchResultsResp{fetchResp1, fetchResp2})
 		cfg := config.WithDefaults()
-		rows, err := NewRows("connId", "corrId", nil, client, cfg, executeStatementResp.DirectResults)
+		rows, err := NewRows(ctx, nil, client, cfg, executeStatementResp.DirectResults)
 		assert.Nil(t, err)
 
 		rows2, ok := rows.(dbsqlrows.Rows)
@@ -867,9 +884,12 @@ func TestGetArrowBatches(t *testing.T) {
 		fetchResp3 := cli_service.TFetchResultsResp{}
 		loadTestData(t, "multipleFetch/FetchResults3.json", &fetchResp3)
 
+		ctx := driverctx.NewContextWithConnId(context.Background(), "connId")
+		ctx = driverctx.NewContextWithCorrelationId(ctx, "corrId")
+
 		client := getSimpleClient([]cli_service.TFetchResultsResp{fetchResp1, fetchResp2, fetchResp3})
 		cfg := config.WithDefaults()
-		rows, err := NewRows("connId", "corrId", nil, client, cfg, nil)
+		rows, err := NewRows(ctx, nil, client, cfg, nil)
 		assert.Nil(t, err)
 
 		rows2, ok := rows.(dbsqlrows.Rows)
@@ -925,9 +945,12 @@ func TestGetArrowBatches(t *testing.T) {
 		fetchResp1 := cli_service.TFetchResultsResp{}
 		loadTestData(t, "zeroRows/zeroRowsFetchResult.json", &fetchResp1)
 
+		ctx := driverctx.NewContextWithConnId(context.Background(), "connId")
+		ctx = driverctx.NewContextWithCorrelationId(ctx, "corrId")
+
 		client := getSimpleClient([]cli_service.TFetchResultsResp{fetchResp1})
 		cfg := config.WithDefaults()
-		rows, err := NewRows("connId", "corrId", nil, client, cfg, nil)
+		rows, err := NewRows(ctx, nil, client, cfg, nil)
 		assert.Nil(t, err)
 
 		rows2, ok := rows.(dbsqlrows.Rows)
@@ -949,9 +972,12 @@ func TestGetArrowBatches(t *testing.T) {
 		loadTestData(t, "zeroRows/zeroRowsDirectResults.json", &executeStatementResp)
 		executeStatementResp.DirectResults.ResultSet.Results.ArrowBatches = []*cli_service.TSparkArrowBatch{}
 
+		ctx := driverctx.NewContextWithConnId(context.Background(), "connId")
+		ctx = driverctx.NewContextWithCorrelationId(ctx, "corrId")
+
 		client := getSimpleClient([]cli_service.TFetchResultsResp{})
 		cfg := config.WithDefaults()
-		rows, err := NewRows("connId", "corrId", nil, client, cfg, executeStatementResp.DirectResults)
+		rows, err := NewRows(ctx, nil, client, cfg, executeStatementResp.DirectResults)
 		assert.Nil(t, err)
 
 		rows2, ok := rows.(dbsqlrows.Rows)
@@ -1525,9 +1551,12 @@ func TestFetchResultPage_PropagatesGetNextPageError(t *testing.T) {
 
 	client := getErroringClient(expectedErr)
 
+	ctx := driverctx.NewContextWithConnId(context.Background(), "connId")
+	ctx = driverctx.NewContextWithCorrelationId(ctx, "corrId")
+
 	executeStatementResp := cli_service.TExecuteStatementResp{}
 	cfg := config.WithDefaults()
-	rows, _ := NewRows("connId", "corrId", nil, client, cfg, executeStatementResp.DirectResults)
+	rows, _ := NewRows(ctx, nil, client, cfg, executeStatementResp.DirectResults)
 	// Call Next and ensure it propagates the error from getNextPage
 	actualErr := rows.Next(nil)
 

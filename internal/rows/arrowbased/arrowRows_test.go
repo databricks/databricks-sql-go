@@ -13,6 +13,7 @@ import (
 
 	"github.com/apache/arrow/go/v12/arrow"
 	"github.com/apache/arrow/go/v12/arrow/array"
+	"github.com/databricks/databricks-sql-go/driverctx"
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/config"
@@ -1525,18 +1526,20 @@ func TestArrowRowScanner(t *testing.T) {
 		fetchResp2 := cli_service.TFetchResultsResp{}
 		loadTestData2(t, "directResultsMultipleFetch/FetchResults2.json", &fetchResp2)
 
+		ctx := driverctx.NewContextWithConnId(context.Background(), "connectionId")
+		ctx = driverctx.NewContextWithCorrelationId(ctx, "correlationId")
+
 		var fetchesInfo []fetchResultsInfo
 		client := getSimpleClient(&fetchesInfo, []cli_service.TFetchResultsResp{fetchResp1, fetchResp2})
 		logger := dbsqllog.WithContext("connectionId", "correlationId", "")
 
 		rpi := rowscanner.NewResultPageIterator(
+			ctx,
 			rowscanner.NewDelimiter(0, 7311),
 			5000,
 			nil,
 			false,
 			client,
-			"connectionId",
-			"correlationId",
 			logger)
 
 		cfg := config.WithDefaults()
