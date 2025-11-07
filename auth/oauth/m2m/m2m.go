@@ -57,7 +57,7 @@ func (c *authClient) Authenticate(r *http.Request) error {
 
 	c.tokenSource = GetTokenSource(config)
 	token, err := c.tokenSource.Token()
-	log.Info().Msgf("token fetched successfully")
+	log.Debug().Msgf("databricks OAuth token fetched successfully")
 	if err != nil {
 		log.Err(err).Msg("failed to get token")
 
