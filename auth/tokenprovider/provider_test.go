@@ -42,12 +42,12 @@ func TestToken_IsExpired(t *testing.T) {
 			expected: false,
 		},
 		{
-			name: "token_expires_within_5_minutes",
+			name: "token_expires_within_30_seconds",
 			token: &Token{
 				AccessToken: "test-token",
-				ExpiresAt:   time.Now().Add(3 * time.Minute),
+				ExpiresAt:   time.Now().Add(15 * time.Second),
 			},
-			expected: true, // Should be considered expired due to 5-minute buffer
+			expected: true, // Should be considered expired due to 30-second buffer
 		},
 	}
 
@@ -171,7 +171,7 @@ func TestExternalTokenProvider(t *testing.T) {
 		assert.Contains(t, err.Error(), "failed to get token")
 	})
 
-	t.Run("empty_token_error", func(t *testing.T) {
+	t.Run("empty_token_allowed", func(t *testing.T) {
 		tokenFunc := func() (string, error) {
 			return "", nil
 		}
@@ -179,9 +179,10 @@ func TestExternalTokenProvider(t *testing.T) {
 		provider := NewExternalTokenProvider(tokenFunc)
 		token, err := provider.GetToken(context.Background())
 
-		assert.Error(t, err)
-		assert.Nil(t, token)
-		assert.Contains(t, err.Error(), "empty token returned")
+		assert.NoError(t, err)
+		assert.NotNil(t, token)
+		assert.Empty(t, token.AccessToken)
+		// Empty tokens are validated at the authenticator level, not provider level
 	})
 
 	t.Run("nil_function_error", func(t *testing.T) {
@@ -190,7 +191,7 @@ func TestExternalTokenProvider(t *testing.T) {
 
 		assert.Error(t, err)
 		assert.Nil(t, token)
-		assert.Contains(t, err.Error(), "token function is nil")
+		assert.Contains(t, err.Error(), "token source is nil")
 	})
 
 	t.Run("custom_token_type", func(t *testing.T) {

@@ -9,7 +9,16 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-// TokenProviderAuthenticator implements auth.Authenticator using a TokenProvider
+// TokenProviderAuthenticator implements auth.Authenticator using a TokenProvider.
+//
+// Authentication Flow:
+// 1. On each Authenticate() call, retrieves a token from the configured TokenProvider
+// 2. The provider may implement its own caching and refresh logic
+// 3. Validates the returned token is non-empty
+// 4. Sets the Authorization header with the token type and value
+//
+// The authenticator delegates all token management (caching, refresh, expiry)
+// to the underlying TokenProvider implementation.
 type TokenProviderAuthenticator struct {
 	provider TokenProvider
 }
