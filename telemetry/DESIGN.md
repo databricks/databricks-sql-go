@@ -1744,7 +1744,8 @@ func BenchmarkInterceptor_Disabled(b *testing.B) {
 
 ### Phase 2: Per-Host Management
 - [x] Implement `featureflag.go` with caching and reference counting (PECOBLR-1146)
-- [ ] Implement `manager.go` for client management
+- [x] Implement `manager.go` for client management (PECOBLR-1147)
+- [x] Implement `client.go` with minimal telemetryClient stub (PECOBLR-1147)
 - [ ] Implement `circuitbreaker.go` with state machine
 - [ ] Add unit tests for all components
 
