@@ -246,6 +246,42 @@ func TestNewConnector(t *testing.T) {
 		require.True(t, ok)
 		assert.False(t, coni.cfg.EnableMetricViewMetadata)
 	})
+
+	t.Run("Connector test WithCloudFetchHTTPClient sets custom client", func(t *testing.T) {
+		host := "databricks-host"
+		accessToken := "token"
+		httpPath := "http-path"
+		customClient := &http.Client{Timeout: 5 * time.Second}
+
+		con, err := NewConnector(
+			WithServerHostname(host),
+			WithAccessToken(accessToken),
+			WithHTTPPath(httpPath),
+			WithCloudFetchHTTPClient(customClient),
+		)
+		assert.Nil(t, err)
+
+		coni, ok := con.(*connector)
+		require.True(t, ok)
+		assert.Equal(t, customClient, coni.cfg.UserConfig.CloudFetchConfig.HTTPClient)
+	})
+
+	t.Run("Connector test WithCloudFetchHTTPClient with nil client is accepted", func(t *testing.T) {
+		host := "databricks-host"
+		accessToken := "token"
+		httpPath := "http-path"
+
+		con, err := NewConnector(
+			WithServerHostname(host),
+			WithAccessToken(accessToken),
+			WithHTTPPath(httpPath),
+		)
+		assert.Nil(t, err)
+
+		coni, ok := con.(*connector)
+		require.True(t, ok)
+		assert.Nil(t, coni.cfg.UserConfig.CloudFetchConfig.HTTPClient)
+	})
 }
 
 type mockRoundTripper struct{}
