@@ -12,6 +12,7 @@ import (
 	"github.com/databricks/databricks-sql-go/auth"
 	"github.com/databricks/databricks-sql-go/auth/oauth/m2m"
 	"github.com/databricks/databricks-sql-go/auth/pat"
+	"github.com/databricks/databricks-sql-go/auth/tokenprovider"
 	"github.com/databricks/databricks-sql-go/driverctx"
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
@@ -290,6 +291,58 @@ func WithClientCredentials(clientID, clientSecret string) ConnOption {
 		if clientID != "" && clientSecret != "" {
 			authr := m2m.NewAuthenticator(clientID, clientSecret, c.Host)
 			c.Authenticator = authr
+		}
+	}
+}
+
+// WithTokenProvider sets up authentication using a custom token provider
+func WithTokenProvider(provider tokenprovider.TokenProvider) ConnOption {
+	return func(c *config.Config) {
+		if provider != nil {
+			c.Authenticator = tokenprovider.NewAuthenticator(provider)
+		}
+	}
+}
+
+// WithExternalToken sets up authentication using an external token function (passthrough)
+func WithExternalToken(tokenFunc func() (string, error)) ConnOption {
+	return func(c *config.Config) {
+		if tokenFunc != nil {
+			provider := tokenprovider.NewExternalTokenProvider(tokenFunc)
+			c.Authenticator = tokenprovider.NewAuthenticator(provider)
+		}
+	}
+}
+
+// WithStaticToken sets up authentication using a static token
+func WithStaticToken(token string) ConnOption {
+	return func(c *config.Config) {
+		if token != "" {
+			provider := tokenprovider.NewStaticTokenProvider(token)
+			c.Authenticator = tokenprovider.NewAuthenticator(provider)
+		}
+	}
+}
+
+// WithFederatedTokenProvider sets up authentication using token federation
+// It wraps the base provider and automatically handles token exchange if needed
+func WithFederatedTokenProvider(baseProvider tokenprovider.TokenProvider) ConnOption {
+	return func(c *config.Config) {
+		if baseProvider != nil {
+			// Wrap with federation provider that auto-detects need for token exchange
+			federationProvider := tokenprovider.NewFederationProvider(baseProvider, c.Host)
+			c.Authenticator = tokenprovider.NewAuthenticator(federationProvider)
+		}
+	}
+}
+
+// WithFederatedTokenProviderAndClientID sets up SP-wide token federation
+func WithFederatedTokenProviderAndClientID(baseProvider tokenprovider.TokenProvider, clientID string) ConnOption {
+	return func(c *config.Config) {
+		if baseProvider != nil {
+			// Wrap with federation provider for SP-wide federation
+			federationProvider := tokenprovider.NewFederationProviderWithClientID(baseProvider, c.Host, clientID)
+			c.Authenticator = tokenprovider.NewAuthenticator(federationProvider)
 		}
 	}
 }
