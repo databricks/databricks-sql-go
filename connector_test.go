@@ -257,7 +257,7 @@ func TestNewConnector(t *testing.T) {
 			WithServerHostname(host),
 			WithAccessToken(accessToken),
 			WithHTTPPath(httpPath),
-			WithCloudFetchHTTPClient(customClient),
+			WithHTTPClient(customClient),
 		)
 		assert.Nil(t, err)
 
