@@ -253,6 +253,103 @@ func TestCloudFetchIterator(t *testing.T) {
 		assert.NotNil(t, err3)
 		assert.ErrorContains(t, err3, fmt.Sprintf("%s %d", "HTTP error", http.StatusNotFound))
 	})
+
+	t.Run("should use custom HTTPClient when provided", func(t *testing.T) {
+		customClient := &http.Client{Timeout: 5 * time.Second}
+		requestCount := 0
+
+		handler = func(w http.ResponseWriter, r *http.Request) {
+			requestCount++
+			w.WriteHeader(http.StatusOK)
+			_, err := w.Write(generateMockArrowBytes(generateArrowRecord()))
+			if err != nil {
+				panic(err)
+			}
+		}
+
+		startRowOffset := int64(100)
+
+		links := []*cli_service.TSparkArrowResultLink{
+			{
+				FileLink:       server.URL,
+				ExpiryTime:     time.Now().Add(10 * time.Minute).Unix(),
+				StartRowOffset: startRowOffset,
+				RowCount:       1,
+			},
+		}
+
+		cfg := config.WithDefaults()
+		cfg.UseLz4Compression = false
+		cfg.MaxDownloadThreads = 1
+		cfg.UserConfig.CloudFetchConfig.HTTPClient = customClient
+
+		bi, err := NewCloudBatchIterator(
+			context.Background(),
+			links,
+			startRowOffset,
+			cfg,
+		)
+		assert.Nil(t, err)
+
+		// Verify custom client is passed through the iterator chain
+		wrapper, ok := bi.(*batchIterator)
+		assert.True(t, ok)
+		cbi, ok := wrapper.ipcIterator.(*cloudIPCStreamIterator)
+		assert.True(t, ok)
+		assert.Equal(t, customClient, cbi.httpClient)
+
+		// Fetch should work with custom client
+		sab1, nextErr := bi.Next()
+		assert.Nil(t, nextErr)
+		assert.NotNil(t, sab1)
+		assert.Greater(t, requestCount, 0) // Verify request was made
+	})
+
+	t.Run("should use http.DefaultClient when HTTPClient is nil", func(t *testing.T) {
+		handler = func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			_, err := w.Write(generateMockArrowBytes(generateArrowRecord()))
+			if err != nil {
+				panic(err)
+			}
+		}
+
+		startRowOffset := int64(100)
+
+		links := []*cli_service.TSparkArrowResultLink{
+			{
+				FileLink:       server.URL,
+				ExpiryTime:     time.Now().Add(10 * time.Minute).Unix(),
+				StartRowOffset: startRowOffset,
+				RowCount:       1,
+			},
+		}
+
+		cfg := config.WithDefaults()
+		cfg.UseLz4Compression = false
+		cfg.MaxDownloadThreads = 1
+		// HTTPClient is nil by default
+
+		bi, err := NewCloudBatchIterator(
+			context.Background(),
+			links,
+			startRowOffset,
+			cfg,
+		)
+		assert.Nil(t, err)
+
+		// Verify nil client is passed through
+		wrapper, ok := bi.(*batchIterator)
+		assert.True(t, ok)
+		cbi, ok := wrapper.ipcIterator.(*cloudIPCStreamIterator)
+		assert.True(t, ok)
+		assert.Nil(t, cbi.httpClient)
+
+		// Fetch should work (falls back to http.DefaultClient)
+		sab1, nextErr := bi.Next()
+		assert.Nil(t, nextErr)
+		assert.NotNil(t, sab1)
+	})
 }
 
 func generateArrowRecord() arrow.Record {
