@@ -1422,7 +1422,7 @@ func checkFeatureFlag(ctx context.Context, host string, httpClient *http.Client)
 
 	// Add query parameters
 	q := req.URL.Query()
-	q.Add("flags", "databricks.partnerplatform.clientConfigsFeatureFlags.enableTelemetryForAdbc")
+	q.Add("flags", "databricks.partnerplatform.clientConfigsFeatureFlags.enableTelemetryForGoDriver")
 	req.URL.RawQuery = q.Encode()
 
 	resp, err := httpClient.Do(req)
@@ -1442,7 +1442,7 @@ func checkFeatureFlag(ctx context.Context, host string, httpClient *http.Client)
 		return false, err
 	}
 
-	return result.Flags["databricks.partnerplatform.clientConfigsFeatureFlags.enableTelemetryForAdbc"], nil
+	return result.Flags["databricks.partnerplatform.clientConfigsFeatureFlags.enableTelemetryForGoDriver"], nil
 }
 ```
 
@@ -1743,7 +1743,7 @@ func BenchmarkInterceptor_Disabled(b *testing.B) {
 - [x] Add unit tests for configuration and tags
 
 ### Phase 2: Per-Host Management
-- [ ] Implement `featureflag.go` with caching and reference counting
+- [x] Implement `featureflag.go` with caching and reference counting (PECOBLR-1146)
 - [ ] Implement `manager.go` for client management
 - [ ] Implement `circuitbreaker.go` with state machine
 - [ ] Add unit tests for all components
