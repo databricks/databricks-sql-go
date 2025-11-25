@@ -26,10 +26,16 @@ import (
 )
 
 type conn struct {
-	id      string
-	cfg     *config.Config
-	client  cli_service.TCLIService
-	session *cli_service.TOpenSessionResp
+	id         string
+	cfg        *config.Config
+	client     cli_service.TCLIService
+	session    *cli_service.TOpenSessionResp
+	autoCommit bool // Cache autocommit state client-side (default: true)
+}
+
+// tx implements driver.Tx for transaction support
+type tx struct {
+	conn *conn
 }
 
 // Prepare prepares a statement with the query bound to this connection.

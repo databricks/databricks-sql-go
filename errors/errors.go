@@ -17,6 +17,13 @@ const (
 	ErrParametersNotSupported            = "query parameters are not supported by this server"
 	ErrMixedNamedAndPositionalParameters = "named and positional parameters cannot be used simultaneously"
 
+	// Transaction errors
+	ErrTransactionBegin      = "failed to begin transaction"
+	ErrTransactionCommit     = "failed to commit transaction"
+	ErrTransactionRollback   = "failed to rollback transaction"
+	ErrTransactionNested     = "transaction already in progress"
+	ErrUnsupportedIsolation  = "unsupported transaction isolation level"
+
 	// Request error messages (connection, authentication, network error)
 	ErrCloseConnection = "failed to close connection"
 	ErrThriftClient    = "error initializing thrift client"
