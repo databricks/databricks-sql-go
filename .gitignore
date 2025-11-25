@@ -65,3 +65,5 @@ _tmp*
 .vscode/
 __debug_bin
 .DS_Store
+
+.claude/
