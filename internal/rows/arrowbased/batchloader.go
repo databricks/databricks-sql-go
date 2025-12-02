@@ -40,6 +40,7 @@ func NewCloudIPCStreamIterator(
 		startRowOffset: startRowOffset,
 		pendingLinks:   NewQueue[cli_service.TSparkArrowResultLink](),
 		downloadTasks:  NewQueue[cloudFetchDownloadTask](),
+		httpClient:     cfg.UserConfig.CloudFetchConfig.HTTPClient,
 	}
 
 	for _, link := range files {
@@ -140,6 +141,7 @@ type cloudIPCStreamIterator struct {
 	startRowOffset int64
 	pendingLinks   Queue[cli_service.TSparkArrowResultLink]
 	downloadTasks  Queue[cloudFetchDownloadTask]
+	httpClient     *http.Client
 }
 
 var _ IPCStreamIterator = (*cloudIPCStreamIterator)(nil)
@@ -162,6 +164,7 @@ func (bi *cloudIPCStreamIterator) Next() (io.Reader, error) {
 			resultChan:         make(chan cloudFetchDownloadTaskResult),
 			minTimeToExpiry:    bi.cfg.MinTimeToExpiry,
 			speedThresholdMbps: bi.cfg.CloudFetchSpeedThresholdMbps,
+			httpClient:         bi.httpClient,
 		}
 		task.Run()
 		bi.downloadTasks.Enqueue(task)
@@ -210,6 +213,7 @@ type cloudFetchDownloadTask struct {
 	link               *cli_service.TSparkArrowResultLink
 	resultChan         chan cloudFetchDownloadTaskResult
 	speedThresholdMbps float64
+	httpClient         *http.Client
 }
 
 func (cft *cloudFetchDownloadTask) GetResult() (io.Reader, error) {
@@ -252,7 +256,7 @@ func (cft *cloudFetchDownloadTask) Run() {
 			cft.link.StartRowOffset,
 			cft.link.RowCount,
 		)
-		data, err := fetchBatchBytes(cft.ctx, cft.link, cft.minTimeToExpiry, cft.speedThresholdMbps)
+		data, err := fetchBatchBytes(cft.ctx, cft.link, cft.minTimeToExpiry, cft.speedThresholdMbps, cft.httpClient)
 		if err != nil {
 			cft.resultChan <- cloudFetchDownloadTaskResult{data: nil, err: err}
 			return
@@ -300,6 +304,7 @@ func fetchBatchBytes(
 	link *cli_service.TSparkArrowResultLink,
 	minTimeToExpiry time.Duration,
 	speedThresholdMbps float64,
+	httpClient *http.Client,
 ) (io.ReadCloser, error) {
 	if isLinkExpired(link.ExpiryTime, minTimeToExpiry) {
 		return nil, errors.New(dbsqlerr.ErrLinkExpired)
@@ -317,9 +322,12 @@ func fetchBatchBytes(
 		}
 	}
 
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+
 	startTime := time.Now()
-	client := http.DefaultClient
-	res, err := client.Do(req)
+	res, err := httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
