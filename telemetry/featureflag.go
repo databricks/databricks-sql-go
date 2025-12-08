@@ -185,7 +185,7 @@ func fetchFeatureFlag(ctx context.Context, host string, httpClient *http.Client)
 
 	if resp.StatusCode != http.StatusOK {
 		// Read and discard body to allow HTTP connection reuse
-		io.Copy(io.Discard, resp.Body)
+		_, _ = io.Copy(io.Discard, resp.Body)
 		return false, fmt.Errorf("feature flag check failed: %d", resp.StatusCode)
 	}
 
