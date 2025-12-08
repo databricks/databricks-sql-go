@@ -3,6 +3,8 @@ package telemetry
 import (
 	"net/http"
 	"sync"
+
+	"github.com/databricks/databricks-sql-go/logger"
 )
 
 // clientManager manages one telemetry client per host.
@@ -62,6 +64,10 @@ func (m *clientManager) releaseClient(host string) error {
 	}
 
 	holder.refCount--
+	if holder.refCount < 0 {
+		// This should never happen - indicates a bug where releaseClient was called more than getOrCreateClient
+		logger.Logger.Debug().Str("host", host).Int("refCount", holder.refCount).Msg("telemetry client refCount became negative")
+	}
 	if holder.refCount <= 0 {
 		delete(m.clients, host)
 		m.mu.Unlock()
