@@ -270,13 +270,6 @@ func WithCloudFetch(useCloudFetch bool) ConnOption {
 	}
 }
 
-// WithHTTPClient allows a custom http client to be used for cloud fetch. Default is http.DefaultClient.
-func WithHTTPClient(httpClient *http.Client) ConnOption {
-	return func(c *config.Config) {
-		c.UserConfig.CloudFetchConfig.HTTPClient = httpClient
-	}
-}
-
 // WithMaxDownloadThreads sets up maximum download threads for cloud fetch. Default is 10.
 func WithMaxDownloadThreads(numThreads int) ConnOption {
 	return func(c *config.Config) {

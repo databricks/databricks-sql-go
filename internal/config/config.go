@@ -479,7 +479,7 @@ type CloudFetchConfig struct {
 	MaxFilesInMemory             int
 	MinTimeToExpiry              time.Duration
 	CloudFetchSpeedThresholdMbps float64 // Minimum download speed in MBps before WARN logging (default: 0.1)
-	HTTPClient                   *http.Client
+	Transport                    http.RoundTripper
 }
 
 func (cfg CloudFetchConfig) WithDefaults() CloudFetchConfig {
