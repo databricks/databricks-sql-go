@@ -255,31 +255,13 @@ func TestCloudFetchIterator(t *testing.T) {
 	})
 
 	t.Run("should use custom Transport when provided", func(t *testing.T) {
-		customTransport := &http.Transport{
-			MaxIdleConns:        10,
-			MaxIdleConnsPerHost: 5,
-		}
-		requestCount := 0
-
 		handler = func(w http.ResponseWriter, r *http.Request) {
-			requestCount++
 			w.WriteHeader(http.StatusOK)
-			_, err := w.Write(generateMockArrowBytes(generateArrowRecord()))
-			if err != nil {
-				panic(err)
-			}
+			w.Write(generateMockArrowBytes(generateArrowRecord()))
 		}
 
 		startRowOffset := int64(100)
-
-		links := []*cli_service.TSparkArrowResultLink{
-			{
-				FileLink:       server.URL,
-				ExpiryTime:     time.Now().Add(10 * time.Minute).Unix(),
-				StartRowOffset: startRowOffset,
-				RowCount:       1,
-			},
-		}
+		customTransport := &http.Transport{MaxIdleConns: 10}
 
 		cfg := config.WithDefaults()
 		cfg.UseLz4Compression = false
@@ -288,70 +270,57 @@ func TestCloudFetchIterator(t *testing.T) {
 
 		bi, err := NewCloudBatchIterator(
 			context.Background(),
-			links,
-			startRowOffset,
-			cfg,
-		)
-		assert.Nil(t, err)
-
-		// Verify custom transport is passed through the iterator chain
-		wrapper, ok := bi.(*batchIterator)
-		assert.True(t, ok)
-		cbi, ok := wrapper.ipcIterator.(*cloudIPCStreamIterator)
-		assert.True(t, ok)
-		assert.Equal(t, customTransport, cbi.transport)
-
-		// Fetch should work with custom transport
-		sab1, nextErr := bi.Next()
-		assert.Nil(t, nextErr)
-		assert.NotNil(t, sab1)
-		assert.Greater(t, requestCount, 0) // Verify request was made
-	})
-
-	t.Run("should use http.DefaultClient when Transport is nil", func(t *testing.T) {
-		handler = func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusOK)
-			_, err := w.Write(generateMockArrowBytes(generateArrowRecord()))
-			if err != nil {
-				panic(err)
-			}
-		}
-
-		startRowOffset := int64(100)
-
-		links := []*cli_service.TSparkArrowResultLink{
-			{
+			[]*cli_service.TSparkArrowResultLink{{
 				FileLink:       server.URL,
 				ExpiryTime:     time.Now().Add(10 * time.Minute).Unix(),
 				StartRowOffset: startRowOffset,
 				RowCount:       1,
-			},
-		}
-
-		cfg := config.WithDefaults()
-		cfg.UseLz4Compression = false
-		cfg.MaxDownloadThreads = 1
-		// Transport is nil by default
-
-		bi, err := NewCloudBatchIterator(
-			context.Background(),
-			links,
+			}},
 			startRowOffset,
 			cfg,
 		)
 		assert.Nil(t, err)
 
-		// Verify nil transport is passed through
-		wrapper, ok := bi.(*batchIterator)
-		assert.True(t, ok)
-		cbi, ok := wrapper.ipcIterator.(*cloudIPCStreamIterator)
-		assert.True(t, ok)
+		cbi := bi.(*batchIterator).ipcIterator.(*cloudIPCStreamIterator)
+		assert.Equal(t, customTransport, cbi.transport)
+
+		// Verify fetch works
+		sab, nextErr := bi.Next()
+		assert.Nil(t, nextErr)
+		assert.NotNil(t, sab)
+	})
+
+	t.Run("should fallback to http.DefaultClient when Transport is nil", func(t *testing.T) {
+		handler = func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			w.Write(generateMockArrowBytes(generateArrowRecord()))
+		}
+
+		startRowOffset := int64(100)
+		cfg := config.WithDefaults()
+		cfg.UseLz4Compression = false
+		cfg.MaxDownloadThreads = 1
+
+		bi, err := NewCloudBatchIterator(
+			context.Background(),
+			[]*cli_service.TSparkArrowResultLink{{
+				FileLink:       server.URL,
+				ExpiryTime:     time.Now().Add(10 * time.Minute).Unix(),
+				StartRowOffset: startRowOffset,
+				RowCount:       1,
+			}},
+			startRowOffset,
+			cfg,
+		)
+		assert.Nil(t, err)
+
+		cbi := bi.(*batchIterator).ipcIterator.(*cloudIPCStreamIterator)
 		assert.Nil(t, cbi.transport)
 
-		// Fetch should work (falls back to http.DefaultClient)
-		sab1, nextErr := bi.Next()
+		// Verify fetch works with default client
+		sab, nextErr := bi.Next()
 		assert.Nil(t, nextErr)
-		assert.NotNil(t, sab1)
+		assert.NotNil(t, sab)
 	})
 }
 
