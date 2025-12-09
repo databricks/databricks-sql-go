@@ -6,41 +6,43 @@ import (
 	"time"
 )
 
-// ExternalTokenProvider provides tokens from an external source (passthrough)
+// ExternalTokenProvider provides tokens from an external source (passthrough).
+// This provider calls a user-supplied function to retrieve tokens on-demand.
 type ExternalTokenProvider struct {
-	tokenFunc func() (string, error)
-	tokenType string
+	tokenSource func() (string, error)
+	tokenType   string
 }
 
 // NewExternalTokenProvider creates a provider that gets tokens from an external function
-func NewExternalTokenProvider(tokenFunc func() (string, error)) *ExternalTokenProvider {
+func NewExternalTokenProvider(tokenSource func() (string, error)) *ExternalTokenProvider {
 	return &ExternalTokenProvider{
-		tokenFunc: tokenFunc,
-		tokenType: "Bearer",
+		tokenSource: tokenSource,
+		tokenType:   "Bearer",
 	}
 }
 
 // NewExternalTokenProviderWithType creates a provider with a custom token type
-func NewExternalTokenProviderWithType(tokenFunc func() (string, error), tokenType string) *ExternalTokenProvider {
+func NewExternalTokenProviderWithType(tokenSource func() (string, error), tokenType string) *ExternalTokenProvider {
 	return &ExternalTokenProvider{
-		tokenFunc: tokenFunc,
-		tokenType: tokenType,
+		tokenSource: tokenSource,
+		tokenType:   tokenType,
 	}
 }
 
 // GetToken retrieves the token from the external source
 func (p *ExternalTokenProvider) GetToken(ctx context.Context) (*Token, error) {
-	if p.tokenFunc == nil {
-		return nil, fmt.Errorf("external token provider: token function is nil")
+	// Check for cancellation first
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("external token provider: context cancelled: %w", err)
 	}
 
-	accessToken, err := p.tokenFunc()
+	if p.tokenSource == nil {
+		return nil, fmt.Errorf("external token provider: token source is nil")
+	}
+
+	accessToken, err := p.tokenSource()
 	if err != nil {
 		return nil, fmt.Errorf("external token provider: failed to get token: %w", err)
-	}
-
-	if accessToken == "" {
-		return nil, fmt.Errorf("external token provider: empty token returned")
 	}
 
 	return &Token{

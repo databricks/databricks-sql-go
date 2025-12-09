@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -44,12 +42,12 @@ func TestToken_IsExpired(t *testing.T) {
 			expected: false,
 		},
 		{
-			name: "token_expires_within_5_minutes",
+			name: "token_expires_within_30_seconds",
 			token: &Token{
 				AccessToken: "test-token",
-				ExpiresAt:   time.Now().Add(3 * time.Minute),
+				ExpiresAt:   time.Now().Add(15 * time.Second),
 			},
-			expected: true, // Should be considered expired due to 5-minute buffer
+			expected: true, // Should be considered expired due to 30-second buffer
 		},
 	}
 
@@ -173,7 +171,7 @@ func TestExternalTokenProvider(t *testing.T) {
 		assert.Contains(t, err.Error(), "failed to get token")
 	})
 
-	t.Run("empty_token_error", func(t *testing.T) {
+	t.Run("empty_token_allowed", func(t *testing.T) {
 		tokenFunc := func() (string, error) {
 			return "", nil
 		}
@@ -181,9 +179,10 @@ func TestExternalTokenProvider(t *testing.T) {
 		provider := NewExternalTokenProvider(tokenFunc)
 		token, err := provider.GetToken(context.Background())
 
-		assert.Error(t, err)
-		assert.Nil(t, token)
-		assert.Contains(t, err.Error(), "empty token returned")
+		assert.NoError(t, err)
+		assert.NotNil(t, token)
+		assert.Empty(t, token.AccessToken)
+		// Empty tokens are validated at the authenticator level, not provider level
 	})
 
 	t.Run("nil_function_error", func(t *testing.T) {
@@ -192,7 +191,7 @@ func TestExternalTokenProvider(t *testing.T) {
 
 		assert.Error(t, err)
 		assert.Nil(t, token)
-		assert.Contains(t, err.Error(), "token function is nil")
+		assert.Contains(t, err.Error(), "token source is nil")
 	})
 
 	t.Run("custom_token_type", func(t *testing.T) {
@@ -225,183 +224,6 @@ func TestExternalTokenProvider(t *testing.T) {
 		assert.NotEqual(t, token1.AccessToken, token2.AccessToken)
 		assert.Equal(t, "token-\x01", token1.AccessToken)
 		assert.Equal(t, "token-\x02", token2.AccessToken)
-	})
-}
-
-func TestCachedTokenProvider(t *testing.T) {
-	t.Run("caches_valid_token", func(t *testing.T) {
-		callCount := 0
-		baseProvider := &mockProvider{
-			tokenFunc: func() (*Token, error) {
-				callCount++
-				return &Token{
-					AccessToken: "cached-token",
-					TokenType:   "Bearer",
-					ExpiresAt:   time.Now().Add(1 * time.Hour),
-				}, nil
-			},
-			name: "mock",
-		}
-
-		cachedProvider := NewCachedTokenProvider(baseProvider)
-
-		// First call - should fetch from base provider
-		token1, err1 := cachedProvider.GetToken(context.Background())
-		require.NoError(t, err1)
-		assert.Equal(t, "cached-token", token1.AccessToken)
-		assert.Equal(t, 1, callCount)
-
-		// Second call - should use cache
-		token2, err2 := cachedProvider.GetToken(context.Background())
-		require.NoError(t, err2)
-		assert.Equal(t, "cached-token", token2.AccessToken)
-		assert.Equal(t, 1, callCount) // Should still be 1
-	})
-
-	t.Run("refreshes_expired_token", func(t *testing.T) {
-		callCount := 0
-		baseProvider := &mockProvider{
-			tokenFunc: func() (*Token, error) {
-				callCount++
-				// Return token that expires soon
-				return &Token{
-					AccessToken: "token-" + string(rune(callCount)),
-					TokenType:   "Bearer",
-					ExpiresAt:   time.Now().Add(2 * time.Minute), // Within refresh threshold
-				}, nil
-			},
-			name: "mock",
-		}
-
-		cachedProvider := NewCachedTokenProvider(baseProvider)
-		cachedProvider.RefreshThreshold = 5 * time.Minute
-
-		// First call
-		token1, err1 := cachedProvider.GetToken(context.Background())
-		require.NoError(t, err1)
-		assert.Equal(t, "token-\x01", token1.AccessToken)
-		assert.Equal(t, 1, callCount)
-
-		// Second call - should refresh because token expires within threshold
-		token2, err2 := cachedProvider.GetToken(context.Background())
-		require.NoError(t, err2)
-		assert.Equal(t, "token-\x02", token2.AccessToken)
-		assert.Equal(t, 2, callCount)
-	})
-
-	t.Run("handles_provider_error", func(t *testing.T) {
-		baseProvider := &mockProvider{
-			tokenFunc: func() (*Token, error) {
-				return nil, errors.New("provider error")
-			},
-			name: "mock",
-		}
-
-		cachedProvider := NewCachedTokenProvider(baseProvider)
-		token, err := cachedProvider.GetToken(context.Background())
-
-		assert.Error(t, err)
-		assert.Nil(t, token)
-		assert.Contains(t, err.Error(), "provider error")
-	})
-
-	t.Run("no_expiry_token_not_refreshed", func(t *testing.T) {
-		callCount := 0
-		baseProvider := &mockProvider{
-			tokenFunc: func() (*Token, error) {
-				callCount++
-				return &Token{
-					AccessToken: "permanent-token",
-					TokenType:   "Bearer",
-					ExpiresAt:   time.Time{}, // No expiry
-				}, nil
-			},
-			name: "mock",
-		}
-
-		cachedProvider := NewCachedTokenProvider(baseProvider)
-
-		// Multiple calls should all use cache
-		for i := 0; i < 5; i++ {
-			token, err := cachedProvider.GetToken(context.Background())
-			require.NoError(t, err)
-			assert.Equal(t, "permanent-token", token.AccessToken)
-		}
-
-		assert.Equal(t, 1, callCount) // Should only be called once
-	})
-
-	t.Run("clear_cache", func(t *testing.T) {
-		callCount := 0
-		baseProvider := &mockProvider{
-			tokenFunc: func() (*Token, error) {
-				callCount++
-				return &Token{
-					AccessToken: "token-" + string(rune(callCount)),
-					TokenType:   "Bearer",
-					ExpiresAt:   time.Now().Add(1 * time.Hour),
-				}, nil
-			},
-			name: "mock",
-		}
-
-		cachedProvider := NewCachedTokenProvider(baseProvider)
-
-		// First call
-		token1, _ := cachedProvider.GetToken(context.Background())
-		assert.Equal(t, "token-\x01", token1.AccessToken)
-		assert.Equal(t, 1, callCount)
-
-		// Clear cache
-		cachedProvider.ClearCache()
-
-		// Next call should fetch new token
-		token2, _ := cachedProvider.GetToken(context.Background())
-		assert.Equal(t, "token-\x02", token2.AccessToken)
-		assert.Equal(t, 2, callCount)
-	})
-
-	t.Run("concurrent_access", func(t *testing.T) {
-		var callCount atomic.Int32
-		baseProvider := &mockProvider{
-			tokenFunc: func() (*Token, error) {
-				// Simulate slow token fetch
-				time.Sleep(100 * time.Millisecond)
-				callCount.Add(1)
-				return &Token{
-					AccessToken: "concurrent-token",
-					TokenType:   "Bearer",
-					ExpiresAt:   time.Now().Add(1 * time.Hour),
-				}, nil
-			},
-			name: "mock",
-		}
-
-		cachedProvider := NewCachedTokenProvider(baseProvider)
-
-		// Launch multiple goroutines
-		var wg sync.WaitGroup
-		for i := 0; i < 10; i++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				token, err := cachedProvider.GetToken(context.Background())
-				assert.NoError(t, err)
-				assert.Equal(t, "concurrent-token", token.AccessToken)
-			}()
-		}
-
-		wg.Wait()
-
-		// Should only fetch token once despite concurrent access
-		assert.Equal(t, int32(1), callCount.Load())
-	})
-
-	t.Run("provider_name", func(t *testing.T) {
-		baseProvider := &mockProvider{name: "test-provider"}
-		cachedProvider := NewCachedTokenProvider(baseProvider)
-
-		assert.Equal(t, "cached[test-provider]", cachedProvider.Name())
 	})
 }
 

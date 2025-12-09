@@ -29,8 +29,9 @@ func (t *Token) IsExpired() bool {
 	if t.ExpiresAt.IsZero() {
 		return false // No expiry means token doesn't expire
 	}
-	// Consider token expired 5 minutes before actual expiry for safety
-	return time.Now().Add(5 * time.Minute).After(t.ExpiresAt)
+	// Consider token expired 30 seconds before actual expiry for safety
+	// This matches the standard buffer used by other Databricks SDKs
+	return time.Now().Add(30 * time.Second).After(t.ExpiresAt)
 }
 
 // SetAuthHeader sets the Authorization header on an HTTP request
