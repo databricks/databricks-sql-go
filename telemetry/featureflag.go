@@ -4,9 +4,18 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
+)
+
+const (
+	// featureFlagCacheDuration is how long to cache feature flag values
+	featureFlagCacheDuration = 15 * time.Minute
+	// featureFlagHTTPTimeout is the default timeout for feature flag HTTP requests
+	featureFlagHTTPTimeout = 10 * time.Second
 )
 
 // featureFlagCache manages feature flag state per host with reference counting.
@@ -18,10 +27,12 @@ type featureFlagCache struct {
 
 // featureFlagContext holds feature flag state and reference count for a host.
 type featureFlagContext struct {
+	mu            sync.RWMutex // protects enabled, lastFetched, fetching
 	enabled       *bool
 	lastFetched   time.Time
-	refCount      int
+	refCount      int // protected by featureFlagCache.mu
 	cacheDuration time.Duration
+	fetching      bool // true if a fetch is in progress
 }
 
 var (
@@ -48,7 +59,7 @@ func (c *featureFlagCache) getOrCreateContext(host string) *featureFlagContext {
 	ctx, exists := c.contexts[host]
 	if !exists {
 		ctx = &featureFlagContext{
-			cacheDuration: 15 * time.Minute,
+			cacheDuration: featureFlagCacheDuration,
 		}
 		c.contexts[host] = ctx
 	}
@@ -81,28 +92,57 @@ func (c *featureFlagCache) isTelemetryEnabled(ctx context.Context, host string, 
 		return false, nil
 	}
 
-	// Check if cache is valid
+	// Check if cache is valid (with proper locking)
+	flagCtx.mu.RLock()
 	if flagCtx.enabled != nil && time.Since(flagCtx.lastFetched) < flagCtx.cacheDuration {
-		return *flagCtx.enabled, nil
+		enabled := *flagCtx.enabled
+		flagCtx.mu.RUnlock()
+		return enabled, nil
 	}
+
+	// Check if another goroutine is already fetching
+	if flagCtx.fetching {
+		// Return cached value if available, otherwise wait
+		if flagCtx.enabled != nil {
+			enabled := *flagCtx.enabled
+			flagCtx.mu.RUnlock()
+			return enabled, nil
+		}
+		flagCtx.mu.RUnlock()
+		// No cached value and fetch in progress, return false
+		return false, nil
+	}
+
+	// Mark as fetching
+	flagCtx.fetching = true
+	flagCtx.mu.RUnlock()
 
 	// Fetch fresh value
 	enabled, err := fetchFeatureFlag(ctx, host, httpClient)
-	if err != nil {
-		// Return cached value on error, or false if no cache
-		if flagCtx.enabled != nil {
-			return *flagCtx.enabled, nil
-		}
-		return false, err
+
+	// Update cache (with proper locking)
+	flagCtx.mu.Lock()
+	flagCtx.fetching = false
+	if err == nil {
+		flagCtx.enabled = &enabled
+		flagCtx.lastFetched = time.Now()
 	}
+	// On error, keep the old cached value if it exists
+	result := false
+	var returnErr error
+	if err != nil {
+		if flagCtx.enabled != nil {
+			result = *flagCtx.enabled
+			returnErr = nil // Return cached value without error
+		} else {
+			returnErr = err
+		}
+	} else {
+		result = enabled
+	}
+	flagCtx.mu.Unlock()
 
-	// Update cache
-	c.mu.Lock()
-	flagCtx.enabled = &enabled
-	flagCtx.lastFetched = time.Now()
-	c.mu.Unlock()
-
-	return enabled, nil
+	return result, returnErr
 }
 
 // isExpired returns true if the cache has expired.
@@ -112,9 +152,16 @@ func (c *featureFlagContext) isExpired() bool {
 
 // fetchFeatureFlag fetches the feature flag value from Databricks.
 func fetchFeatureFlag(ctx context.Context, host string, httpClient *http.Client) (bool, error) {
+	// Add timeout to context if it doesn't have a deadline
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, featureFlagHTTPTimeout)
+		defer cancel()
+	}
+
 	// Construct endpoint URL, adding https:// if not already present
 	var endpoint string
-	if len(host) > 7 && (host[:7] == "http://" || host[:8] == "https://") {
+	if strings.HasPrefix(host, "http://") || strings.HasPrefix(host, "https://") {
 		endpoint = fmt.Sprintf("%s/api/2.0/feature-flags", host)
 	} else {
 		endpoint = fmt.Sprintf("https://%s/api/2.0/feature-flags", host)
@@ -137,6 +184,8 @@ func fetchFeatureFlag(ctx context.Context, host string, httpClient *http.Client)
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		// Read and discard body to allow HTTP connection reuse
+		_, _ = io.Copy(io.Discard, resp.Body)
 		return false, fmt.Errorf("feature flag check failed: %d", resp.StatusCode)
 	}
 
