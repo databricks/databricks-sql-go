@@ -323,3 +323,26 @@ func WithStaticToken(token string) ConnOption {
 		}
 	}
 }
+
+// WithFederatedTokenProvider sets up authentication using token federation
+// It wraps the base provider and automatically handles token exchange if needed
+func WithFederatedTokenProvider(baseProvider tokenprovider.TokenProvider) ConnOption {
+	return func(c *config.Config) {
+		if baseProvider != nil {
+			// Wrap with federation provider that auto-detects need for token exchange
+			federationProvider := tokenprovider.NewFederationProvider(baseProvider, c.Host)
+			c.Authenticator = tokenprovider.NewAuthenticator(federationProvider)
+		}
+	}
+}
+
+// WithFederatedTokenProviderAndClientID sets up SP-wide token federation
+func WithFederatedTokenProviderAndClientID(baseProvider tokenprovider.TokenProvider, clientID string) ConnOption {
+	return func(c *config.Config) {
+		if baseProvider != nil {
+			// Wrap with federation provider for SP-wide federation
+			federationProvider := tokenprovider.NewFederationProviderWithClientID(baseProvider, c.Host, clientID)
+			c.Authenticator = tokenprovider.NewAuthenticator(federationProvider)
+		}
+	}
+}
