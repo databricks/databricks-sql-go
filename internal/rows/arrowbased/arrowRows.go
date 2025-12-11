@@ -531,6 +531,37 @@ func getColumnInfo(arrowSchema *arrow.Schema, schema *cli_service.TTableSchema) 
 	return colInfos
 }
 
+// GetArrowSchemaBytes returns the Arrow schema bytes from result set metadata.
+// If ArrowSchema is not directly available, it generates the bytes from TTableSchema.
+func GetArrowSchemaBytes(resultSetMetadata *cli_service.TGetResultSetMetadataResp, cfg *config.Config, ctx context.Context) ([]byte, error) {
+	if resultSetMetadata == nil {
+		return nil, nil
+	}
+
+	// If ArrowSchema is directly available, return it
+	if resultSetMetadata.ArrowSchema != nil {
+		return resultSetMetadata.ArrowSchema, nil
+	}
+
+	// Otherwise, generate from TTableSchema
+	if resultSetMetadata.Schema == nil {
+		return nil, nil
+	}
+
+	arrowConfig := cfg.ArrowConfig
+	arrowSchema, err := tTableSchemaToArrowSchema(resultSetMetadata.Schema, &arrowConfig)
+	if err != nil {
+		return nil, err
+	}
+
+	schemaBytes, err := getArrowSchemaBytes(arrowSchema, ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return schemaBytes, nil
+}
+
 // Derive an arrow.Schema object and the corresponding serialized bytes from TGetResultSetMetadataResp
 func tGetResultSetMetadataRespToArrowSchema(resultSetMetadata *cli_service.TGetResultSetMetadataResp, arrowConfig config.ArrowConfig, ctx context.Context, logger *dbsqllog.DBSQLLogger) ([]byte, *arrow.Schema, dbsqlerr.DBError) {
 
