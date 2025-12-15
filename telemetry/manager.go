@@ -8,10 +8,18 @@ import (
 )
 
 // clientManager manages one telemetry client per host.
-// Prevents rate limiting by sharing clients across connections.
+//
+// Design:
+// - Creates a single telemetryClient per host, shared across multiple connections
+// - Prevents rate limiting by consolidating telemetry from all connections to the same host
+// - Uses reference counting to track active connections and cleanup when last connection closes
+// - Thread-safe using sync.RWMutex for concurrent access from multiple goroutines
+//
+// The manager handles synchronization for client lifecycle (create/release),
+// while the telemetryClient itself must be thread-safe for concurrent data operations.
 type clientManager struct {
-	mu      sync.RWMutex
-	clients map[string]*clientHolder
+	mu      sync.RWMutex             // Protects the clients map
+	clients map[string]*clientHolder // host -> client holder mapping
 }
 
 // clientHolder holds a telemetry client and its reference count.
@@ -43,11 +51,16 @@ func (m *clientManager) getOrCreateClient(host string, httpClient *http.Client, 
 
 	holder, exists := m.clients[host]
 	if !exists {
+		client := newTelemetryClient(host, httpClient, cfg)
+		if err := client.start(); err != nil {
+			// Failed to start client, don't add to map
+			logger.Logger.Warn().Str("host", host).Err(err).Msg("failed to start telemetry client")
+			return nil
+		}
 		holder = &clientHolder{
-			client: newTelemetryClient(host, httpClient, cfg),
+			client: client,
 		}
 		m.clients[host] = holder
-		_ = holder.client.start() // Start background flush goroutine
 	}
 	holder.refCount++
 	return holder.client
@@ -76,4 +89,22 @@ func (m *clientManager) releaseClient(host string) error {
 
 	m.mu.Unlock()
 	return nil
+}
+
+// shutdown closes all telemetry clients and clears the manager.
+// This should be called on application shutdown.
+func (m *clientManager) shutdown() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	var lastErr error
+	for host, holder := range m.clients {
+		if err := holder.client.close(); err != nil {
+			logger.Logger.Warn().Str("host", host).Err(err).Msg("error closing telemetry client during shutdown")
+			lastErr = err
+		}
+	}
+	// Clear the map
+	m.clients = make(map[string]*clientHolder)
+	return lastErr
 }

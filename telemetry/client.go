@@ -6,12 +6,22 @@ import (
 )
 
 // telemetryClient represents a client for sending telemetry data to Databricks.
+//
+// Thread-Safety and Sharing:
+// - One telemetryClient instance is shared across ALL connections to the same host
+// - This prevents rate limiting by consolidating telemetry from multiple connections
+// - The client MUST be fully thread-safe as it will be accessed concurrently
+// - All methods (start, close, and future export methods) must use proper synchronization
+//
+// The mu mutex protects the started and closed flags. Future implementations in Phase 4
+// will need to ensure thread-safety for batch operations and flushing.
+//
 // This is a minimal stub implementation that will be fully implemented in Phase 4.
 type telemetryClient struct {
 	host       string
 	httpClient *http.Client
 	cfg        *Config
-	mu         sync.Mutex
+	mu         sync.Mutex // Protects started and closed flags
 	started    bool
 	closed     bool
 }
