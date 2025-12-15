@@ -1925,8 +1925,8 @@ func BenchmarkInterceptor_Disabled(b *testing.B) {
 
 **JIRA Tickets**:
 - **PECOBLR-1143**: Phases 1-5 (Core Infrastructure → Opt-In Configuration)
-- **PECOBLR-1379**: Phase 6 (Collection & Aggregation)
-- **PECOBLR-1380**: Phase 7 (Driver Integration)
+  - **PECOBLR-1381**: Phase 6 (Collection & Aggregation) - subtask
+  - **PECOBLR-1382**: Phase 7 (Driver Integration) - subtask
 
 ### Phase 1: Core Infrastructure ✅ COMPLETED
 - [x] Create `telemetry` package structure
@@ -2011,7 +2011,7 @@ func BenchmarkInterceptor_Disabled(b *testing.B) {
   - [ ] Test cache expiration and refresh
   - [ ] Test concurrent connections with shared cache
 
-### Phase 6: Collection & Aggregation (PECOBLR-1379)
+### Phase 6: Collection & Aggregation (PECOBLR-1381)
 - [ ] Implement `interceptor.go` for metric collection
   - [ ] Implement beforeExecute() and afterExecute() hooks
   - [ ] Implement context-based metric tracking with metricContext
@@ -2040,7 +2040,7 @@ func BenchmarkInterceptor_Disabled(b *testing.B) {
   - [ ] Test error classification
   - [ ] Test client with aggregator integration
 
-### Phase 7: Driver Integration (PECOBLR-1380)
+### Phase 7: Driver Integration (PECOBLR-1382)
 - [ ] Add telemetry initialization to `connection.go`
   - [ ] Call isTelemetryEnabled() at connection open
   - [ ] Initialize telemetry client via clientManager.getOrCreateClient()
