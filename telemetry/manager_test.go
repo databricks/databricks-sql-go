@@ -320,3 +320,100 @@ func TestClientManager_MultipleGetOrCreateSameClient(t *testing.T) {
 		t.Errorf("Expected refCount to be 3, got %d", holder.refCount)
 	}
 }
+
+func TestClientManager_Shutdown(t *testing.T) {
+	manager := &clientManager{
+		clients: make(map[string]*clientHolder),
+	}
+
+	hosts := []string{
+		"host1.databricks.com",
+		"host2.databricks.com",
+		"host3.databricks.com",
+	}
+	httpClient := &http.Client{}
+	cfg := DefaultConfig()
+
+	// Create clients for multiple hosts
+	clients := make([]*telemetryClient, 0, len(hosts))
+	for _, host := range hosts {
+		client := manager.getOrCreateClient(host, httpClient, cfg)
+		clients = append(clients, client)
+	}
+
+	// Verify clients are created
+	if len(manager.clients) != len(hosts) {
+		t.Errorf("Expected %d clients, got %d", len(hosts), len(manager.clients))
+	}
+
+	// Shutdown should close all clients
+	err := manager.shutdown()
+	if err != nil {
+		t.Errorf("Expected no error during shutdown, got %v", err)
+	}
+
+	// Verify all clients are closed
+	for i, client := range clients {
+		if !client.closed {
+			t.Errorf("Expected client for host %s to be closed", hosts[i])
+		}
+	}
+
+	// Verify clients map is empty
+	if len(manager.clients) != 0 {
+		t.Errorf("Expected clients map to be empty after shutdown, got %d clients", len(manager.clients))
+	}
+}
+
+func TestClientManager_ShutdownWithActiveRefs(t *testing.T) {
+	manager := &clientManager{
+		clients: make(map[string]*clientHolder),
+	}
+
+	host := "test-host.databricks.com"
+	httpClient := &http.Client{}
+	cfg := DefaultConfig()
+
+	// Create client with multiple references
+	client := manager.getOrCreateClient(host, httpClient, cfg)
+	manager.getOrCreateClient(host, httpClient, cfg)
+	manager.getOrCreateClient(host, httpClient, cfg)
+
+	holder := manager.clients[host]
+	if holder.refCount != 3 {
+		t.Errorf("Expected refCount to be 3, got %d", holder.refCount)
+	}
+
+	// Shutdown should still close client even with active references
+	err := manager.shutdown()
+	if err != nil {
+		t.Errorf("Expected no error during shutdown, got %v", err)
+	}
+
+	// Verify client is closed
+	if !client.closed {
+		t.Error("Expected client to be closed after shutdown")
+	}
+
+	// Verify clients map is empty
+	if len(manager.clients) != 0 {
+		t.Errorf("Expected clients map to be empty after shutdown, got %d clients", len(manager.clients))
+	}
+}
+
+func TestClientManager_ShutdownEmptyManager(t *testing.T) {
+	manager := &clientManager{
+		clients: make(map[string]*clientHolder),
+	}
+
+	// Shutdown on empty manager should not error
+	err := manager.shutdown()
+	if err != nil {
+		t.Errorf("Expected no error shutting down empty manager, got %v", err)
+	}
+
+	// Verify map is still empty
+	if len(manager.clients) != 0 {
+		t.Errorf("Expected clients map to be empty, got %d clients", len(manager.clients))
+	}
+}
