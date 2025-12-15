@@ -4,7 +4,7 @@
 
 This document outlines a **telemetry design** for the Databricks SQL Go driver that collects usage metrics and exports them to the Databricks telemetry service. The design leverages Go's `context.Context` and middleware patterns to instrument driver operations without impacting performance.
 
-**Important Note:** Telemetry is **disabled by default** and will be enabled only after full testing and validation is complete.
+**Important Note:** Telemetry is **disabled by default** and requires explicit opt-in. A gradual rollout strategy will be used to ensure reliability and user control.
 
 **Key Objectives:**
 - Collect driver usage metrics and performance data
@@ -14,9 +14,10 @@ This document outlines a **telemetry design** for the Databricks SQL Go driver t
 - Follow Go best practices and idiomatic patterns
 
 **Design Principles:**
+- **Opt-in first**: User explicit consent required, disabled by default
 - **Non-blocking**: All operations async using goroutines
 - **Privacy-first**: No PII or query data collected
-- **Server-controlled**: Feature flag support for enable/disable
+- **Server-controlled**: Feature flag support for gradual rollout
 - **Fail-safe**: All telemetry errors swallowed silently
 - **Idiomatic Go**: Use standard library patterns and interfaces
 
@@ -44,12 +45,17 @@ This document outlines a **telemetry design** for the Databricks SQL Go driver t
 4. [Data Collection](#4-data-collection)
 5. [Export Mechanism](#5-export-mechanism)
 6. [Configuration](#6-configuration)
+   - 6.1 [Configuration Structure](#61-configuration-structure)
+   - 6.2 [Configuration from DSN](#62-configuration-from-dsn)
+   - 6.3 [Feature Flag Integration](#63-feature-flag-integration)
+   - 6.4 [Opt-In Control & Priority](#64-opt-in-control--priority)
 7. [Privacy & Compliance](#7-privacy--compliance)
 8. [Error Handling](#8-error-handling)
 9. [Graceful Shutdown](#9-graceful-shutdown)
 10. [Testing Strategy](#10-testing-strategy)
-11. [Implementation Checklist](#11-implementation-checklist)
-12. [References](#12-references)
+11. [Partial Launch Strategy](#11-partial-launch-strategy)
+12. [Implementation Checklist](#12-implementation-checklist)
+13. [References](#13-references)
 
 ---
 
@@ -1343,6 +1349,14 @@ type Config struct {
 	// Enabled controls whether telemetry is active
 	Enabled bool
 
+	// ForceEnableTelemetry bypasses server-side feature flag checks
+	// When true, telemetry is always enabled regardless of server flags
+	ForceEnableTelemetry bool
+
+	// EnableTelemetry indicates user wants telemetry enabled if server allows
+	// Respects server-side feature flags and rollout percentage
+	EnableTelemetry bool
+
 	// BatchSize is the number of metrics to batch before flushing
 	BatchSize int
 
@@ -1366,11 +1380,13 @@ type Config struct {
 }
 
 // DefaultConfig returns default telemetry configuration.
-// Note: Telemetry is disabled by default and will be enabled after full testing and validation.
+// Note: Telemetry is disabled by default and requires explicit opt-in.
 func DefaultConfig() *Config {
 	return &Config{
-		Enabled:                 false, // Disabled by default until testing is complete
-		BatchSize:               100,
+		Enabled:              false, // Disabled by default, requires explicit opt-in
+		ForceEnableTelemetry: false,
+		EnableTelemetry:      false,
+		BatchSize:            100,
 		FlushInterval:           5 * time.Second,
 		MaxRetries:              3,
 		RetryDelay:              100 * time.Millisecond,
@@ -1381,15 +1397,27 @@ func DefaultConfig() *Config {
 }
 ```
 
-### 6.2 Configuration from DSN
+### 6.2 Configuration from Connection Parameters
 
 ```go
-// ParseTelemetryConfig extracts telemetry config from DSN query parameters.
+// ParseTelemetryConfig extracts telemetry config from connection parameters.
 func ParseTelemetryConfig(params map[string]string) *Config {
 	cfg := DefaultConfig()
 
-	if v, ok := params["telemetry"]; ok {
-		cfg.Enabled = v == "true" || v == "1"
+	// Check for forceEnableTelemetry flag (bypasses server feature flags)
+	if v, ok := params["forceEnableTelemetry"]; ok {
+		if v == "true" || v == "1" {
+			cfg.ForceEnableTelemetry = true
+		}
+	}
+
+	// Check for enableTelemetry flag (respects server feature flags)
+	if v, ok := params["enableTelemetry"]; ok {
+		if v == "true" || v == "1" {
+			cfg.EnableTelemetry = true
+		} else if v == "false" || v == "0" {
+			cfg.EnableTelemetry = false
+		}
 	}
 
 	if v, ok := params["telemetry_batch_size"]; ok {
@@ -1442,9 +1470,100 @@ func checkFeatureFlag(ctx context.Context, host string, httpClient *http.Client)
 		return false, err
 	}
 
-	return result.Flags["databricks.partnerplatform.clientConfigsFeatureFlags.enableTelemetryForGoDriver"], nil
+	// Parse flag response
+	flagValue := result.Flags["databricks.partnerplatform.clientConfigsFeatureFlags.enableTelemetryForGoDriver"]
+
+	response := &featureFlagResponse{
+		Enabled:           false,
+		RolloutPercentage: 0,
+	}
+
+	// Handle both boolean and object responses for backward compatibility
+	switch v := flagValue.(type) {
+	case bool:
+		response.Enabled = v
+		if v {
+			response.RolloutPercentage = 100
+		}
+	case map[string]interface{}:
+		if enabled, ok := v["enabled"].(bool); ok {
+			response.Enabled = enabled
+		}
+		if rollout, ok := v["rollout_percentage"].(float64); ok {
+			response.RolloutPercentage = int(rollout)
+		}
+	}
+
+	return response, nil
+}
+
+// isInRollout checks if this connection is in the rollout percentage.
+// Uses consistent hashing based on workspace ID for stable rollout.
+func isInRollout(workspaceID string, rolloutPercentage int) bool {
+	if rolloutPercentage >= 100 {
+		return true
+	}
+	if rolloutPercentage <= 0 {
+		return false
+	}
+
+	// Use consistent hashing based on workspace ID
+	h := fnv.New32a()
+	h.Write([]byte(workspaceID))
+	hash := h.Sum32()
+
+	return int(hash%100) < rolloutPercentage
 }
 ```
+
+### 6.4 Opt-In Control & Priority
+
+The telemetry system supports multiple layers of control for gradual rollout with clear priority order:
+
+**Opt-In Priority (highest to lowest):**
+1. **forceEnableTelemetry=true** - Bypasses all server-side feature flag checks, always enables
+2. **enableTelemetry=false** - Explicit opt-out, always disables telemetry
+3. **enableTelemetry=true + Server Feature Flag** - User wants telemetry, respects server decision
+4. **Server-Side Feature Flag Only** - Databricks-controlled when user hasn't specified preference
+5. **Default** - Disabled (`false`)
+
+```go
+// isTelemetryEnabled checks if telemetry should be enabled for this connection.
+// Implements the priority-based decision tree for telemetry enablement.
+func isTelemetryEnabled(ctx context.Context, cfg *Config, host string, httpClient *http.Client) bool {
+	// Priority 1: Force enable bypasses all server checks
+	if cfg.ForceEnableTelemetry {
+		return true
+	}
+
+	// Priority 2: Explicit opt-out always disables
+	if !cfg.EnableTelemetry && cfg.EnableTelemetry != nil {
+		// User explicitly set to false
+		return false
+	}
+
+	// Priority 3 & 4: Check server-side feature flag
+	flagCache := getFeatureFlagCache()
+	serverEnabled, err := flagCache.isTelemetryEnabled(ctx, host, httpClient)
+	if err != nil {
+		// On error, respect default (disabled)
+		return false
+	}
+
+	return serverEnabled
+}
+```
+
+**Note**: Rollout percentage and gradual enablement can be added in a future phase after basic opt-in is validated.
+
+**Configuration Flag Summary:**
+
+| Flag | Behavior | Use Case |
+|------|----------|----------|
+| `forceEnableTelemetry=true` | Bypass server flags, always enable | Testing, internal users, debugging |
+| `enableTelemetry=true` | Enable if server allows | User opt-in during beta phase |
+| `enableTelemetry=false` | Always disable telemetry | User wants to opt-out |
+| *(no flags set)* | Respect server feature flag | Default behavior |
 
 ---
 
@@ -1769,82 +1888,234 @@ func BenchmarkInterceptor_Disabled(b *testing.B) {
 
 ---
 
-## 11. Implementation Checklist
+## 11. Partial Launch Strategy
 
-### Phase 1: Core Infrastructure ✅ COMPLETED (PECOBLR-1145)
+### Launch Phases
+
+**Phase 1: Internal Testing**
+- Server flag: `enabled=false`
+- Internal users use: `forceEnableTelemetry=true` via connection params
+- Validate: implementation, performance, privacy
+
+**Phase 2: Beta Opt-In**
+- Server flag: `enabled=false`
+- Beta users use: `enableTelemetry=true` via connection params
+- Collect feedback, monitor data quality
+
+**Phase 3: Server-Controlled Launch**
+- Server flag: `enabled=true`
+- Telemetry enabled for all users (who haven't opted out)
+- Users can opt-out: `enableTelemetry=false`
+
+**Phase 4 (Future): Gradual Rollout**
+- Add rollout percentage support in feature flag API
+- Enable for subset of users based on workspace ID
+- Implement after Phase 1-3 are validated
+
+### Rollback
+- **Emergency**: Set server flag `enabled=false`
+- **Effect**: Disables telemetry for all users (except `forceEnableTelemetry=true`)
+- **Time**: ~15 minutes (feature flag cache TTL)
+
+---
+
+## 12. Implementation Checklist
+
+**Strategy**: Build infrastructure bottom-up: Circuit Breaker → Export (POST to endpoint) → Opt-In Configuration → Collection & Aggregation → Driver Integration. This allows unit testing each layer before adding metric collection.
+
+**JIRA Tickets**:
+- **PECOBLR-1143**: Phases 1-5 (Core Infrastructure → Opt-In Configuration)
+- **PECOBLR-1379**: Phase 6 (Collection & Aggregation)
+- **PECOBLR-1380**: Phase 7 (Driver Integration)
+
+### Phase 1: Core Infrastructure ✅ COMPLETED
 - [x] Create `telemetry` package structure
-- [x] Implement `config.go` with configuration types
+- [x] Implement `config.go` with configuration types (basic structure)
 - [x] Implement `tags.go` with tag definitions and filtering
 - [x] Add unit tests for configuration and tags
 
 ### Phase 2: Per-Host Management ✅ COMPLETED
-- [x] Implement `featureflag.go` with caching and reference counting (PECOBLR-1146)
-- [x] Implement `manager.go` for client management (PECOBLR-1147)
+- [x] Implement `featureflag.go` with caching and reference counting
+- [x] Implement `manager.go` for client management
   - [x] Thread-safe singleton pattern with per-host client holders
   - [x] Reference counting for automatic cleanup
   - [x] Error handling for client start failures
   - [x] Shutdown method for graceful application shutdown
   - [x] Comprehensive documentation on thread-safety and connection sharing
-- [x] Implement `client.go` with minimal telemetryClient stub (PECOBLR-1147)
+- [x] Implement `client.go` with minimal telemetryClient stub
   - [x] Thread-safe start() and close() methods
   - [x] Mutex protection for state flags
   - [x] Detailed documentation on concurrent access requirements
-- [x] Add comprehensive unit tests for all components (PECOBLR-1147)
+- [x] Add comprehensive unit tests for all components
   - [x] Singleton pattern verification
   - [x] Reference counting (increment/decrement/cleanup)
   - [x] Concurrent access tests (100+ goroutines)
   - [x] Shutdown scenarios (empty, with active refs, multiple hosts)
   - [x] Race detector tests passing
-- [ ] Implement `circuitbreaker.go` with state machine (PECOBLR-1148)
 
-### Phase 3: Collection & Aggregation
-- [ ] Implement `interceptor.go` for metric collection
-- [ ] Implement `aggregator.go` for batching
-- [ ] Implement error classification in `errors.go`
-- [ ] Add unit tests for collection and aggregation
+### Phase 3: Circuit Breaker (PECOBLR-1143)
+- [ ] Implement `circuitbreaker.go` with state machine
+  - [ ] Implement circuit breaker states (Closed, Open, Half-Open)
+  - [ ] Implement circuitBreakerManager singleton per host
+  - [ ] Add configurable thresholds and timeout
+  - [ ] Implement execute() method with state transitions
+  - [ ] Implement failure/success tracking
+- [ ] Add comprehensive unit tests
+  - [ ] Test state transitions (Closed → Open → Half-Open → Closed)
+  - [ ] Test failure/success counting
+  - [ ] Test timeout and retry logic
+  - [ ] Test per-host circuit breaker isolation
+  - [ ] Test concurrent access
 
-### Phase 4: Export
+### Phase 4: Export Infrastructure (PECOBLR-1143)
 - [ ] Implement `exporter.go` with retry logic
-- [ ] Implement `client.go` for telemetry client with full functionality
-- [ ] Wire up circuit breaker with exporter
-- [ ] Integrate shutdown method into driver lifecycle:
-  - [ ] Option 1: Export public `Shutdown()` API for applications to call
-  - [ ] Option 2: Hook into `sql.DB.Close()` or driver cleanup
-  - [ ] Option 3: Integrate with connection pool shutdown logic
-  - [ ] Document shutdown integration points and usage patterns
+  - [ ] Implement HTTP POST to telemetry endpoint (/api/2.0/telemetry-ext)
+  - [ ] Implement retry logic with exponential backoff
+  - [ ] Implement tag filtering for export (shouldExportToDatabricks)
+  - [ ] Integrate with circuit breaker
+  - [ ] Add error swallowing
+  - [ ] Implement toExportedMetric() conversion
+  - [ ] Implement telemetryPayload JSON structure
 - [ ] Add unit tests for export logic
+  - [ ] Test HTTP request construction
+  - [ ] Test retry logic (with mock HTTP responses)
+  - [ ] Test circuit breaker integration
+  - [ ] Test tag filtering
+  - [ ] Test error swallowing
+- [ ] Add integration tests with mock HTTP server
+  - [ ] Test successful export
+  - [ ] Test error scenarios (4xx, 5xx)
+  - [ ] Test retry behavior
+  - [ ] Test circuit breaker opening/closing
 
-### Phase 5: Driver Integration
-- [ ] Add telemetry to `connection.go`
-- [ ] Add telemetry to `statement.go`
+### Phase 5: Opt-In Configuration Integration (PECOBLR-1143)
+- [ ] Implement `isTelemetryEnabled()` with priority-based logic in config.go
+  - [ ] Priority 1: ForceEnableTelemetry=true bypasses all checks → return true
+  - [ ] Priority 2: EnableTelemetry=false explicit opt-out → return false
+  - [ ] Priority 3: EnableTelemetry=true + check server feature flag
+  - [ ] Priority 4: Server-side feature flag only (default behavior)
+  - [ ] Priority 5: Default disabled if no flags set and server check fails
+- [ ] Integrate feature flag cache with opt-in logic
+  - [ ] Wire up isTelemetryEnabled() to call featureFlagCache.isTelemetryEnabled()
+  - [ ] Implement fallback behavior on errors (return cached value or false)
+  - [ ] Add proper error handling and logging
+- [ ] Add unit tests for opt-in priority logic
+  - [ ] Test forceEnableTelemetry=true (always enabled, bypasses server)
+  - [ ] Test enableTelemetry=false (always disabled, explicit opt-out)
+  - [ ] Test enableTelemetry=true with server flag enabled
+  - [ ] Test enableTelemetry=true with server flag disabled
+  - [ ] Test default behavior (server flag controls)
+  - [ ] Test error scenarios (server unreachable, use cached value)
+- [ ] Add integration tests with mock feature flag server
+  - [ ] Test opt-in priority with mock server
+  - [ ] Test cache expiration and refresh
+  - [ ] Test concurrent connections with shared cache
+
+### Phase 6: Collection & Aggregation (PECOBLR-1379)
+- [ ] Implement `interceptor.go` for metric collection
+  - [ ] Implement beforeExecute() and afterExecute() hooks
+  - [ ] Implement context-based metric tracking with metricContext
+  - [ ] Implement latency measurement (startTime, latencyMs calculation)
+  - [ ] Add tag collection methods (addTag)
+  - [ ] Implement error swallowing with panic recovery
+- [ ] Implement `aggregator.go` for batching
+  - [ ] Implement statement-level aggregation (statementMetrics)
+  - [ ] Implement batch size and flush interval logic
+  - [ ] Implement background flush goroutine (flushLoop)
+  - [ ] Add thread-safe metric recording
+  - [ ] Implement completeStatement() for final aggregation
+- [ ] Implement error classification in `errors.go`
+  - [ ] Implement error type classification (terminal vs retryable)
+  - [ ] Implement HTTP status code classification
+  - [ ] Add error pattern matching
+  - [ ] Implement isTerminalError() function
+- [ ] Update `client.go` to integrate aggregator
+  - [ ] Wire up aggregator with exporter
+  - [ ] Implement background flush timer
+  - [ ] Update start() and close() methods
+- [ ] Add unit tests for collection and aggregation
+  - [ ] Test interceptor metric collection and latency tracking
+  - [ ] Test aggregation logic
+  - [ ] Test batch flushing (size-based and time-based)
+  - [ ] Test error classification
+  - [ ] Test client with aggregator integration
+
+### Phase 7: Driver Integration (PECOBLR-1380)
+- [ ] Add telemetry initialization to `connection.go`
+  - [ ] Call isTelemetryEnabled() at connection open
+  - [ ] Initialize telemetry client via clientManager.getOrCreateClient()
+  - [ ] Increment feature flag cache reference count
+  - [ ] Store telemetry interceptor in connection
+- [ ] Add telemetry hooks to `statement.go`
+  - [ ] Add beforeExecute() hook at statement start
+  - [ ] Add afterExecute() hook at statement completion
+  - [ ] Add tag collection during execution (result format, chunk count, bytes, etc.)
+  - [ ] Call completeStatement() at statement end
 - [ ] Add cleanup in `Close()` methods
+  - [ ] Release client manager reference in connection.Close()
+  - [ ] Release feature flag cache reference
+  - [ ] Flush pending metrics before close
 - [ ] Add integration tests
+  - [ ] Test telemetry enabled via forceEnableTelemetry=true
+  - [ ] Test telemetry disabled by default
+  - [ ] Test metric collection and export end-to-end
+  - [ ] Test multiple concurrent connections
+  - [ ] Test latency measurement accuracy
+  - [ ] Test opt-in priority in driver context
 
-### Phase 6: Testing & Validation
+### Phase 8: Testing & Validation
 - [ ] Run benchmark tests
+  - [ ] Measure overhead when enabled
+  - [ ] Measure overhead when disabled
+  - [ ] Ensure <1% overhead when enabled
 - [ ] Perform load testing with concurrent connections
+  - [ ] Test 100+ concurrent connections
+  - [ ] Verify per-host client sharing
+  - [ ] Verify no rate limiting with per-host clients
 - [ ] Validate graceful shutdown
+  - [ ] Test reference counting cleanup
+  - [ ] Test final flush on shutdown
+  - [ ] Test shutdown method works correctly
 - [ ] Test circuit breaker behavior
-- [ ] Verify privacy compliance (no PII)
+  - [ ] Test circuit opening on repeated failures
+  - [ ] Test circuit recovery after timeout
+  - [ ] Test metrics dropped when circuit open
+- [ ] Test opt-in priority logic end-to-end
+  - [ ] Verify forceEnableTelemetry works in real driver
+  - [ ] Verify enableTelemetry works in real driver
+  - [ ] Verify server flag integration works
+- [ ] Verify privacy compliance
+  - [ ] Verify no SQL queries collected
+  - [ ] Verify no PII collected
+  - [ ] Verify tag filtering works (shouldExportToDatabricks)
 
-### Phase 7: Documentation
+### Phase 9: Partial Launch Preparation
+- [ ] Document `forceEnableTelemetry` and `enableTelemetry` flags
+- [ ] Create internal testing plan for Phase 1 (use forceEnableTelemetry=true)
+- [ ] Prepare beta opt-in documentation for Phase 2 (use enableTelemetry=true)
+- [ ] Set up monitoring for rollout health metrics
+- [ ] Document rollback procedures (set server flag to false)
+
+### Phase 10: Documentation
 - [ ] Document configuration options in README
-- [ ] Add examples for enabling/disabling telemetry
+- [ ] Add examples for opt-in flags
+- [ ] Document partial launch strategy and phases
 - [ ] Document metric tags and their meanings
 - [ ] Create troubleshooting guide
+- [ ] Document architecture and design decisions
 
 ---
 
-## 12. References
+## 13. References
 
-### 12.1 Go Standards
+### 13.1 Go Standards
 - [context package](https://pkg.go.dev/context)
 - [database/sql/driver](https://pkg.go.dev/database/sql/driver)
 - [net/http](https://pkg.go.dev/net/http)
 - [sync package](https://pkg.go.dev/sync)
 - [Effective Go](https://go.dev/doc/effective_go)
 
-### 12.2 Existing Code References
+### 13.2 Existing Code References
 
 **Databricks SQL Go Driver**:
 - `connection.go`: Connection management
