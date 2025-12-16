@@ -282,7 +282,8 @@ func TestCloudFetchIterator(t *testing.T) {
 		assert.Nil(t, err)
 
 		cbi := bi.(*batchIterator).ipcIterator.(*cloudIPCStreamIterator)
-		assert.Equal(t, customTransport, cbi.transport)
+		assert.NotNil(t, cbi.httpClient)
+		assert.Equal(t, customTransport, cbi.httpClient.Transport)
 
 		// Verify fetch works
 		sab, nextErr := bi.Next()
@@ -315,7 +316,7 @@ func TestCloudFetchIterator(t *testing.T) {
 		assert.Nil(t, err)
 
 		cbi := bi.(*batchIterator).ipcIterator.(*cloudIPCStreamIterator)
-		assert.Nil(t, cbi.transport)
+		assert.Equal(t, http.DefaultClient, cbi.httpClient)
 
 		// Verify fetch works with default client
 		sab, nextErr := bi.Next()

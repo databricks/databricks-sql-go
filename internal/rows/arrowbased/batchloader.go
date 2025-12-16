@@ -34,13 +34,21 @@ func NewCloudIPCStreamIterator(
 	startRowOffset int64,
 	cfg *config.Config,
 ) (IPCStreamIterator, dbsqlerr.DBError) {
+	transport := cfg.UserConfig.Transport
+	httpClient := http.DefaultClient
+	if transport != nil {
+		httpClient = &http.Client{
+			Transport: transport,
+		}
+	}
+
 	bi := &cloudIPCStreamIterator{
 		ctx:            ctx,
 		cfg:            cfg,
 		startRowOffset: startRowOffset,
 		pendingLinks:   NewQueue[cli_service.TSparkArrowResultLink](),
 		downloadTasks:  NewQueue[cloudFetchDownloadTask](),
-		transport:      cfg.UserConfig.Transport,
+		httpClient:     httpClient,
 	}
 
 	for _, link := range files {
@@ -141,7 +149,7 @@ type cloudIPCStreamIterator struct {
 	startRowOffset int64
 	pendingLinks   Queue[cli_service.TSparkArrowResultLink]
 	downloadTasks  Queue[cloudFetchDownloadTask]
-	transport      http.RoundTripper
+	httpClient     *http.Client
 }
 
 var _ IPCStreamIterator = (*cloudIPCStreamIterator)(nil)
@@ -164,7 +172,7 @@ func (bi *cloudIPCStreamIterator) Next() (io.Reader, error) {
 			resultChan:         make(chan cloudFetchDownloadTaskResult),
 			minTimeToExpiry:    bi.cfg.MinTimeToExpiry,
 			speedThresholdMbps: bi.cfg.CloudFetchSpeedThresholdMbps,
-			transport:          bi.transport,
+			httpClient:         bi.httpClient,
 		}
 		task.Run()
 		bi.downloadTasks.Enqueue(task)
@@ -213,7 +221,7 @@ type cloudFetchDownloadTask struct {
 	link               *cli_service.TSparkArrowResultLink
 	resultChan         chan cloudFetchDownloadTaskResult
 	speedThresholdMbps float64
-	transport          http.RoundTripper
+	httpClient         *http.Client
 }
 
 func (cft *cloudFetchDownloadTask) GetResult() (io.Reader, error) {
@@ -256,7 +264,7 @@ func (cft *cloudFetchDownloadTask) Run() {
 			cft.link.StartRowOffset,
 			cft.link.RowCount,
 		)
-		data, err := fetchBatchBytes(cft.ctx, cft.link, cft.minTimeToExpiry, cft.speedThresholdMbps, cft.transport)
+		data, err := fetchBatchBytes(cft.ctx, cft.link, cft.minTimeToExpiry, cft.speedThresholdMbps, cft.httpClient)
 		if err != nil {
 			cft.resultChan <- cloudFetchDownloadTaskResult{data: nil, err: err}
 			return
@@ -304,7 +312,7 @@ func fetchBatchBytes(
 	link *cli_service.TSparkArrowResultLink,
 	minTimeToExpiry time.Duration,
 	speedThresholdMbps float64,
-	transport http.RoundTripper,
+	httpClient *http.Client,
 ) (io.ReadCloser, error) {
 	if isLinkExpired(link.ExpiryTime, minTimeToExpiry) {
 		return nil, errors.New(dbsqlerr.ErrLinkExpired)
@@ -319,13 +327,6 @@ func fetchBatchBytes(
 	if link.HttpHeaders != nil {
 		for key, value := range link.HttpHeaders {
 			req.Header.Set(key, value)
-		}
-	}
-
-	httpClient := http.DefaultClient
-	if transport != nil {
-		httpClient = &http.Client{
-			Transport: transport,
 		}
 	}
 
