@@ -1580,7 +1580,42 @@ func (c *conn) Close() error {
 }
 ```
 
-### 9.2 Client Shutdown
+### 9.2 Client Manager Shutdown
+
+The `clientManager` now includes a `shutdown()` method that provides graceful cleanup of all telemetry clients on application shutdown. This method:
+
+- Closes all active telemetry clients regardless of reference counts
+- Logs warnings for any close failures
+- Clears the clients map to prevent memory leaks
+- Returns the last error encountered (if any)
+
+```go
+// shutdown closes all telemetry clients and clears the manager.
+// Integration points will be determined in Phase 4.
+func (m *clientManager) shutdown() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	var lastErr error
+	for host, holder := range m.clients {
+		if err := holder.client.close(); err != nil {
+			logger.Logger.Warn().Str("host", host).Err(err).Msg("error closing telemetry client during shutdown")
+			lastErr = err
+		}
+	}
+	// Clear the map
+	m.clients = make(map[string]*clientHolder)
+	return lastErr
+}
+```
+
+**Integration Options** (to be implemented in Phase 4):
+
+1. **Public API**: Export a `Shutdown()` function for applications to call during their shutdown sequence
+2. **Driver Hook**: Integrate with `sql.DB.Close()` or driver cleanup mechanisms
+3. **Signal Handler**: Call from application signal handlers (SIGTERM, SIGINT)
+
+### 9.3 Client Shutdown
 
 ```go
 // close shuts down the telemetry client gracefully.
@@ -1742,11 +1777,25 @@ func BenchmarkInterceptor_Disabled(b *testing.B) {
 - [x] Implement `tags.go` with tag definitions and filtering
 - [x] Add unit tests for configuration and tags
 
-### Phase 2: Per-Host Management
+### Phase 2: Per-Host Management ✅ COMPLETED
 - [x] Implement `featureflag.go` with caching and reference counting (PECOBLR-1146)
-- [ ] Implement `manager.go` for client management
-- [ ] Implement `circuitbreaker.go` with state machine
-- [ ] Add unit tests for all components
+- [x] Implement `manager.go` for client management (PECOBLR-1147)
+  - [x] Thread-safe singleton pattern with per-host client holders
+  - [x] Reference counting for automatic cleanup
+  - [x] Error handling for client start failures
+  - [x] Shutdown method for graceful application shutdown
+  - [x] Comprehensive documentation on thread-safety and connection sharing
+- [x] Implement `client.go` with minimal telemetryClient stub (PECOBLR-1147)
+  - [x] Thread-safe start() and close() methods
+  - [x] Mutex protection for state flags
+  - [x] Detailed documentation on concurrent access requirements
+- [x] Add comprehensive unit tests for all components (PECOBLR-1147)
+  - [x] Singleton pattern verification
+  - [x] Reference counting (increment/decrement/cleanup)
+  - [x] Concurrent access tests (100+ goroutines)
+  - [x] Shutdown scenarios (empty, with active refs, multiple hosts)
+  - [x] Race detector tests passing
+- [ ] Implement `circuitbreaker.go` with state machine (PECOBLR-1148)
 
 ### Phase 3: Collection & Aggregation
 - [ ] Implement `interceptor.go` for metric collection
@@ -1756,8 +1805,13 @@ func BenchmarkInterceptor_Disabled(b *testing.B) {
 
 ### Phase 4: Export
 - [ ] Implement `exporter.go` with retry logic
-- [ ] Implement `client.go` for telemetry client
+- [ ] Implement `client.go` for telemetry client with full functionality
 - [ ] Wire up circuit breaker with exporter
+- [ ] Integrate shutdown method into driver lifecycle:
+  - [ ] Option 1: Export public `Shutdown()` API for applications to call
+  - [ ] Option 2: Hook into `sql.DB.Close()` or driver cleanup
+  - [ ] Option 3: Integrate with connection pool shutdown logic
+  - [ ] Document shutdown integration points and usage patterns
 - [ ] Add unit tests for export logic
 
 ### Phase 5: Driver Integration
