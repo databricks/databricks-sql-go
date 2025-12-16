@@ -37,10 +37,10 @@ func TestCircuitBreaker_ClosedToOpen_FailureRate(t *testing.T) {
 
 	// Execute 10 calls: 6 failures (60% failure rate) should open circuit
 	for i := 0; i < 6; i++ {
-		cb.execute(ctx, failFunc)
+		_ = cb.execute(ctx, failFunc)
 	}
 	for i := 0; i < 4; i++ {
-		cb.execute(ctx, successFunc)
+		_ = cb.execute(ctx, successFunc)
 	}
 
 	// Circuit should be open (60% > 50% threshold)
@@ -66,7 +66,7 @@ func TestCircuitBreaker_MinimumCallsRequired(t *testing.T) {
 
 	// Execute 10 failures (less than minimum)
 	for i := 0; i < 10; i++ {
-		cb.execute(ctx, failFunc)
+		_ = cb.execute(ctx, failFunc)
 	}
 
 	// Circuit should still be closed (not enough calls)
@@ -76,7 +76,7 @@ func TestCircuitBreaker_MinimumCallsRequired(t *testing.T) {
 
 	// Execute 10 more failures (now 20 total, 100% failure rate)
 	for i := 0; i < 10; i++ {
-		cb.execute(ctx, failFunc)
+		_ = cb.execute(ctx, failFunc)
 	}
 
 	// Now circuit should be open
@@ -105,7 +105,7 @@ func TestCircuitBreaker_SlidingWindow(t *testing.T) {
 
 	// Fill window with 10 failures (100% failure rate)
 	for i := 0; i < 10; i++ {
-		cb.execute(ctx, failFunc)
+		_ = cb.execute(ctx, failFunc)
 	}
 
 	if cb.getState() != stateOpen {
@@ -116,14 +116,14 @@ func TestCircuitBreaker_SlidingWindow(t *testing.T) {
 	time.Sleep(cfg.waitDurationInOpenState + 50*time.Millisecond)
 
 	// Successful call to move to half-open
-	cb.execute(ctx, successFunc)
+	_ = cb.execute(ctx, successFunc)
 
 	if cb.getState() != stateHalfOpen {
 		t.Fatalf("Expected state to be HalfOpen, got %v", cb.getState())
 	}
 
 	// One more success should close it (2 successes needed)
-	cb.execute(ctx, successFunc)
+	_ = cb.execute(ctx, successFunc)
 
 	if cb.getState() != stateClosed {
 		t.Errorf("Expected state to be Closed after half-open successes, got %v", cb.getState())
@@ -131,7 +131,7 @@ func TestCircuitBreaker_SlidingWindow(t *testing.T) {
 
 	// Window should be reset - now add 10 successes
 	for i := 0; i < 10; i++ {
-		cb.execute(ctx, successFunc)
+		_ = cb.execute(ctx, successFunc)
 	}
 
 	// Should remain closed (0% failure rate)
@@ -157,7 +157,7 @@ func TestCircuitBreaker_OpenRejectsRequests(t *testing.T) {
 
 	// Open the circuit (10 failures = 100% failure rate)
 	for i := 0; i < 10; i++ {
-		cb.execute(ctx, failFunc)
+		_ = cb.execute(ctx, failFunc)
 	}
 
 	if cb.getState() != stateOpen {
@@ -192,7 +192,7 @@ func TestCircuitBreaker_OpenToHalfOpen(t *testing.T) {
 
 	// Open the circuit
 	for i := 0; i < 10; i++ {
-		cb.execute(ctx, failFunc)
+		_ = cb.execute(ctx, failFunc)
 	}
 
 	if cb.getState() != stateOpen {
@@ -237,7 +237,7 @@ func TestCircuitBreaker_HalfOpenToClosed(t *testing.T) {
 
 	// Open the circuit
 	for i := 0; i < 10; i++ {
-		cb.execute(ctx, failFunc)
+		_ = cb.execute(ctx, failFunc)
 	}
 
 	// Wait for wait duration
@@ -274,7 +274,7 @@ func TestCircuitBreaker_HalfOpenToOpen(t *testing.T) {
 
 	// Open the circuit
 	for i := 0; i < 10; i++ {
-		cb.execute(ctx, failFunc)
+		_ = cb.execute(ctx, failFunc)
 	}
 
 	// Wait for wait duration
@@ -338,7 +338,7 @@ func TestCircuitBreaker_ConcurrentAccess(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			cb.execute(ctx, func() error {
+			_ = cb.execute(ctx, func() error {
 				return errors.New("test error")
 			})
 		}()
@@ -441,11 +441,11 @@ func TestCircuitBreaker_FailureRateCalculation(t *testing.T) {
 	// Execute 30 calls: 15 failures, 15 successes (50% failure rate)
 	for i := 0; i < 30; i++ {
 		if i%2 == 0 {
-			cb.execute(ctx, func() error {
+			_ = cb.execute(ctx, func() error {
 				return errors.New("test error")
 			})
 		} else {
-			cb.execute(ctx, func() error {
+			_ = cb.execute(ctx, func() error {
 				return nil
 			})
 		}

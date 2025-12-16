@@ -54,7 +54,7 @@ func (m *clientManager) getOrCreateClient(host string, httpClient *http.Client, 
 		client := newTelemetryClient(host, httpClient, cfg)
 		if err := client.start(); err != nil {
 			// Failed to start client, don't add to map
-			logger.Logger.Warn().Str("host", host).Err(err).Msg("failed to start telemetry client")
+			logger.Logger.Debug().Str("host", host).Err(err).Msg("failed to start telemetry client")
 			return nil
 		}
 		holder = &clientHolder{
@@ -100,7 +100,7 @@ func (m *clientManager) shutdown() error {
 	var lastErr error
 	for host, holder := range m.clients {
 		if err := holder.client.close(); err != nil {
-			logger.Logger.Warn().Str("host", host).Err(err).Msg("error closing telemetry client during shutdown")
+			logger.Logger.Debug().Str("host", host).Err(err).Msg("error closing telemetry client during shutdown")
 			lastErr = err
 		}
 	}

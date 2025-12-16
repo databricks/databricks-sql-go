@@ -53,6 +53,12 @@ linters:
   # - wsl
 
 linters-settings:
+  depguard:
+    rules:
+      main:
+        allow:
+          - $gostd
+          - github.com/databricks/databricks-sql-go
   gosec:
     exclude-generated: true
     severity: "low"

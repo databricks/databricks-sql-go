@@ -255,13 +255,6 @@ func (cb *circuitBreaker) getFailureRate() int {
 	return (cb.failureCount * 100) / windowSize
 }
 
-// getTotalCalls returns the total number of recorded calls (for testing).
-func (cb *circuitBreaker) getTotalCalls() int {
-	cb.mu.RLock()
-	defer cb.mu.RUnlock()
-	return cb.totalCalls
-}
-
 // circuitBreakerManager manages circuit breakers per host.
 // Each host gets its own circuit breaker to provide isolation.
 type circuitBreakerManager struct {
