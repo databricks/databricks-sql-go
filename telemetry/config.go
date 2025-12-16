@@ -44,10 +44,10 @@ type Config struct {
 // Note: Telemetry is disabled by default and requires explicit opt-in.
 func DefaultConfig() *Config {
 	return &Config{
-		Enabled:              false, // Disabled by default, requires explicit opt-in
-		ForceEnableTelemetry: false,
-		EnableTelemetry:      false,
-		BatchSize:            100,
+		Enabled:                 false, // Disabled by default, requires explicit opt-in
+		ForceEnableTelemetry:    false,
+		EnableTelemetry:         false,
+		BatchSize:               100,
 		FlushInterval:           5 * time.Second,
 		MaxRetries:              3,
 		RetryDelay:              100 * time.Millisecond,

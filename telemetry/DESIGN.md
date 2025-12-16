@@ -379,7 +379,7 @@ func (m *clientManager) releaseClient(host string) error {
 
 ### 3.3 circuitBreaker
 
-**Purpose**: Implement circuit breaker pattern to protect against failing telemetry endpoint.
+**Purpose**: Implement circuit breaker pattern to protect against failing telemetry endpoint using a sliding window and failure rate percentage algorithm (matching JDBC's Resilience4j implementation).
 
 **Location**: `telemetry/circuitbreaker.go`
 
@@ -388,11 +388,28 @@ func (m *clientManager) releaseClient(host string) error {
 - **Not just rate limiting**: Protects against 5xx errors, timeouts, network failures
 - **Resource efficiency**: Prevents wasting resources on a failing endpoint
 - **Auto-recovery**: Automatically detects when endpoint becomes healthy again
+- **JDBC alignment**: Uses sliding window with failure rate percentage, matching JDBC driver behavior exactly
+
+#### Algorithm: Sliding Window with Failure Rate
+The circuit breaker tracks recent calls in a **sliding window** (ring buffer) and calculates the **failure rate percentage**:
+- Tracks the last N calls (default: 30)
+- Opens circuit when failure rate >= threshold (default: 50%)
+- Requires minimum calls before evaluation (default: 20)
+- Uses percentage-based evaluation instead of consecutive failures
+
+**Example**: With 30 calls in window, if 15 or more fail (50%), circuit opens. This is more robust than consecutive-failure counting as it considers overall reliability.
 
 #### States
 1. **Closed**: Normal operation, requests pass through
-2. **Open**: After threshold failures, all requests rejected immediately (drop events)
-3. **Half-Open**: After timeout, allows test requests to check if endpoint recovered
+2. **Open**: After failure rate exceeds threshold, all requests rejected immediately (drop events)
+3. **Half-Open**: After wait duration, allows test requests to check if endpoint recovered
+
+#### Configuration (matching JDBC defaults)
+- **failureRateThreshold**: 50% - Opens circuit if failure rate >= 50%
+- **minimumNumberOfCalls**: 20 - Minimum calls before evaluating failure rate
+- **slidingWindowSize**: 30 - Track last 30 calls in sliding window
+- **waitDurationInOpenState**: 30s - Wait before transitioning to half-open
+- **permittedCallsInHalfOpen**: 3 - Test with 3 successful calls before closing
 
 #### Interface
 
@@ -416,32 +433,53 @@ const (
 	stateHalfOpen
 )
 
+// callResult represents the result of a call (success or failure).
+type callResult bool
+
+const (
+	callSuccess callResult = true
+	callFailure callResult = false
+)
+
 // circuitBreaker implements the circuit breaker pattern.
+// It protects against failing telemetry endpoints by tracking failures
+// using a sliding window and failure rate percentage.
 type circuitBreaker struct {
 	mu sync.RWMutex
 
 	state         atomic.Int32 // circuitState
-	failureCount  int
-	successCount  int
-	lastFailTime  time.Time
 	lastStateTime time.Time
+
+	// Sliding window for tracking calls
+	window       []callResult
+	windowIndex  int
+	windowFilled bool
+	totalCalls   int
+	failureCount int
+
+	// Half-open state tracking
+	halfOpenSuccesses int
 
 	config circuitBreakerConfig
 }
 
 // circuitBreakerConfig holds circuit breaker configuration.
 type circuitBreakerConfig struct {
-	failureThreshold int           // Open after N failures
-	successThreshold int           // Close after N successes in half-open
-	timeout          time.Duration // Try again after timeout
+	failureRateThreshold     int           // Open if failure rate >= this percentage (0-100)
+	minimumNumberOfCalls     int           // Minimum calls before evaluating failure rate
+	slidingWindowSize        int           // Number of recent calls to track
+	waitDurationInOpenState  time.Duration // Wait before transitioning to half-open
+	permittedCallsInHalfOpen int           // Number of test calls in half-open state
 }
 
-// defaultCircuitBreakerConfig returns default configuration.
+// defaultCircuitBreakerConfig returns default configuration matching JDBC.
 func defaultCircuitBreakerConfig() circuitBreakerConfig {
 	return circuitBreakerConfig{
-		failureThreshold: 5,
-		successThreshold: 2,
-		timeout:          1 * time.Minute,
+		failureRateThreshold:     50, // 50% failure rate
+		minimumNumberOfCalls:     20, // Minimum sample size
+		slidingWindowSize:        30, // Keep recent 30 calls
+		waitDurationInOpenState:  30 * time.Second,
+		permittedCallsInHalfOpen: 3, // Test with 3 calls
 	}
 }
 
@@ -450,6 +488,7 @@ func newCircuitBreaker(cfg circuitBreakerConfig) *circuitBreaker {
 	cb := &circuitBreaker{
 		config:        cfg,
 		lastStateTime: time.Now(),
+		window:        make([]callResult, cfg.slidingWindowSize),
 	}
 	cb.state.Store(int32(stateClosed))
 	return cb
@@ -464,9 +503,9 @@ func (cb *circuitBreaker) execute(ctx context.Context, fn func() error) error {
 
 	switch state {
 	case stateOpen:
-		// Check if timeout has passed
+		// Check if wait duration has passed
 		cb.mu.RLock()
-		shouldRetry := time.Since(cb.lastStateTime) > cb.config.timeout
+		shouldRetry := time.Since(cb.lastStateTime) > cb.config.waitDurationInOpenState
 		cb.mu.RUnlock()
 
 		if shouldRetry {
@@ -491,46 +530,94 @@ func (cb *circuitBreaker) tryExecute(ctx context.Context, fn func() error) error
 	err := fn()
 
 	if err != nil {
-		cb.recordFailure()
+		cb.recordCall(callFailure)
 		return err
 	}
 
-	cb.recordSuccess()
+	cb.recordCall(callSuccess)
 	return nil
 }
 
-// recordFailure records a failure and potentially opens the circuit.
-func (cb *circuitBreaker) recordFailure() {
+// recordCall records a call result in the sliding window and evaluates state transitions.
+func (cb *circuitBreaker) recordCall(result callResult) {
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
 
-	cb.failureCount++
-	cb.successCount = 0
-	cb.lastFailTime = time.Now()
-
 	state := circuitState(cb.state.Load())
 
+	// Handle half-open state specially
 	if state == stateHalfOpen {
-		// Failure in half-open immediately opens circuit
-		cb.setStateUnlocked(stateOpen)
-	} else if cb.failureCount >= cb.config.failureThreshold {
+		if result == callFailure {
+			// Any failure in half-open immediately reopens circuit
+			cb.resetWindowUnlocked()
+			cb.setStateUnlocked(stateOpen)
+			return
+		}
+
+		cb.halfOpenSuccesses++
+		if cb.halfOpenSuccesses >= cb.config.permittedCallsInHalfOpen {
+			// Enough successes to close circuit
+			cb.resetWindowUnlocked()
+			cb.setStateUnlocked(stateClosed)
+		}
+		return
+	}
+
+	// Record in sliding window
+	// Remove old value from count if window is full
+	if cb.windowFilled && cb.window[cb.windowIndex] == callFailure {
+		cb.failureCount--
+	}
+
+	// Add new value
+	cb.window[cb.windowIndex] = result
+	if result == callFailure {
+		cb.failureCount++
+	}
+
+	// Move to next position
+	cb.windowIndex = (cb.windowIndex + 1) % cb.config.slidingWindowSize
+	if cb.windowIndex == 0 {
+		cb.windowFilled = true
+	}
+
+	cb.totalCalls++
+
+	// Evaluate if we should open the circuit
+	if state == stateClosed {
+		cb.evaluateStateUnlocked()
+	}
+}
+
+// evaluateStateUnlocked checks if the circuit should open based on failure rate.
+// Caller must hold cb.mu lock.
+func (cb *circuitBreaker) evaluateStateUnlocked() {
+	// Need minimum number of calls before evaluating
+	windowSize := cb.totalCalls
+	if cb.windowFilled {
+		windowSize = cb.config.slidingWindowSize
+	}
+
+	if windowSize < cb.config.minimumNumberOfCalls {
+		return
+	}
+
+	// Calculate failure rate
+	failureRate := (cb.failureCount * 100) / windowSize
+
+	if failureRate >= cb.config.failureRateThreshold {
 		cb.setStateUnlocked(stateOpen)
 	}
 }
 
-// recordSuccess records a success and potentially closes the circuit.
-func (cb *circuitBreaker) recordSuccess() {
-	cb.mu.Lock()
-	defer cb.mu.Unlock()
-
+// resetWindowUnlocked clears the sliding window.
+// Caller must hold cb.mu lock.
+func (cb *circuitBreaker) resetWindowUnlocked() {
+	cb.windowIndex = 0
+	cb.windowFilled = false
+	cb.totalCalls = 0
 	cb.failureCount = 0
-	cb.successCount++
-
-	state := circuitState(cb.state.Load())
-
-	if state == stateHalfOpen && cb.successCount >= cb.config.successThreshold {
-		cb.setStateUnlocked(stateClosed)
-	}
+	cb.halfOpenSuccesses = 0
 }
 
 // setState transitions to a new state.
@@ -541,6 +628,7 @@ func (cb *circuitBreaker) setState(newState circuitState) {
 }
 
 // setStateUnlocked transitions to a new state without locking.
+// Caller must hold cb.mu lock.
 func (cb *circuitBreaker) setStateUnlocked(newState circuitState) {
 	oldState := circuitState(cb.state.Load())
 	if oldState == newState {
@@ -549,14 +637,13 @@ func (cb *circuitBreaker) setStateUnlocked(newState circuitState) {
 
 	cb.state.Store(int32(newState))
 	cb.lastStateTime = time.Now()
-	cb.failureCount = 0
-	cb.successCount = 0
 
 	// Log state transition at DEBUG level
 	// logger.Debug().Msgf("circuit breaker: %v -> %v", oldState, newState)
 }
 
 // circuitBreakerManager manages circuit breakers per host.
+// Each host gets its own circuit breaker to provide isolation.
 type circuitBreakerManager struct {
 	mu       sync.RWMutex
 	breakers map[string]*circuitBreaker
@@ -578,6 +665,7 @@ func getCircuitBreakerManager() *circuitBreakerManager {
 }
 
 // getCircuitBreaker gets or creates a circuit breaker for the host.
+// Thread-safe for concurrent access.
 func (m *circuitBreakerManager) getCircuitBreaker(host string) *circuitBreaker {
 	m.mu.RLock()
 	cb, exists := m.breakers[host]
@@ -1888,38 +1976,7 @@ func BenchmarkInterceptor_Disabled(b *testing.B) {
 
 ---
 
-## 11. Partial Launch Strategy
-
-### Launch Phases
-
-**Phase 1: Internal Testing**
-- Server flag: `enabled=false`
-- Internal users use: `forceEnableTelemetry=true` via connection params
-- Validate: implementation, performance, privacy
-
-**Phase 2: Beta Opt-In**
-- Server flag: `enabled=false`
-- Beta users use: `enableTelemetry=true` via connection params
-- Collect feedback, monitor data quality
-
-**Phase 3: Server-Controlled Launch**
-- Server flag: `enabled=true`
-- Telemetry enabled for all users (who haven't opted out)
-- Users can opt-out: `enableTelemetry=false`
-
-**Phase 4 (Future): Gradual Rollout**
-- Add rollout percentage support in feature flag API
-- Enable for subset of users based on workspace ID
-- Implement after Phase 1-3 are validated
-
-### Rollback
-- **Emergency**: Set server flag `enabled=false`
-- **Effect**: Disables telemetry for all users (except `forceEnableTelemetry=true`)
-- **Time**: ~15 minutes (feature flag cache TTL)
-
----
-
-## 12. Implementation Checklist
+## 11. Implementation Checklist
 
 **Strategy**: Build infrastructure bottom-up: Circuit Breaker → Export (POST to endpoint) → Opt-In Configuration → Collection & Aggregation → Driver Integration. This allows unit testing each layer before adding metric collection.
 
@@ -2106,16 +2163,16 @@ func BenchmarkInterceptor_Disabled(b *testing.B) {
 
 ---
 
-## 13. References
+## 12. References
 
-### 13.1 Go Standards
+### 12.1 Go Standards
 - [context package](https://pkg.go.dev/context)
 - [database/sql/driver](https://pkg.go.dev/database/sql/driver)
 - [net/http](https://pkg.go.dev/net/http)
 - [sync package](https://pkg.go.dev/sync)
 - [Effective Go](https://go.dev/doc/effective_go)
 
-### 13.2 Existing Code References
+### 12.2 Existing Code References
 
 **Databricks SQL Go Driver**:
 - `connection.go`: Connection management
