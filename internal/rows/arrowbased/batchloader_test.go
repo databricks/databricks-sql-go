@@ -254,19 +254,21 @@ func TestCloudFetchIterator(t *testing.T) {
 		assert.ErrorContains(t, err3, fmt.Sprintf("%s %d", "HTTP error", http.StatusNotFound))
 	})
 
-	t.Run("should use custom Transport when provided", func(t *testing.T) {
+	t.Run("should use custom HTTPClient when provided", func(t *testing.T) {
 		handler = func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
 			w.Write(generateMockArrowBytes(generateArrowRecord()))
 		}
 
 		startRowOffset := int64(100)
-		customTransport := &http.Transport{MaxIdleConns: 10}
+		customHTTPClient := &http.Client{
+			Transport: &http.Transport{MaxIdleConns: 10},
+		}
 
 		cfg := config.WithDefaults()
 		cfg.UseLz4Compression = false
 		cfg.MaxDownloadThreads = 1
-		cfg.UserConfig.Transport = customTransport
+		cfg.UserConfig.CloudFetchConfig.HTTPClient = customHTTPClient
 
 		bi, err := NewCloudBatchIterator(
 			context.Background(),
@@ -282,8 +284,7 @@ func TestCloudFetchIterator(t *testing.T) {
 		assert.Nil(t, err)
 
 		cbi := bi.(*batchIterator).ipcIterator.(*cloudIPCStreamIterator)
-		assert.NotNil(t, cbi.httpClient)
-		assert.Equal(t, customTransport, cbi.httpClient.Transport)
+		assert.Equal(t, customHTTPClient, cbi.httpClient)
 
 		// Verify fetch works
 		sab, nextErr := bi.Next()
@@ -291,7 +292,7 @@ func TestCloudFetchIterator(t *testing.T) {
 		assert.NotNil(t, sab)
 	})
 
-	t.Run("should fallback to http.DefaultClient when Transport is nil", func(t *testing.T) {
+	t.Run("should fallback to http.DefaultClient when HTTPClient is nil", func(t *testing.T) {
 		handler = func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
 			w.Write(generateMockArrowBytes(generateArrowRecord()))
@@ -301,6 +302,8 @@ func TestCloudFetchIterator(t *testing.T) {
 		cfg := config.WithDefaults()
 		cfg.UseLz4Compression = false
 		cfg.MaxDownloadThreads = 1
+		// Explicitly set HTTPClient to nil to verify fallback behavior
+		cfg.UserConfig.CloudFetchConfig.HTTPClient = nil
 
 		bi, err := NewCloudBatchIterator(
 			context.Background(),

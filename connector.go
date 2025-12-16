@@ -260,6 +260,12 @@ func WithAuthenticator(authr auth.Authenticator) ConnOption {
 func WithTransport(t http.RoundTripper) ConnOption {
 	return func(c *config.Config) {
 		c.Transport = t
+
+		if c.CloudFetchConfig.HTTPClient == nil {
+			c.CloudFetchConfig.HTTPClient = &http.Client{
+				Transport: t,
+			}
+		}
 	}
 }
 

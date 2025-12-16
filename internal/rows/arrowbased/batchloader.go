@@ -34,12 +34,9 @@ func NewCloudIPCStreamIterator(
 	startRowOffset int64,
 	cfg *config.Config,
 ) (IPCStreamIterator, dbsqlerr.DBError) {
-	transport := cfg.UserConfig.Transport
 	httpClient := http.DefaultClient
-	if transport != nil {
-		httpClient = &http.Client{
-			Transport: transport,
-		}
+	if cfg.UserConfig.CloudFetchConfig.HTTPClient != nil {
+		httpClient = cfg.UserConfig.CloudFetchConfig.HTTPClient
 	}
 
 	bi := &cloudIPCStreamIterator{
