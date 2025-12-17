@@ -257,7 +257,10 @@ func TestCloudFetchIterator(t *testing.T) {
 	t.Run("should use custom HTTPClient when provided", func(t *testing.T) {
 		handler = func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
-			w.Write(generateMockArrowBytes(generateArrowRecord()))
+			_, err := w.Write(generateMockArrowBytes(generateArrowRecord()))
+			if err != nil {
+				panic(err)
+			}
 		}
 
 		startRowOffset := int64(100)
@@ -295,7 +298,10 @@ func TestCloudFetchIterator(t *testing.T) {
 	t.Run("should fallback to http.DefaultClient when HTTPClient is nil", func(t *testing.T) {
 		handler = func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
-			w.Write(generateMockArrowBytes(generateArrowRecord()))
+			_, err := w.Write(generateMockArrowBytes(generateArrowRecord()))
+			if err != nil {
+				panic(err)
+			}
 		}
 
 		startRowOffset := int64(100)
