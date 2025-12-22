@@ -48,6 +48,7 @@ func TestNewConnector(t *testing.T) {
 			MaxFilesInMemory:             10,
 			MinTimeToExpiry:              0 * time.Second,
 			CloudFetchSpeedThresholdMbps: 0.1,
+			HTTPClient:                   &http.Client{Transport: roundTripper},
 		}
 		expectedUserConfig := config.UserConfig{
 			Host:             host,
@@ -245,6 +246,25 @@ func TestNewConnector(t *testing.T) {
 		coni, ok := con.(*connector)
 		require.True(t, ok)
 		assert.False(t, coni.cfg.EnableMetricViewMetadata)
+	})
+
+	t.Run("Connector test WithTransport sets HTTPClient in CloudFetchConfig", func(t *testing.T) {
+		host := "databricks-host"
+		accessToken := "token"
+		httpPath := "http-path"
+		customTransport := &http.Transport{MaxIdleConns: 10}
+		con, err := NewConnector(
+			WithServerHostname(host),
+			WithAccessToken(accessToken),
+			WithHTTPPath(httpPath),
+			WithTransport(customTransport),
+		)
+		assert.Nil(t, err)
+
+		coni, ok := con.(*connector)
+		require.True(t, ok)
+		assert.NotNil(t, coni.cfg.CloudFetchConfig.HTTPClient)
+		assert.Equal(t, customTransport, coni.cfg.CloudFetchConfig.HTTPClient.Transport)
 	})
 }
 
