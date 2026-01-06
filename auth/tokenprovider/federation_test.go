@@ -249,6 +249,12 @@ func TestFederationProvider_ProviderName(t *testing.T) {
 		// Should truncate client ID to first 8 chars
 		assert.Equal(t, "federation[static,sp:client-1]", fedProvider.Name())
 	})
+
+	t.Run("with_short_client_id", func(t *testing.T) {
+		fedProvider := NewFederationProviderWithClientID(baseProvider, "test.databricks.com", "short")
+		// Should use full client ID when less than 8 chars
+		assert.Equal(t, "federation[static,sp:short]", fedProvider.Name())
+	})
 }
 
 func TestFederationProvider_CachedIntegration(t *testing.T) {
@@ -300,6 +306,10 @@ func TestFederationProvider_CachedIntegration(t *testing.T) {
 	assert.Equal(t, "databricks-token", token2.AccessToken)
 	assert.Equal(t, 1, callCount, "External provider should still be called only once (cached)")
 	assert.Equal(t, 1, exchangeCount, "Token should still be exchanged only once (cached)")
+	// Verify tokens have same values but are different objects (copies for thread safety)
+	assert.Equal(t, token1.AccessToken, token2.AccessToken, "Tokens should have same access token")
+	assert.NotSame(t, token1, token2, "Tokens should be different objects (copies)")
+
 }
 
 func TestFederationProvider_InvalidJWT(t *testing.T) {

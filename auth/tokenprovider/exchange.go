@@ -48,6 +48,11 @@ func NewFederationProviderWithClientID(baseProvider TokenProvider, databricksHos
 
 // GetToken gets token from base provider and exchanges if needed
 func (p *FederationProvider) GetToken(ctx context.Context) (*Token, error) {
+	// Check if context is already cancelled
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("federation provider: context cancelled: %w", err)
+	}
+
 	// Get token from base provider
 	baseToken, err := p.baseProvider.GetToken(ctx)
 	if err != nil {
@@ -75,7 +80,11 @@ func (p *FederationProvider) GetToken(ctx context.Context) (*Token, error) {
 
 // needsTokenExchange determines if a token needs exchange by checking if it's from a different issuer
 func (p *FederationProvider) needsTokenExchange(tokenString string) bool {
-	// Try to parse as JWT
+	// Try to parse as JWT without verification
+	// We use ParseUnverified because:
+	// 1. We only need to inspect claims (issuer), not validate the signature
+	// 2. We don't have the public key for external identity providers
+	// 3. Token validation will be done by Databricks during exchange
 	token, _, err := new(jwt.Parser).ParseUnverified(tokenString, jwt.MapClaims{})
 	if err != nil {
 		log.Debug().Err(err).Msg("federation provider: not a JWT token, skipping exchange")
@@ -101,7 +110,11 @@ func (p *FederationProvider) tryTokenExchange(ctx context.Context, subjectToken 
 	// Build exchange URL - add scheme if not present
 	exchangeURL := p.databricksHost
 	if !strings.HasPrefix(exchangeURL, "http://") && !strings.HasPrefix(exchangeURL, "https://") {
+		// Default to HTTPS for security
 		exchangeURL = "https://" + exchangeURL
+	} else if strings.HasPrefix(exchangeURL, "http://") {
+		// Warn if using insecure HTTP for token exchange
+		log.Warn().Msgf("federation provider: using insecure HTTP for token exchange: %s", exchangeURL)
 	}
 	if !strings.HasSuffix(exchangeURL, "/") {
 		exchangeURL += "/"
@@ -161,6 +174,18 @@ func (p *FederationProvider) tryTokenExchange(ctx context.Context, subjectToken 
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
 
+	// Validate token response
+	if tokenResp.AccessToken == "" {
+		return nil, fmt.Errorf("token exchange returned empty access token")
+	}
+	if tokenResp.TokenType == "" {
+		log.Debug().Msg("token exchange: token_type not specified, defaulting to Bearer")
+		tokenResp.TokenType = "Bearer"
+	}
+	if tokenResp.ExpiresIn < 0 {
+		return nil, fmt.Errorf("token exchange returned invalid expires_in: %d", tokenResp.ExpiresIn)
+	}
+
 	token := &Token{
 		AccessToken: tokenResp.AccessToken,
 		TokenType:   tokenResp.TokenType,
@@ -186,19 +211,27 @@ func (p *FederationProvider) isSameHost(url1, url2 string) bool {
 	u2, err2 := url.Parse(parsedURL2)
 
 	if err1 != nil || err2 != nil {
+		log.Debug().Msgf("federation provider: failed to parse URLs for comparison: url1=%s err1=%v, url2=%s err2=%v",
+			url1, err1, parsedURL2, err2)
 		return false
 	}
 
 	// Use Hostname() instead of Host to ignore port differences
 	// This handles cases like "host.com:443" == "host.com" for HTTPS
-	return u1.Hostname() == u2.Hostname()
+	isSame := u1.Hostname() == u2.Hostname()
+	log.Debug().Msgf("federation provider: host comparison: %s vs %s = %v", u1.Hostname(), u2.Hostname(), isSame)
+	return isSame
 }
 
 // Name returns the provider name
 func (p *FederationProvider) Name() string {
 	baseName := p.baseProvider.Name()
 	if p.clientID != "" {
-		return fmt.Sprintf("federation[%s,sp:%s]", baseName, p.clientID[:8]) // Truncate client ID for readability
+		clientIDDisplay := p.clientID
+		if len(p.clientID) > 8 {
+			clientIDDisplay = p.clientID[:8]
+		}
+		return fmt.Sprintf("federation[%s,sp:%s]", baseName, clientIDDisplay) // Truncate client ID for readability
 	}
 	return fmt.Sprintf("federation[%s]", baseName)
 }
