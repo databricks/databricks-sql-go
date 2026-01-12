@@ -37,6 +37,61 @@ func TestParameter_Inference(t *testing.T) {
 	})
 }
 
+func TestParameter_BigInt(t *testing.T) {
+	t.Run("Should infer int64 as BIGINT", func(t *testing.T) {
+		maxInt64 := int64(9223372036854775807)
+		values := []driver.NamedValue{
+			{Value: maxInt64},
+		}
+		parameters, err := convertNamedValuesToSparkParams(values)
+		require.NoError(t, err)
+		require.Equal(t, "BIGINT", *parameters[0].Type)
+		require.Equal(t, "9223372036854775807", *parameters[0].Value.StringValue)
+	})
+
+	t.Run("Should infer uint64 as BIGINT", func(t *testing.T) {
+		largeUint64 := uint64(0x123456789ABCDEF0)
+		values := []driver.NamedValue{
+			{Value: largeUint64},
+		}
+		parameters, err := convertNamedValuesToSparkParams(values)
+		require.NoError(t, err)
+		require.Equal(t, "BIGINT", *parameters[0].Type)
+		require.Equal(t, "1311768467463790320", *parameters[0].Value.StringValue)
+	})
+
+	t.Run("Should infer negative int64 as BIGINT", func(t *testing.T) {
+		minInt64 := int64(-9223372036854775808)
+		values := []driver.NamedValue{
+			{Value: minInt64},
+		}
+		parameters, err := convertNamedValuesToSparkParams(values)
+		require.NoError(t, err)
+		require.Equal(t, "BIGINT", *parameters[0].Type)
+		require.Equal(t, "-9223372036854775808", *parameters[0].Value.StringValue)
+	})
+
+	t.Run("Should handle explicit BigInt Parameter with non-string value", func(t *testing.T) {
+		values := []driver.NamedValue{
+			{Value: Parameter{Type: SqlBigInt, Value: int64(12345)}},
+		}
+		parameters, err := convertNamedValuesToSparkParams(values)
+		require.NoError(t, err)
+		require.Equal(t, "BIGINT", *parameters[0].Type)
+		require.Equal(t, "12345", *parameters[0].Value.StringValue)
+	})
+
+	t.Run("Should preserve int32 as INTEGER", func(t *testing.T) {
+		values := []driver.NamedValue{
+			{Value: int32(2147483647)},
+		}
+		parameters, err := convertNamedValuesToSparkParams(values)
+		require.NoError(t, err)
+		require.Equal(t, "INTEGER", *parameters[0].Type)
+		require.Equal(t, "2147483647", *parameters[0].Value.StringValue)
+	})
+}
+
 func TestParameters_ConvertToSpark(t *testing.T) {
 	t.Run("Should convert names parameters", func(t *testing.T) {
 		values := [2]driver.NamedValue{
