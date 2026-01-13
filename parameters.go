@@ -140,17 +140,17 @@ func inferType(param *Parameter) {
 		param.Value = strconv.FormatUint(uint64(value), 10)
 		param.Type = SqlInteger
 	case int64:
-		param.Value = strconv.Itoa(int(value))
-		param.Type = SqlInteger
+		param.Value = strconv.FormatInt(value, 10)
+		param.Type = SqlBigInt
 	case uint64:
-		param.Value = strconv.FormatUint(uint64(value), 10)
-		param.Type = SqlInteger
+		param.Value = strconv.FormatUint(value, 10)
+		param.Type = SqlBigInt
 	case float32:
 		param.Value = strconv.FormatFloat(float64(value), 'f', -1, 32)
 		param.Type = SqlFloat
 	case float64:
-		param.Value = strconv.FormatFloat(float64(value), 'f', -1, 64)
-		param.Type = SqlFloat
+		param.Value = strconv.FormatFloat(value, 'f', -1, 64)
+		param.Type = SqlDouble
 	case time.Time:
 		param.Value = value.Format(time.RFC3339Nano)
 		param.Type = SqlTimestamp
@@ -179,7 +179,13 @@ func convertNamedValuesToSparkParams(values []driver.NamedValue) ([]*cli_service
 		if sqlParam.Type == SqlVoid {
 			sparkValue = nil
 		} else {
-			stringValue := sqlParam.Value.(string)
+			var stringValue string
+			switch v := sqlParam.Value.(type) {
+			case string:
+				stringValue = v
+			default:
+				stringValue = fmt.Sprintf("%v", sqlParam.Value)
+			}
 			sparkValue = &cli_service.TSparkParameterValue{StringValue: &stringValue}
 		}
 
