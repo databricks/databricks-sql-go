@@ -183,6 +183,14 @@ func convertNamedValuesToSparkParams(values []driver.NamedValue) ([]*cli_service
 			switch v := sqlParam.Value.(type) {
 			case string:
 				stringValue = v
+			case float32:
+				stringValue = strconv.FormatFloat(float64(v), 'f', -1, 32)
+			case float64:
+				stringValue = strconv.FormatFloat(v, 'f', -1, 64)
+			case int64:
+				stringValue = strconv.FormatInt(v, 10)
+			case uint64:
+				stringValue = strconv.FormatUint(v, 10)
 			default:
 				stringValue = fmt.Sprintf("%v", sqlParam.Value)
 			}

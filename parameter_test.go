@@ -146,6 +146,31 @@ func TestParameter_Float(t *testing.T) {
 		require.Equal(t, "DOUBLE", *parameters[0].Type)
 		require.Equal(t, "3.14159", *parameters[0].Value.StringValue)
 	})
+
+	t.Run("Should format large float64 consistently when using explicit type", func(t *testing.T) {
+		// This tests that explicit Parameter with large float64 uses decimal notation
+		// (strconv.FormatFloat) instead of scientific notation (fmt.Sprintf)
+		value := float64(1e20)
+		values := []driver.NamedValue{
+			{Value: Parameter{Type: SqlDouble, Value: value}},
+		}
+		parameters, err := convertNamedValuesToSparkParams(values)
+		require.NoError(t, err)
+		require.Equal(t, "DOUBLE", *parameters[0].Type)
+		// Should be decimal notation, not "1e+20"
+		require.Equal(t, "100000000000000000000", *parameters[0].Value.StringValue)
+	})
+
+	t.Run("Should format float32 consistently when using explicit type", func(t *testing.T) {
+		value := float32(3.14159)
+		values := []driver.NamedValue{
+			{Value: Parameter{Type: SqlFloat, Value: value}},
+		}
+		parameters, err := convertNamedValuesToSparkParams(values)
+		require.NoError(t, err)
+		require.Equal(t, "FLOAT", *parameters[0].Type)
+		require.Equal(t, "3.14159", *parameters[0].Value.StringValue)
+	})
 }
 
 func TestParameters_ConvertToSpark(t *testing.T) {
