@@ -59,34 +59,34 @@ func TestParseTelemetryConfig_EmptyParams(t *testing.T) {
 
 func TestParseTelemetryConfig_EnabledTrue(t *testing.T) {
 	params := map[string]string{
-		"telemetry": "true",
+		"enableTelemetry": "true",
 	}
 	cfg := ParseTelemetryConfig(params)
 
-	if !cfg.Enabled {
-		t.Error("Expected telemetry to be enabled when set to 'true'")
+	if !cfg.EnableTelemetry {
+		t.Error("Expected EnableTelemetry to be true when set to 'true'")
 	}
 }
 
 func TestParseTelemetryConfig_Enabled1(t *testing.T) {
 	params := map[string]string{
-		"telemetry": "1",
+		"enableTelemetry": "1",
 	}
 	cfg := ParseTelemetryConfig(params)
 
-	if !cfg.Enabled {
-		t.Error("Expected telemetry to be enabled when set to '1'")
+	if !cfg.EnableTelemetry {
+		t.Error("Expected EnableTelemetry to be true when set to '1'")
 	}
 }
 
 func TestParseTelemetryConfig_EnabledFalse(t *testing.T) {
 	params := map[string]string{
-		"telemetry": "false",
+		"enableTelemetry": "false",
 	}
 	cfg := ParseTelemetryConfig(params)
 
-	if cfg.Enabled {
-		t.Error("Expected telemetry to be disabled when set to 'false'")
+	if cfg.EnableTelemetry {
+		t.Error("Expected EnableTelemetry to be false when set to 'false'")
 	}
 }
 
@@ -162,14 +162,14 @@ func TestParseTelemetryConfig_FlushIntervalInvalid(t *testing.T) {
 
 func TestParseTelemetryConfig_MultipleParams(t *testing.T) {
 	params := map[string]string{
-		"telemetry":                "true",
+		"enableTelemetry":          "true",
 		"telemetry_batch_size":     "200",
 		"telemetry_flush_interval": "30s",
 	}
 	cfg := ParseTelemetryConfig(params)
 
-	if !cfg.Enabled {
-		t.Error("Expected telemetry to be enabled")
+	if !cfg.EnableTelemetry {
+		t.Error("Expected EnableTelemetry to be true")
 	}
 
 	if cfg.BatchSize != 200 {

@@ -10,6 +10,14 @@ type Config struct {
 	// Enabled controls whether telemetry is active
 	Enabled bool
 
+	// ForceEnableTelemetry bypasses server-side feature flag checks
+	// When true, telemetry is always enabled regardless of server flags
+	ForceEnableTelemetry bool
+
+	// EnableTelemetry indicates user wants telemetry enabled if server allows
+	// Respects server-side feature flags and rollout percentage
+	EnableTelemetry bool
+
 	// BatchSize is the number of metrics to batch before flushing
 	BatchSize int
 
@@ -33,10 +41,12 @@ type Config struct {
 }
 
 // DefaultConfig returns default telemetry configuration.
-// Note: Telemetry is disabled by default and will be enabled after full testing and validation.
+// Note: Telemetry is disabled by default and requires explicit opt-in.
 func DefaultConfig() *Config {
 	return &Config{
-		Enabled:                 false, // Disabled by default until testing is complete
+		Enabled:                 false, // Disabled by default, requires explicit opt-in
+		ForceEnableTelemetry:    false,
+		EnableTelemetry:         false,
 		BatchSize:               100,
 		FlushInterval:           5 * time.Second,
 		MaxRetries:              3,
@@ -47,12 +57,25 @@ func DefaultConfig() *Config {
 	}
 }
 
-// ParseTelemetryConfig extracts telemetry config from DSN query parameters.
+// ParseTelemetryConfig extracts telemetry config from connection parameters.
 func ParseTelemetryConfig(params map[string]string) *Config {
 	cfg := DefaultConfig()
 
-	if v, ok := params["telemetry"]; ok {
-		cfg.Enabled = v == "true" || v == "1"
+	// Check for forceEnableTelemetry flag (bypasses server feature flags)
+	if v, ok := params["forceEnableTelemetry"]; ok {
+		if v == "true" || v == "1" {
+			cfg.ForceEnableTelemetry = true
+			cfg.Enabled = true // Also set Enabled for backward compatibility
+		}
+	}
+
+	// Check for enableTelemetry flag (respects server feature flags)
+	if v, ok := params["enableTelemetry"]; ok {
+		if v == "true" || v == "1" {
+			cfg.EnableTelemetry = true
+		} else if v == "false" || v == "0" {
+			cfg.EnableTelemetry = false
+		}
 	}
 
 	if v, ok := params["telemetry_batch_size"]; ok {
