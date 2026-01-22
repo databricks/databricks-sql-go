@@ -73,15 +73,15 @@ func NewRows(
 	client cli_service.TCLIService,
 	config *config.Config,
 	directResults *cli_service.TSparkDirectResults,
+	logger *dbsqllog.DBSQLLogger,
 ) (driver.Rows, dbsqlerr.DBError) {
 
-	var logger *dbsqllog.DBSQLLogger
 	var ctx context.Context
 	if opHandle != nil {
-		logger = dbsqllog.WithContext(connId, correlationId, dbsqlclient.SprintGuid(opHandle.OperationId.GUID))
+		logger = dbsqllog.AddContext(logger, connId, correlationId, dbsqlclient.SprintGuid(opHandle.OperationId.GUID))
 		ctx = driverctx.NewContextWithQueryId(driverctx.NewContextWithCorrelationId(driverctx.NewContextWithConnId(context.Background(), connId), correlationId), dbsqlclient.SprintGuid(opHandle.OperationId.GUID))
 	} else {
-		logger = dbsqllog.WithContext(connId, correlationId, "")
+		logger = dbsqllog.AddContext(logger, connId, correlationId, "")
 		ctx = driverctx.NewContextWithCorrelationId(driverctx.NewContextWithConnId(context.Background(), connId), correlationId)
 	}
 

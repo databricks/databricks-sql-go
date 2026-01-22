@@ -73,7 +73,7 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 		client:  tclient,
 		session: session,
 	}
-	log := logger.WithContext(conn.id, driverctx.CorrelationIdFromContext(ctx), "")
+	log := logger.AddContext(logger.FromContext(ctx), conn.id, driverctx.CorrelationIdFromContext(ctx), "")
 
 	log.Info().Msgf("connect: host=%s port=%d httpPath=%s serverProtocolVersion=0x%X", c.cfg.Host, c.cfg.Port, c.cfg.HTTPPath, session.ServerProtocolVersion)
 

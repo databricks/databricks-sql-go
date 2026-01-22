@@ -119,6 +119,9 @@ func (c *conn) ExecContext(ctx context.Context, query string, args []driver.Name
 	stagingErr := c.execStagingOperation(exStmtResp, ctx)
 
 	if exStmtResp != nil && exStmtResp.OperationHandle != nil {
+		// we have an operation id so update the logger
+		log, _ := client.LoggerAndContext(ctx, exStmtResp)
+
 		// since we have an operation handle we can close the operation if necessary
 		alreadyClosed := exStmtResp.DirectResults != nil && exStmtResp.DirectResults.CloseOperation != nil
 		newCtx := driverctx.NewContextWithCorrelationId(driverctx.NewContextWithConnId(context.Background(), c.id), corrId)
@@ -169,7 +172,7 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 	}
 
 	corrId := driverctx.CorrelationIdFromContext(ctx)
-	rows, err := rows.NewRows(c.id, corrId, exStmtResp.OperationHandle, c.client, c.cfg, exStmtResp.DirectResults)
+	rows, err := rows.NewRows(c.id, corrId, exStmtResp.OperationHandle, c.client, c.cfg, exStmtResp.DirectResults, logger.FromContext(ctx))
 
 	return rows, err
 
@@ -364,7 +367,7 @@ func (c *conn) executeStatement(ctx context.Context, query string, args []driver
 
 func (c *conn) pollOperation(ctx context.Context, opHandle *cli_service.TOperationHandle) (*cli_service.TGetOperationStatusResp, error) {
 	corrId := driverctx.CorrelationIdFromContext(ctx)
-	log := logger.WithContext(c.id, corrId, client.SprintGuid(opHandle.OperationId.GUID))
+	log := logger.AddContext(logger.FromContext(ctx), c.id, corrId, client.SprintGuid(opHandle.OperationId.GUID))
 	var statusResp *cli_service.TGetOperationStatusResp
 	ctx = driverctx.NewContextWithConnId(ctx, c.id)
 	newCtx := driverctx.NewContextWithCorrelationId(driverctx.NewContextWithConnId(context.Background(), c.id), corrId)
@@ -589,7 +592,7 @@ func (c *conn) execStagingOperation(
 	}
 
 	if len(driverctx.StagingPathsFromContext(ctx)) != 0 {
-		row, err = rows.NewRows(c.id, corrId, exStmtResp.OperationHandle, c.client, c.cfg, exStmtResp.DirectResults)
+		row, err = rows.NewRows(c.id, corrId, exStmtResp.OperationHandle, c.client, c.cfg, exStmtResp.DirectResults, logger.FromContext(ctx))
 		if err != nil {
 			return dbsqlerrint.NewDriverError(ctx, "error reading row.", err)
 		}
