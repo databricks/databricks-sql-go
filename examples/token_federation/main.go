@@ -1,34 +1,36 @@
+// Example: Token Provider Authentication
+//
+// This example demonstrates different ways to provide authentication tokens:
+// 1. Static token - hardcoded/env token
+// 2. External token - dynamic token from a function
+// 3. Custom provider - full TokenProvider implementation
+//
+// Environment variables:
+//   - DATABRICKS_HOST: Databricks workspace hostname
+//   - DATABRICKS_HTTPPATH: SQL warehouse HTTP path
+//   - DATABRICKS_ACCESS_TOKEN: Access token for authentication
+//   - TOKEN_EXAMPLE: Which example to run (static, external, custom)
 package main
 
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
+	"database/sql/driver"
 	"fmt"
-	"io"
 	"log"
-	"net/http"
 	"os"
-	"strconv"
 	"time"
 
 	dbsql "github.com/databricks/databricks-sql-go"
 	"github.com/databricks/databricks-sql-go/auth/tokenprovider"
+	"github.com/joho/godotenv"
 )
 
 func main() {
-	// Get configuration from environment
-	host := os.Getenv("DATABRICKS_HOST")
-	httpPath := os.Getenv("DATABRICKS_HTTPPATH")
-	port, err := strconv.Atoi(os.Getenv("DATABRICKS_PORT"))
-	if err != nil {
-		port = 443
+	if err := godotenv.Load(); err != nil {
+		log.Printf("Note: .env file not found")
 	}
 
-	fmt.Println("Token Federation Examples")
-	fmt.Println("=========================")
-
-	// Choose which example to run based on environment variable
 	example := os.Getenv("TOKEN_EXAMPLE")
 	if example == "" {
 		example = "static"
@@ -36,33 +38,31 @@ func main() {
 
 	switch example {
 	case "static":
-		runStaticTokenExample(host, httpPath, port)
+		runStaticExample()
 	case "external":
-		runExternalTokenExample(host, httpPath, port)
-	case "cached":
-		runCachedTokenExample(host, httpPath, port)
+		runExternalExample()
 	case "custom":
-		runCustomProviderExample(host, httpPath, port)
-	case "oauth":
-		runOAuthServiceExample(host, httpPath, port)
+		runCustomProviderExample()
 	default:
-		log.Fatalf("Unknown example: %s", example)
+		log.Fatalf("Unknown example: %s (use: static, external, custom)", example)
 	}
 }
 
-// Example 1: Static token (simplest case)
-func runStaticTokenExample(host, httpPath string, port int) {
-	fmt.Println("\nExample 1: Static Token Provider")
-	fmt.Println("---------------------------------")
+// runStaticExample uses a static token from environment variable
+func runStaticExample() {
+	fmt.Println("Static Token Example")
+	fmt.Println("====================")
 
+	host := os.Getenv("DATABRICKS_HOST")
+	httpPath := os.Getenv("DATABRICKS_HTTPPATH")
 	token := os.Getenv("DATABRICKS_ACCESS_TOKEN")
-	if token == "" {
-		log.Fatal("DATABRICKS_ACCESS_TOKEN not set")
+
+	if host == "" || httpPath == "" || token == "" {
+		log.Fatal("Required: DATABRICKS_HOST, DATABRICKS_HTTPPATH, DATABRICKS_ACCESS_TOKEN")
 	}
 
 	connector, err := dbsql.NewConnector(
 		dbsql.WithServerHostname(host),
-		dbsql.WithPort(port),
 		dbsql.WithHTTPPath(httpPath),
 		dbsql.WithStaticToken(token),
 	)
@@ -70,43 +70,34 @@ func runStaticTokenExample(host, httpPath string, port int) {
 		log.Fatal(err)
 	}
 
-	db := sql.OpenDB(connector)
-	defer db.Close()
-
-	// Test the connection
-	var result int
-	err = db.QueryRow("SELECT 1").Scan(&result)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	fmt.Printf("✓ Connected successfully using static token\n")
-	fmt.Printf("✓ Test query result: %d\n", result)
+	testConnection(connector)
 }
 
-// Example 2: External token provider (token passthrough)
-func runExternalTokenExample(host, httpPath string, port int) {
-	fmt.Println("\nExample 2: External Token Provider (Passthrough)")
-	fmt.Println("------------------------------------------------")
+// runExternalExample uses a function that returns tokens on-demand
+func runExternalExample() {
+	fmt.Println("External Token Example")
+	fmt.Println("======================")
 
-	// Simulate getting token from external source
+	host := os.Getenv("DATABRICKS_HOST")
+	httpPath := os.Getenv("DATABRICKS_HTTPPATH")
+
+	if host == "" || httpPath == "" {
+		log.Fatal("Required: DATABRICKS_HOST, DATABRICKS_HTTPPATH")
+	}
+
+	// Token function - called each time a token is needed
+	// In practice, this could read from a file, call an API, etc.
 	tokenFunc := func() (string, error) {
-		// In real scenario, this could:
-		// - Read from a file
-		// - Call another service
-		// - Retrieve from a secret manager
-		// - Get from environment variable
 		token := os.Getenv("DATABRICKS_ACCESS_TOKEN")
 		if token == "" {
-			return "", fmt.Errorf("no token available")
+			return "", fmt.Errorf("DATABRICKS_ACCESS_TOKEN not set")
 		}
-		fmt.Println("  → Fetching token from external source...")
+		fmt.Println("  → Token fetched from external source")
 		return token, nil
 	}
 
 	connector, err := dbsql.NewConnector(
 		dbsql.WithServerHostname(host),
-		dbsql.WithPort(port),
 		dbsql.WithHTTPPath(httpPath),
 		dbsql.WithExternalToken(tokenFunc),
 	)
@@ -114,231 +105,72 @@ func runExternalTokenExample(host, httpPath string, port int) {
 		log.Fatal(err)
 	}
 
-	db := sql.OpenDB(connector)
-	defer db.Close()
-
-	// Test the connection
-	var result int
-	err = db.QueryRow("SELECT 2").Scan(&result)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	fmt.Printf("✓ Connected successfully using external token provider\n")
-	fmt.Printf("✓ Test query result: %d\n", result)
+	testConnection(connector)
 }
 
-// Example 3: Cached token provider
-func runCachedTokenExample(host, httpPath string, port int) {
-	fmt.Println("\nExample 3: Cached Token Provider")
-	fmt.Println("--------------------------------")
+// runCustomProviderExample uses a custom TokenProvider implementation
+func runCustomProviderExample() {
+	fmt.Println("Custom Provider Example")
+	fmt.Println("=======================")
 
-	callCount := 0
-	// Create a token provider that tracks how many times it's called
-	baseProvider := tokenprovider.NewExternalTokenProvider(func() (string, error) {
-		callCount++
-		fmt.Printf("  → Token provider called (count: %d)\n", callCount)
-		token := os.Getenv("DATABRICKS_ACCESS_TOKEN")
-		if token == "" {
-			return "", fmt.Errorf("no token available")
-		}
-		return token, nil
-	})
+	host := os.Getenv("DATABRICKS_HOST")
+	httpPath := os.Getenv("DATABRICKS_HTTPPATH")
+	token := os.Getenv("DATABRICKS_ACCESS_TOKEN")
 
-	// Wrap with caching
-	cachedProvider := tokenprovider.NewCachedTokenProvider(baseProvider)
+	if host == "" || httpPath == "" || token == "" {
+		log.Fatal("Required: DATABRICKS_HOST, DATABRICKS_HTTPPATH, DATABRICKS_ACCESS_TOKEN")
+	}
+
+	// Custom provider with expiry tracking
+	provider := &ExpiringTokenProvider{
+		token:    token,
+		lifetime: 1 * time.Hour,
+	}
 
 	connector, err := dbsql.NewConnector(
 		dbsql.WithServerHostname(host),
-		dbsql.WithPort(port),
 		dbsql.WithHTTPPath(httpPath),
-		dbsql.WithTokenProvider(cachedProvider),
+		dbsql.WithTokenProvider(provider),
 	)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	db := sql.OpenDB(connector)
-	defer db.Close()
-
-	// Run multiple queries - token should only be fetched once due to caching
-	for i := 1; i <= 3; i++ {
-		var result int
-		err = db.QueryRow(fmt.Sprintf("SELECT %d", i)).Scan(&result)
-		if err != nil {
-			log.Fatal(err)
-		}
-		fmt.Printf("✓ Query %d result: %d\n", i, result)
-	}
-
-	fmt.Printf("✓ Token was fetched %d time(s) (should be 1 due to caching)\n", callCount)
+	testConnection(connector)
+	fmt.Printf("  Token expires: %s\n", provider.expiresAt.Format(time.RFC3339))
 }
 
-// Example 4: Custom token provider with expiry
-func runCustomProviderExample(host, httpPath string, port int) {
-	fmt.Println("\nExample 4: Custom Token Provider with Expiry")
-	fmt.Println("--------------------------------------------")
-
-	// Custom provider that simulates token with expiry
-	provider := &CustomExpiringTokenProvider{
-		baseToken: os.Getenv("DATABRICKS_ACCESS_TOKEN"),
-		expiry:    1 * time.Hour,
-	}
-
-	// Wrap with caching to handle refresh
-	cachedProvider := tokenprovider.NewCachedTokenProvider(provider)
-
-	connector, err := dbsql.NewConnector(
-		dbsql.WithServerHostname(host),
-		dbsql.WithPort(port),
-		dbsql.WithHTTPPath(httpPath),
-		dbsql.WithTokenProvider(cachedProvider),
-	)
-	if err != nil {
-		log.Fatal(err)
-	}
-
+// testConnection verifies the connection works
+func testConnection(connector driver.Connector) {
 	db := sql.OpenDB(connector)
 	defer db.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 
 	var result int
-	err = db.QueryRow("SELECT 42").Scan(&result)
-	if err != nil {
-		log.Fatal(err)
+	if err := db.QueryRowContext(ctx, "SELECT 1").Scan(&result); err != nil {
+		log.Fatalf("Query failed: %v", err)
 	}
-
-	fmt.Printf("✓ Connected with custom provider\n")
-	fmt.Printf("✓ Token expires at: %s\n", provider.lastToken.ExpiresAt.Format(time.RFC3339))
-	fmt.Printf("✓ Test query result: %d\n", result)
+	fmt.Printf("✓ Connected, SELECT 1 = %d\n", result)
 }
 
-// Example 5: OAuth service token provider
-func runOAuthServiceExample(host, httpPath string, port int) {
-	fmt.Println("\nExample 5: OAuth Service Token Provider")
-	fmt.Println("---------------------------------------")
-
-	oauthEndpoint := os.Getenv("OAUTH_TOKEN_ENDPOINT")
-	clientID := os.Getenv("OAUTH_CLIENT_ID")
-	clientSecret := os.Getenv("OAUTH_CLIENT_SECRET")
-
-	if oauthEndpoint == "" || clientID == "" || clientSecret == "" {
-		fmt.Println("⚠ Skipping OAuth example (OAUTH_TOKEN_ENDPOINT, OAUTH_CLIENT_ID, or OAUTH_CLIENT_SECRET not set)")
-		return
-	}
-
-	provider := &OAuthServiceTokenProvider{
-		endpoint:     oauthEndpoint,
-		clientID:     clientID,
-		clientSecret: clientSecret,
-	}
-
-	// Wrap with caching for efficiency
-	cachedProvider := tokenprovider.NewCachedTokenProvider(provider)
-
-	connector, err := dbsql.NewConnector(
-		dbsql.WithServerHostname(host),
-		dbsql.WithPort(port),
-		dbsql.WithHTTPPath(httpPath),
-		dbsql.WithTokenProvider(cachedProvider),
-	)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	db := sql.OpenDB(connector)
-	defer db.Close()
-
-	var result string
-	err = db.QueryRow("SELECT 'OAuth Success'").Scan(&result)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	fmt.Printf("✓ Connected with OAuth service token\n")
-	fmt.Printf("✓ Test query result: %s\n", result)
+// ExpiringTokenProvider is a custom TokenProvider with expiry support
+type ExpiringTokenProvider struct {
+	token     string
+	lifetime  time.Duration
+	expiresAt time.Time
 }
 
-// CustomExpiringTokenProvider simulates a provider with token expiry
-type CustomExpiringTokenProvider struct {
-	baseToken string
-	expiry    time.Duration
-	lastToken *tokenprovider.Token
-}
-
-func (p *CustomExpiringTokenProvider) GetToken(ctx context.Context) (*tokenprovider.Token, error) {
-	if p.baseToken == "" {
-		return nil, fmt.Errorf("no base token configured")
-	}
-
-	fmt.Println("  → Generating new token with expiry...")
-	p.lastToken = &tokenprovider.Token{
-		AccessToken: p.baseToken,
+func (p *ExpiringTokenProvider) GetToken(ctx context.Context) (*tokenprovider.Token, error) {
+	p.expiresAt = time.Now().Add(p.lifetime)
+	return &tokenprovider.Token{
+		AccessToken: p.token,
 		TokenType:   "Bearer",
-		ExpiresAt:   time.Now().Add(p.expiry),
-	}
-
-	return p.lastToken, nil
+		ExpiresAt:   p.expiresAt,
+	}, nil
 }
 
-func (p *CustomExpiringTokenProvider) Name() string {
-	return "custom-expiring"
-}
-
-// OAuthServiceTokenProvider gets tokens from an OAuth service
-type OAuthServiceTokenProvider struct {
-	endpoint     string
-	clientID     string
-	clientSecret string
-}
-
-func (p *OAuthServiceTokenProvider) GetToken(ctx context.Context) (*tokenprovider.Token, error) {
-	fmt.Printf("  → Fetching token from OAuth service: %s\n", p.endpoint)
-
-	// Create OAuth request
-	req, err := http.NewRequestWithContext(ctx, "POST", p.endpoint, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	req.SetBasicAuth(p.clientID, p.clientSecret)
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-
-	// Make request
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("OAuth service returned %d: %s", resp.StatusCode, body)
-	}
-
-	// Parse response
-	var tokenResp struct {
-		AccessToken string `json:"access_token"`
-		TokenType   string `json:"token_type"`
-		ExpiresIn   int    `json:"expires_in"`
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
-		return nil, err
-	}
-
-	token := &tokenprovider.Token{
-		AccessToken: tokenResp.AccessToken,
-		TokenType:   tokenResp.TokenType,
-	}
-
-	if tokenResp.ExpiresIn > 0 {
-		token.ExpiresAt = time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second)
-	}
-
-	return token, nil
-}
-
-func (p *OAuthServiceTokenProvider) Name() string {
-	return "oauth-service"
+func (p *ExpiringTokenProvider) Name() string {
+	return "expiring-token"
 }
