@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 )
@@ -16,6 +15,10 @@ const (
 	featureFlagCacheDuration = 15 * time.Minute
 	// featureFlagHTTPTimeout is the default timeout for feature flag HTTP requests
 	featureFlagHTTPTimeout = 10 * time.Second
+	// featureFlagEndpointPath is the path for feature flag endpoint
+	featureFlagEndpointPath = "/api/2.0/connector-service/feature-flags/GOLANG/"
+	// featureFlagName is the name of the Go driver telemetry feature flag
+	featureFlagName = "databricks.partnerplatform.clientConfigsFeatureFlags.enableTelemetryForGoDriver"
 )
 
 // featureFlagCache manages feature flag state per host with reference counting.
@@ -83,7 +86,7 @@ func (c *featureFlagCache) releaseContext(host string) {
 
 // isTelemetryEnabled checks if telemetry is enabled for the host.
 // Uses cached value if available and not expired.
-func (c *featureFlagCache) isTelemetryEnabled(ctx context.Context, host string, httpClient *http.Client) (bool, error) {
+func (c *featureFlagCache) isTelemetryEnabled(ctx context.Context, host string, driverVersion string, httpClient *http.Client) (bool, error) {
 	c.mu.RLock()
 	flagCtx, exists := c.contexts[host]
 	c.mu.RUnlock()
@@ -118,7 +121,7 @@ func (c *featureFlagCache) isTelemetryEnabled(ctx context.Context, host string, 
 	flagCtx.mu.RUnlock()
 
 	// Fetch fresh value
-	enabled, err := fetchFeatureFlag(ctx, host, httpClient)
+	enabled, err := fetchFeatureFlag(ctx, host, driverVersion, httpClient)
 
 	// Update cache (with proper locking)
 	flagCtx.mu.Lock()
@@ -151,7 +154,7 @@ func (c *featureFlagContext) isExpired() bool {
 }
 
 // fetchFeatureFlag fetches the feature flag value from Databricks.
-func fetchFeatureFlag(ctx context.Context, host string, httpClient *http.Client) (bool, error) {
+func fetchFeatureFlag(ctx context.Context, host string, driverVersion string, httpClient *http.Client) (bool, error) {
 	// Add timeout to context if it doesn't have a deadline
 	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
 		var cancel context.CancelFunc
@@ -159,23 +162,14 @@ func fetchFeatureFlag(ctx context.Context, host string, httpClient *http.Client)
 		defer cancel()
 	}
 
-	// Construct endpoint URL, adding https:// if not already present
-	var endpoint string
-	if strings.HasPrefix(host, "http://") || strings.HasPrefix(host, "https://") {
-		endpoint = fmt.Sprintf("%s/api/2.0/feature-flags", host)
-	} else {
-		endpoint = fmt.Sprintf("https://%s/api/2.0/feature-flags", host)
-	}
+	// Construct endpoint URL using connector-service endpoint like JDBC
+	hostURL := ensureHTTPScheme(host)
+	endpoint := fmt.Sprintf("%s%s%s", hostURL, featureFlagEndpointPath, driverVersion)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", endpoint, nil)
 	if err != nil {
 		return false, fmt.Errorf("failed to create feature flag request: %w", err)
 	}
-
-	// Add query parameter for the specific feature flag
-	q := req.URL.Query()
-	q.Add("flags", "databricks.partnerplatform.clientConfigsFeatureFlags.enableTelemetryForGoDriver")
-	req.URL.RawQuery = q.Encode()
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
@@ -189,17 +183,29 @@ func fetchFeatureFlag(ctx context.Context, host string, httpClient *http.Client)
 		return false, fmt.Errorf("feature flag check failed: %d", resp.StatusCode)
 	}
 
-	var result struct {
-		Flags map[string]bool `json:"flags"`
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return false, fmt.Errorf("failed to read feature flag response: %w", err)
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+
+	var result struct {
+		Flags []struct {
+			Name  string `json:"name"`
+			Value string `json:"value"`
+		} `json:"flags"`
+		TTLSeconds int `json:"ttl_seconds"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
 		return false, fmt.Errorf("failed to decode feature flag response: %w", err)
 	}
 
-	enabled, ok := result.Flags["databricks.partnerplatform.clientConfigsFeatureFlags.enableTelemetryForGoDriver"]
-	if !ok {
-		return false, nil
+	// Look for Go driver telemetry feature flag
+	for _, flag := range result.Flags {
+		if flag.Name == featureFlagName {
+			enabled := flag.Value == "true"
+			return enabled, nil
+		}
 	}
 
-	return enabled, nil
+	return false, nil
 }

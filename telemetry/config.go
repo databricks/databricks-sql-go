@@ -113,7 +113,7 @@ func ParseTelemetryConfig(params map[string]string) *Config {
 //
 // Returns:
 //   - bool: true if telemetry should be enabled, false otherwise
-func isTelemetryEnabled(ctx context.Context, cfg *Config, host string, httpClient *http.Client) bool {
+func isTelemetryEnabled(ctx context.Context, cfg *Config, host string, driverVersion string, httpClient *http.Client) bool {
 	// Priority 1: Force enable bypasses all server checks
 	if cfg.ForceEnableTelemetry {
 		return true
@@ -130,7 +130,7 @@ func isTelemetryEnabled(ctx context.Context, cfg *Config, host string, httpClien
 	// - User explicitly opted in (enableTelemetry=true) - respect server decision
 	// - Default behavior (no explicit setting) - server controls enablement
 	flagCache := getFeatureFlagCache()
-	serverEnabled, err := flagCache.isTelemetryEnabled(ctx, host, httpClient)
+	serverEnabled, err := flagCache.isTelemetryEnabled(ctx, host, driverVersion, httpClient)
 	if err != nil {
 		// On error, respect default (disabled)
 		// This ensures telemetry failures don't impact driver operation
