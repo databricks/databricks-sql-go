@@ -55,6 +55,8 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 	}
 
 	protocolVersion := int64(c.cfg.ThriftProtocolVersion)
+
+	sessionStart := time.Now()
 	session, err := tclient.OpenSession(ctx, &cli_service.TOpenSessionReq{
 		ClientProtocolI64: &protocolVersion,
 		Configuration:     sessionParams,
@@ -64,6 +66,8 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 		},
 		CanUseMultipleCatalogs: &c.cfg.CanUseMultipleCatalogs,
 	})
+	sessionLatencyMs := time.Since(sessionStart).Milliseconds()
+
 	if err != nil {
 		return nil, dbsqlerrint.NewRequestError(ctx, fmt.Sprintf("error connecting: host=%s port=%d, httpPath=%s", c.cfg.Host, c.cfg.Port, c.cfg.HTTPPath), err)
 	}
@@ -81,12 +85,14 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 		conn.telemetry = telemetry.InitializeForConnection(
 			ctx,
 			c.cfg.Host,
+			c.cfg.DriverVersion,
 			c.client,
 			c.cfg.EnableTelemetry,
 			c.cfg.ForceEnableTelemetry,
 		)
 		if conn.telemetry != nil {
 			log.Debug().Msg("telemetry initialized for connection")
+			conn.telemetry.RecordOperation(ctx, conn.id, telemetry.OperationTypeCreateSession, sessionLatencyMs)
 		}
 	}
 

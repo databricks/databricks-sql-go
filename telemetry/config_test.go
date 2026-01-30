@@ -213,7 +213,7 @@ func TestIsTelemetryEnabled_ForceEnable(t *testing.T) {
 	httpClient := &http.Client{Timeout: 5 * time.Second}
 
 	// Force enable should bypass server check
-	result := isTelemetryEnabled(ctx, cfg, server.URL, httpClient)
+	result := isTelemetryEnabled(ctx, cfg, server.URL, "test-version", httpClient)
 
 	if !result {
 		t.Error("Expected telemetry to be enabled with ForceEnableTelemetry=true, got disabled")
@@ -242,7 +242,7 @@ func TestIsTelemetryEnabled_ExplicitOptOut(t *testing.T) {
 	ctx := context.Background()
 	httpClient := &http.Client{Timeout: 5 * time.Second}
 
-	result := isTelemetryEnabled(ctx, cfg, server.URL, httpClient)
+	result := isTelemetryEnabled(ctx, cfg, server.URL, "test-version", httpClient)
 
 	if result {
 		t.Error("Expected telemetry to be disabled with EnableTelemetry=false, got enabled")
@@ -275,7 +275,7 @@ func TestIsTelemetryEnabled_UserOptInServerEnabled(t *testing.T) {
 	flagCache.getOrCreateContext(server.URL)
 	defer flagCache.releaseContext(server.URL)
 
-	result := isTelemetryEnabled(ctx, cfg, server.URL, httpClient)
+	result := isTelemetryEnabled(ctx, cfg, server.URL, "test-version", httpClient)
 
 	if !result {
 		t.Error("Expected telemetry to be enabled when user opts in and server allows, got disabled")
@@ -308,7 +308,7 @@ func TestIsTelemetryEnabled_UserOptInServerDisabled(t *testing.T) {
 	flagCache.getOrCreateContext(server.URL)
 	defer flagCache.releaseContext(server.URL)
 
-	result := isTelemetryEnabled(ctx, cfg, server.URL, httpClient)
+	result := isTelemetryEnabled(ctx, cfg, server.URL, "test-version", httpClient)
 
 	if result {
 		t.Error("Expected telemetry to be disabled when server disables it, got enabled")
@@ -341,7 +341,7 @@ func TestIsTelemetryEnabled_ServerFlagOnly(t *testing.T) {
 	flagCache.getOrCreateContext(server.URL)
 	defer flagCache.releaseContext(server.URL)
 
-	result := isTelemetryEnabled(ctx, cfg, server.URL, httpClient)
+	result := isTelemetryEnabled(ctx, cfg, server.URL, "test-version", httpClient)
 
 	// When enableTelemetry is false (default), should return false (Priority 2)
 	if result {
@@ -356,7 +356,7 @@ func TestIsTelemetryEnabled_Default(t *testing.T) {
 	ctx := context.Background()
 	httpClient := &http.Client{Timeout: 5 * time.Second}
 
-	result := isTelemetryEnabled(ctx, cfg, "test-host", httpClient)
+	result := isTelemetryEnabled(ctx, cfg, "test-host", "test-version", httpClient)
 
 	if result {
 		t.Error("Expected telemetry to be disabled by default, got enabled")
@@ -384,7 +384,7 @@ func TestIsTelemetryEnabled_ServerError(t *testing.T) {
 	flagCache.getOrCreateContext(server.URL)
 	defer flagCache.releaseContext(server.URL)
 
-	result := isTelemetryEnabled(ctx, cfg, server.URL, httpClient)
+	result := isTelemetryEnabled(ctx, cfg, server.URL, "test-version", httpClient)
 
 	// On error, should default to disabled
 	if result {
@@ -408,7 +408,7 @@ func TestIsTelemetryEnabled_ServerUnreachable(t *testing.T) {
 	flagCache.getOrCreateContext(unreachableHost)
 	defer flagCache.releaseContext(unreachableHost)
 
-	result := isTelemetryEnabled(ctx, cfg, unreachableHost, httpClient)
+	result := isTelemetryEnabled(ctx, cfg, unreachableHost, "test-version", httpClient)
 
 	// On error, should default to disabled
 	if result {

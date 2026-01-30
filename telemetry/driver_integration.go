@@ -12,6 +12,7 @@ import (
 // Parameters:
 //   - ctx: Context for the initialization
 //   - host: Databricks host
+//   - driverVersion: Driver version string
 //   - httpClient: HTTP client for making requests
 //   - enableTelemetry: User opt-in flag
 //   - forceEnableTelemetry: Force enable flag (bypasses server checks)
@@ -21,6 +22,7 @@ import (
 func InitializeForConnection(
 	ctx context.Context,
 	host string,
+	driverVersion string,
 	httpClient *http.Client,
 	enableTelemetry bool,
 	forceEnableTelemetry bool,
@@ -30,18 +32,20 @@ func InitializeForConnection(
 	cfg.EnableTelemetry = enableTelemetry
 	cfg.ForceEnableTelemetry = forceEnableTelemetry
 
+	// Get feature flag cache context FIRST (for reference counting)
+	flagCache := getFeatureFlagCache()
+	flagCache.getOrCreateContext(host)
+
 	// Check if telemetry should be enabled
-	if !isTelemetryEnabled(ctx, cfg, host, httpClient) {
+	enabled := isTelemetryEnabled(ctx, cfg, host, driverVersion, httpClient)
+	if !enabled {
+		flagCache.releaseContext(host)
 		return nil
 	}
 
 	// Get or create telemetry client for this host
 	clientMgr := getClientManager()
-	telemetryClient := clientMgr.getOrCreateClient(host, httpClient, cfg)
-
-	// Get feature flag cache context (for reference counting)
-	flagCache := getFeatureFlagCache()
-	flagCache.getOrCreateContext(host)
+	telemetryClient := clientMgr.getOrCreateClient(host, driverVersion, httpClient, cfg)
 
 	// Return interceptor
 	return telemetryClient.GetInterceptor(true)
