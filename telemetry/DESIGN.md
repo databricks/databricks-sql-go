@@ -2129,34 +2129,34 @@ func BenchmarkInterceptor_Disabled(b *testing.B) {
   - [x] Test server error handling
   - [x] Test unreachable server scenarios
 
-### Phase 6: Collection & Aggregation (PECOBLR-1381)
-- [ ] Implement `interceptor.go` for metric collection
-  - [ ] Implement beforeExecute() and afterExecute() hooks
-  - [ ] Implement context-based metric tracking with metricContext
-  - [ ] Implement latency measurement (startTime, latencyMs calculation)
-  - [ ] Add tag collection methods (addTag)
-  - [ ] Implement error swallowing with panic recovery
-- [ ] Implement `aggregator.go` for batching
-  - [ ] Implement statement-level aggregation (statementMetrics)
-  - [ ] Implement batch size and flush interval logic
-  - [ ] Implement background flush goroutine (flushLoop)
-  - [ ] Add thread-safe metric recording
-  - [ ] Implement completeStatement() for final aggregation
-- [ ] Implement error classification in `errors.go`
-  - [ ] Implement error type classification (terminal vs retryable)
-  - [ ] Implement HTTP status code classification
-  - [ ] Add error pattern matching
-  - [ ] Implement isTerminalError() function
-- [ ] Update `client.go` to integrate aggregator
-  - [ ] Wire up aggregator with exporter
-  - [ ] Implement background flush timer
-  - [ ] Update start() and close() methods
-- [ ] Add unit tests for collection and aggregation
-  - [ ] Test interceptor metric collection and latency tracking
-  - [ ] Test aggregation logic
-  - [ ] Test batch flushing (size-based and time-based)
-  - [ ] Test error classification
-  - [ ] Test client with aggregator integration
+### Phase 6: Collection & Aggregation (PECOBLR-1381) ✅ COMPLETED
+- [x] Implement `interceptor.go` for metric collection
+  - [x] Implement beforeExecute() and afterExecute() hooks
+  - [x] Implement context-based metric tracking with metricContext
+  - [x] Implement latency measurement (startTime, latencyMs calculation)
+  - [x] Add tag collection methods (addTag)
+  - [x] Implement error swallowing with panic recovery
+- [x] Implement `aggregator.go` for batching
+  - [x] Implement statement-level aggregation (statementMetrics)
+  - [x] Implement batch size and flush interval logic
+  - [x] Implement background flush goroutine (flushLoop)
+  - [x] Add thread-safe metric recording
+  - [x] Implement completeStatement() for final aggregation
+- [x] Implement error classification in `errors.go`
+  - [x] Implement error type classification (terminal vs retryable)
+  - [x] Implement HTTP status code classification
+  - [x] Add error pattern matching
+  - [x] Implement isTerminalError() function
+- [x] Update `client.go` to integrate aggregator
+  - [x] Wire up aggregator with exporter
+  - [x] Implement background flush timer
+  - [x] Update start() and close() methods
+- [x] Add unit tests for collection and aggregation
+  - [x] Test interceptor metric collection and latency tracking
+  - [x] Test aggregation logic
+  - [x] Test batch flushing (size-based and time-based)
+  - [x] Test error classification
+  - [x] Test client with aggregator integration
 
 ### Phase 7: Driver Integration ✅ COMPLETED
 - [x] Add telemetry initialization to `connection.go`
@@ -2180,9 +2180,12 @@ func BenchmarkInterceptor_Disabled(b *testing.B) {
   - [x] Test compilation with telemetry
   - [x] Test no breaking changes to existing tests
   - [x] Test graceful handling when disabled
-
-Note: Statement execution hooks (beforeExecute/afterExecute in statement.go) for
-actual metric collection can be added as follow-up enhancement.
+- [x] Statement execution hooks
+  - [x] Add beforeExecute() hook to QueryContext
+  - [x] Add afterExecute() and completeStatement() hooks to QueryContext
+  - [x] Add beforeExecute() hook to ExecContext
+  - [x] Add afterExecute() and completeStatement() hooks to ExecContext
+  - [x] Use operation handle GUID as statement ID
 
 ### Phase 8: Testing & Validation
 - [ ] Run benchmark tests
