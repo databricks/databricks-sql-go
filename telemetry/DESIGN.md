@@ -2010,63 +2010,64 @@ func BenchmarkInterceptor_Disabled(b *testing.B) {
   - [x] Shutdown scenarios (empty, with active refs, multiple hosts)
   - [x] Race detector tests passing
 
-### Phase 3: Circuit Breaker (PECOBLR-1143)
-- [ ] Implement `circuitbreaker.go` with state machine
-  - [ ] Implement circuit breaker states (Closed, Open, Half-Open)
-  - [ ] Implement circuitBreakerManager singleton per host
-  - [ ] Add configurable thresholds and timeout
-  - [ ] Implement execute() method with state transitions
-  - [ ] Implement failure/success tracking
-- [ ] Add comprehensive unit tests
-  - [ ] Test state transitions (Closed → Open → Half-Open → Closed)
-  - [ ] Test failure/success counting
-  - [ ] Test timeout and retry logic
-  - [ ] Test per-host circuit breaker isolation
-  - [ ] Test concurrent access
+### Phase 3: Circuit Breaker ✅ COMPLETED
+- [x] Implement `circuitbreaker.go` with state machine
+  - [x] Implement circuit breaker states (Closed, Open, Half-Open)
+  - [x] Implement circuitBreakerManager singleton per host
+  - [x] Add configurable thresholds and timeout
+  - [x] Implement execute() method with state transitions
+  - [x] Implement failure/success tracking with sliding window algorithm
+- [x] Add comprehensive unit tests
+  - [x] Test state transitions (Closed → Open → Half-Open → Closed)
+  - [x] Test failure/success counting
+  - [x] Test timeout and retry logic
+  - [x] Test per-host circuit breaker isolation
+  - [x] Test concurrent access
 
-### Phase 4: Export Infrastructure (PECOBLR-1143)
-- [ ] Implement `exporter.go` with retry logic
-  - [ ] Implement HTTP POST to telemetry endpoint (/api/2.0/telemetry-ext)
-  - [ ] Implement retry logic with exponential backoff
-  - [ ] Implement tag filtering for export (shouldExportToDatabricks)
-  - [ ] Integrate with circuit breaker
-  - [ ] Add error swallowing
-  - [ ] Implement toExportedMetric() conversion
-  - [ ] Implement telemetryPayload JSON structure
-- [ ] Add unit tests for export logic
-  - [ ] Test HTTP request construction
-  - [ ] Test retry logic (with mock HTTP responses)
-  - [ ] Test circuit breaker integration
-  - [ ] Test tag filtering
-  - [ ] Test error swallowing
-- [ ] Add integration tests with mock HTTP server
-  - [ ] Test successful export
-  - [ ] Test error scenarios (4xx, 5xx)
-  - [ ] Test retry behavior
-  - [ ] Test circuit breaker opening/closing
+### Phase 4: Export Infrastructure ✅ COMPLETED
+- [x] Implement `exporter.go` with retry logic
+  - [x] Implement HTTP POST to telemetry endpoint (/api/2.0/telemetry-ext)
+  - [x] Implement retry logic with exponential backoff
+  - [x] Implement tag filtering for export (shouldExportToDatabricks)
+  - [x] Integrate with circuit breaker
+  - [x] Add error swallowing
+  - [x] Implement toExportedMetric() conversion
+  - [x] Implement telemetryPayload JSON structure
+- [x] Add unit tests for export logic
+  - [x] Test HTTP request construction
+  - [x] Test retry logic (with mock HTTP responses)
+  - [x] Test circuit breaker integration
+  - [x] Test tag filtering
+  - [x] Test error swallowing
+- [x] Add integration tests with mock HTTP server
+  - [x] Test successful export
+  - [x] Test error scenarios (4xx, 5xx)
+  - [x] Test retry behavior (exponential backoff)
+  - [x] Test circuit breaker opening/closing
+  - [x] Test context cancellation
 
-### Phase 5: Opt-In Configuration Integration (PECOBLR-1143)
-- [ ] Implement `isTelemetryEnabled()` with priority-based logic in config.go
-  - [ ] Priority 1: ForceEnableTelemetry=true bypasses all checks → return true
-  - [ ] Priority 2: EnableTelemetry=false explicit opt-out → return false
-  - [ ] Priority 3: EnableTelemetry=true + check server feature flag
-  - [ ] Priority 4: Server-side feature flag only (default behavior)
-  - [ ] Priority 5: Default disabled if no flags set and server check fails
-- [ ] Integrate feature flag cache with opt-in logic
-  - [ ] Wire up isTelemetryEnabled() to call featureFlagCache.isTelemetryEnabled()
-  - [ ] Implement fallback behavior on errors (return cached value or false)
-  - [ ] Add proper error handling and logging
-- [ ] Add unit tests for opt-in priority logic
-  - [ ] Test forceEnableTelemetry=true (always enabled, bypasses server)
-  - [ ] Test enableTelemetry=false (always disabled, explicit opt-out)
-  - [ ] Test enableTelemetry=true with server flag enabled
-  - [ ] Test enableTelemetry=true with server flag disabled
-  - [ ] Test default behavior (server flag controls)
-  - [ ] Test error scenarios (server unreachable, use cached value)
-- [ ] Add integration tests with mock feature flag server
-  - [ ] Test opt-in priority with mock server
-  - [ ] Test cache expiration and refresh
-  - [ ] Test concurrent connections with shared cache
+### Phase 5: Opt-In Configuration Integration ✅ COMPLETED
+- [x] Implement `isTelemetryEnabled()` with priority-based logic in config.go
+  - [x] Priority 1: ForceEnableTelemetry=true bypasses all checks → return true
+  - [x] Priority 2: EnableTelemetry=false explicit opt-out → return false
+  - [x] Priority 3: EnableTelemetry=true + check server feature flag
+  - [x] Priority 4: Server-side feature flag only (default behavior)
+  - [x] Priority 5: Default disabled if no flags set and server check fails
+- [x] Integrate feature flag cache with opt-in logic
+  - [x] Wire up isTelemetryEnabled() to call featureFlagCache.isTelemetryEnabled()
+  - [x] Implement fallback behavior on errors (return cached value or false)
+  - [x] Add proper error handling
+- [x] Add unit tests for opt-in priority logic
+  - [x] Test forceEnableTelemetry=true (always enabled, bypasses server)
+  - [x] Test enableTelemetry=false (always disabled, explicit opt-out)
+  - [x] Test enableTelemetry=true with server flag enabled
+  - [x] Test enableTelemetry=true with server flag disabled
+  - [x] Test default behavior (server flag controls)
+  - [x] Test error scenarios (server unreachable, use cached value)
+- [x] Add integration tests with mock feature flag server
+  - [x] Test opt-in priority with mock server
+  - [x] Test server error handling
+  - [x] Test unreachable server scenarios
 
 ### Phase 6: Collection & Aggregation (PECOBLR-1381)
 - [ ] Implement `interceptor.go` for metric collection
