@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/databricks/databricks-sql-go/internal/config"
 )
 
 // TestIntegration_EndToEnd_WithCircuitBreaker tests complete end-to-end flow.
@@ -30,8 +32,8 @@ func TestIntegration_EndToEnd_WithCircuitBreaker(t *testing.T) {
 		if r.Method != "POST" {
 			t.Errorf("Expected POST, got %s", r.Method)
 		}
-		if r.URL.Path != "/api/2.0/telemetry-ext" {
-			t.Errorf("Expected /api/2.0/telemetry-ext, got %s", r.URL.Path)
+		if r.URL.Path != "/telemetry-ext" {
+			t.Errorf("Expected /telemetry-ext, got %s", r.URL.Path)
 		}
 
 		// Parse payload
@@ -56,7 +58,7 @@ func TestIntegration_EndToEnd_WithCircuitBreaker(t *testing.T) {
 	ctx := context.Background()
 	for i := 0; i < 10; i++ {
 		statementID := "stmt-integration"
-		ctx = interceptor.BeforeExecute(ctx, statementID)
+		ctx = interceptor.BeforeExecute(ctx, "session-id", statementID)
 		time.Sleep(10 * time.Millisecond) // Simulate work
 		interceptor.AfterExecute(ctx, nil)
 		interceptor.CompleteStatement(ctx, statementID, false)
@@ -104,7 +106,7 @@ func TestIntegration_CircuitBreakerOpening(t *testing.T) {
 	ctx := context.Background()
 	for i := 0; i < 50; i++ {
 		statementID := "stmt-circuit"
-		ctx = interceptor.BeforeExecute(ctx, statementID)
+		ctx = interceptor.BeforeExecute(ctx, "session-id", statementID)
 		interceptor.AfterExecute(ctx, nil)
 		interceptor.CompleteStatement(ctx, statementID, false)
 
@@ -129,7 +131,7 @@ func TestIntegration_CircuitBreakerOpening(t *testing.T) {
 	// Send more requests - should be dropped if circuit is open
 	for i := 0; i < 10; i++ {
 		statementID := "stmt-dropped"
-		ctx = interceptor.BeforeExecute(ctx, statementID)
+		ctx = interceptor.BeforeExecute(ctx, "session-id", statementID)
 		interceptor.AfterExecute(ctx, nil)
 		interceptor.CompleteStatement(ctx, statementID, false)
 	}
@@ -149,14 +151,8 @@ func TestIntegration_CircuitBreakerOpening(t *testing.T) {
 
 // TestIntegration_OptInPriority tests the priority logic for telemetry enablement.
 func TestIntegration_OptInPriority_ForceEnable(t *testing.T) {
-	cfg := &Config{
-		ForceEnableTelemetry: true, // Priority 1: Force enable
-		EnableTelemetry:      false,
-		BatchSize:            100,
-		FlushInterval:        5 * time.Second,
-		MaxRetries:           3,
-		RetryDelay:           100 * time.Millisecond,
-	}
+	cfg := DefaultConfig()
+	cfg.EnableTelemetry = config.NewConfigValue(true) // Explicit enable (overrides server)
 
 	httpClient := &http.Client{Timeout: 5 * time.Second}
 
@@ -173,24 +169,18 @@ func TestIntegration_OptInPriority_ForceEnable(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Should be enabled due to ForceEnableTelemetry
+	// Should be enabled due to explicit config override
 	result := isTelemetryEnabled(ctx, cfg, server.URL, httpClient)
 
 	if !result {
-		t.Error("Expected telemetry to be force enabled")
+		t.Error("Expected telemetry to be enabled via explicit config")
 	}
 }
 
 // TestIntegration_OptInPriority_ExplicitOptOut tests explicit opt-out.
 func TestIntegration_OptInPriority_ExplicitOptOut(t *testing.T) {
-	cfg := &Config{
-		ForceEnableTelemetry: false,
-		EnableTelemetry:      false, // Priority 2: Explicit opt-out
-		BatchSize:            100,
-		FlushInterval:        5 * time.Second,
-		MaxRetries:           3,
-		RetryDelay:           100 * time.Millisecond,
-	}
+	cfg := DefaultConfig()
+	cfg.EnableTelemetry = config.NewConfigValue(false) // Explicit disable (overrides server)
 
 	httpClient := &http.Client{Timeout: 5 * time.Second}
 
@@ -207,11 +197,11 @@ func TestIntegration_OptInPriority_ExplicitOptOut(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Should be disabled due to explicit opt-out
+	// Should be disabled due to explicit config override
 	result := isTelemetryEnabled(ctx, cfg, server.URL, httpClient)
 
 	if result {
-		t.Error("Expected telemetry to be disabled by explicit opt-out")
+		t.Error("Expected telemetry to be disabled by explicit config")
 	}
 }
 
@@ -237,7 +227,7 @@ func TestIntegration_PrivacyCompliance_NoQueryText(t *testing.T) {
 	// Simulate execution with sensitive data in tags (should be filtered)
 	ctx := context.Background()
 	statementID := "stmt-privacy"
-	ctx = interceptor.BeforeExecute(ctx, statementID)
+	ctx = interceptor.BeforeExecute(ctx, "session-id", statementID)
 
 	// Try to add sensitive tags (should be filtered out)
 	interceptor.AddTag(ctx, "query.text", "SELECT * FROM users")

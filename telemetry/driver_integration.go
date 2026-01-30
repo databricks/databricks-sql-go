@@ -41,7 +41,7 @@ func InitializeForConnection(
 
 	// Get or create telemetry client for this host
 	clientMgr := getClientManager()
-	telemetryClient := clientMgr.getOrCreateClient(host, httpClient, cfg)
+	telemetryClient := clientMgr.getOrCreateClient(host, "", httpClient, cfg) // TODO: Add driver version support
 	if telemetryClient == nil {
 		return nil
 	}

@@ -14,6 +14,7 @@ type Interceptor struct {
 
 // metricContext holds metric collection state in context.
 type metricContext struct {
+	sessionID   string
 	statementID string
 	startTime   time.Time
 	tags        map[string]interface{}
@@ -47,14 +48,33 @@ func getMetricContext(ctx context.Context) *metricContext {
 // BeforeExecute is called before statement execution.
 // Returns a new context with metric tracking attached.
 // Exported for use by the driver package.
-func (i *Interceptor) BeforeExecute(ctx context.Context, statementID string) context.Context {
+func (i *Interceptor) BeforeExecute(ctx context.Context, sessionID string, statementID string) context.Context {
 	if !i.enabled {
 		return ctx
 	}
 
 	mc := &metricContext{
+		sessionID:   sessionID,
 		statementID: statementID,
 		startTime:   time.Now(),
+		tags:        make(map[string]interface{}),
+	}
+
+	return withMetricContext(ctx, mc)
+}
+
+// BeforeExecuteWithTime is called before statement execution with a custom start time.
+// This is useful when the statement ID is not known until after execution starts.
+// Exported for use by the driver package.
+func (i *Interceptor) BeforeExecuteWithTime(ctx context.Context, sessionID string, statementID string, startTime time.Time) context.Context {
+	if !i.enabled {
+		return ctx
+	}
+
+	mc := &metricContext{
+		sessionID:   sessionID,
+		statementID: statementID,
+		startTime:   startTime,
 		tags:        make(map[string]interface{}),
 	}
 
@@ -85,6 +105,7 @@ func (i *Interceptor) AfterExecute(ctx context.Context, err error) {
 	metric := &telemetryMetric{
 		metricType:  "statement",
 		timestamp:   mc.startTime,
+		sessionID:   mc.sessionID,
 		statementID: mc.statementID,
 		latencyMs:   time.Since(mc.startTime).Milliseconds(),
 		tags:        mc.tags,
@@ -140,6 +161,30 @@ func (i *Interceptor) CompleteStatement(ctx context.Context, statementID string,
 	}
 
 	i.aggregator.completeStatement(ctx, statementID, failed)
+}
+
+// RecordOperation records an operation with type and latency.
+// Exported for use by the driver package.
+func (i *Interceptor) RecordOperation(ctx context.Context, sessionID string, operationType string, latencyMs int64) {
+	if !i.enabled {
+		return
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			// Silently handle panics
+		}
+	}()
+
+	metric := &telemetryMetric{
+		metricType:  "operation",
+		timestamp:   time.Now(),
+		sessionID:   sessionID,
+		latencyMs:   latencyMs,
+		tags:        map[string]interface{}{"operation_type": operationType},
+	}
+
+	i.aggregator.recordMetric(ctx, metric)
 }
 
 // Close shuts down the interceptor and flushes pending metrics.

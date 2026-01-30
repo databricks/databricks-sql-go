@@ -31,7 +31,7 @@ type telemetryClient struct {
 }
 
 // newTelemetryClient creates a new telemetry client for the given host.
-func newTelemetryClient(host string, httpClient *http.Client, cfg *Config) *telemetryClient {
+func newTelemetryClient(host string, driverVersion string, httpClient *http.Client, cfg *Config) *telemetryClient {
 	// Create exporter
 	exporter := newTelemetryExporter(host, httpClient, cfg)
 

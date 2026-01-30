@@ -53,14 +53,17 @@ func (c *conn) Close() error {
 	ctx := driverctx.NewContextWithConnId(context.Background(), c.id)
 
 	// Close telemetry and release resources
-	if c.telemetry != nil {
-		_ = c.telemetry.Close(ctx)
-		telemetry.ReleaseForConnection(c.cfg.Host)
-	}
-
+	closeStart := time.Now()
 	_, err := c.client.CloseSession(ctx, &cli_service.TCloseSessionReq{
 		SessionHandle: c.session.SessionHandle,
 	})
+	closeLatencyMs := time.Since(closeStart).Milliseconds()
+
+	if c.telemetry != nil {
+		c.telemetry.RecordOperation(ctx, c.id, telemetry.OperationTypeDeleteSession, closeLatencyMs)
+		_ = c.telemetry.Close(ctx)
+		telemetry.ReleaseForConnection(c.cfg.Host)
+	}
 
 	if err != nil {
 		log.Err(err).Msg("databricks: failed to close connection")
@@ -123,7 +126,8 @@ func (c *conn) ExecContext(ctx context.Context, query string, args []driver.Name
 
 	corrId := driverctx.CorrelationIdFromContext(ctx)
 
-	exStmtResp, opStatusResp, err := c.runQuery(ctx, query, args)
+	var pollCount int
+	exStmtResp, opStatusResp, err := c.runQuery(ctx, query, args, &pollCount)
 	log, ctx = client.LoggerAndContext(ctx, exStmtResp)
 	stagingErr := c.execStagingOperation(exStmtResp, ctx)
 
@@ -131,7 +135,7 @@ func (c *conn) ExecContext(ctx context.Context, query string, args []driver.Name
 	var statementID string
 	if c.telemetry != nil && exStmtResp != nil && exStmtResp.OperationHandle != nil && exStmtResp.OperationHandle.OperationId != nil {
 		statementID = client.SprintGuid(exStmtResp.OperationHandle.OperationId.GUID)
-		ctx = c.telemetry.BeforeExecute(ctx, statementID)
+		ctx = c.telemetry.BeforeExecute(ctx, c.id, statementID)
 		defer func() {
 			finalErr := err
 			if stagingErr != nil {
@@ -140,6 +144,7 @@ func (c *conn) ExecContext(ctx context.Context, query string, args []driver.Name
 			c.telemetry.AfterExecute(ctx, finalErr)
 			c.telemetry.CompleteStatement(ctx, statementID, finalErr != nil)
 		}()
+		c.telemetry.AddTag(ctx, "poll_count", pollCount)
 	}
 
 	if exStmtResp != nil && exStmtResp.OperationHandle != nil {
@@ -181,21 +186,30 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 	log, _ := client.LoggerAndContext(ctx, nil)
 	msg, start := log.Track("QueryContext")
 
-	// first we try to get the results synchronously.
-	// at any point in time that the context is done we must cancel and return
-	exStmtResp, opStatusResp, err := c.runQuery(ctx, query, args)
+	// Capture execution start time for telemetry before running the query
+	executeStart := time.Now()
+	var pollCount int
+	exStmtResp, opStatusResp, pollCount, err := c.runQueryWithTelemetry(ctx, query, args, &pollCount)
 	log, ctx = client.LoggerAndContext(ctx, exStmtResp)
 	defer log.Duration(msg, start)
 
-	// Telemetry: track statement execution
 	var statementID string
 	if c.telemetry != nil && exStmtResp != nil && exStmtResp.OperationHandle != nil && exStmtResp.OperationHandle.OperationId != nil {
 		statementID = client.SprintGuid(exStmtResp.OperationHandle.OperationId.GUID)
-		ctx = c.telemetry.BeforeExecute(ctx, statementID)
+		// Use BeforeExecuteWithTime to set the correct start time (before execution)
+		ctx = c.telemetry.BeforeExecuteWithTime(ctx, c.id, statementID, executeStart)
 		defer func() {
 			c.telemetry.AfterExecute(ctx, err)
 			c.telemetry.CompleteStatement(ctx, statementID, err != nil)
 		}()
+
+		c.telemetry.AddTag(ctx, "poll_count", pollCount)
+		c.telemetry.AddTag(ctx, "operation_type", telemetry.OperationTypeExecuteStatement)
+
+		if exStmtResp.DirectResults != nil && exStmtResp.DirectResults.ResultSetMetadata != nil {
+			resultFormat := exStmtResp.DirectResults.ResultSetMetadata.GetResultFormat()
+			c.telemetry.AddTag(ctx, "result.format", resultFormat.String())
+		}
 	}
 
 	if err != nil {
@@ -203,12 +217,29 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 		return nil, dbsqlerrint.NewExecutionError(ctx, dbsqlerr.ErrQueryExecution, err, opStatusResp)
 	}
 
-	rows, err := rows.NewRows(ctx, exStmtResp.OperationHandle, c.client, c.cfg, exStmtResp.DirectResults)
+	var telemetryUpdate func(int, int64)
+	if c.telemetry != nil {
+		telemetryUpdate = func(chunkCount int, bytesDownloaded int64) {
+			c.telemetry.AddTag(ctx, "chunk_count", chunkCount)
+			c.telemetry.AddTag(ctx, "bytes_downloaded", bytesDownloaded)
+		}
+	}
+
+	rows, err := rows.NewRows(ctx, exStmtResp.OperationHandle, c.client, c.cfg, exStmtResp.DirectResults, ctx, telemetryUpdate)
 	return rows, err
 
 }
 
-func (c *conn) runQuery(ctx context.Context, query string, args []driver.NamedValue) (*cli_service.TExecuteStatementResp, *cli_service.TGetOperationStatusResp, error) {
+func (c *conn) runQueryWithTelemetry(ctx context.Context, query string, args []driver.NamedValue, pollCount *int) (*cli_service.TExecuteStatementResp, *cli_service.TGetOperationStatusResp, int, error) {
+	exStmtResp, opStatusResp, err := c.runQuery(ctx, query, args, pollCount)
+	count := 0
+	if pollCount != nil {
+		count = *pollCount
+	}
+	return exStmtResp, opStatusResp, count, err
+}
+
+func (c *conn) runQuery(ctx context.Context, query string, args []driver.NamedValue, pollCount *int) (*cli_service.TExecuteStatementResp, *cli_service.TGetOperationStatusResp, error) {
 	// first we try to get the results synchronously.
 	// at any point in time that the context is done we must cancel and return
 	exStmtResp, err := c.executeStatement(ctx, query, args)
@@ -240,7 +271,7 @@ func (c *conn) runQuery(ctx context.Context, query string, args []driver.NamedVa
 		case cli_service.TOperationState_INITIALIZED_STATE,
 			cli_service.TOperationState_PENDING_STATE,
 			cli_service.TOperationState_RUNNING_STATE:
-			statusResp, err := c.pollOperation(ctx, opHandle)
+			statusResp, err := c.pollOperationWithCount(ctx, opHandle, pollCount)
 			if err != nil {
 				return exStmtResp, statusResp, err
 			}
@@ -268,7 +299,7 @@ func (c *conn) runQuery(ctx context.Context, query string, args []driver.NamedVa
 		}
 
 	} else {
-		statusResp, err := c.pollOperation(ctx, opHandle)
+		statusResp, err := c.pollOperationWithCount(ctx, opHandle, pollCount)
 		if err != nil {
 			return exStmtResp, statusResp, err
 		}
@@ -396,7 +427,7 @@ func (c *conn) executeStatement(ctx context.Context, query string, args []driver
 	return resp, err
 }
 
-func (c *conn) pollOperation(ctx context.Context, opHandle *cli_service.TOperationHandle) (*cli_service.TGetOperationStatusResp, error) {
+func (c *conn) pollOperationWithCount(ctx context.Context, opHandle *cli_service.TOperationHandle, pollCount *int) (*cli_service.TGetOperationStatusResp, error) {
 	corrId := driverctx.CorrelationIdFromContext(ctx)
 	log := logger.WithContext(c.id, corrId, client.SprintGuid(opHandle.OperationId.GUID))
 	var statusResp *cli_service.TGetOperationStatusResp
@@ -412,6 +443,10 @@ func (c *conn) pollOperation(ctx context.Context, opHandle *cli_service.TOperati
 			statusResp, err = c.client.GetOperationStatus(newCtx, &cli_service.TGetOperationStatusReq{
 				OperationHandle: opHandle,
 			})
+
+			if pollCount != nil {
+				*pollCount++
+			}
 
 			if statusResp != nil && statusResp.OperationState != nil {
 				log.Debug().Msgf("databricks: status %s", statusResp.GetOperationState().String())
@@ -453,6 +488,10 @@ func (c *conn) pollOperation(ctx context.Context, opHandle *cli_service.TOperati
 		return nil, dbsqlerrint.NewDriverError(ctx, dbsqlerr.ErrReadQueryStatus, nil)
 	}
 	return statusResp, nil
+}
+
+func (c *conn) pollOperation(ctx context.Context, opHandle *cli_service.TOperationHandle) (*cli_service.TGetOperationStatusResp, error) {
+	return c.pollOperationWithCount(ctx, opHandle, nil)
 }
 
 func (c *conn) CheckNamedValue(nv *driver.NamedValue) error {
@@ -622,7 +661,7 @@ func (c *conn) execStagingOperation(
 	}
 
 	if len(driverctx.StagingPathsFromContext(ctx)) != 0 {
-		row, err = rows.NewRows(ctx, exStmtResp.OperationHandle, c.client, c.cfg, exStmtResp.DirectResults)
+		row, err = rows.NewRows(ctx, exStmtResp.OperationHandle, c.client, c.cfg, exStmtResp.DirectResults, nil, nil)
 		if err != nil {
 			return dbsqlerrint.NewDriverError(ctx, "error reading row.", err)
 		}
