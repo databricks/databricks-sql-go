@@ -5,8 +5,9 @@ import (
 	"time"
 )
 
-// interceptor wraps driver operations to collect metrics.
-type interceptor struct {
+// Interceptor wraps driver operations to collect metrics.
+// Exported for use by the driver package.
+type Interceptor struct {
 	aggregator *metricsAggregator
 	enabled    bool
 }
@@ -23,8 +24,8 @@ type contextKey int
 const metricContextKey contextKey = 0
 
 // newInterceptor creates a new telemetry interceptor.
-func newInterceptor(aggregator *metricsAggregator, enabled bool) *interceptor {
-	return &interceptor{
+func newInterceptor(aggregator *metricsAggregator, enabled bool) *Interceptor {
+	return &Interceptor{
 		aggregator: aggregator,
 		enabled:    enabled,
 	}
@@ -45,7 +46,7 @@ func getMetricContext(ctx context.Context) *metricContext {
 
 // beforeExecute is called before statement execution.
 // Returns a new context with metric tracking attached.
-func (i *interceptor) beforeExecute(ctx context.Context, statementID string) context.Context {
+func (i *Interceptor) beforeExecute(ctx context.Context, statementID string) context.Context {
 	if !i.enabled {
 		return ctx
 	}
@@ -61,7 +62,7 @@ func (i *interceptor) beforeExecute(ctx context.Context, statementID string) con
 
 // afterExecute is called after statement execution.
 // Records the metric with timing and error information.
-func (i *interceptor) afterExecute(ctx context.Context, err error) {
+func (i *Interceptor) afterExecute(ctx context.Context, err error) {
 	if !i.enabled {
 		return
 	}
@@ -96,7 +97,7 @@ func (i *interceptor) afterExecute(ctx context.Context, err error) {
 }
 
 // addTag adds a tag to the current metric context.
-func (i *interceptor) addTag(ctx context.Context, key string, value interface{}) {
+func (i *Interceptor) addTag(ctx context.Context, key string, value interface{}) {
 	if !i.enabled {
 		return
 	}
@@ -108,7 +109,7 @@ func (i *interceptor) addTag(ctx context.Context, key string, value interface{})
 }
 
 // recordConnection records a connection event.
-func (i *interceptor) recordConnection(ctx context.Context, tags map[string]interface{}) {
+func (i *Interceptor) recordConnection(ctx context.Context, tags map[string]interface{}) {
 	if !i.enabled {
 		return
 	}
@@ -129,7 +130,7 @@ func (i *interceptor) recordConnection(ctx context.Context, tags map[string]inte
 }
 
 // completeStatement marks a statement as complete and flushes aggregated metrics.
-func (i *interceptor) completeStatement(ctx context.Context, statementID string, failed bool) {
+func (i *Interceptor) completeStatement(ctx context.Context, statementID string, failed bool) {
 	if !i.enabled {
 		return
 	}
@@ -137,8 +138,9 @@ func (i *interceptor) completeStatement(ctx context.Context, statementID string,
 	i.aggregator.completeStatement(ctx, statementID, failed)
 }
 
-// close shuts down the interceptor and flushes pending metrics.
-func (i *interceptor) close(ctx context.Context) error {
+// Close shuts down the interceptor and flushes pending metrics.
+// Exported for use by the driver package.
+func (i *Interceptor) Close(ctx context.Context) error {
 	if !i.enabled {
 		return nil
 	}

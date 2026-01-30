@@ -80,8 +80,9 @@ func (c *telemetryClient) close() error {
 	return c.aggregator.close(ctx)
 }
 
-// getInterceptor returns a new interceptor for a connection.
+// GetInterceptor returns a new interceptor for a connection.
 // Each connection gets its own interceptor, but they all share the same aggregator.
-func (c *telemetryClient) getInterceptor(enabled bool) *interceptor {
+// Exported for use by the driver package.
+func (c *telemetryClient) GetInterceptor(enabled bool) *Interceptor {
 	return newInterceptor(c.aggregator, enabled)
 }
