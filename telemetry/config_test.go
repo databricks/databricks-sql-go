@@ -12,9 +12,14 @@ import (
 func TestDefaultConfig(t *testing.T) {
 	cfg := DefaultConfig()
 
-	// Verify telemetry is disabled by default
+	// Verify telemetry uses config overlay (nil = use server flag)
 	if cfg.Enabled {
-		t.Error("Expected telemetry to be disabled by default, got enabled")
+		t.Error("Expected Enabled to be false by default")
+	}
+
+	// Verify EnableTelemetry is nil (config overlay - use server flag)
+	if cfg.EnableTelemetry != nil {
+		t.Error("Expected EnableTelemetry to be nil (use server flag), got non-nil")
 	}
 
 	// Verify other defaults
@@ -51,9 +56,9 @@ func TestParseTelemetryConfig_EmptyParams(t *testing.T) {
 	params := map[string]string{}
 	cfg := ParseTelemetryConfig(params)
 
-	// Should return defaults
-	if cfg.Enabled {
-		t.Error("Expected telemetry to be disabled by default")
+	// Should return defaults - EnableTelemetry nil means use server flag
+	if cfg.EnableTelemetry != nil {
+		t.Error("Expected EnableTelemetry to be nil (use server flag) when no params provided")
 	}
 
 	if cfg.BatchSize != 100 {
@@ -67,7 +72,7 @@ func TestParseTelemetryConfig_EnabledTrue(t *testing.T) {
 	}
 	cfg := ParseTelemetryConfig(params)
 
-	if !cfg.EnableTelemetry {
+	if cfg.EnableTelemetry == nil || !*cfg.EnableTelemetry {
 		t.Error("Expected EnableTelemetry to be true when set to 'true'")
 	}
 }
@@ -78,7 +83,7 @@ func TestParseTelemetryConfig_Enabled1(t *testing.T) {
 	}
 	cfg := ParseTelemetryConfig(params)
 
-	if !cfg.EnableTelemetry {
+	if cfg.EnableTelemetry == nil || !*cfg.EnableTelemetry {
 		t.Error("Expected EnableTelemetry to be true when set to '1'")
 	}
 }
@@ -89,7 +94,7 @@ func TestParseTelemetryConfig_EnabledFalse(t *testing.T) {
 	}
 	cfg := ParseTelemetryConfig(params)
 
-	if cfg.EnableTelemetry {
+	if cfg.EnableTelemetry == nil || *cfg.EnableTelemetry {
 		t.Error("Expected EnableTelemetry to be false when set to 'false'")
 	}
 }
@@ -172,7 +177,7 @@ func TestParseTelemetryConfig_MultipleParams(t *testing.T) {
 	}
 	cfg := ParseTelemetryConfig(params)
 
-	if !cfg.EnableTelemetry {
+	if cfg.EnableTelemetry == nil || !*cfg.EnableTelemetry {
 		t.Error("Expected EnableTelemetry to be true")
 	}
 
@@ -190,11 +195,111 @@ func TestParseTelemetryConfig_MultipleParams(t *testing.T) {
 	}
 }
 
-// TestIsTelemetryEnabled_ForceEnable tests Priority 1: forceEnableTelemetry=true
-func TestIsTelemetryEnabled_ForceEnable(t *testing.T) {
+// TestIsTelemetryEnabled_ClientOverrideEnabled tests Priority 1: client explicitly enables (overrides server)
+func TestIsTelemetryEnabled_ClientOverrideEnabled(t *testing.T) {
 	// Setup: Create a server that returns disabled
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Even if server says disabled, force enable should bypass
+		// Server says disabled, but client override should win
+		resp := map[string]interface{}{
+			"flags": map[string]bool{
+				"databricks.partnerplatform.clientConfigsFeatureFlags.enableTelemetryForGoDriver": false,
+			},
+		}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	enabled := true
+	cfg := &Config{
+		EnableTelemetry: &enabled, // Priority 1: Client explicitly enables
+	}
+
+	ctx := context.Background()
+	httpClient := &http.Client{Timeout: 5 * time.Second}
+
+	// Setup feature flag cache context
+	flagCache := getFeatureFlagCache()
+	flagCache.getOrCreateContext(server.URL)
+	defer flagCache.releaseContext(server.URL)
+
+	// Client override should bypass server check
+	result := isTelemetryEnabled(ctx, cfg, server.URL, httpClient)
+
+	if !result {
+		t.Error("Expected telemetry to be enabled when client explicitly sets enableTelemetry=true, got disabled")
+	}
+}
+
+// TestIsTelemetryEnabled_ClientOverrideDisabled tests Priority 1: client explicitly disables (overrides server)
+func TestIsTelemetryEnabled_ClientOverrideDisabled(t *testing.T) {
+	// Setup: Create a server that returns enabled
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Server says enabled, but client override should win
+		resp := map[string]interface{}{
+			"flags": map[string]bool{
+				"databricks.partnerplatform.clientConfigsFeatureFlags.enableTelemetryForGoDriver": true,
+			},
+		}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	disabled := false
+	cfg := &Config{
+		EnableTelemetry: &disabled, // Priority 1: Client explicitly disables
+	}
+
+	ctx := context.Background()
+	httpClient := &http.Client{Timeout: 5 * time.Second}
+
+	// Setup feature flag cache context
+	flagCache := getFeatureFlagCache()
+	flagCache.getOrCreateContext(server.URL)
+	defer flagCache.releaseContext(server.URL)
+
+	result := isTelemetryEnabled(ctx, cfg, server.URL, httpClient)
+
+	if result {
+		t.Error("Expected telemetry to be disabled when client explicitly sets enableTelemetry=false, got enabled")
+	}
+}
+
+// TestIsTelemetryEnabled_ServerEnabled tests Priority 2: server flag enables (client didn't set)
+func TestIsTelemetryEnabled_ServerEnabled(t *testing.T) {
+	// Setup: Create a server that returns enabled
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := map[string]interface{}{
+			"flags": map[string]bool{
+				"databricks.partnerplatform.clientConfigsFeatureFlags.enableTelemetryForGoDriver": true,
+			},
+		}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	cfg := &Config{
+		EnableTelemetry: nil, // Client didn't set - use server flag
+	}
+
+	ctx := context.Background()
+	httpClient := &http.Client{Timeout: 5 * time.Second}
+
+	// Setup feature flag cache context
+	flagCache := getFeatureFlagCache()
+	flagCache.getOrCreateContext(server.URL)
+	defer flagCache.releaseContext(server.URL)
+
+	result := isTelemetryEnabled(ctx, cfg, server.URL, httpClient)
+
+	if !result {
+		t.Error("Expected telemetry to be enabled when server flag is true, got disabled")
+	}
+}
+
+// TestIsTelemetryEnabled_ServerDisabled tests Priority 2: server flag disables (client didn't set)
+func TestIsTelemetryEnabled_ServerDisabled(t *testing.T) {
+	// Setup: Create a server that returns disabled
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		resp := map[string]interface{}{
 			"flags": map[string]bool{
 				"databricks.partnerplatform.clientConfigsFeatureFlags.enableTelemetryForGoDriver": false,
@@ -205,99 +310,7 @@ func TestIsTelemetryEnabled_ForceEnable(t *testing.T) {
 	defer server.Close()
 
 	cfg := &Config{
-		ForceEnableTelemetry: true, // Priority 1: Force enable
-		EnableTelemetry:      false,
-	}
-
-	ctx := context.Background()
-	httpClient := &http.Client{Timeout: 5 * time.Second}
-
-	// Force enable should bypass server check
-	result := isTelemetryEnabled(ctx, cfg, server.URL, httpClient)
-
-	if !result {
-		t.Error("Expected telemetry to be enabled with ForceEnableTelemetry=true, got disabled")
-	}
-}
-
-// TestIsTelemetryEnabled_ExplicitOptOut tests Priority 2: enableTelemetry=false
-func TestIsTelemetryEnabled_ExplicitOptOut(t *testing.T) {
-	// Setup: Create a server that returns enabled
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Even if server says enabled, explicit opt-out should disable
-		resp := map[string]interface{}{
-			"flags": map[string]bool{
-				"databricks.partnerplatform.clientConfigsFeatureFlags.enableTelemetryForGoDriver": true,
-			},
-		}
-		json.NewEncoder(w).Encode(resp)
-	}))
-	defer server.Close()
-
-	cfg := &Config{
-		ForceEnableTelemetry: false,
-		EnableTelemetry:      false, // Priority 2: Explicit opt-out
-	}
-
-	ctx := context.Background()
-	httpClient := &http.Client{Timeout: 5 * time.Second}
-
-	result := isTelemetryEnabled(ctx, cfg, server.URL, httpClient)
-
-	if result {
-		t.Error("Expected telemetry to be disabled with EnableTelemetry=false, got enabled")
-	}
-}
-
-// TestIsTelemetryEnabled_UserOptInServerEnabled tests Priority 3: user opts in + server enabled
-func TestIsTelemetryEnabled_UserOptInServerEnabled(t *testing.T) {
-	// Setup: Create a server that returns enabled
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		resp := map[string]interface{}{
-			"flags": map[string]bool{
-				"databricks.partnerplatform.clientConfigsFeatureFlags.enableTelemetryForGoDriver": true,
-			},
-		}
-		json.NewEncoder(w).Encode(resp)
-	}))
-	defer server.Close()
-
-	cfg := &Config{
-		ForceEnableTelemetry: false,
-		EnableTelemetry:      true, // User wants telemetry
-	}
-
-	ctx := context.Background()
-	httpClient := &http.Client{Timeout: 5 * time.Second}
-
-	// Setup feature flag cache context
-	flagCache := getFeatureFlagCache()
-	flagCache.getOrCreateContext(server.URL)
-	defer flagCache.releaseContext(server.URL)
-
-	result := isTelemetryEnabled(ctx, cfg, server.URL, httpClient)
-
-	if !result {
-		t.Error("Expected telemetry to be enabled when user opts in and server allows, got disabled")
-	}
-}
-
-// TestIsTelemetryEnabled_UserOptInServerDisabled tests Priority 3: user opts in but server disabled
-func TestIsTelemetryEnabled_UserOptInServerDisabled(t *testing.T) {
-	// Setup: Create a server that returns disabled
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		resp := map[string]interface{}{
-			"flags": map[string]bool{
-				"databricks.partnerplatform.clientConfigsFeatureFlags.enableTelemetryForGoDriver": false,
-			},
-		}
-		json.NewEncoder(w).Encode(resp)
-	}))
-	defer server.Close()
-
-	cfg := &Config{
-		ForceEnableTelemetry: false,
-		EnableTelemetry:      true, // User wants telemetry
+		EnableTelemetry: nil, // Client didn't set - use server flag
 	}
 
 	ctx := context.Background()
@@ -311,59 +324,26 @@ func TestIsTelemetryEnabled_UserOptInServerDisabled(t *testing.T) {
 	result := isTelemetryEnabled(ctx, cfg, server.URL, httpClient)
 
 	if result {
-		t.Error("Expected telemetry to be disabled when server disables it, got enabled")
+		t.Error("Expected telemetry to be disabled when server flag is false, got enabled")
 	}
 }
 
-// TestIsTelemetryEnabled_ServerFlagOnly tests Priority 4: server flag controls (default behavior)
-func TestIsTelemetryEnabled_ServerFlagOnly(t *testing.T) {
-	// Setup: Create a server that returns enabled
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		resp := map[string]interface{}{
-			"flags": map[string]bool{
-				"databricks.partnerplatform.clientConfigsFeatureFlags.enableTelemetryForGoDriver": true,
-			},
-		}
-		json.NewEncoder(w).Encode(resp)
-	}))
-	defer server.Close()
-
-	cfg := &Config{
-		ForceEnableTelemetry: false,
-		EnableTelemetry:      false, // Default: no explicit user preference
-	}
-
-	ctx := context.Background()
-	httpClient := &http.Client{Timeout: 5 * time.Second}
-
-	// Setup feature flag cache context
-	flagCache := getFeatureFlagCache()
-	flagCache.getOrCreateContext(server.URL)
-	defer flagCache.releaseContext(server.URL)
-
-	result := isTelemetryEnabled(ctx, cfg, server.URL, httpClient)
-
-	// When enableTelemetry is false (default), should return false (Priority 2)
-	if result {
-		t.Error("Expected telemetry to be disabled with default EnableTelemetry=false, got enabled")
-	}
-}
-
-// TestIsTelemetryEnabled_Default tests Priority 5: default disabled
-func TestIsTelemetryEnabled_Default(t *testing.T) {
+// TestIsTelemetryEnabled_FailSafeDefault tests Priority 3: default disabled when server unavailable
+func TestIsTelemetryEnabled_FailSafeDefault(t *testing.T) {
 	cfg := DefaultConfig()
 
 	ctx := context.Background()
 	httpClient := &http.Client{Timeout: 5 * time.Second}
 
-	result := isTelemetryEnabled(ctx, cfg, "test-host", httpClient)
+	// No server available, should default to disabled (fail-safe)
+	result := isTelemetryEnabled(ctx, cfg, "nonexistent-host", httpClient)
 
 	if result {
-		t.Error("Expected telemetry to be disabled by default, got enabled")
+		t.Error("Expected telemetry to be disabled when server unavailable (fail-safe), got enabled")
 	}
 }
 
-// TestIsTelemetryEnabled_ServerError tests error handling
+// TestIsTelemetryEnabled_ServerError tests Priority 3: fail-safe default on server error
 func TestIsTelemetryEnabled_ServerError(t *testing.T) {
 	// Setup: Create a server that returns error
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -372,8 +352,7 @@ func TestIsTelemetryEnabled_ServerError(t *testing.T) {
 	defer server.Close()
 
 	cfg := &Config{
-		ForceEnableTelemetry: false,
-		EnableTelemetry:      true, // User wants telemetry
+		EnableTelemetry: nil, // Client didn't set - should use server, but server errors
 	}
 
 	ctx := context.Background()
@@ -386,17 +365,16 @@ func TestIsTelemetryEnabled_ServerError(t *testing.T) {
 
 	result := isTelemetryEnabled(ctx, cfg, server.URL, httpClient)
 
-	// On error, should default to disabled
+	// On error, should default to disabled (fail-safe)
 	if result {
-		t.Error("Expected telemetry to be disabled on server error, got enabled")
+		t.Error("Expected telemetry to be disabled on server error (fail-safe), got enabled")
 	}
 }
 
-// TestIsTelemetryEnabled_ServerUnreachable tests unreachable server
+// TestIsTelemetryEnabled_ServerUnreachable tests Priority 3: fail-safe default on unreachable server
 func TestIsTelemetryEnabled_ServerUnreachable(t *testing.T) {
 	cfg := &Config{
-		ForceEnableTelemetry: false,
-		EnableTelemetry:      true, // User wants telemetry
+		EnableTelemetry: nil, // Client didn't set - should use server, but server unreachable
 	}
 
 	ctx := context.Background()
@@ -410,8 +388,37 @@ func TestIsTelemetryEnabled_ServerUnreachable(t *testing.T) {
 
 	result := isTelemetryEnabled(ctx, cfg, unreachableHost, httpClient)
 
-	// On error, should default to disabled
+	// On error, should default to disabled (fail-safe)
 	if result {
-		t.Error("Expected telemetry to be disabled when server unreachable, got enabled")
+		t.Error("Expected telemetry to be disabled when server unreachable (fail-safe), got enabled")
+	}
+}
+
+// TestIsTelemetryEnabled_ClientOverridesServerError tests Priority 1 > Priority 3
+func TestIsTelemetryEnabled_ClientOverridesServerError(t *testing.T) {
+	// Setup: Create a server that returns error
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	enabled := true
+	cfg := &Config{
+		EnableTelemetry: &enabled, // Client explicitly enables - should override server error
+	}
+
+	ctx := context.Background()
+	httpClient := &http.Client{Timeout: 5 * time.Second}
+
+	// Setup feature flag cache context
+	flagCache := getFeatureFlagCache()
+	flagCache.getOrCreateContext(server.URL)
+	defer flagCache.releaseContext(server.URL)
+
+	result := isTelemetryEnabled(ctx, cfg, server.URL, httpClient)
+
+	// Client override should work even when server errors
+	if !result {
+		t.Error("Expected telemetry to be enabled when client explicitly sets true, even with server error, got disabled")
 	}
 }
