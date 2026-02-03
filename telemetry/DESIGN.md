@@ -165,9 +165,12 @@ sequenceDiagram
 
 #### Rationale
 - **Per-host caching**: Feature flags cached by host to prevent rate limiting
+- **Multi-flag support**: Fetches all flags in a single request for efficiency
 - **Reference counting**: Tracks number of connections per host for proper cleanup
 - **Automatic expiration**: Refreshes cached flags after TTL expires (15 minutes)
 - **Thread-safe**: Uses sync.RWMutex for concurrent access
+- **Synchronous fetch**: Blocks on cache miss (see Section 6.3 for behavior details)
+- **Thundering herd protection**: Only one fetch per host at a time
 
 #### Interface
 
@@ -1604,37 +1607,59 @@ func isInRollout(workspaceID string, rolloutPercentage int) bool {
 }
 ```
 
-### 6.4 Opt-In Control & Priority
+#### Synchronous Fetch Behavior
 
-The telemetry system supports multiple layers of control for gradual rollout with clear priority order:
+**Feature flag fetching is synchronous** and may block driver initialization.
 
-**Opt-In Priority (highest to lowest):**
-1. **forceEnableTelemetry=true** - Bypasses all server-side feature flag checks, always enables
-2. **enableTelemetry=false** - Explicit opt-out, always disables telemetry
-3. **enableTelemetry=true + Server Feature Flag** - User wants telemetry, respects server decision
-4. **Server-Side Feature Flag Only** - Databricks-controlled when user hasn't specified preference
-5. **Default** - Disabled (`false`)
+**Key Characteristics:**
+- 10-second HTTP timeout per request
+- Uses RetryableClient (4 retries, exponential backoff 1s-30s)
+- 15-minute cache minimizes fetch frequency
+- Thundering herd protection (only one fetch per host at a time)
+
+**When It Blocks:**
+- First connection to host: blocks for HTTP fetch (up to ~70s with retries)
+- Cache expiry (every 15 min): first caller blocks, others return stale cache
+- Concurrent callers: only first blocks, others return stale cache immediately
+
+**Why synchronous:** Simple, deterministic, 99% cache hit rate, matches JDBC driver.
+
+### 6.4 Config Overlay Pattern
+
+**UPDATE (Phase 4-5):** The telemetry system now uses a **config overlay pattern** that provides a consistent, clear priority model. This pattern is designed to be reusable across all driver configurations.
+
+#### Config Overlay Priority (highest to lowest):
+
+1. **Client Config** - Explicitly set by user (overrides server)
+2. **Server Config** - Feature flag controls when client doesn't specify
+3. **Fail-Safe Default** - Disabled when server unavailable
+
+This approach eliminates the need for special bypass flags like `forceEnableTelemetry` because client config naturally has priority.
+
+#### Implementation:
 
 ```go
-// isTelemetryEnabled checks if telemetry should be enabled for this connection.
-// Implements the priority-based decision tree for telemetry enablement.
+// EnableTelemetry is a pointer to distinguish three states:
+// - nil: not set by client (use server feature flag)
+// - true: client wants enabled (overrides server)
+// - false: client wants disabled (overrides server)
+type Config struct {
+	EnableTelemetry *bool
+	// ... other fields
+}
+
+// isTelemetryEnabled implements config overlay
 func isTelemetryEnabled(ctx context.Context, cfg *Config, host string, httpClient *http.Client) bool {
-	// Priority 1: Force enable bypasses all server checks
-	if cfg.ForceEnableTelemetry {
-		return true
+	// Priority 1: Client explicitly set (overrides everything)
+	if cfg.EnableTelemetry != nil {
+		return *cfg.EnableTelemetry
 	}
 
-	// Priority 2: Explicit opt-out always disables
-	if !cfg.EnableTelemetry && cfg.EnableTelemetry != nil {
-		// User explicitly set to false
-		return false
-	}
-
-	// Priority 3 & 4: Check server-side feature flag
+	// Priority 2: Check server-side feature flag
 	flagCache := getFeatureFlagCache()
 	serverEnabled, err := flagCache.isTelemetryEnabled(ctx, host, httpClient)
 	if err != nil {
-		// On error, respect default (disabled)
+		// Priority 3: Fail-safe default (disabled)
 		return false
 	}
 
@@ -1642,16 +1667,51 @@ func isTelemetryEnabled(ctx context.Context, cfg *Config, host string, httpClien
 }
 ```
 
-**Note**: Rollout percentage and gradual enablement can be added in a future phase after basic opt-in is validated.
+#### Configuration Behavior Matrix:
 
-**Configuration Flag Summary:**
+| Client Sets | Server Returns | Result | Explanation |
+|-------------|----------------|--------|-------------|
+| `true` | `false` | **`true`** | Client overrides server |
+| `false` | `true` | **`false`** | Client overrides server |
+| `true` | error | **`true`** | Client overrides server error |
+| unset | `true` | **`true`** | Use server config |
+| unset | `false` | **`false`** | Use server config |
+| unset | error | **`false`** | Fail-safe default |
 
-| Flag | Behavior | Use Case |
-|------|----------|----------|
-| `forceEnableTelemetry=true` | Bypass server flags, always enable | Testing, internal users, debugging |
-| `enableTelemetry=true` | Enable if server allows | User opt-in during beta phase |
-| `enableTelemetry=false` | Always disable telemetry | User wants to opt-out |
-| *(no flags set)* | Respect server feature flag | Default behavior |
+#### Configuration Parameter Summary:
+
+| Parameter | Value | Behavior | Use Case |
+|-----------|-------|----------|----------|
+| `enableTelemetry=true` | Client forces enabled | Always send telemetry (overrides server) | Testing, debugging, opt-in users |
+| `enableTelemetry=false` | Client forces disabled | Never send telemetry (overrides server) | Privacy-conscious users, opt-out |
+| *(not set)* | Use server flag | Server controls via feature flag | Default behavior - Databricks-controlled rollout |
+
+#### Benefits of Config Overlay:
+
+- ✅ **Simpler**: Client > Server > Default (3 clear layers)
+- ✅ **Consistent**: Same pattern can be used for all driver configs
+- ✅ **No bypass flags**: Client config naturally has priority
+- ✅ **Reusable**: General `ConfigValue[T]` type in `internal/config/overlay.go`
+- ✅ **Type-safe**: Uses Go generics for any config type
+
+#### General Config Overlay System:
+
+A reusable config overlay system is available in `internal/config/overlay.go`:
+
+```go
+// Generic config value that supports overlay pattern
+type ConfigValue[T any] struct {
+	value *T  // nil = unset, non-nil = client set
+}
+
+// Parse from connection params
+cv := ParseBoolConfigValue(params, "enableFeature")
+
+// Resolve with overlay priority
+result := cv.ResolveWithContext(ctx, host, httpClient, serverResolver, defaultValue)
+```
+
+**Note**: A general `ConfigValue[T]` implementation is available in `internal/config/overlay.go` for extending this pattern to other driver configurations.
 
 ---
 

@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/databricks/databricks-sql-go/internal/config"
 )
 
 func TestDefaultConfig(t *testing.T) {
@@ -17,9 +19,9 @@ func TestDefaultConfig(t *testing.T) {
 		t.Error("Expected Enabled to be false by default")
 	}
 
-	// Verify EnableTelemetry is nil (config overlay - use server flag)
-	if cfg.EnableTelemetry != nil {
-		t.Error("Expected EnableTelemetry to be nil (use server flag), got non-nil")
+	// Verify EnableTelemetry is unset (config overlay - use server flag)
+	if cfg.EnableTelemetry.IsSet() {
+		t.Error("Expected EnableTelemetry to be unset (use server flag), got set")
 	}
 
 	// Verify other defaults
@@ -56,9 +58,9 @@ func TestParseTelemetryConfig_EmptyParams(t *testing.T) {
 	params := map[string]string{}
 	cfg := ParseTelemetryConfig(params)
 
-	// Should return defaults - EnableTelemetry nil means use server flag
-	if cfg.EnableTelemetry != nil {
-		t.Error("Expected EnableTelemetry to be nil (use server flag) when no params provided")
+	// Should return defaults - EnableTelemetry unset means use server flag
+	if cfg.EnableTelemetry.IsSet() {
+		t.Error("Expected EnableTelemetry to be unset (use server flag) when no params provided")
 	}
 
 	if cfg.BatchSize != 100 {
@@ -72,7 +74,8 @@ func TestParseTelemetryConfig_EnabledTrue(t *testing.T) {
 	}
 	cfg := ParseTelemetryConfig(params)
 
-	if cfg.EnableTelemetry == nil || !*cfg.EnableTelemetry {
+	val, ok := cfg.EnableTelemetry.Get()
+	if !ok || !val {
 		t.Error("Expected EnableTelemetry to be true when set to 'true'")
 	}
 }
@@ -83,7 +86,8 @@ func TestParseTelemetryConfig_Enabled1(t *testing.T) {
 	}
 	cfg := ParseTelemetryConfig(params)
 
-	if cfg.EnableTelemetry == nil || !*cfg.EnableTelemetry {
+	val, ok := cfg.EnableTelemetry.Get()
+	if !ok || !val {
 		t.Error("Expected EnableTelemetry to be true when set to '1'")
 	}
 }
@@ -94,7 +98,8 @@ func TestParseTelemetryConfig_EnabledFalse(t *testing.T) {
 	}
 	cfg := ParseTelemetryConfig(params)
 
-	if cfg.EnableTelemetry == nil || *cfg.EnableTelemetry {
+	val, ok := cfg.EnableTelemetry.Get()
+	if !ok || val {
 		t.Error("Expected EnableTelemetry to be false when set to 'false'")
 	}
 }
@@ -177,7 +182,8 @@ func TestParseTelemetryConfig_MultipleParams(t *testing.T) {
 	}
 	cfg := ParseTelemetryConfig(params)
 
-	if cfg.EnableTelemetry == nil || !*cfg.EnableTelemetry {
+	val, ok := cfg.EnableTelemetry.Get()
+	if !ok || !val {
 		t.Error("Expected EnableTelemetry to be true")
 	}
 
@@ -209,9 +215,8 @@ func TestIsTelemetryEnabled_ClientOverrideEnabled(t *testing.T) {
 	}))
 	defer server.Close()
 
-	enabled := true
 	cfg := &Config{
-		EnableTelemetry: &enabled, // Priority 1: Client explicitly enables
+		EnableTelemetry: config.NewConfigValue(true), // Priority 1: Client explicitly enables
 	}
 
 	ctx := context.Background()
@@ -244,9 +249,8 @@ func TestIsTelemetryEnabled_ClientOverrideDisabled(t *testing.T) {
 	}))
 	defer server.Close()
 
-	disabled := false
 	cfg := &Config{
-		EnableTelemetry: &disabled, // Priority 1: Client explicitly disables
+		EnableTelemetry: config.NewConfigValue(false), // Priority 1: Client explicitly disables
 	}
 
 	ctx := context.Background()
@@ -278,7 +282,7 @@ func TestIsTelemetryEnabled_ServerEnabled(t *testing.T) {
 	defer server.Close()
 
 	cfg := &Config{
-		EnableTelemetry: nil, // Client didn't set - use server flag
+		EnableTelemetry: config.ConfigValue[bool]{}, // Client didn't set - use server flag
 	}
 
 	ctx := context.Background()
@@ -310,7 +314,7 @@ func TestIsTelemetryEnabled_ServerDisabled(t *testing.T) {
 	defer server.Close()
 
 	cfg := &Config{
-		EnableTelemetry: nil, // Client didn't set - use server flag
+		EnableTelemetry: config.ConfigValue[bool]{}, // Client didn't set - use server flag
 	}
 
 	ctx := context.Background()
@@ -352,7 +356,7 @@ func TestIsTelemetryEnabled_ServerError(t *testing.T) {
 	defer server.Close()
 
 	cfg := &Config{
-		EnableTelemetry: nil, // Client didn't set - should use server, but server errors
+		EnableTelemetry: config.ConfigValue[bool]{}, // Client didn't set - should use server, but server errors
 	}
 
 	ctx := context.Background()
@@ -374,7 +378,7 @@ func TestIsTelemetryEnabled_ServerError(t *testing.T) {
 // TestIsTelemetryEnabled_ServerUnreachable tests Priority 3: fail-safe default on unreachable server
 func TestIsTelemetryEnabled_ServerUnreachable(t *testing.T) {
 	cfg := &Config{
-		EnableTelemetry: nil, // Client didn't set - should use server, but server unreachable
+		EnableTelemetry: config.ConfigValue[bool]{}, // Client didn't set - should use server, but server unreachable
 	}
 
 	ctx := context.Background()
@@ -402,9 +406,8 @@ func TestIsTelemetryEnabled_ClientOverridesServerError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	enabled := true
 	cfg := &Config{
-		EnableTelemetry: &enabled, // Client explicitly enables - should override server error
+		EnableTelemetry: config.NewConfigValue(true), // Client explicitly enables - should override server error
 	}
 
 	ctx := context.Background()

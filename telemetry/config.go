@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"strconv"
 	"time"
+
+	"github.com/databricks/databricks-sql-go/internal/config"
 )
 
 // Config holds telemetry configuration.
@@ -12,12 +14,12 @@ type Config struct {
 	// Enabled controls whether telemetry is active
 	Enabled bool
 
-	// EnableTelemetry is the client-side telemetry preference
-	// - nil: not set by client, use server feature flag (default behavior)
-	// - true: client wants telemetry enabled (overrides server)
-	// - false: client wants telemetry disabled (overrides server)
-	// This implements config overlay: client > server > default
-	EnableTelemetry *bool
+	// EnableTelemetry is the client-side telemetry preference.
+	// Uses config overlay pattern: client > server > default
+	// - Unset: use server feature flag (default behavior)
+	// - Set to true: client wants telemetry enabled (overrides server)
+	// - Set to false: client wants telemetry disabled (overrides server)
+	EnableTelemetry config.ConfigValue[bool]
 
 	// BatchSize is the number of metrics to batch before flushing
 	BatchSize int
@@ -42,12 +44,12 @@ type Config struct {
 }
 
 // DefaultConfig returns default telemetry configuration.
-// Note: Telemetry uses config overlay - enabled by default, controlled by server feature flags.
+// Note: Telemetry uses config overlay - controlled by server feature flags by default.
 // Clients can override by explicitly setting enableTelemetry=true/false.
 func DefaultConfig() *Config {
 	return &Config{
 		Enabled:                 false, // Will be set based on overlay logic
-		EnableTelemetry:         nil,   // nil = use server feature flag (config overlay)
+		EnableTelemetry:         config.ConfigValue[bool]{}, // Unset = use server feature flag
 		BatchSize:               100,
 		FlushInterval:           5 * time.Second,
 		MaxRetries:              3,
@@ -67,11 +69,7 @@ func ParseTelemetryConfig(params map[string]string) *Config {
 	//   1. Client explicit setting (enableTelemetry=true/false) - overrides server
 	//   2. Server feature flag (when client doesn't set) - server controls
 	//   3. Default disabled (when server flag unavailable) - fail-safe
-	if v, ok := params["enableTelemetry"]; ok {
-		enabled := (v == "true" || v == "1")
-		cfg.EnableTelemetry = &enabled
-	}
-	// Note: If not present in params, stays nil (use server feature flag)
+	cfg.EnableTelemetry = config.ParseBoolConfigValue(params, "enableTelemetry")
 
 	if v, ok := params["telemetry_batch_size"]; ok {
 		if size, err := strconv.Atoi(v); err == nil && size > 0 {
@@ -105,9 +103,10 @@ func ParseTelemetryConfig(params map[string]string) *Config {
 // Returns:
 //   - bool: true if telemetry should be enabled, false otherwise
 func isTelemetryEnabled(ctx context.Context, cfg *Config, host string, httpClient *http.Client) bool {
-	// Priority 1: Client explicitly set enableTelemetry (overrides server)
-	if cfg.EnableTelemetry != nil {
-		return *cfg.EnableTelemetry
+	// Priority 1: Client explicitly set (overrides server)
+	if cfg.EnableTelemetry.IsSet() {
+		val, _ := cfg.EnableTelemetry.Get()
+		return val
 	}
 
 	// Priority 2: Check server-side feature flag
@@ -115,7 +114,6 @@ func isTelemetryEnabled(ctx context.Context, cfg *Config, host string, httpClien
 	serverEnabled, err := flagCache.isTelemetryEnabled(ctx, host, httpClient)
 	if err != nil {
 		// Priority 3: Fail-safe default (disabled)
-		// On error, default to disabled to ensure telemetry failures don't impact driver
 		return false
 	}
 
