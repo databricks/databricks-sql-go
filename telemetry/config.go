@@ -48,7 +48,7 @@ type Config struct {
 // Clients can override by explicitly setting enableTelemetry=true/false.
 func DefaultConfig() *Config {
 	return &Config{
-		Enabled:                 false, // Will be set based on overlay logic
+		Enabled:                 false,                      // Will be set based on overlay logic
 		EnableTelemetry:         config.ConfigValue[bool]{}, // Unset = use server feature flag
 		BatchSize:               100,
 		FlushInterval:           5 * time.Second,
@@ -119,4 +119,3 @@ func isTelemetryEnabled(ctx context.Context, cfg *Config, host string, httpClien
 
 	return serverEnabled
 }
-

@@ -211,7 +211,7 @@ func TestIsTelemetryEnabled_ClientOverrideEnabled(t *testing.T) {
 				"databricks.partnerplatform.clientConfigsFeatureFlags.enableTelemetryForGoDriver": false,
 			},
 		}
-		json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(resp)
 	}))
 	defer server.Close()
 
@@ -245,7 +245,7 @@ func TestIsTelemetryEnabled_ClientOverrideDisabled(t *testing.T) {
 				"databricks.partnerplatform.clientConfigsFeatureFlags.enableTelemetryForGoDriver": true,
 			},
 		}
-		json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(resp)
 	}))
 	defer server.Close()
 
@@ -277,7 +277,7 @@ func TestIsTelemetryEnabled_ServerEnabled(t *testing.T) {
 				"databricks.partnerplatform.clientConfigsFeatureFlags.enableTelemetryForGoDriver": true,
 			},
 		}
-		json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(resp)
 	}))
 	defer server.Close()
 
@@ -309,7 +309,7 @@ func TestIsTelemetryEnabled_ServerDisabled(t *testing.T) {
 				"databricks.partnerplatform.clientConfigsFeatureFlags.enableTelemetryForGoDriver": false,
 			},
 		}
-		json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(resp)
 	}))
 	defer server.Close()
 

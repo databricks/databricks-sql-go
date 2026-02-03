@@ -296,8 +296,8 @@ func TestToExportedMetric_TagFiltering(t *testing.T) {
 
 func TestIsRetryableStatus(t *testing.T) {
 	tests := []struct {
-		status     int
-		retryable  bool
+		status      int
+		retryable   bool
 		description string
 	}{
 		{200, false, "200 OK is not retryable"},

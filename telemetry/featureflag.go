@@ -33,12 +33,12 @@ type featureFlagCache struct {
 
 // featureFlagContext holds feature flag state and reference count for a host.
 type featureFlagContext struct {
-	mu            sync.RWMutex       // protects flags, lastFetched, fetching
-	flags         map[string]bool    // cached feature flags by name
-	lastFetched   time.Time          // when flags were last fetched
-	refCount      int                // protected by featureFlagCache.mu
-	cacheDuration time.Duration      // how long to cache flags
-	fetching      bool               // true if a fetch is in progress
+	mu            sync.RWMutex    // protects flags, lastFetched, fetching
+	flags         map[string]bool // cached feature flags by name
+	lastFetched   time.Time       // when flags were last fetched
+	refCount      int             // protected by featureFlagCache.mu
+	cacheDuration time.Duration   // how long to cache flags
+	fetching      bool            // true if a fetch is in progress
 }
 
 var (

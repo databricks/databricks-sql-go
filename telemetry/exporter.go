@@ -20,14 +20,14 @@ type telemetryExporter struct {
 
 // telemetryMetric represents a metric to export.
 type telemetryMetric struct {
-	metricType      string
-	timestamp       time.Time
-	workspaceID     string
-	sessionID       string
-	statementID     string
-	latencyMs       int64
-	errorType       string
-	tags            map[string]interface{}
+	metricType  string
+	timestamp   time.Time
+	workspaceID string
+	sessionID   string
+	statementID string
+	latencyMs   int64
+	errorType   string
+	tags        map[string]interface{}
 }
 
 // telemetryPayload is the JSON structure sent to Databricks.
@@ -120,6 +120,7 @@ func (e *telemetryExporter) doExport(ctx context.Context, metrics []*telemetryMe
 			backoff := time.Duration(1<<uint(attempt-1)) * e.cfg.RetryDelay
 			select {
 			case <-time.After(backoff):
+				// Backoff completed, continue to retry
 			case <-ctx.Done():
 				return ctx.Err()
 			}
