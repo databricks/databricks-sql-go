@@ -8,6 +8,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/databricks/databricks-sql-go/driverctx"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/client"
 	"github.com/databricks/databricks-sql-go/internal/config"
@@ -32,15 +33,17 @@ func TestArrowRecordIterator(t *testing.T) {
 
 		var fetchesInfo []fetchResultsInfo
 
+		ctx := driverctx.NewContextWithConnId(context.Background(), "connectionId")
+		ctx = driverctx.NewContextWithCorrelationId(ctx, "correlationId")
+
 		simpleClient := getSimpleClient(&fetchesInfo, []cli_service.TFetchResultsResp{fetchResp1, fetchResp2})
 		rpi := rowscanner.NewResultPageIterator(
+			ctx,
 			rowscanner.NewDelimiter(0, 7311),
 			5000,
 			nil,
 			false,
 			simpleClient,
-			"connectionId",
-			"correlationId",
 			logger,
 		)
 
@@ -126,17 +129,19 @@ func TestArrowRecordIterator(t *testing.T) {
 		fetchResp3 := cli_service.TFetchResultsResp{}
 		loadTestData2(t, "multipleFetch/FetchResults3.json", &fetchResp3)
 
+		ctx := driverctx.NewContextWithConnId(context.Background(), "connectionId")
+		ctx = driverctx.NewContextWithCorrelationId(ctx, "correlationId")
+
 		var fetchesInfo []fetchResultsInfo
 
 		simpleClient := getSimpleClient(&fetchesInfo, []cli_service.TFetchResultsResp{fetchResp1, fetchResp2, fetchResp3})
 		rpi := rowscanner.NewResultPageIterator(
+			ctx,
 			rowscanner.NewDelimiter(0, 0),
 			5000,
 			nil,
 			false,
 			simpleClient,
-			"connectionId",
-			"correlationId",
 			logger,
 		)
 
@@ -199,16 +204,18 @@ func TestArrowRecordIteratorSchema(t *testing.T) {
 		fetchResp1 := cli_service.TFetchResultsResp{}
 		loadTestData2(t, "directResultsMultipleFetch/FetchResults1.json", &fetchResp1)
 
+		ctx := driverctx.NewContextWithConnId(context.Background(), "connectionId")
+		ctx = driverctx.NewContextWithCorrelationId(ctx, "correlationId")
+
 		var fetchesInfo []fetchResultsInfo
 		simpleClient := getSimpleClient(&fetchesInfo, []cli_service.TFetchResultsResp{fetchResp1})
 		rpi := rowscanner.NewResultPageIterator(
+			ctx,
 			rowscanner.NewDelimiter(0, 0),
 			5000,
 			nil,
 			false,
 			simpleClient,
-			"connectionId",
-			"correlationId",
 			logger,
 		)
 
@@ -251,16 +258,18 @@ func TestArrowRecordIteratorSchema(t *testing.T) {
 		fetchResp1 := cli_service.TFetchResultsResp{}
 		loadTestData2(t, "multipleFetch/FetchResults1.json", &fetchResp1)
 
+		ctx := driverctx.NewContextWithConnId(context.Background(), "connectionId")
+		ctx = driverctx.NewContextWithCorrelationId(ctx, "correlationId")
+
 		var fetchesInfo []fetchResultsInfo
 		simpleClient := getSimpleClient(&fetchesInfo, []cli_service.TFetchResultsResp{fetchResp1})
 		rpi := rowscanner.NewResultPageIterator(
+			ctx,
 			rowscanner.NewDelimiter(0, 0),
 			5000,
 			nil,
 			false,
 			simpleClient,
-			"connectionId",
-			"correlationId",
 			logger,
 		)
 
@@ -293,14 +302,16 @@ func TestArrowRecordIteratorSchema(t *testing.T) {
 			},
 		}
 
+		ctx := driverctx.NewContextWithConnId(context.Background(), "connectionId")
+		ctx = driverctx.NewContextWithCorrelationId(ctx, "correlationId")
+
 		rpi := rowscanner.NewResultPageIterator(
+			ctx,
 			rowscanner.NewDelimiter(0, 0),
 			5000,
 			nil,
 			false,
 			failingClient,
-			"connectionId",
-			"correlationId",
 			logger,
 		)
 
