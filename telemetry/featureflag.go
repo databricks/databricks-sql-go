@@ -95,8 +95,37 @@ func (c *featureFlagCache) getFeatureFlag(ctx context.Context, host string, http
 	flagCtx, exists := c.contexts[host]
 	c.mu.RUnlock()
 
+	// If context doesn't exist, create it and make initial blocking fetch
 	if !exists {
-		return false, nil
+		c.mu.Lock()
+		// Double-check after acquiring write lock
+		flagCtx, exists = c.contexts[host]
+		if !exists {
+			flagCtx = &featureFlagContext{
+				cacheDuration: featureFlagCacheDuration,
+				fetching:      true, // Mark as fetching
+			}
+			c.contexts[host] = flagCtx
+		}
+		c.mu.Unlock()
+
+		// If we just created the context, make the initial blocking fetch
+		if !exists {
+			flags, err := fetchFeatureFlags(ctx, host, httpClient)
+
+			flagCtx.mu.Lock()
+			flagCtx.fetching = false
+			if err == nil {
+				flagCtx.flags = flags
+				flagCtx.lastFetched = time.Now()
+				result := flags[flagName]
+				flagCtx.mu.Unlock()
+				return result, nil
+			}
+			// On error for first fetch, fail-safe: return false (telemetry disabled)
+			flagCtx.mu.Unlock()
+			return false, nil
+		}
 	}
 
 	// Check if cache is valid (with proper locking)
