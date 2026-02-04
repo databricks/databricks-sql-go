@@ -107,9 +107,9 @@ func (e *telemetryExporter) doExport(ctx context.Context, metrics []*telemetryMe
 	// Support both plain hosts and full URLs (for testing)
 	var endpoint string
 	if strings.HasPrefix(e.host, "http://") || strings.HasPrefix(e.host, "https://") {
-		endpoint = fmt.Sprintf("%s/api/2.0/telemetry-ext", e.host)
+		endpoint = fmt.Sprintf("%s/telemetry-ext", e.host)
 	} else {
-		endpoint = fmt.Sprintf("https://%s/api/2.0/telemetry-ext", e.host)
+		endpoint = fmt.Sprintf("https://%s/telemetry-ext", e.host)
 	}
 
 	// Retry logic with exponential backoff
