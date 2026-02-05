@@ -1531,18 +1531,14 @@ func ParseTelemetryConfig(params map[string]string) *Config {
 
 ```go
 // checkFeatureFlag checks if telemetry is enabled server-side.
-func checkFeatureFlag(ctx context.Context, host string, httpClient *http.Client) (bool, error) {
-	endpoint := fmt.Sprintf("https://%s/api/2.0/feature-flags", host)
+func checkFeatureFlag(ctx context.Context, host string, httpClient *http.Client, driverVersion string) (bool, error) {
+	// Use connector-service endpoint with driver name and version
+	endpoint := fmt.Sprintf("https://%s/api/2.0/connector-service/feature-flags/GOLANG/%s", host, driverVersion)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", endpoint, nil)
 	if err != nil {
 		return false, err
 	}
-
-	// Add query parameters
-	q := req.URL.Query()
-	q.Add("flags", "databricks.partnerplatform.clientConfigsFeatureFlags.enableTelemetryForGoDriver")
-	req.URL.RawQuery = q.Encode()
 
 	resp, err := httpClient.Do(req)
 	if err != nil {

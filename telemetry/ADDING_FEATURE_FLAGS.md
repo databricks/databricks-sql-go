@@ -62,10 +62,21 @@ if enabled {
 
 ## How It Works
 
-### Single Request for All Flags
-All flags are fetched together in a single HTTP request:
+### Connector Service Endpoint
+Flags are fetched from the connector-service endpoint with driver name and version:
 ```
-GET /api/2.0/feature-flags?flags=flagOne,flagTwo,flagThree
+GET /api/2.0/connector-service/feature-flags/GOLANG/{driverVersion}
+```
+
+The response includes all available flags for the driver:
+```json
+{
+  "flags": [
+    {"name": "flagOne", "value": "true"},
+    {"name": "flagTwo", "value": "false"}
+  ],
+  "ttl_seconds": 900
+}
 ```
 
 ### 15-Minute Cache
