@@ -158,19 +158,16 @@ func TestIntegration_OptInPriority_ForceEnable(t *testing.T) {
 
 	// Server that returns disabled
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		resp := map[string]interface{}{
-			"flags": map[string]bool{
-				"databricks.partnerplatform.clientConfigsFeatureFlags.enableTelemetryForGoDriver": false,
-			},
-		}
-		json.NewEncoder(w).Encode(resp)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"flags": [{"name": "databricks.partnerplatform.clientConfigsFeatureFlags.enableTelemetryForGoDriver", "value": "false"}]}`))
 	}))
 	defer server.Close()
 
 	ctx := context.Background()
 
 	// Should be enabled due to explicit config override
-	result := isTelemetryEnabled(ctx, cfg, server.URL, httpClient)
+	result := isTelemetryEnabled(ctx, cfg, server.URL, httpClient, "1.0.0")
 
 	if !result {
 		t.Error("Expected telemetry to be enabled via explicit config")
@@ -186,19 +183,16 @@ func TestIntegration_OptInPriority_ExplicitOptOut(t *testing.T) {
 
 	// Server that returns enabled
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		resp := map[string]interface{}{
-			"flags": map[string]bool{
-				"databricks.partnerplatform.clientConfigsFeatureFlags.enableTelemetryForGoDriver": true,
-			},
-		}
-		json.NewEncoder(w).Encode(resp)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"flags": [{"name": "databricks.partnerplatform.clientConfigsFeatureFlags.enableTelemetryForGoDriver", "value": "true"}]}`))
 	}))
 	defer server.Close()
 
 	ctx := context.Background()
 
 	// Should be disabled due to explicit config override
-	result := isTelemetryEnabled(ctx, cfg, server.URL, httpClient)
+	result := isTelemetryEnabled(ctx, cfg, server.URL, httpClient, "1.0.0")
 
 	if result {
 		t.Error("Expected telemetry to be disabled by explicit config")

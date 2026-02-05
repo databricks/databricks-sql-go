@@ -37,7 +37,7 @@ func InitializeForConnection(
 	// else: leave unset (will check server feature flag)
 
 	// Check if telemetry should be enabled
-	if !isTelemetryEnabled(ctx, cfg, host, httpClient) {
+	if !isTelemetryEnabled(ctx, cfg, host, httpClient, driverVersion) {
 		return nil
 	}
 
