@@ -63,8 +63,8 @@ func (e *telemetryExporter) export(ctx context.Context, metrics []*telemetryMetr
 	// Swallow all errors and panics
 	defer func() {
 		if r := recover(); r != nil {
-			// Log at trace level only
-			// logger.Trace().Msgf("telemetry: export panic: %v", r)
+			// Intentionally swallow panic - telemetry must not impact driver
+			_ = r // Log at trace level only: logger.Trace().Msgf("telemetry: export panic: %v", r)
 		}
 	}()
 
@@ -79,8 +79,8 @@ func (e *telemetryExporter) export(ctx context.Context, metrics []*telemetryMetr
 	}
 
 	if err != nil {
-		// Log at trace level only
-		// logger.Trace().Msgf("telemetry: export error: %v", err)
+		// Intentionally swallow error - telemetry must not impact driver
+		_ = err // Log at trace level only: logger.Trace().Msgf("telemetry: export error: %v", err)
 	}
 }
 
