@@ -13,10 +13,14 @@ import (
 // telemetryExporter exports metrics to Databricks telemetry service.
 type telemetryExporter struct {
 	host           string
+	port           int
+	httpPath       string
 	driverVersion  string
 	httpClient     *http.Client
 	circuitBreaker *circuitBreaker
 	cfg            *Config
+	// Connection parameters for telemetry
+	connParams *DriverConnectionParameters
 }
 
 // telemetryMetric represents a metric to export.
@@ -32,13 +36,25 @@ type telemetryMetric struct {
 }
 
 // newTelemetryExporter creates a new exporter.
-func newTelemetryExporter(host string, driverVersion string, httpClient *http.Client, cfg *Config) *telemetryExporter {
+func newTelemetryExporter(host string, port int, httpPath string, driverVersion string, httpClient *http.Client, cfg *Config, connParams *DriverConnectionParameters) *telemetryExporter {
+	// Build connection parameters if not provided
+	if connParams == nil {
+		connParams = &DriverConnectionParameters{
+			Host:     host,
+			Port:     port,
+			HTTPPath: httpPath,
+		}
+	}
+
 	return &telemetryExporter{
 		host:           host,
+		port:           port,
+		httpPath:       httpPath,
 		driverVersion:  driverVersion,
 		httpClient:     httpClient,
 		circuitBreaker: getCircuitBreakerManager().getCircuitBreaker(host),
 		cfg:            cfg,
+		connParams:     connParams,
 	}
 }
 
@@ -72,7 +88,7 @@ func (e *telemetryExporter) export(ctx context.Context, metrics []*telemetryMetr
 // doExport performs the actual export with retries and exponential backoff.
 func (e *telemetryExporter) doExport(ctx context.Context, metrics []*telemetryMetric) error {
 	// Create telemetry request with protoLogs format (matches JDBC/Node.js)
-	payload, err := createTelemetryRequest(metrics, e.driverVersion)
+	payload, err := createTelemetryRequest(metrics, e.driverVersion, e.connParams)
 	if err != nil {
 		return fmt.Errorf("failed to create telemetry request: %w", err)
 	}

@@ -66,8 +66,14 @@ type DriverSystemConfiguration struct {
 
 // DriverConnectionParameters contains connection parameters.
 type DriverConnectionParameters struct {
-	Host string `json:"host,omitempty"`
-	Port int    `json:"port,omitempty"`
+	Host                     string `json:"host,omitempty"`
+	Port                     int    `json:"port,omitempty"`
+	HTTPPath                 string `json:"http_path,omitempty"`
+	EnableArrow              bool   `json:"enable_arrow,omitempty"`
+	EnableDirectResults      bool   `json:"enable_direct_results,omitempty"`
+	EnableMetricViewMetadata bool   `json:"enable_metric_view_metadata,omitempty"`
+	SocketTimeoutSeconds     int64  `json:"socket_timeout,omitempty"`
+	RowsFetchedPerBlock      int64  `json:"rows_fetched_per_block,omitempty"`
 }
 
 // SQLExecutionEvent contains SQL execution details.
@@ -102,7 +108,7 @@ type TelemetryResponse struct {
 }
 
 // createTelemetryRequest creates a telemetry request from metrics.
-func createTelemetryRequest(metrics []*telemetryMetric, driverVersion string) (*TelemetryRequest, error) {
+func createTelemetryRequest(metrics []*telemetryMetric, driverVersion string, connParams *DriverConnectionParameters) (*TelemetryRequest, error) {
 	protoLogs := make([]string, 0, len(metrics))
 
 	for _, metric := range metrics {
@@ -117,10 +123,11 @@ func createTelemetryRequest(metrics []*telemetryMetric, driverVersion string) (*
 			},
 			Entry: &FrontendLogEntry{
 				SQLDriverLog: &TelemetryEvent{
-					SessionID:           metric.sessionID,
-					SQLStatementID:      metric.statementID,
-					SystemConfiguration: getSystemConfiguration(driverVersion),
-					OperationLatencyMs:  metric.latencyMs,
+					SessionID:                  metric.sessionID,
+					SQLStatementID:             metric.statementID,
+					SystemConfiguration:        getSystemConfiguration(driverVersion),
+					DriverConnectionParameters: connParams,
+					OperationLatencyMs:         metric.latencyMs,
 				},
 			},
 		}

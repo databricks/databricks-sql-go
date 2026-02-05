@@ -16,7 +16,7 @@ func TestNewTelemetryExporter(t *testing.T) {
 	httpClient := &http.Client{Timeout: 5 * time.Second}
 	host := "test-host"
 
-	exporter := newTelemetryExporter(host, "test-version", httpClient, cfg)
+	exporter := newTelemetryExporter(host, 443, "", "test-version", httpClient, cfg, nil)
 
 	if exporter.host != host {
 		t.Errorf("Expected host %s, got %s", host, exporter.host)
@@ -73,7 +73,7 @@ func TestExport_Success(t *testing.T) {
 	httpClient := &http.Client{Timeout: 5 * time.Second}
 
 	// Use full server URL for testing
-	exporter := newTelemetryExporter(server.URL, "test-version", httpClient, cfg)
+	exporter := newTelemetryExporter(server.URL, 443, "", "test-version", httpClient, cfg, nil)
 
 	metrics := []*telemetryMetric{
 		{
@@ -113,7 +113,7 @@ func TestExport_RetryOn5xx(t *testing.T) {
 	httpClient := &http.Client{Timeout: 5 * time.Second}
 
 	// Use full server URL for testing
-	exporter := newTelemetryExporter(server.URL, "test-version", httpClient, cfg)
+	exporter := newTelemetryExporter(server.URL, 443, "", "test-version", httpClient, cfg, nil)
 
 	metrics := []*telemetryMetric{
 		{
@@ -145,7 +145,7 @@ func TestExport_NonRetryable4xx(t *testing.T) {
 	httpClient := &http.Client{Timeout: 5 * time.Second}
 
 	// Use full server URL for testing
-	exporter := newTelemetryExporter(server.URL, "test-version", httpClient, cfg)
+	exporter := newTelemetryExporter(server.URL, 443, "", "test-version", httpClient, cfg, nil)
 
 	metrics := []*telemetryMetric{
 		{
@@ -181,7 +181,7 @@ func TestExport_Retry429(t *testing.T) {
 	httpClient := &http.Client{Timeout: 5 * time.Second}
 
 	// Use full server URL for testing
-	exporter := newTelemetryExporter(server.URL, "test-version", httpClient, cfg)
+	exporter := newTelemetryExporter(server.URL, 443, "", "test-version", httpClient, cfg, nil)
 
 	metrics := []*telemetryMetric{
 		{
@@ -211,7 +211,7 @@ func TestExport_CircuitBreakerOpen(t *testing.T) {
 	httpClient := &http.Client{Timeout: 5 * time.Second}
 
 	// Use full server URL for testing
-	exporter := newTelemetryExporter(server.URL, "test-version", httpClient, cfg)
+	exporter := newTelemetryExporter(server.URL, 443, "", "test-version", httpClient, cfg, nil)
 
 	// Open the circuit breaker by recording failures
 	cb := exporter.circuitBreaker
@@ -260,7 +260,7 @@ func TestCreateTelemetryRequest_TagFiltering(t *testing.T) {
 		},
 	}
 
-	req, err := createTelemetryRequest([]*telemetryMetric{metric}, "1.0.0")
+	req, err := createTelemetryRequest([]*telemetryMetric{metric}, "1.0.0", &DriverConnectionParameters{Host: "test-host", Port: 443})
 	if err != nil {
 		t.Fatalf("Failed to create telemetry request: %v", err)
 	}
@@ -329,7 +329,7 @@ func TestExport_ErrorSwallowing(t *testing.T) {
 	httpClient := &http.Client{Timeout: 5 * time.Second}
 
 	// Use full server URL for testing
-	exporter := newTelemetryExporter(server.URL, "test-version", httpClient, cfg)
+	exporter := newTelemetryExporter(server.URL, 443, "", "test-version", httpClient, cfg, nil)
 
 	metrics := []*telemetryMetric{
 		{
@@ -365,7 +365,7 @@ func TestExport_ContextCancellation(t *testing.T) {
 	httpClient := &http.Client{Timeout: 5 * time.Second}
 
 	// Use full server URL for testing
-	exporter := newTelemetryExporter(server.URL, "test-version", httpClient, cfg)
+	exporter := newTelemetryExporter(server.URL, 443, "", "test-version", httpClient, cfg, nil)
 
 	metrics := []*telemetryMetric{
 		{
@@ -398,7 +398,7 @@ func TestExport_ExponentialBackoff(t *testing.T) {
 	httpClient := &http.Client{Timeout: 5 * time.Second}
 
 	// Use full server URL for testing
-	exporter := newTelemetryExporter(server.URL, "test-version", httpClient, cfg)
+	exporter := newTelemetryExporter(server.URL, 443, "", "test-version", httpClient, cfg, nil)
 
 	metrics := []*telemetryMetric{
 		{

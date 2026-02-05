@@ -23,9 +23,12 @@ import (
 func InitializeForConnection(
 	ctx context.Context,
 	host string,
+	port int,
+	httpPath string,
 	driverVersion string,
 	httpClient *http.Client,
 	enableTelemetry *bool,
+	connParams *DriverConnectionParameters,
 ) *Interceptor {
 	// Create telemetry config
 	cfg := DefaultConfig()
@@ -43,7 +46,7 @@ func InitializeForConnection(
 
 	// Get or create telemetry client for this host
 	clientMgr := getClientManager()
-	telemetryClient := clientMgr.getOrCreateClient(host, driverVersion, httpClient, cfg)
+	telemetryClient := clientMgr.getOrCreateClient(host, port, httpPath, driverVersion, httpClient, cfg, connParams)
 	if telemetryClient == nil {
 		return nil
 	}

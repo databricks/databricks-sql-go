@@ -89,12 +89,26 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 	}
 	// else: leave nil to check server feature flag
 
+	// Build connection parameters for telemetry
+	connParams := &telemetry.DriverConnectionParameters{
+		Host:                     c.cfg.Host,
+		Port:                     c.cfg.Port,
+		HTTPPath:                 c.cfg.HTTPPath,
+		EnableArrow:              c.cfg.UseArrowBatches,
+		EnableMetricViewMetadata: c.cfg.EnableMetricViewMetadata,
+		SocketTimeoutSeconds:     int64(c.cfg.ClientTimeout.Seconds()),
+		RowsFetchedPerBlock:      int64(c.cfg.MaxRows),
+	}
+
 	conn.telemetry = telemetry.InitializeForConnection(
 		ctx,
 		c.cfg.Host,
+		c.cfg.Port,
+		c.cfg.HTTPPath,
 		c.cfg.DriverVersion,
 		c.client,
 		enableTelemetry,
+		connParams,
 	)
 	if conn.telemetry != nil {
 		log.Debug().Msg("telemetry initialized for connection")

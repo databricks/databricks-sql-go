@@ -20,7 +20,7 @@ func BenchmarkInterceptor_Overhead_Enabled(b *testing.B) {
 	}))
 	defer server.Close()
 
-	exporter := newTelemetryExporter(server.URL, "test-version", httpClient, cfg)
+	exporter := newTelemetryExporter(server.URL, 443, "", "test-version", httpClient, cfg, nil)
 	aggregator := newMetricsAggregator(exporter, cfg)
 	defer aggregator.close(context.Background())
 
@@ -48,7 +48,7 @@ func BenchmarkInterceptor_Overhead_Disabled(b *testing.B) {
 	}))
 	defer server.Close()
 
-	exporter := newTelemetryExporter(server.URL, "test-version", httpClient, cfg)
+	exporter := newTelemetryExporter(server.URL, 443, "", "test-version", httpClient, cfg, nil)
 	aggregator := newMetricsAggregator(exporter, cfg)
 	defer aggregator.close(context.Background())
 
@@ -75,7 +75,7 @@ func BenchmarkAggregator_RecordMetric(b *testing.B) {
 	}))
 	defer server.Close()
 
-	exporter := newTelemetryExporter(server.URL, "test-version", httpClient, cfg)
+	exporter := newTelemetryExporter(server.URL, 443, "", "test-version", httpClient, cfg, nil)
 	aggregator := newMetricsAggregator(exporter, cfg)
 	defer aggregator.close(context.Background())
 
@@ -105,7 +105,7 @@ func BenchmarkExporter_Export(b *testing.B) {
 	}))
 	defer server.Close()
 
-	exporter := newTelemetryExporter(server.URL, "test-version", httpClient, cfg)
+	exporter := newTelemetryExporter(server.URL, 443, "", "test-version", httpClient, cfg, nil)
 
 	ctx := context.Background()
 	metrics := []*telemetryMetric{
@@ -141,7 +141,7 @@ func BenchmarkConcurrentConnections_PerHostSharing(b *testing.B) {
 		for pb.Next() {
 			// Simulate getting a client (should share per host)
 			mgr := getClientManager()
-			client := mgr.getOrCreateClient(host, "test-version", httpClient, cfg)
+			client := mgr.getOrCreateClient(host, 443, "", "test-version", httpClient, cfg, nil)
 			_ = client
 
 			// Release client
@@ -198,7 +198,7 @@ func TestLoadTesting_ConcurrentConnections(t *testing.T) {
 			defer wg.Done()
 
 			// Get client (should share)
-			client := mgr.getOrCreateClient(host, "test-version", httpClient, cfg)
+			client := mgr.getOrCreateClient(host, 443, "", "test-version", httpClient, cfg, nil)
 			interceptor := client.GetInterceptor(true)
 
 			// Simulate some operations
@@ -237,8 +237,8 @@ func TestGracefulShutdown_ReferenceCountingCleanup(t *testing.T) {
 	mgr := getClientManager()
 
 	// Create multiple references
-	client1 := mgr.getOrCreateClient(host, "test-version", httpClient, cfg)
-	client2 := mgr.getOrCreateClient(host, "test-version", httpClient, cfg)
+	client1 := mgr.getOrCreateClient(host, 443, "", "test-version", httpClient, cfg, nil)
+	client2 := mgr.getOrCreateClient(host, 443, "", "test-version", httpClient, cfg, nil)
 
 	if client1 != client2 {
 		t.Error("Expected same client instance for same host")
@@ -292,7 +292,7 @@ func TestGracefulShutdown_FinalFlush(t *testing.T) {
 	}))
 	defer server.Close()
 
-	exporter := newTelemetryExporter(server.URL, "test-version", httpClient, cfg)
+	exporter := newTelemetryExporter(server.URL, 443, "", "test-version", httpClient, cfg, nil)
 	aggregator := newMetricsAggregator(exporter, cfg)
 
 	// Record a metric
