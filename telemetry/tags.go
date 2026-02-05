@@ -21,6 +21,11 @@ const (
 	TagPollLatency           = "poll.latency_ms"
 )
 
+// Tag names for operation metrics
+const (
+	TagOperationType = "operation_type"
+)
+
 // Tag names for error metrics
 const (
 	TagErrorType = "error.type"

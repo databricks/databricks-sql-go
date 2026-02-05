@@ -31,23 +31,6 @@ type telemetryMetric struct {
 	tags        map[string]interface{}
 }
 
-// telemetryPayload is the JSON structure sent to Databricks.
-type telemetryPayload struct {
-	Metrics []*exportedMetric `json:"metrics"`
-}
-
-// exportedMetric is a single metric in the payload.
-type exportedMetric struct {
-	MetricType  string                 `json:"metric_type"`
-	Timestamp   string                 `json:"timestamp"` // RFC3339
-	WorkspaceID string                 `json:"workspace_id,omitempty"`
-	SessionID   string                 `json:"session_id,omitempty"`
-	StatementID string                 `json:"statement_id,omitempty"`
-	LatencyMs   int64                  `json:"latency_ms,omitempty"`
-	ErrorType   string                 `json:"error_type,omitempty"`
-	Tags        map[string]interface{} `json:"tags,omitempty"`
-}
-
 // newTelemetryExporter creates a new exporter.
 func newTelemetryExporter(host string, driverVersion string, httpClient *http.Client, cfg *Config) *telemetryExporter {
 	return &telemetryExporter{
@@ -88,22 +71,20 @@ func (e *telemetryExporter) export(ctx context.Context, metrics []*telemetryMetr
 
 // doExport performs the actual export with retries and exponential backoff.
 func (e *telemetryExporter) doExport(ctx context.Context, metrics []*telemetryMetric) error {
-	// Convert metrics to exported format with tag filtering
-	exportedMetrics := make([]*exportedMetric, 0, len(metrics))
-	for _, m := range metrics {
-		exportedMetrics = append(exportedMetrics, m.toExportedMetric())
+	// Create telemetry request with protoLogs format (matches JDBC/Node.js)
+	payload, err := createTelemetryRequest(metrics, e.driverVersion)
+	if err != nil {
+		return fmt.Errorf("failed to create telemetry request: %w", err)
 	}
 
-	// Create payload
-	payload := &telemetryPayload{
-		Metrics: exportedMetrics,
-	}
-
-	// Serialize metrics
+	// Serialize request
 	data, err := json.Marshal(payload)
 	if err != nil {
-		return fmt.Errorf("failed to marshal metrics: %w", err)
+		return fmt.Errorf("failed to marshal telemetry request: %w", err)
 	}
+
+	// TODO: Remove debug logging
+	fmt.Printf("[TELEMETRY DEBUG] Payload: %s\n", string(data))
 
 	// Determine endpoint
 	// Support both plain hosts and full URLs (for testing)
@@ -113,6 +94,10 @@ func (e *telemetryExporter) doExport(ctx context.Context, metrics []*telemetryMe
 	} else {
 		endpoint = fmt.Sprintf("https://%s/telemetry-ext", e.host)
 	}
+
+	// TODO: Remove debug logging
+	fmt.Printf("[TELEMETRY DEBUG] Exporting %d metrics to %s\n", len(metrics), endpoint)
+	fmt.Printf("[TELEMETRY DEBUG] ProtoLogs count: %d\n", len(payload.ProtoLogs))
 
 	// Retry logic with exponential backoff
 	maxRetries := e.cfg.MaxRetries
@@ -150,8 +135,13 @@ func (e *telemetryExporter) doExport(ctx context.Context, metrics []*telemetryMe
 
 		// Check status code
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			// TODO: Remove debug logging
+			fmt.Printf("[TELEMETRY DEBUG] Export successful: %d metrics sent, HTTP %d\n", len(metrics), resp.StatusCode)
 			return nil // Success
 		}
+
+		// TODO: Remove debug logging
+		fmt.Printf("[TELEMETRY DEBUG] Export failed: HTTP %d (attempt %d/%d)\n", resp.StatusCode, attempt+1, maxRetries+1)
 
 		// Check if retryable
 		if !isRetryableStatus(resp.StatusCode) {
@@ -164,28 +154,6 @@ func (e *telemetryExporter) doExport(ctx context.Context, metrics []*telemetryMe
 	}
 
 	return nil
-}
-
-// toExportedMetric converts internal metric to exported format with tag filtering.
-func (m *telemetryMetric) toExportedMetric() *exportedMetric {
-	// Filter tags based on export scope
-	filteredTags := make(map[string]interface{})
-	for k, v := range m.tags {
-		if shouldExportToDatabricks(m.metricType, k) {
-			filteredTags[k] = v
-		}
-	}
-
-	return &exportedMetric{
-		MetricType:  m.metricType,
-		Timestamp:   m.timestamp.Format(time.RFC3339),
-		WorkspaceID: m.workspaceID,
-		SessionID:   m.sessionID,
-		StatementID: m.statementID,
-		LatencyMs:   m.latencyMs,
-		ErrorType:   m.errorType,
-		Tags:        filteredTags,
-	}
 }
 
 // isRetryableStatus returns true if HTTP status is retryable.
