@@ -76,18 +76,23 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 	}
 	log := logger.WithContext(conn.id, driverctx.CorrelationIdFromContext(ctx), "")
 
-	// Initialize telemetry if configured
-	if c.cfg.EnableTelemetry || c.cfg.ForceEnableTelemetry {
-		conn.telemetry = telemetry.InitializeForConnection(
-			ctx,
-			c.cfg.Host,
-			c.client,
-			c.cfg.EnableTelemetry,
-			c.cfg.ForceEnableTelemetry,
-		)
-		if conn.telemetry != nil {
-			log.Debug().Msg("telemetry initialized for connection")
-		}
+	// Initialize telemetry (always attempt, let feature flags decide)
+	var enableTelemetry *bool
+	if c.cfg.ForceEnableTelemetry || c.cfg.EnableTelemetry {
+		// User explicitly enabled telemetry
+		trueVal := true
+		enableTelemetry = &trueVal
+	}
+	// else: leave nil to check server feature flag
+
+	conn.telemetry = telemetry.InitializeForConnection(
+		ctx,
+		c.cfg.Host,
+		c.client,
+		enableTelemetry,
+	)
+	if conn.telemetry != nil {
+		log.Debug().Msg("telemetry initialized for connection")
 	}
 
 	log.Info().Msgf("connect: host=%s port=%d httpPath=%s serverProtocolVersion=0x%X", c.cfg.Host, c.cfg.Port, c.cfg.HTTPPath, session.ServerProtocolVersion)

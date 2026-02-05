@@ -3,6 +3,8 @@ package telemetry
 import (
 	"context"
 	"net/http"
+
+	"github.com/databricks/databricks-sql-go/internal/config"
 )
 
 // InitializeForConnection initializes telemetry for a database connection.
@@ -13,8 +15,7 @@ import (
 //   - ctx: Context for the initialization
 //   - host: Databricks host
 //   - httpClient: HTTP client for making requests
-//   - enableTelemetry: User opt-in flag
-//   - forceEnableTelemetry: Force enable flag (bypasses server checks)
+//   - enableTelemetry: User opt-in flag (nil = unset, true = enable, false = disable)
 //
 // Returns:
 //   - *Interceptor: Telemetry interceptor if enabled, nil otherwise
@@ -22,13 +23,16 @@ func InitializeForConnection(
 	ctx context.Context,
 	host string,
 	httpClient *http.Client,
-	enableTelemetry bool,
-	forceEnableTelemetry bool,
+	enableTelemetry *bool,
 ) *Interceptor {
 	// Create telemetry config
 	cfg := DefaultConfig()
-	cfg.EnableTelemetry = enableTelemetry
-	cfg.ForceEnableTelemetry = forceEnableTelemetry
+
+	// Set EnableTelemetry based on user preference
+	if enableTelemetry != nil {
+		cfg.EnableTelemetry = config.NewConfigValue(*enableTelemetry)
+	}
+	// else: leave unset (will check server feature flag)
 
 	// Check if telemetry should be enabled
 	if !isTelemetryEnabled(ctx, cfg, host, httpClient) {
@@ -38,6 +42,9 @@ func InitializeForConnection(
 	// Get or create telemetry client for this host
 	clientMgr := getClientManager()
 	telemetryClient := clientMgr.getOrCreateClient(host, httpClient, cfg)
+	if telemetryClient == nil {
+		return nil
+	}
 
 	// Get feature flag cache context (for reference counting)
 	flagCache := getFeatureFlagCache()
