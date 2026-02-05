@@ -200,7 +200,7 @@ func WithDefaults() *Config {
 		ClientTimeout:             900 * time.Second,
 		PingTimeout:               60 * time.Second,
 		CanUseMultipleCatalogs:    true,
-		DriverName:                "databricks-sql-go",
+		DriverName:                "godatabrickssqlconnector", // Server requires this exact name for validation
 		ThriftProtocol:            "binary",
 		ThriftTransport:           "http",
 		ThriftProtocolVersion:     cli_service.TProtocolVersion_SPARK_CLI_SERVICE_PROTOCOL_V8,
