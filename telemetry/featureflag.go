@@ -90,7 +90,7 @@ func (c *featureFlagCache) releaseContext(host string) {
 // getFeatureFlag retrieves a specific feature flag value for the host.
 // This is the generic method that handles caching and fetching for any flag.
 // Uses cached value if available and not expired.
-func (c *featureFlagCache) getFeatureFlag(ctx context.Context, host string, httpClient *http.Client, flagName string) (bool, error) {
+func (c *featureFlagCache) getFeatureFlag(ctx context.Context, host string, httpClient *http.Client, flagName string, driverVersion string) (bool, error) {
 	c.mu.RLock()
 	flagCtx, exists := c.contexts[host]
 	c.mu.RUnlock()
@@ -111,7 +111,7 @@ func (c *featureFlagCache) getFeatureFlag(ctx context.Context, host string, http
 
 		// If we just created the context, make the initial blocking fetch
 		if !exists {
-			flags, err := fetchFeatureFlags(ctx, host, httpClient)
+			flags, err := fetchFeatureFlags(ctx, host, httpClient, driverVersion)
 
 			flagCtx.mu.Lock()
 			flagCtx.fetching = false
@@ -155,7 +155,7 @@ func (c *featureFlagCache) getFeatureFlag(ctx context.Context, host string, http
 	flagCtx.mu.RUnlock()
 
 	// Fetch fresh values for all flags
-	flags, err := fetchFeatureFlags(ctx, host, httpClient)
+	flags, err := fetchFeatureFlags(ctx, host, httpClient, driverVersion)
 
 	// Update cache (with proper locking)
 	flagCtx.mu.Lock()
@@ -184,8 +184,8 @@ func (c *featureFlagCache) getFeatureFlag(ctx context.Context, host string, http
 
 // isTelemetryEnabled checks if telemetry is enabled for the host.
 // Uses cached value if available and not expired.
-func (c *featureFlagCache) isTelemetryEnabled(ctx context.Context, host string, httpClient *http.Client) (bool, error) {
-	return c.getFeatureFlag(ctx, host, httpClient, flagEnableTelemetry)
+func (c *featureFlagCache) isTelemetryEnabled(ctx context.Context, host string, httpClient *http.Client, driverVersion string) (bool, error) {
+	return c.getFeatureFlag(ctx, host, httpClient, flagEnableTelemetry, driverVersion)
 }
 
 // isExpired returns true if the cache has expired.
@@ -203,9 +203,21 @@ func getAllFeatureFlags() []string {
 	}
 }
 
-// fetchFeatureFlags fetches multiple feature flag values from Databricks in a single request.
+// featureFlagEntry represents a single feature flag from the server response.
+type featureFlagEntry struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+}
+
+// featureFlagsResponse represents the response from the connector-service feature flags endpoint.
+type featureFlagsResponse struct {
+	Flags      []featureFlagEntry `json:"flags"`
+	TTLSeconds *int               `json:"ttl_seconds,omitempty"`
+}
+
+// fetchFeatureFlags fetches multiple feature flag values from Databricks connector-service endpoint.
 // Returns a map of flag names to their boolean values.
-func fetchFeatureFlags(ctx context.Context, host string, httpClient *http.Client) (map[string]bool, error) {
+func fetchFeatureFlags(ctx context.Context, host string, httpClient *http.Client, driverVersion string) (map[string]bool, error) {
 	// Add timeout to context if it doesn't have a deadline
 	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
 		var cancel context.CancelFunc
@@ -213,25 +225,19 @@ func fetchFeatureFlags(ctx context.Context, host string, httpClient *http.Client
 		defer cancel()
 	}
 
-	// Construct endpoint URL, adding https:// if not already present
+	// Construct connector-service endpoint URL with driver name and version
+	// Format: /api/2.0/connector-service/feature-flags/GOLANG/{version}
 	var endpoint string
 	if strings.HasPrefix(host, "http://") || strings.HasPrefix(host, "https://") {
-		endpoint = fmt.Sprintf("%s/api/2.0/feature-flags", host)
+		endpoint = fmt.Sprintf("%s/api/2.0/connector-service/feature-flags/GOLANG/%s", host, driverVersion)
 	} else {
-		endpoint = fmt.Sprintf("https://%s/api/2.0/feature-flags", host)
+		endpoint = fmt.Sprintf("https://%s/api/2.0/connector-service/feature-flags/GOLANG/%s", host, driverVersion)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "GET", endpoint, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create feature flag request: %w", err)
 	}
-
-	// Add query parameter with comma-separated list of feature flags
-	// This fetches all flags in a single request for efficiency
-	allFlags := getAllFeatureFlags()
-	q := req.URL.Query()
-	q.Add("flags", strings.Join(allFlags, ","))
-	req.URL.RawQuery = q.Encode()
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
@@ -245,18 +251,19 @@ func fetchFeatureFlags(ctx context.Context, host string, httpClient *http.Client
 		return nil, fmt.Errorf("feature flag check failed: %d", resp.StatusCode)
 	}
 
-	var result struct {
-		Flags map[string]bool `json:"flags"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	var response featureFlagsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
 		return nil, fmt.Errorf("failed to decode feature flag response: %w", err)
 	}
 
-	// Return the full map of flags
-	// Flags not present in the response will have false value when accessed
-	if result.Flags == nil {
-		return make(map[string]bool), nil
+	// Convert array of flag entries to map
+	flags := make(map[string]bool)
+	if response.Flags != nil {
+		for _, flag := range response.Flags {
+			// Parse string value as boolean
+			flags[flag.Name] = flag.Value == "true"
+		}
 	}
 
-	return result.Flags, nil
+	return flags, nil
 }

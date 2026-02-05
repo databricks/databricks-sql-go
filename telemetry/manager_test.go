@@ -29,7 +29,7 @@ func TestClientManager_GetOrCreateClient(t *testing.T) {
 	cfg := DefaultConfig()
 
 	// First call should create client and increment refCount to 1
-	client1 := manager.getOrCreateClient(host, httpClient, cfg)
+	client1 := manager.getOrCreateClient(host, 443, "", "test-version", httpClient, cfg, nil)
 	if client1 == nil {
 		t.Fatal("Expected client to be created")
 	}
@@ -46,7 +46,7 @@ func TestClientManager_GetOrCreateClient(t *testing.T) {
 	}
 
 	// Second call should reuse client and increment refCount to 2
-	client2 := manager.getOrCreateClient(host, httpClient, cfg)
+	client2 := manager.getOrCreateClient(host, 443, "", "test-version", httpClient, cfg, nil)
 	if client2 != client1 {
 		t.Error("Expected to get the same client instance")
 	}
@@ -65,8 +65,8 @@ func TestClientManager_GetOrCreateClient_DifferentHosts(t *testing.T) {
 	httpClient := &http.Client{}
 	cfg := DefaultConfig()
 
-	client1 := manager.getOrCreateClient(host1, httpClient, cfg)
-	client2 := manager.getOrCreateClient(host2, httpClient, cfg)
+	client1 := manager.getOrCreateClient(host1, 443, "", "test-version", httpClient, cfg, nil)
+	client2 := manager.getOrCreateClient(host2, 443, "", "test-version", httpClient, cfg, nil)
 
 	if client1 == client2 {
 		t.Error("Expected different clients for different hosts")
@@ -87,8 +87,8 @@ func TestClientManager_ReleaseClient(t *testing.T) {
 	cfg := DefaultConfig()
 
 	// Create client with refCount = 2
-	manager.getOrCreateClient(host, httpClient, cfg)
-	manager.getOrCreateClient(host, httpClient, cfg)
+	manager.getOrCreateClient(host, 443, "", "test-version", httpClient, cfg, nil)
+	manager.getOrCreateClient(host, 443, "", "test-version", httpClient, cfg, nil)
 
 	// First release should decrement to 1
 	err := manager.releaseClient(host)
@@ -151,7 +151,7 @@ func TestClientManager_ConcurrentAccess(t *testing.T) {
 	for i := 0; i < numGoroutines; i++ {
 		go func() {
 			defer wg.Done()
-			client := manager.getOrCreateClient(host, httpClient, cfg)
+			client := manager.getOrCreateClient(host, 443, "", "test-version", httpClient, cfg, nil)
 			if client == nil {
 				t.Error("Expected client to be created")
 			}
@@ -207,7 +207,7 @@ func TestClientManager_ConcurrentAccessMultipleHosts(t *testing.T) {
 			wg.Add(1)
 			go func(h string) {
 				defer wg.Done()
-				_ = manager.getOrCreateClient(h, httpClient, cfg)
+				_ = manager.getOrCreateClient(h, 443, "", "test-version", httpClient, cfg, nil)
 			}(host)
 		}
 	}
@@ -241,7 +241,7 @@ func TestClientManager_ReleaseClientPartial(t *testing.T) {
 
 	// Create 5 references
 	for i := 0; i < 5; i++ {
-		manager.getOrCreateClient(host, httpClient, cfg)
+		manager.getOrCreateClient(host, 443, "", "test-version", httpClient, cfg, nil)
 	}
 
 	// Release 3 references
@@ -271,7 +271,7 @@ func TestClientManager_ClientStartCalled(t *testing.T) {
 	httpClient := &http.Client{}
 	cfg := DefaultConfig()
 
-	client := manager.getOrCreateClient(host, httpClient, cfg)
+	client := manager.getOrCreateClient(host, 443, "", "test-version", httpClient, cfg, nil)
 
 	if !client.started {
 		t.Error("Expected start() to be called on new client")
@@ -287,7 +287,7 @@ func TestClientManager_ClientCloseCalled(t *testing.T) {
 	httpClient := &http.Client{}
 	cfg := DefaultConfig()
 
-	client := manager.getOrCreateClient(host, httpClient, cfg)
+	client := manager.getOrCreateClient(host, 443, "", "test-version", httpClient, cfg, nil)
 	_ = manager.releaseClient(host)
 
 	if !client.closed {
@@ -305,9 +305,9 @@ func TestClientManager_MultipleGetOrCreateSameClient(t *testing.T) {
 	cfg := DefaultConfig()
 
 	// Get same client multiple times
-	client1 := manager.getOrCreateClient(host, httpClient, cfg)
-	client2 := manager.getOrCreateClient(host, httpClient, cfg)
-	client3 := manager.getOrCreateClient(host, httpClient, cfg)
+	client1 := manager.getOrCreateClient(host, 443, "", "test-version", httpClient, cfg, nil)
+	client2 := manager.getOrCreateClient(host, 443, "", "test-version", httpClient, cfg, nil)
+	client3 := manager.getOrCreateClient(host, 443, "", "test-version", httpClient, cfg, nil)
 
 	// All should be same instance
 	if client1 != client2 || client2 != client3 {
@@ -337,7 +337,7 @@ func TestClientManager_Shutdown(t *testing.T) {
 	// Create clients for multiple hosts
 	clients := make([]*telemetryClient, 0, len(hosts))
 	for _, host := range hosts {
-		client := manager.getOrCreateClient(host, httpClient, cfg)
+		client := manager.getOrCreateClient(host, 443, "", "test-version", httpClient, cfg, nil)
 		clients = append(clients, client)
 	}
 
@@ -375,9 +375,9 @@ func TestClientManager_ShutdownWithActiveRefs(t *testing.T) {
 	cfg := DefaultConfig()
 
 	// Create client with multiple references
-	client := manager.getOrCreateClient(host, httpClient, cfg)
-	manager.getOrCreateClient(host, httpClient, cfg)
-	manager.getOrCreateClient(host, httpClient, cfg)
+	client := manager.getOrCreateClient(host, 443, "", "test-version", httpClient, cfg, nil)
+	manager.getOrCreateClient(host, 443, "", "test-version", httpClient, cfg, nil)
+	manager.getOrCreateClient(host, 443, "", "test-version", httpClient, cfg, nil)
 
 	holder := manager.clients[host]
 	if holder.refCount != 3 {

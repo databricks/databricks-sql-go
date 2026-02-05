@@ -1531,18 +1531,14 @@ func ParseTelemetryConfig(params map[string]string) *Config {
 
 ```go
 // checkFeatureFlag checks if telemetry is enabled server-side.
-func checkFeatureFlag(ctx context.Context, host string, httpClient *http.Client) (bool, error) {
-	endpoint := fmt.Sprintf("https://%s/api/2.0/feature-flags", host)
+func checkFeatureFlag(ctx context.Context, host string, httpClient *http.Client, driverVersion string) (bool, error) {
+	// Use connector-service endpoint with driver name and version
+	endpoint := fmt.Sprintf("https://%s/api/2.0/connector-service/feature-flags/GOLANG/%s", host, driverVersion)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", endpoint, nil)
 	if err != nil {
 		return false, err
 	}
-
-	// Add query parameters
-	q := req.URL.Query()
-	q.Add("flags", "databricks.partnerplatform.clientConfigsFeatureFlags.enableTelemetryForGoDriver")
-	req.URL.RawQuery = q.Encode()
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
@@ -2187,46 +2183,46 @@ func BenchmarkInterceptor_Disabled(b *testing.B) {
   - [x] Add afterExecute() and completeStatement() hooks to ExecContext
   - [x] Use operation handle GUID as statement ID
 
-### Phase 8: Testing & Validation
-- [ ] Run benchmark tests
-  - [ ] Measure overhead when enabled
-  - [ ] Measure overhead when disabled
-  - [ ] Ensure <1% overhead when enabled
-- [ ] Perform load testing with concurrent connections
-  - [ ] Test 100+ concurrent connections
-  - [ ] Verify per-host client sharing
-  - [ ] Verify no rate limiting with per-host clients
-- [ ] Validate graceful shutdown
-  - [ ] Test reference counting cleanup
-  - [ ] Test final flush on shutdown
-  - [ ] Test shutdown method works correctly
-- [ ] Test circuit breaker behavior
-  - [ ] Test circuit opening on repeated failures
-  - [ ] Test circuit recovery after timeout
-  - [ ] Test metrics dropped when circuit open
-- [ ] Test opt-in priority logic end-to-end
-  - [ ] Verify forceEnableTelemetry works in real driver
-  - [ ] Verify enableTelemetry works in real driver
-  - [ ] Verify server flag integration works
-- [ ] Verify privacy compliance
-  - [ ] Verify no SQL queries collected
-  - [ ] Verify no PII collected
-  - [ ] Verify tag filtering works (shouldExportToDatabricks)
+### Phase 8: Testing & Validation ✅ COMPLETED
+- [x] Run benchmark tests
+  - [x] Measure overhead when enabled
+  - [x] Measure overhead when disabled
+  - [x] Ensure <1% overhead when enabled
+- [x] Perform load testing with concurrent connections
+  - [x] Test 100+ concurrent connections
+  - [x] Verify per-host client sharing
+  - [x] Verify no rate limiting with per-host clients
+- [x] Validate graceful shutdown
+  - [x] Test reference counting cleanup
+  - [x] Test final flush on shutdown
+  - [x] Test shutdown method works correctly
+- [x] Test circuit breaker behavior
+  - [x] Test circuit opening on repeated failures
+  - [x] Test circuit recovery after timeout
+  - [x] Test metrics dropped when circuit open
+- [x] Test opt-in priority logic end-to-end
+  - [x] Verify forceEnableTelemetry works in real driver
+  - [x] Verify enableTelemetry works in real driver
+  - [x] Verify server flag integration works
+- [x] Verify privacy compliance
+  - [x] Verify no SQL queries collected
+  - [x] Verify no PII collected
+  - [x] Verify tag filtering works (shouldExportToDatabricks)
 
-### Phase 9: Partial Launch Preparation
-- [ ] Document `forceEnableTelemetry` and `enableTelemetry` flags
-- [ ] Create internal testing plan for Phase 1 (use forceEnableTelemetry=true)
-- [ ] Prepare beta opt-in documentation for Phase 2 (use enableTelemetry=true)
-- [ ] Set up monitoring for rollout health metrics
-- [ ] Document rollback procedures (set server flag to false)
+### Phase 9: Partial Launch Preparation ✅ COMPLETED
+- [x] Document `forceEnableTelemetry` and `enableTelemetry` flags
+- [x] Create internal testing plan for Phase 1 (use forceEnableTelemetry=true)
+- [x] Prepare beta opt-in documentation for Phase 2 (use enableTelemetry=true)
+- [x] Set up monitoring for rollout health metrics
+- [x] Document rollback procedures (set server flag to false)
 
-### Phase 10: Documentation
-- [ ] Document configuration options in README
-- [ ] Add examples for opt-in flags
-- [ ] Document partial launch strategy and phases
-- [ ] Document metric tags and their meanings
-- [ ] Create troubleshooting guide
-- [ ] Document architecture and design decisions
+### Phase 10: Documentation ✅ COMPLETED
+- [x] Document configuration options in README
+- [x] Add examples for opt-in flags
+- [x] Document partial launch strategy and phases
+- [x] Document metric tags and their meanings
+- [x] Create troubleshooting guide
+- [x] Document architecture and design decisions
 
 ---
 

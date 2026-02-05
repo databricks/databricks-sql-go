@@ -184,6 +184,9 @@ func (ucfg UserConfig) WithDefaults() UserConfig {
 	ucfg.UseLz4Compression = false
 	ucfg.CloudFetchConfig = CloudFetchConfig{}.WithDefaults()
 
+	// Enable telemetry by default (respects server feature flags)
+	ucfg.EnableTelemetry = true
+
 	return ucfg
 }
 
@@ -197,7 +200,7 @@ func WithDefaults() *Config {
 		ClientTimeout:             900 * time.Second,
 		PingTimeout:               60 * time.Second,
 		CanUseMultipleCatalogs:    true,
-		DriverName:                "godatabrickssqlconnector", // important. Do not change
+		DriverName:                "godatabrickssqlconnector", // Server requires this exact name for validation
 		ThriftProtocol:            "binary",
 		ThriftTransport:           "http",
 		ThriftProtocolVersion:     cli_service.TProtocolVersion_SPARK_CLI_SERVICE_PROTOCOL_V8,

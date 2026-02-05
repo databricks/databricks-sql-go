@@ -18,6 +18,7 @@ type metricsAggregator struct {
 	flushInterval time.Duration
 	stopCh        chan struct{}
 	flushTimer    *time.Ticker
+	closed        bool
 }
 
 // statementMetrics holds aggregated metrics for a statement.
@@ -63,12 +64,10 @@ func (agg *metricsAggregator) recordMetric(ctx context.Context, metric *telemetr
 	defer agg.mu.Unlock()
 
 	switch metric.metricType {
-	case "connection":
-		// Emit connection events immediately
+	case "connection", "operation":
+		// Emit connection and operation events immediately
 		agg.batch = append(agg.batch, metric)
-		if len(agg.batch) >= agg.batchSize {
-			agg.flushUnlocked(ctx)
-		}
+		agg.flushUnlocked(ctx)
 
 	case "statement":
 		// Aggregate by statement ID
@@ -211,6 +210,14 @@ func (agg *metricsAggregator) flushUnlocked(ctx context.Context) {
 
 // close stops the aggregator and flushes pending metrics.
 func (agg *metricsAggregator) close(ctx context.Context) error {
+	agg.mu.Lock()
+	if agg.closed {
+		agg.mu.Unlock()
+		return nil
+	}
+	agg.closed = true
+	agg.mu.Unlock()
+
 	close(agg.stopCh)
 	agg.flush(ctx)
 	return nil
