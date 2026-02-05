@@ -13,6 +13,7 @@ import (
 // telemetryExporter exports metrics to Databricks telemetry service.
 type telemetryExporter struct {
 	host           string
+	driverVersion  string
 	httpClient     *http.Client
 	circuitBreaker *circuitBreaker
 	cfg            *Config
@@ -48,9 +49,10 @@ type exportedMetric struct {
 }
 
 // newTelemetryExporter creates a new exporter.
-func newTelemetryExporter(host string, httpClient *http.Client, cfg *Config) *telemetryExporter {
+func newTelemetryExporter(host string, driverVersion string, httpClient *http.Client, cfg *Config) *telemetryExporter {
 	return &telemetryExporter{
 		host:           host,
+		driverVersion:  driverVersion,
 		httpClient:     httpClient,
 		circuitBreaker: getCircuitBreakerManager().getCircuitBreaker(host),
 		cfg:            cfg,

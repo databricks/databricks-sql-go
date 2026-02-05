@@ -16,7 +16,7 @@ func TestNewTelemetryExporter(t *testing.T) {
 	httpClient := &http.Client{Timeout: 5 * time.Second}
 	host := "test-host"
 
-	exporter := newTelemetryExporter(host, httpClient, cfg)
+	exporter := newTelemetryExporter(host, "test-version", httpClient, cfg)
 
 	if exporter.host != host {
 		t.Errorf("Expected host %s, got %s", host, exporter.host)
@@ -73,7 +73,7 @@ func TestExport_Success(t *testing.T) {
 	httpClient := &http.Client{Timeout: 5 * time.Second}
 
 	// Use full server URL for testing
-	exporter := newTelemetryExporter(server.URL, httpClient, cfg)
+	exporter := newTelemetryExporter(server.URL, "test-version", httpClient, cfg)
 
 	metrics := []*telemetryMetric{
 		{
@@ -113,7 +113,7 @@ func TestExport_RetryOn5xx(t *testing.T) {
 	httpClient := &http.Client{Timeout: 5 * time.Second}
 
 	// Use full server URL for testing
-	exporter := newTelemetryExporter(server.URL, httpClient, cfg)
+	exporter := newTelemetryExporter(server.URL, "test-version", httpClient, cfg)
 
 	metrics := []*telemetryMetric{
 		{
@@ -145,7 +145,7 @@ func TestExport_NonRetryable4xx(t *testing.T) {
 	httpClient := &http.Client{Timeout: 5 * time.Second}
 
 	// Use full server URL for testing
-	exporter := newTelemetryExporter(server.URL, httpClient, cfg)
+	exporter := newTelemetryExporter(server.URL, "test-version", httpClient, cfg)
 
 	metrics := []*telemetryMetric{
 		{
@@ -181,7 +181,7 @@ func TestExport_Retry429(t *testing.T) {
 	httpClient := &http.Client{Timeout: 5 * time.Second}
 
 	// Use full server URL for testing
-	exporter := newTelemetryExporter(server.URL, httpClient, cfg)
+	exporter := newTelemetryExporter(server.URL, "test-version", httpClient, cfg)
 
 	metrics := []*telemetryMetric{
 		{
@@ -211,7 +211,7 @@ func TestExport_CircuitBreakerOpen(t *testing.T) {
 	httpClient := &http.Client{Timeout: 5 * time.Second}
 
 	// Use full server URL for testing
-	exporter := newTelemetryExporter(server.URL, httpClient, cfg)
+	exporter := newTelemetryExporter(server.URL, "test-version", httpClient, cfg)
 
 	// Open the circuit breaker by recording failures
 	cb := exporter.circuitBreaker
@@ -334,7 +334,7 @@ func TestExport_ErrorSwallowing(t *testing.T) {
 	httpClient := &http.Client{Timeout: 5 * time.Second}
 
 	// Use full server URL for testing
-	exporter := newTelemetryExporter(server.URL, httpClient, cfg)
+	exporter := newTelemetryExporter(server.URL, "test-version", httpClient, cfg)
 
 	metrics := []*telemetryMetric{
 		{
@@ -370,7 +370,7 @@ func TestExport_ContextCancellation(t *testing.T) {
 	httpClient := &http.Client{Timeout: 5 * time.Second}
 
 	// Use full server URL for testing
-	exporter := newTelemetryExporter(server.URL, httpClient, cfg)
+	exporter := newTelemetryExporter(server.URL, "test-version", httpClient, cfg)
 
 	metrics := []*telemetryMetric{
 		{
@@ -403,7 +403,7 @@ func TestExport_ExponentialBackoff(t *testing.T) {
 	httpClient := &http.Client{Timeout: 5 * time.Second}
 
 	// Use full server URL for testing
-	exporter := newTelemetryExporter(server.URL, httpClient, cfg)
+	exporter := newTelemetryExporter(server.URL, "test-version", httpClient, cfg)
 
 	metrics := []*telemetryMetric{
 		{

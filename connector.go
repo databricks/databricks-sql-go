@@ -92,6 +92,7 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 	conn.telemetry = telemetry.InitializeForConnection(
 		ctx,
 		c.cfg.Host,
+		c.cfg.DriverVersion,
 		c.client,
 		enableTelemetry,
 	)

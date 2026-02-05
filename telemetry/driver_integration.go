@@ -14,6 +14,7 @@ import (
 // Parameters:
 //   - ctx: Context for the initialization
 //   - host: Databricks host
+//   - driverVersion: Driver version string
 //   - httpClient: HTTP client for making requests
 //   - enableTelemetry: User opt-in flag (nil = unset, true = enable, false = disable)
 //
@@ -22,6 +23,7 @@ import (
 func InitializeForConnection(
 	ctx context.Context,
 	host string,
+	driverVersion string,
 	httpClient *http.Client,
 	enableTelemetry *bool,
 ) *Interceptor {
@@ -41,7 +43,7 @@ func InitializeForConnection(
 
 	// Get or create telemetry client for this host
 	clientMgr := getClientManager()
-	telemetryClient := clientMgr.getOrCreateClient(host, "", httpClient, cfg) // TODO: Add driver version support
+	telemetryClient := clientMgr.getOrCreateClient(host, driverVersion, httpClient, cfg)
 	if telemetryClient == nil {
 		return nil
 	}

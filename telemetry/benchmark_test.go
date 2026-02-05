@@ -20,7 +20,7 @@ func BenchmarkInterceptor_Overhead_Enabled(b *testing.B) {
 	}))
 	defer server.Close()
 
-	exporter := newTelemetryExporter(server.URL, httpClient, cfg)
+	exporter := newTelemetryExporter(server.URL, "test-version", httpClient, cfg)
 	aggregator := newMetricsAggregator(exporter, cfg)
 	defer aggregator.close(context.Background())
 
@@ -48,7 +48,7 @@ func BenchmarkInterceptor_Overhead_Disabled(b *testing.B) {
 	}))
 	defer server.Close()
 
-	exporter := newTelemetryExporter(server.URL, httpClient, cfg)
+	exporter := newTelemetryExporter(server.URL, "test-version", httpClient, cfg)
 	aggregator := newMetricsAggregator(exporter, cfg)
 	defer aggregator.close(context.Background())
 
@@ -75,7 +75,7 @@ func BenchmarkAggregator_RecordMetric(b *testing.B) {
 	}))
 	defer server.Close()
 
-	exporter := newTelemetryExporter(server.URL, httpClient, cfg)
+	exporter := newTelemetryExporter(server.URL, "test-version", httpClient, cfg)
 	aggregator := newMetricsAggregator(exporter, cfg)
 	defer aggregator.close(context.Background())
 
@@ -105,7 +105,7 @@ func BenchmarkExporter_Export(b *testing.B) {
 	}))
 	defer server.Close()
 
-	exporter := newTelemetryExporter(server.URL, httpClient, cfg)
+	exporter := newTelemetryExporter(server.URL, "test-version", httpClient, cfg)
 
 	ctx := context.Background()
 	metrics := []*telemetryMetric{
@@ -292,7 +292,7 @@ func TestGracefulShutdown_FinalFlush(t *testing.T) {
 	}))
 	defer server.Close()
 
-	exporter := newTelemetryExporter(server.URL, httpClient, cfg)
+	exporter := newTelemetryExporter(server.URL, "test-version", httpClient, cfg)
 	aggregator := newMetricsAggregator(exporter, cfg)
 
 	// Record a metric
