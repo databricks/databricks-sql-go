@@ -226,12 +226,12 @@ func fetchFeatureFlags(ctx context.Context, host string, httpClient *http.Client
 	}
 
 	// Construct connector-service endpoint URL with driver name and version
-	// Format: /api/2.0/connector-service/feature-flags/OSS_GO_SQL/{version}
+	// Format: /api/2.0/connector-service/feature-flags/GOLANG/{version}
 	var endpoint string
 	if strings.HasPrefix(host, "http://") || strings.HasPrefix(host, "https://") {
-		endpoint = fmt.Sprintf("%s/api/2.0/connector-service/feature-flags/OSS_GO_SQL/%s", host, driverVersion)
+		endpoint = fmt.Sprintf("%s/api/2.0/connector-service/feature-flags/GOLANG/%s", host, driverVersion)
 	} else {
-		endpoint = fmt.Sprintf("https://%s/api/2.0/connector-service/feature-flags/OSS_GO_SQL/%s", host, driverVersion)
+		endpoint = fmt.Sprintf("https://%s/api/2.0/connector-service/feature-flags/GOLANG/%s", host, driverVersion)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "GET", endpoint, nil)

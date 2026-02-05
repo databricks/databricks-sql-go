@@ -323,7 +323,7 @@ func TestFetchFeatureFlags_Success(t *testing.T) {
 		if r.Method != "GET" {
 			t.Errorf("Expected GET request, got %s", r.Method)
 		}
-		expectedPath := "/api/2.0/connector-service/feature-flags/OSS_GO_SQL/1.0.0"
+		expectedPath := "/api/2.0/connector-service/feature-flags/GOLANG/1.0.0"
 		if r.URL.Path != expectedPath {
 			t.Errorf("Expected %s path, got %s", expectedPath, r.URL.Path)
 		}
