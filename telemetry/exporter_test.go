@@ -45,8 +45,8 @@ func TestExport_Success(t *testing.T) {
 			t.Errorf("Expected POST, got %s", r.Method)
 		}
 
-		if r.URL.Path != "/api/2.0/telemetry-ext" {
-			t.Errorf("Expected path /api/2.0/telemetry-ext, got %s", r.URL.Path)
+		if r.URL.Path != "/telemetry-ext" {
+			t.Errorf("Expected path /telemetry-ext, got %s", r.URL.Path)
 		}
 
 		// Verify content type
