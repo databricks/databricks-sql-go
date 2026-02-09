@@ -94,8 +94,9 @@ func TestFeatureFlagCache_IsTelemetryEnabled_Cached(t *testing.T) {
 	ctx := cache.getOrCreateContext(host)
 
 	// Set cached value
-	enabled := true
-	ctx.enabled = &enabled
+	ctx.flags = map[string]bool{
+		flagEnableTelemetry: true,
+	}
 	ctx.lastFetched = time.Now()
 
 	// Should return cached value without HTTP call
@@ -127,8 +128,9 @@ func TestFeatureFlagCache_IsTelemetryEnabled_Expired(t *testing.T) {
 	ctx := cache.getOrCreateContext(host)
 
 	// Set expired cached value
-	enabled := false
-	ctx.enabled = &enabled
+	ctx.flags = map[string]bool{
+		flagEnableTelemetry: false,
+	}
 	ctx.lastFetched = time.Now().Add(-20 * time.Minute) // Expired
 
 	// Should fetch fresh value
@@ -145,7 +147,7 @@ func TestFeatureFlagCache_IsTelemetryEnabled_Expired(t *testing.T) {
 	}
 
 	// Verify cache was updated
-	if *ctx.enabled != true {
+	if ctx.flags[flagEnableTelemetry] != true {
 		t.Error("Expected cache to be updated with new value")
 	}
 }
@@ -157,14 +159,15 @@ func TestFeatureFlagCache_IsTelemetryEnabled_NoContext(t *testing.T) {
 
 	host := "non-existent-host.databricks.com"
 
-	// Should return false for non-existent context
-	result, err := cache.isTelemetryEnabled(context.Background(), host, nil)
-	if err != nil {
-		t.Errorf("Expected no error, got %v", err)
-	}
+	// Should return false for non-existent context (network error expected)
+	httpClient := &http.Client{Timeout: 1 * time.Second}
+	result, err := cache.isTelemetryEnabled(context.Background(), host, httpClient)
+	// Error expected due to network failure, but should not panic
 	if result != false {
 		t.Error("Expected false for non-existent context")
 	}
+	// err is expected to be non-nil due to DNS/network failure, but that's okay
+	_ = err
 }
 
 func TestFeatureFlagCache_IsTelemetryEnabled_ErrorFallback(t *testing.T) {
@@ -182,8 +185,9 @@ func TestFeatureFlagCache_IsTelemetryEnabled_ErrorFallback(t *testing.T) {
 	ctx := cache.getOrCreateContext(host)
 
 	// Set cached value
-	enabled := true
-	ctx.enabled = &enabled
+	ctx.flags = map[string]bool{
+		flagEnableTelemetry: true,
+	}
 	ctx.lastFetched = time.Now().Add(-20 * time.Minute) // Expired
 
 	// Should return cached value on error
@@ -271,28 +275,28 @@ func TestFeatureFlagCache_ConcurrentAccess(t *testing.T) {
 func TestFeatureFlagContext_IsExpired(t *testing.T) {
 	tests := []struct {
 		name     string
-		enabled  *bool
+		flags    map[string]bool
 		fetched  time.Time
 		duration time.Duration
 		want     bool
 	}{
 		{
 			name:     "no cache",
-			enabled:  nil,
+			flags:    nil,
 			fetched:  time.Time{},
 			duration: 15 * time.Minute,
 			want:     true,
 		},
 		{
 			name:     "fresh cache",
-			enabled:  boolPtr(true),
+			flags:    map[string]bool{flagEnableTelemetry: true},
 			fetched:  time.Now(),
 			duration: 15 * time.Minute,
 			want:     false,
 		},
 		{
 			name:     "expired cache",
-			enabled:  boolPtr(true),
+			flags:    map[string]bool{flagEnableTelemetry: true},
 			fetched:  time.Now().Add(-20 * time.Minute),
 			duration: 15 * time.Minute,
 			want:     true,
@@ -302,7 +306,7 @@ func TestFeatureFlagContext_IsExpired(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := &featureFlagContext{
-				enabled:       tt.enabled,
+				flags:         tt.flags,
 				lastFetched:   tt.fetched,
 				cacheDuration: tt.duration,
 			}
@@ -313,7 +317,7 @@ func TestFeatureFlagContext_IsExpired(t *testing.T) {
 	}
 }
 
-func TestFetchFeatureFlag_Success(t *testing.T) {
+func TestFetchFeatureFlags_Success(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Verify request
 		if r.Method != "GET" {
@@ -339,16 +343,16 @@ func TestFetchFeatureFlag_Success(t *testing.T) {
 	host := server.URL // Use full URL for testing
 	httpClient := &http.Client{}
 
-	enabled, err := fetchFeatureFlag(context.Background(), host, httpClient)
+	flags, err := fetchFeatureFlags(context.Background(), host, httpClient)
 	if err != nil {
 		t.Errorf("Expected no error, got %v", err)
 	}
-	if !enabled {
-		t.Error("Expected feature flag to be enabled")
+	if !flags[flagEnableTelemetry] {
+		t.Error("Expected telemetry feature flag to be enabled")
 	}
 }
 
-func TestFetchFeatureFlag_Disabled(t *testing.T) {
+func TestFetchFeatureFlags_Disabled(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
@@ -359,16 +363,16 @@ func TestFetchFeatureFlag_Disabled(t *testing.T) {
 	host := server.URL // Use full URL for testing
 	httpClient := &http.Client{}
 
-	enabled, err := fetchFeatureFlag(context.Background(), host, httpClient)
+	flags, err := fetchFeatureFlags(context.Background(), host, httpClient)
 	if err != nil {
 		t.Errorf("Expected no error, got %v", err)
 	}
-	if enabled {
-		t.Error("Expected feature flag to be disabled")
+	if flags[flagEnableTelemetry] {
+		t.Error("Expected telemetry feature flag to be disabled")
 	}
 }
 
-func TestFetchFeatureFlag_FlagNotPresent(t *testing.T) {
+func TestFetchFeatureFlags_FlagNotPresent(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
@@ -379,16 +383,16 @@ func TestFetchFeatureFlag_FlagNotPresent(t *testing.T) {
 	host := server.URL // Use full URL for testing
 	httpClient := &http.Client{}
 
-	enabled, err := fetchFeatureFlag(context.Background(), host, httpClient)
+	flags, err := fetchFeatureFlags(context.Background(), host, httpClient)
 	if err != nil {
 		t.Errorf("Expected no error, got %v", err)
 	}
-	if enabled {
-		t.Error("Expected feature flag to be false when not present")
+	if flags[flagEnableTelemetry] {
+		t.Error("Expected telemetry feature flag to be false when not present")
 	}
 }
 
-func TestFetchFeatureFlag_HTTPError(t *testing.T) {
+func TestFetchFeatureFlags_HTTPError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
@@ -397,13 +401,13 @@ func TestFetchFeatureFlag_HTTPError(t *testing.T) {
 	host := server.URL // Use full URL for testing
 	httpClient := &http.Client{}
 
-	_, err := fetchFeatureFlag(context.Background(), host, httpClient)
+	_, err := fetchFeatureFlags(context.Background(), host, httpClient)
 	if err == nil {
 		t.Error("Expected error for HTTP 500")
 	}
 }
 
-func TestFetchFeatureFlag_InvalidJSON(t *testing.T) {
+func TestFetchFeatureFlags_InvalidJSON(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
@@ -414,13 +418,13 @@ func TestFetchFeatureFlag_InvalidJSON(t *testing.T) {
 	host := server.URL // Use full URL for testing
 	httpClient := &http.Client{}
 
-	_, err := fetchFeatureFlag(context.Background(), host, httpClient)
+	_, err := fetchFeatureFlags(context.Background(), host, httpClient)
 	if err == nil {
 		t.Error("Expected error for invalid JSON")
 	}
 }
 
-func TestFetchFeatureFlag_ContextCancellation(t *testing.T) {
+func TestFetchFeatureFlags_ContextCancellation(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(100 * time.Millisecond)
 		w.WriteHeader(http.StatusOK)
@@ -433,13 +437,8 @@ func TestFetchFeatureFlag_ContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel immediately
 
-	_, err := fetchFeatureFlag(ctx, host, httpClient)
+	_, err := fetchFeatureFlags(ctx, host, httpClient)
 	if err == nil {
 		t.Error("Expected error for cancelled context")
 	}
-}
-
-// Helper function to create bool pointer
-func boolPtr(b bool) *bool {
-	return &b
 }

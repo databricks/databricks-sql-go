@@ -338,6 +338,7 @@ func (c *conn) executeStatement(ctx context.Context, query string, args []driver
 
 	select {
 	default:
+		// Non-blocking check: continue if context not done
 	case <-ctx.Done():
 		newCtx := driverctx.NewContextFromBackground(ctx)
 		// in case context is done, we need to cancel the operation if necessary
