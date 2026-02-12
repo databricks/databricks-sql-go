@@ -4,6 +4,8 @@ import (
 	"context"
 	"sync"
 	"time"
+
+	"github.com/databricks/databricks-sql-go/logger"
 )
 
 // metricsAggregator aggregates metrics by statement and batches for export.
@@ -54,8 +56,7 @@ func (agg *metricsAggregator) recordMetric(ctx context.Context, metric *telemetr
 	// Swallow all errors
 	defer func() {
 		if r := recover(); r != nil {
-			// Log at trace level only
-			// logger.Trace().Msgf("telemetry: recordMetric panic: %v", r)
+			logger.Debug().Msgf("telemetry: recordMetric panic: %v", r)
 		}
 	}()
 
@@ -125,7 +126,7 @@ func (agg *metricsAggregator) recordMetric(ctx context.Context, metric *telemetr
 func (agg *metricsAggregator) completeStatement(ctx context.Context, statementID string, failed bool) {
 	defer func() {
 		if r := recover(); r != nil {
-			// Log at trace level only
+			logger.Debug().Msgf("telemetry: completeStatement panic: %v", r)
 		}
 	}()
 
@@ -204,7 +205,7 @@ func (agg *metricsAggregator) flushUnlocked(ctx context.Context) {
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
-				// Log at trace level only
+				logger.Debug().Msgf("telemetry: async export panic: %v", r)
 			}
 		}()
 		agg.exporter.export(ctx, metrics)

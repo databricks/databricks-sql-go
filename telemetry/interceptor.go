@@ -3,6 +3,8 @@ package telemetry
 import (
 	"context"
 	"time"
+
+	"github.com/databricks/databricks-sql-go/logger"
 )
 
 // Interceptor wraps driver operations to collect metrics.
@@ -75,8 +77,7 @@ func (i *Interceptor) afterExecute(ctx context.Context, err error) {
 	// Swallow all panics
 	defer func() {
 		if r := recover(); r != nil {
-			// Log at trace level only
-			// logger.Trace().Msgf("telemetry: afterExecute panic: %v", r)
+			logger.Debug().Msgf("telemetry: afterExecute panic: %v", r)
 		}
 	}()
 
@@ -116,7 +117,7 @@ func (i *Interceptor) recordConnection(ctx context.Context, tags map[string]inte
 
 	defer func() {
 		if r := recover(); r != nil {
-			// Log at trace level only
+			logger.Debug().Msgf("telemetry: recordConnection panic: %v", r)
 		}
 	}()
 
