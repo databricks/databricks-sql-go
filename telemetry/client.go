@@ -25,9 +25,9 @@ type telemetryClient struct {
 	exporter   *telemetryExporter
 	aggregator *metricsAggregator
 
-	mu         sync.Mutex // Protects started and closed flags
-	started    bool
-	closed     bool
+	mu      sync.Mutex // Protects started and closed flags
+	started bool
+	closed  bool
 }
 
 // newTelemetryClient creates a new telemetry client for the given host.
