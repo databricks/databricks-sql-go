@@ -64,7 +64,8 @@ func (agg *metricsAggregator) recordMetric(ctx context.Context, metric *telemetr
 
 	switch metric.metricType {
 	case "connection":
-		// Emit connection events immediately
+		// Emit connection events immediately: connection lifecycle events must be captured
+		// before the connection closes, as we won't have another opportunity to flush
 		agg.batch = append(agg.batch, metric)
 		if len(agg.batch) >= agg.batchSize {
 			agg.flushUnlocked(ctx)
@@ -107,7 +108,8 @@ func (agg *metricsAggregator) recordMetric(ctx context.Context, metric *telemetr
 	case "error":
 		// Check if terminal error
 		if metric.errorType != "" && isTerminalError(&simpleError{msg: metric.errorType}) {
-			// Flush terminal errors immediately
+			// Flush terminal errors immediately: terminal errors often lead to connection
+			// termination. If we wait for the next batch/timer flush, this data may be lost
 			agg.batch = append(agg.batch, metric)
 			agg.flushUnlocked(ctx)
 		} else {
