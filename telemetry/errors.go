@@ -13,7 +13,12 @@ func isTerminalError(err error) bool {
 		return false
 	}
 
-	// Check error message patterns for terminal errors
+	// Priority 1: Check HTTP status code if available (most reliable)
+	if httpErr, ok := extractHTTPError(err); ok {
+		return isTerminalHTTPStatus(httpErr.statusCode)
+	}
+
+	// Priority 2: Fall back to error message patterns
 	errMsg := strings.ToLower(err.Error())
 	terminalPatterns := []string{
 		"authentication failed",
