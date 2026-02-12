@@ -23,6 +23,8 @@ type metricsAggregator struct {
 }
 
 // statementMetrics holds aggregated metrics for a statement.
+//
+//nolint:unused // Will be used in Phase 8+
 type statementMetrics struct {
 	statementID     string
 	sessionID       string
@@ -52,6 +54,8 @@ func newMetricsAggregator(exporter *telemetryExporter, cfg *Config) *metricsAggr
 }
 
 // recordMetric records a metric for aggregation.
+//
+//nolint:unused // Will be used in Phase 8+
 func (agg *metricsAggregator) recordMetric(ctx context.Context, metric *telemetryMetric) {
 	// Swallow all errors
 	defer func() {
@@ -123,6 +127,8 @@ func (agg *metricsAggregator) recordMetric(ctx context.Context, metric *telemetr
 }
 
 // completeStatement marks a statement as complete and emits aggregated metric.
+//
+//nolint:unused // Will be used in Phase 8+
 func (agg *metricsAggregator) completeStatement(ctx context.Context, statementID string, failed bool) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -220,10 +226,13 @@ func (agg *metricsAggregator) close(ctx context.Context) error {
 }
 
 // simpleError is a simple error implementation for testing.
+//
+//nolint:unused // Will be used in Phase 8+
 type simpleError struct {
 	msg string
 }
 
+//nolint:unused // Will be used in Phase 8+
 func (e *simpleError) Error() string {
 	return e.msg
 }
