@@ -80,7 +80,7 @@ func classifyError(err error) string {
 // isRetryableError returns true if the error is retryable.
 // This is the inverse of isTerminalError.
 //
-//nolint:unused // Will be used in Phase 8+
+//nolint:deadcode,unused // Will be used in Phase 8+
 func isRetryableError(err error) bool {
 	return !isTerminalError(err)
 }
@@ -100,7 +100,7 @@ func (e *httpError) Error() string {
 
 // newHTTPError creates a new HTTP error.
 //
-//nolint:unused // Will be used in Phase 8+
+//nolint:deadcode,unused // Will be used in Phase 8+
 func newHTTPError(statusCode int, message string) error {
 	return &httpError{
 		statusCode: statusCode,
