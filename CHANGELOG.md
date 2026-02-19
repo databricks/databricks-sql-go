@@ -1,5 +1,13 @@
 # Release History
 
+## v1.10.0 (2026-02-19)
+- Add token federation / token provider support for OAuth (databricks/databricks-sql-go#290, #291, #292)
+- Implement telemetry infrastructure phases 1-5: core config, feature flag cache, client manager, circuit breaker, and export infrastructure with opt-in configuration (databricks/databricks-sql-go#297, #304, #305, #311, #319)
+- Fix type inference for int64/uint64 (BIGINT) and float64 (DOUBLE) (databricks/databricks-sql-go#316)
+- Fix context loss in polling and connection close operations (databricks/databricks-sql-go#295)
+- CloudFetch: allow configuration of HTTP client (databricks/databricks-sql-go#308)
+- Add metric view metadata support (databricks/databricks-sql-go#286)
+
 ## v1.9.0 (2025-09-17)
 - Added support for query tags
 - Passing session params in open session request instead of SET commands (databricks/databricks-sql-go#283)
