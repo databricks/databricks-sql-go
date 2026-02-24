@@ -82,22 +82,25 @@ func (c *Config) DeepCopy() *Config {
 
 // UserConfig is the set of configurations exposed to users
 type UserConfig struct {
-	Protocol                 string
-	Host                     string // from databricks UI
-	Port                     int    // from databricks UI
-	HTTPPath                 string // from databricks UI
-	Catalog                  string
-	Schema                   string
-	Authenticator            auth.Authenticator
-	AccessToken              string        // from databricks UI
-	MaxRows                  int           // max rows per page
-	QueryTimeout             time.Duration // Timeout passed to server for query processing
-	UserAgentEntry           string
-	Location                 *time.Location
-	SessionParams            map[string]string
-	RetryWaitMin             time.Duration
-	RetryWaitMax             time.Duration
-	RetryMax                 int
+	Protocol       string
+	Host           string // from databricks UI
+	Port           int    // from databricks UI
+	HTTPPath       string // from databricks UI
+	Catalog        string
+	Schema         string
+	Authenticator  auth.Authenticator
+	AccessToken    string        // from databricks UI
+	MaxRows        int           // max rows per page
+	QueryTimeout   time.Duration // Timeout passed to server for query processing
+	UserAgentEntry string
+	Location       *time.Location
+	SessionParams  map[string]string
+	RetryWaitMin   time.Duration
+	RetryWaitMax   time.Duration
+	RetryMax       int
+	// Telemetry configuration
+	EnableTelemetry          bool // Opt-in for telemetry (respects server feature flags)
+	ForceEnableTelemetry     bool // Force enable telemetry (bypasses server checks)
 	Transport                http.RoundTripper
 	UseLz4Compression        bool
 	EnableMetricViewMetadata bool
@@ -144,6 +147,8 @@ func (ucfg UserConfig) DeepCopy() UserConfig {
 		UseLz4Compression:        ucfg.UseLz4Compression,
 		EnableMetricViewMetadata: ucfg.EnableMetricViewMetadata,
 		CloudFetchConfig:         ucfg.CloudFetchConfig,
+		EnableTelemetry:          ucfg.EnableTelemetry,
+		ForceEnableTelemetry:     ucfg.ForceEnableTelemetry,
 	}
 }
 
@@ -280,6 +285,21 @@ func ParseDSN(dsn string) (UserConfig, error) {
 			return UserConfig{}, err
 		}
 		ucfg.EnableMetricViewMetadata = enableMetricViewMetadata
+	}
+
+	// Telemetry parameters
+	if enableTelemetry, ok, err := params.extractAsBool("enableTelemetry"); ok {
+		if err != nil {
+			return UserConfig{}, err
+		}
+		ucfg.EnableTelemetry = enableTelemetry
+	}
+
+	if forceEnableTelemetry, ok, err := params.extractAsBool("forceEnableTelemetry"); ok {
+		if err != nil {
+			return UserConfig{}, err
+		}
+		ucfg.ForceEnableTelemetry = forceEnableTelemetry
 	}
 
 	// for timezone we do a case insensitive key match.
