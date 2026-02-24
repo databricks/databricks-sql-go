@@ -592,6 +592,7 @@ func (c *conn) execStagingOperation(
 		if err != nil {
 			return dbsqlerrint.NewDriverError(ctx, "error reading row.", err)
 		}
+		defer row.Close()
 
 	} else {
 		return dbsqlerrint.NewDriverError(ctx, "staging ctx must be provided.", nil)
