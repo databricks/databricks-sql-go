@@ -13,7 +13,7 @@ func init() {
 	sql.Register("databricks", &databricksDriver{})
 }
 
-var DriverVersion = "1.9.0" // update version before each release
+var DriverVersion = "1.10.0" // update version before each release
 
 type databricksDriver struct{}
 

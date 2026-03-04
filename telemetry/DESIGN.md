@@ -4,7 +4,7 @@
 
 This document outlines a **telemetry design** for the Databricks SQL Go driver that collects usage metrics and exports them to the Databricks telemetry service. The design leverages Go's `context.Context` and middleware patterns to instrument driver operations without impacting performance.
 
-**Important Note:** Telemetry is **disabled by default** and will be enabled only after full testing and validation is complete.
+**Important Note:** Telemetry is **disabled by default** and requires explicit opt-in. A gradual rollout strategy will be used to ensure reliability and user control.
 
 **Key Objectives:**
 - Collect driver usage metrics and performance data
@@ -14,9 +14,10 @@ This document outlines a **telemetry design** for the Databricks SQL Go driver t
 - Follow Go best practices and idiomatic patterns
 
 **Design Principles:**
+- **Opt-in first**: User explicit consent required, disabled by default
 - **Non-blocking**: All operations async using goroutines
 - **Privacy-first**: No PII or query data collected
-- **Server-controlled**: Feature flag support for enable/disable
+- **Server-controlled**: Feature flag support for gradual rollout
 - **Fail-safe**: All telemetry errors swallowed silently
 - **Idiomatic Go**: Use standard library patterns and interfaces
 
@@ -44,12 +45,17 @@ This document outlines a **telemetry design** for the Databricks SQL Go driver t
 4. [Data Collection](#4-data-collection)
 5. [Export Mechanism](#5-export-mechanism)
 6. [Configuration](#6-configuration)
+   - 6.1 [Configuration Structure](#61-configuration-structure)
+   - 6.2 [Configuration from DSN](#62-configuration-from-dsn)
+   - 6.3 [Feature Flag Integration](#63-feature-flag-integration)
+   - 6.4 [Opt-In Control & Priority](#64-opt-in-control--priority)
 7. [Privacy & Compliance](#7-privacy--compliance)
 8. [Error Handling](#8-error-handling)
 9. [Graceful Shutdown](#9-graceful-shutdown)
 10. [Testing Strategy](#10-testing-strategy)
-11. [Implementation Checklist](#11-implementation-checklist)
-12. [References](#12-references)
+11. [Partial Launch Strategy](#11-partial-launch-strategy)
+12. [Implementation Checklist](#12-implementation-checklist)
+13. [References](#13-references)
 
 ---
 
@@ -159,9 +165,12 @@ sequenceDiagram
 
 #### Rationale
 - **Per-host caching**: Feature flags cached by host to prevent rate limiting
+- **Multi-flag support**: Fetches all flags in a single request for efficiency
 - **Reference counting**: Tracks number of connections per host for proper cleanup
 - **Automatic expiration**: Refreshes cached flags after TTL expires (15 minutes)
 - **Thread-safe**: Uses sync.RWMutex for concurrent access
+- **Synchronous fetch**: Blocks on cache miss (see Section 6.3 for behavior details)
+- **Thundering herd protection**: Only one fetch per host at a time
 
 #### Interface
 
@@ -373,7 +382,7 @@ func (m *clientManager) releaseClient(host string) error {
 
 ### 3.3 circuitBreaker
 
-**Purpose**: Implement circuit breaker pattern to protect against failing telemetry endpoint.
+**Purpose**: Implement circuit breaker pattern to protect against failing telemetry endpoint using a sliding window and failure rate percentage algorithm (matching JDBC's Resilience4j implementation).
 
 **Location**: `telemetry/circuitbreaker.go`
 
@@ -382,11 +391,28 @@ func (m *clientManager) releaseClient(host string) error {
 - **Not just rate limiting**: Protects against 5xx errors, timeouts, network failures
 - **Resource efficiency**: Prevents wasting resources on a failing endpoint
 - **Auto-recovery**: Automatically detects when endpoint becomes healthy again
+- **JDBC alignment**: Uses sliding window with failure rate percentage, matching JDBC driver behavior exactly
+
+#### Algorithm: Sliding Window with Failure Rate
+The circuit breaker tracks recent calls in a **sliding window** (ring buffer) and calculates the **failure rate percentage**:
+- Tracks the last N calls (default: 30)
+- Opens circuit when failure rate >= threshold (default: 50%)
+- Requires minimum calls before evaluation (default: 20)
+- Uses percentage-based evaluation instead of consecutive failures
+
+**Example**: With 30 calls in window, if 15 or more fail (50%), circuit opens. This is more robust than consecutive-failure counting as it considers overall reliability.
 
 #### States
 1. **Closed**: Normal operation, requests pass through
-2. **Open**: After threshold failures, all requests rejected immediately (drop events)
-3. **Half-Open**: After timeout, allows test requests to check if endpoint recovered
+2. **Open**: After failure rate exceeds threshold, all requests rejected immediately (drop events)
+3. **Half-Open**: After wait duration, allows test requests to check if endpoint recovered
+
+#### Configuration (matching JDBC defaults)
+- **failureRateThreshold**: 50% - Opens circuit if failure rate >= 50%
+- **minimumNumberOfCalls**: 20 - Minimum calls before evaluating failure rate
+- **slidingWindowSize**: 30 - Track last 30 calls in sliding window
+- **waitDurationInOpenState**: 30s - Wait before transitioning to half-open
+- **permittedCallsInHalfOpen**: 3 - Test with 3 successful calls before closing
 
 #### Interface
 
@@ -410,32 +436,53 @@ const (
 	stateHalfOpen
 )
 
+// callResult represents the result of a call (success or failure).
+type callResult bool
+
+const (
+	callSuccess callResult = true
+	callFailure callResult = false
+)
+
 // circuitBreaker implements the circuit breaker pattern.
+// It protects against failing telemetry endpoints by tracking failures
+// using a sliding window and failure rate percentage.
 type circuitBreaker struct {
 	mu sync.RWMutex
 
 	state         atomic.Int32 // circuitState
-	failureCount  int
-	successCount  int
-	lastFailTime  time.Time
 	lastStateTime time.Time
+
+	// Sliding window for tracking calls
+	window       []callResult
+	windowIndex  int
+	windowFilled bool
+	totalCalls   int
+	failureCount int
+
+	// Half-open state tracking
+	halfOpenSuccesses int
 
 	config circuitBreakerConfig
 }
 
 // circuitBreakerConfig holds circuit breaker configuration.
 type circuitBreakerConfig struct {
-	failureThreshold int           // Open after N failures
-	successThreshold int           // Close after N successes in half-open
-	timeout          time.Duration // Try again after timeout
+	failureRateThreshold     int           // Open if failure rate >= this percentage (0-100)
+	minimumNumberOfCalls     int           // Minimum calls before evaluating failure rate
+	slidingWindowSize        int           // Number of recent calls to track
+	waitDurationInOpenState  time.Duration // Wait before transitioning to half-open
+	permittedCallsInHalfOpen int           // Number of test calls in half-open state
 }
 
-// defaultCircuitBreakerConfig returns default configuration.
+// defaultCircuitBreakerConfig returns default configuration matching JDBC.
 func defaultCircuitBreakerConfig() circuitBreakerConfig {
 	return circuitBreakerConfig{
-		failureThreshold: 5,
-		successThreshold: 2,
-		timeout:          1 * time.Minute,
+		failureRateThreshold:     50, // 50% failure rate
+		minimumNumberOfCalls:     20, // Minimum sample size
+		slidingWindowSize:        30, // Keep recent 30 calls
+		waitDurationInOpenState:  30 * time.Second,
+		permittedCallsInHalfOpen: 3, // Test with 3 calls
 	}
 }
 
@@ -444,6 +491,7 @@ func newCircuitBreaker(cfg circuitBreakerConfig) *circuitBreaker {
 	cb := &circuitBreaker{
 		config:        cfg,
 		lastStateTime: time.Now(),
+		window:        make([]callResult, cfg.slidingWindowSize),
 	}
 	cb.state.Store(int32(stateClosed))
 	return cb
@@ -458,9 +506,9 @@ func (cb *circuitBreaker) execute(ctx context.Context, fn func() error) error {
 
 	switch state {
 	case stateOpen:
-		// Check if timeout has passed
+		// Check if wait duration has passed
 		cb.mu.RLock()
-		shouldRetry := time.Since(cb.lastStateTime) > cb.config.timeout
+		shouldRetry := time.Since(cb.lastStateTime) > cb.config.waitDurationInOpenState
 		cb.mu.RUnlock()
 
 		if shouldRetry {
@@ -485,46 +533,94 @@ func (cb *circuitBreaker) tryExecute(ctx context.Context, fn func() error) error
 	err := fn()
 
 	if err != nil {
-		cb.recordFailure()
+		cb.recordCall(callFailure)
 		return err
 	}
 
-	cb.recordSuccess()
+	cb.recordCall(callSuccess)
 	return nil
 }
 
-// recordFailure records a failure and potentially opens the circuit.
-func (cb *circuitBreaker) recordFailure() {
+// recordCall records a call result in the sliding window and evaluates state transitions.
+func (cb *circuitBreaker) recordCall(result callResult) {
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
 
-	cb.failureCount++
-	cb.successCount = 0
-	cb.lastFailTime = time.Now()
-
 	state := circuitState(cb.state.Load())
 
+	// Handle half-open state specially
 	if state == stateHalfOpen {
-		// Failure in half-open immediately opens circuit
-		cb.setStateUnlocked(stateOpen)
-	} else if cb.failureCount >= cb.config.failureThreshold {
+		if result == callFailure {
+			// Any failure in half-open immediately reopens circuit
+			cb.resetWindowUnlocked()
+			cb.setStateUnlocked(stateOpen)
+			return
+		}
+
+		cb.halfOpenSuccesses++
+		if cb.halfOpenSuccesses >= cb.config.permittedCallsInHalfOpen {
+			// Enough successes to close circuit
+			cb.resetWindowUnlocked()
+			cb.setStateUnlocked(stateClosed)
+		}
+		return
+	}
+
+	// Record in sliding window
+	// Remove old value from count if window is full
+	if cb.windowFilled && cb.window[cb.windowIndex] == callFailure {
+		cb.failureCount--
+	}
+
+	// Add new value
+	cb.window[cb.windowIndex] = result
+	if result == callFailure {
+		cb.failureCount++
+	}
+
+	// Move to next position
+	cb.windowIndex = (cb.windowIndex + 1) % cb.config.slidingWindowSize
+	if cb.windowIndex == 0 {
+		cb.windowFilled = true
+	}
+
+	cb.totalCalls++
+
+	// Evaluate if we should open the circuit
+	if state == stateClosed {
+		cb.evaluateStateUnlocked()
+	}
+}
+
+// evaluateStateUnlocked checks if the circuit should open based on failure rate.
+// Caller must hold cb.mu lock.
+func (cb *circuitBreaker) evaluateStateUnlocked() {
+	// Need minimum number of calls before evaluating
+	windowSize := cb.totalCalls
+	if cb.windowFilled {
+		windowSize = cb.config.slidingWindowSize
+	}
+
+	if windowSize < cb.config.minimumNumberOfCalls {
+		return
+	}
+
+	// Calculate failure rate
+	failureRate := (cb.failureCount * 100) / windowSize
+
+	if failureRate >= cb.config.failureRateThreshold {
 		cb.setStateUnlocked(stateOpen)
 	}
 }
 
-// recordSuccess records a success and potentially closes the circuit.
-func (cb *circuitBreaker) recordSuccess() {
-	cb.mu.Lock()
-	defer cb.mu.Unlock()
-
+// resetWindowUnlocked clears the sliding window.
+// Caller must hold cb.mu lock.
+func (cb *circuitBreaker) resetWindowUnlocked() {
+	cb.windowIndex = 0
+	cb.windowFilled = false
+	cb.totalCalls = 0
 	cb.failureCount = 0
-	cb.successCount++
-
-	state := circuitState(cb.state.Load())
-
-	if state == stateHalfOpen && cb.successCount >= cb.config.successThreshold {
-		cb.setStateUnlocked(stateClosed)
-	}
+	cb.halfOpenSuccesses = 0
 }
 
 // setState transitions to a new state.
@@ -535,6 +631,7 @@ func (cb *circuitBreaker) setState(newState circuitState) {
 }
 
 // setStateUnlocked transitions to a new state without locking.
+// Caller must hold cb.mu lock.
 func (cb *circuitBreaker) setStateUnlocked(newState circuitState) {
 	oldState := circuitState(cb.state.Load())
 	if oldState == newState {
@@ -543,14 +640,13 @@ func (cb *circuitBreaker) setStateUnlocked(newState circuitState) {
 
 	cb.state.Store(int32(newState))
 	cb.lastStateTime = time.Now()
-	cb.failureCount = 0
-	cb.successCount = 0
 
 	// Log state transition at DEBUG level
 	// logger.Debug().Msgf("circuit breaker: %v -> %v", oldState, newState)
 }
 
 // circuitBreakerManager manages circuit breakers per host.
+// Each host gets its own circuit breaker to provide isolation.
 type circuitBreakerManager struct {
 	mu       sync.RWMutex
 	breakers map[string]*circuitBreaker
@@ -572,6 +668,7 @@ func getCircuitBreakerManager() *circuitBreakerManager {
 }
 
 // getCircuitBreaker gets or creates a circuit breaker for the host.
+// Thread-safe for concurrent access.
 func (m *circuitBreakerManager) getCircuitBreaker(host string) *circuitBreaker {
 	m.mu.RLock()
 	cb, exists := m.breakers[host]
@@ -1343,6 +1440,14 @@ type Config struct {
 	// Enabled controls whether telemetry is active
 	Enabled bool
 
+	// ForceEnableTelemetry bypasses server-side feature flag checks
+	// When true, telemetry is always enabled regardless of server flags
+	ForceEnableTelemetry bool
+
+	// EnableTelemetry indicates user wants telemetry enabled if server allows
+	// Respects server-side feature flags and rollout percentage
+	EnableTelemetry bool
+
 	// BatchSize is the number of metrics to batch before flushing
 	BatchSize int
 
@@ -1366,11 +1471,13 @@ type Config struct {
 }
 
 // DefaultConfig returns default telemetry configuration.
-// Note: Telemetry is disabled by default and will be enabled after full testing and validation.
+// Note: Telemetry is disabled by default and requires explicit opt-in.
 func DefaultConfig() *Config {
 	return &Config{
-		Enabled:                 false, // Disabled by default until testing is complete
-		BatchSize:               100,
+		Enabled:              false, // Disabled by default, requires explicit opt-in
+		ForceEnableTelemetry: false,
+		EnableTelemetry:      false,
+		BatchSize:            100,
 		FlushInterval:           5 * time.Second,
 		MaxRetries:              3,
 		RetryDelay:              100 * time.Millisecond,
@@ -1381,15 +1488,27 @@ func DefaultConfig() *Config {
 }
 ```
 
-### 6.2 Configuration from DSN
+### 6.2 Configuration from Connection Parameters
 
 ```go
-// ParseTelemetryConfig extracts telemetry config from DSN query parameters.
+// ParseTelemetryConfig extracts telemetry config from connection parameters.
 func ParseTelemetryConfig(params map[string]string) *Config {
 	cfg := DefaultConfig()
 
-	if v, ok := params["telemetry"]; ok {
-		cfg.Enabled = v == "true" || v == "1"
+	// Check for forceEnableTelemetry flag (bypasses server feature flags)
+	if v, ok := params["forceEnableTelemetry"]; ok {
+		if v == "true" || v == "1" {
+			cfg.ForceEnableTelemetry = true
+		}
+	}
+
+	// Check for enableTelemetry flag (respects server feature flags)
+	if v, ok := params["enableTelemetry"]; ok {
+		if v == "true" || v == "1" {
+			cfg.EnableTelemetry = true
+		} else if v == "false" || v == "0" {
+			cfg.EnableTelemetry = false
+		}
 	}
 
 	if v, ok := params["telemetry_batch_size"]; ok {
@@ -1422,7 +1541,7 @@ func checkFeatureFlag(ctx context.Context, host string, httpClient *http.Client)
 
 	// Add query parameters
 	q := req.URL.Query()
-	q.Add("flags", "databricks.partnerplatform.clientConfigsFeatureFlags.enableTelemetryForAdbc")
+	q.Add("flags", "databricks.partnerplatform.clientConfigsFeatureFlags.enableTelemetryForGoDriver")
 	req.URL.RawQuery = q.Encode()
 
 	resp, err := httpClient.Do(req)
@@ -1442,9 +1561,157 @@ func checkFeatureFlag(ctx context.Context, host string, httpClient *http.Client)
 		return false, err
 	}
 
-	return result.Flags["databricks.partnerplatform.clientConfigsFeatureFlags.enableTelemetryForAdbc"], nil
+	// Parse flag response
+	flagValue := result.Flags["databricks.partnerplatform.clientConfigsFeatureFlags.enableTelemetryForGoDriver"]
+
+	response := &featureFlagResponse{
+		Enabled:           false,
+		RolloutPercentage: 0,
+	}
+
+	// Handle both boolean and object responses for backward compatibility
+	switch v := flagValue.(type) {
+	case bool:
+		response.Enabled = v
+		if v {
+			response.RolloutPercentage = 100
+		}
+	case map[string]interface{}:
+		if enabled, ok := v["enabled"].(bool); ok {
+			response.Enabled = enabled
+		}
+		if rollout, ok := v["rollout_percentage"].(float64); ok {
+			response.RolloutPercentage = int(rollout)
+		}
+	}
+
+	return response, nil
+}
+
+// isInRollout checks if this connection is in the rollout percentage.
+// Uses consistent hashing based on workspace ID for stable rollout.
+func isInRollout(workspaceID string, rolloutPercentage int) bool {
+	if rolloutPercentage >= 100 {
+		return true
+	}
+	if rolloutPercentage <= 0 {
+		return false
+	}
+
+	// Use consistent hashing based on workspace ID
+	h := fnv.New32a()
+	h.Write([]byte(workspaceID))
+	hash := h.Sum32()
+
+	return int(hash%100) < rolloutPercentage
 }
 ```
+
+#### Synchronous Fetch Behavior
+
+**Feature flag fetching is synchronous** and may block driver initialization.
+
+**Key Characteristics:**
+- 10-second HTTP timeout per request
+- Uses RetryableClient (4 retries, exponential backoff 1s-30s)
+- 15-minute cache minimizes fetch frequency
+- Thundering herd protection (only one fetch per host at a time)
+
+**When It Blocks:**
+- First connection to host: blocks for HTTP fetch (up to ~70s with retries)
+- Cache expiry (every 15 min): first caller blocks, others return stale cache
+- Concurrent callers: only first blocks, others return stale cache immediately
+
+**Why synchronous:** Simple, deterministic, 99% cache hit rate, matches JDBC driver.
+
+### 6.4 Config Overlay Pattern
+
+**UPDATE (Phase 4-5):** The telemetry system now uses a **config overlay pattern** that provides a consistent, clear priority model. This pattern is designed to be reusable across all driver configurations.
+
+#### Config Overlay Priority (highest to lowest):
+
+1. **Client Config** - Explicitly set by user (overrides server)
+2. **Server Config** - Feature flag controls when client doesn't specify
+3. **Fail-Safe Default** - Disabled when server unavailable
+
+This approach eliminates the need for special bypass flags like `forceEnableTelemetry` because client config naturally has priority.
+
+#### Implementation:
+
+```go
+// EnableTelemetry is a pointer to distinguish three states:
+// - nil: not set by client (use server feature flag)
+// - true: client wants enabled (overrides server)
+// - false: client wants disabled (overrides server)
+type Config struct {
+	EnableTelemetry *bool
+	// ... other fields
+}
+
+// isTelemetryEnabled implements config overlay
+func isTelemetryEnabled(ctx context.Context, cfg *Config, host string, httpClient *http.Client) bool {
+	// Priority 1: Client explicitly set (overrides everything)
+	if cfg.EnableTelemetry != nil {
+		return *cfg.EnableTelemetry
+	}
+
+	// Priority 2: Check server-side feature flag
+	flagCache := getFeatureFlagCache()
+	serverEnabled, err := flagCache.isTelemetryEnabled(ctx, host, httpClient)
+	if err != nil {
+		// Priority 3: Fail-safe default (disabled)
+		return false
+	}
+
+	return serverEnabled
+}
+```
+
+#### Configuration Behavior Matrix:
+
+| Client Sets | Server Returns | Result | Explanation |
+|-------------|----------------|--------|-------------|
+| `true` | `false` | **`true`** | Client overrides server |
+| `false` | `true` | **`false`** | Client overrides server |
+| `true` | error | **`true`** | Client overrides server error |
+| unset | `true` | **`true`** | Use server config |
+| unset | `false` | **`false`** | Use server config |
+| unset | error | **`false`** | Fail-safe default |
+
+#### Configuration Parameter Summary:
+
+| Parameter | Value | Behavior | Use Case |
+|-----------|-------|----------|----------|
+| `enableTelemetry=true` | Client forces enabled | Always send telemetry (overrides server) | Testing, debugging, opt-in users |
+| `enableTelemetry=false` | Client forces disabled | Never send telemetry (overrides server) | Privacy-conscious users, opt-out |
+| *(not set)* | Use server flag | Server controls via feature flag | Default behavior - Databricks-controlled rollout |
+
+#### Benefits of Config Overlay:
+
+- ✅ **Simpler**: Client > Server > Default (3 clear layers)
+- ✅ **Consistent**: Same pattern can be used for all driver configs
+- ✅ **No bypass flags**: Client config naturally has priority
+- ✅ **Reusable**: General `ConfigValue[T]` type in `internal/config/overlay.go`
+- ✅ **Type-safe**: Uses Go generics for any config type
+
+#### General Config Overlay System:
+
+A reusable config overlay system is available in `internal/config/overlay.go`:
+
+```go
+// Generic config value that supports overlay pattern
+type ConfigValue[T any] struct {
+	value *T  // nil = unset, non-nil = client set
+}
+
+// Parse from connection params
+cv := ParseBoolConfigValue(params, "enableFeature")
+
+// Resolve with overlay priority
+result := cv.ResolveWithContext(ctx, host, httpClient, serverResolver, defaultValue)
+```
+
+**Note**: A general `ConfigValue[T]` implementation is available in `internal/config/overlay.go` for extending this pattern to other driver configurations.
 
 ---
 
@@ -1580,7 +1847,42 @@ func (c *conn) Close() error {
 }
 ```
 
-### 9.2 Client Shutdown
+### 9.2 Client Manager Shutdown
+
+The `clientManager` now includes a `shutdown()` method that provides graceful cleanup of all telemetry clients on application shutdown. This method:
+
+- Closes all active telemetry clients regardless of reference counts
+- Logs warnings for any close failures
+- Clears the clients map to prevent memory leaks
+- Returns the last error encountered (if any)
+
+```go
+// shutdown closes all telemetry clients and clears the manager.
+// Integration points will be determined in Phase 4.
+func (m *clientManager) shutdown() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	var lastErr error
+	for host, holder := range m.clients {
+		if err := holder.client.close(); err != nil {
+			logger.Logger.Warn().Str("host", host).Err(err).Msg("error closing telemetry client during shutdown")
+			lastErr = err
+		}
+	}
+	// Clear the map
+	m.clients = make(map[string]*clientHolder)
+	return lastErr
+}
+```
+
+**Integration Options** (to be implemented in Phase 4):
+
+1. **Public API**: Export a `Shutdown()` function for applications to call during their shutdown sequence
+2. **Driver Hook**: Integrate with `sql.DB.Close()` or driver cleanup mechanisms
+3. **Signal Handler**: Call from application signal handlers (SIGTERM, SIGINT)
+
+### 9.3 Client Shutdown
 
 ```go
 // close shuts down the telemetry client gracefully.
@@ -1736,48 +2038,189 @@ func BenchmarkInterceptor_Disabled(b *testing.B) {
 
 ## 11. Implementation Checklist
 
-### Phase 1: Core Infrastructure ✅ COMPLETED (PECOBLR-1145)
+**Strategy**: Build infrastructure bottom-up: Circuit Breaker → Export (POST to endpoint) → Opt-In Configuration → Collection & Aggregation → Driver Integration. This allows unit testing each layer before adding metric collection.
+
+**JIRA Tickets**:
+- **PECOBLR-1143**: Phases 1-5 (Core Infrastructure → Opt-In Configuration)
+  - **PECOBLR-1381**: Phase 6 (Collection & Aggregation) - subtask
+  - **PECOBLR-1382**: Phase 7 (Driver Integration) - subtask
+
+### Phase 1: Core Infrastructure ✅ COMPLETED
 - [x] Create `telemetry` package structure
-- [x] Implement `config.go` with configuration types
+- [x] Implement `config.go` with configuration types (basic structure)
 - [x] Implement `tags.go` with tag definitions and filtering
 - [x] Add unit tests for configuration and tags
 
-### Phase 2: Per-Host Management
-- [ ] Implement `featureflag.go` with caching and reference counting
-- [ ] Implement `manager.go` for client management
-- [ ] Implement `circuitbreaker.go` with state machine
-- [ ] Add unit tests for all components
+### Phase 2: Per-Host Management ✅ COMPLETED
+- [x] Implement `featureflag.go` with caching and reference counting
+- [x] Implement `manager.go` for client management
+  - [x] Thread-safe singleton pattern with per-host client holders
+  - [x] Reference counting for automatic cleanup
+  - [x] Error handling for client start failures
+  - [x] Shutdown method for graceful application shutdown
+  - [x] Comprehensive documentation on thread-safety and connection sharing
+- [x] Implement `client.go` with minimal telemetryClient stub
+  - [x] Thread-safe start() and close() methods
+  - [x] Mutex protection for state flags
+  - [x] Detailed documentation on concurrent access requirements
+- [x] Add comprehensive unit tests for all components
+  - [x] Singleton pattern verification
+  - [x] Reference counting (increment/decrement/cleanup)
+  - [x] Concurrent access tests (100+ goroutines)
+  - [x] Shutdown scenarios (empty, with active refs, multiple hosts)
+  - [x] Race detector tests passing
 
-### Phase 3: Collection & Aggregation
+### Phase 3: Circuit Breaker ✅ COMPLETED
+- [x] Implement `circuitbreaker.go` with state machine
+  - [x] Implement circuit breaker states (Closed, Open, Half-Open)
+  - [x] Implement circuitBreakerManager singleton per host
+  - [x] Add configurable thresholds and timeout
+  - [x] Implement execute() method with state transitions
+  - [x] Implement failure/success tracking with sliding window algorithm
+- [x] Add comprehensive unit tests
+  - [x] Test state transitions (Closed → Open → Half-Open → Closed)
+  - [x] Test failure/success counting
+  - [x] Test timeout and retry logic
+  - [x] Test per-host circuit breaker isolation
+  - [x] Test concurrent access
+
+### Phase 4: Export Infrastructure ✅ COMPLETED
+- [x] Implement `exporter.go` with retry logic
+  - [x] Implement HTTP POST to telemetry endpoint (/api/2.0/telemetry-ext)
+  - [x] Implement retry logic with exponential backoff
+  - [x] Implement tag filtering for export (shouldExportToDatabricks)
+  - [x] Integrate with circuit breaker
+  - [x] Add error swallowing
+  - [x] Implement toExportedMetric() conversion
+  - [x] Implement telemetryPayload JSON structure
+- [x] Add unit tests for export logic
+  - [x] Test HTTP request construction
+  - [x] Test retry logic (with mock HTTP responses)
+  - [x] Test circuit breaker integration
+  - [x] Test tag filtering
+  - [x] Test error swallowing
+- [x] Add integration tests with mock HTTP server
+  - [x] Test successful export
+  - [x] Test error scenarios (4xx, 5xx)
+  - [x] Test retry behavior (exponential backoff)
+  - [x] Test circuit breaker opening/closing
+  - [x] Test context cancellation
+
+### Phase 5: Opt-In Configuration Integration ✅ COMPLETED
+- [x] Implement `isTelemetryEnabled()` with priority-based logic in config.go
+  - [x] Priority 1: ForceEnableTelemetry=true bypasses all checks → return true
+  - [x] Priority 2: EnableTelemetry=false explicit opt-out → return false
+  - [x] Priority 3: EnableTelemetry=true + check server feature flag
+  - [x] Priority 4: Server-side feature flag only (default behavior)
+  - [x] Priority 5: Default disabled if no flags set and server check fails
+- [x] Integrate feature flag cache with opt-in logic
+  - [x] Wire up isTelemetryEnabled() to call featureFlagCache.isTelemetryEnabled()
+  - [x] Implement fallback behavior on errors (return cached value or false)
+  - [x] Add proper error handling
+- [x] Add unit tests for opt-in priority logic
+  - [x] Test forceEnableTelemetry=true (always enabled, bypasses server)
+  - [x] Test enableTelemetry=false (always disabled, explicit opt-out)
+  - [x] Test enableTelemetry=true with server flag enabled
+  - [x] Test enableTelemetry=true with server flag disabled
+  - [x] Test default behavior (server flag controls)
+  - [x] Test error scenarios (server unreachable, use cached value)
+- [x] Add integration tests with mock feature flag server
+  - [x] Test opt-in priority with mock server
+  - [x] Test server error handling
+  - [x] Test unreachable server scenarios
+
+### Phase 6: Collection & Aggregation (PECOBLR-1381)
 - [ ] Implement `interceptor.go` for metric collection
+  - [ ] Implement beforeExecute() and afterExecute() hooks
+  - [ ] Implement context-based metric tracking with metricContext
+  - [ ] Implement latency measurement (startTime, latencyMs calculation)
+  - [ ] Add tag collection methods (addTag)
+  - [ ] Implement error swallowing with panic recovery
 - [ ] Implement `aggregator.go` for batching
+  - [ ] Implement statement-level aggregation (statementMetrics)
+  - [ ] Implement batch size and flush interval logic
+  - [ ] Implement background flush goroutine (flushLoop)
+  - [ ] Add thread-safe metric recording
+  - [ ] Implement completeStatement() for final aggregation
 - [ ] Implement error classification in `errors.go`
+  - [ ] Implement error type classification (terminal vs retryable)
+  - [ ] Implement HTTP status code classification
+  - [ ] Add error pattern matching
+  - [ ] Implement isTerminalError() function
+- [ ] Update `client.go` to integrate aggregator
+  - [ ] Wire up aggregator with exporter
+  - [ ] Implement background flush timer
+  - [ ] Update start() and close() methods
 - [ ] Add unit tests for collection and aggregation
+  - [ ] Test interceptor metric collection and latency tracking
+  - [ ] Test aggregation logic
+  - [ ] Test batch flushing (size-based and time-based)
+  - [ ] Test error classification
+  - [ ] Test client with aggregator integration
 
-### Phase 4: Export
-- [ ] Implement `exporter.go` with retry logic
-- [ ] Implement `client.go` for telemetry client
-- [ ] Wire up circuit breaker with exporter
-- [ ] Add unit tests for export logic
-
-### Phase 5: Driver Integration
-- [ ] Add telemetry to `connection.go`
-- [ ] Add telemetry to `statement.go`
+### Phase 7: Driver Integration (PECOBLR-1382)
+- [ ] Add telemetry initialization to `connection.go`
+  - [ ] Call isTelemetryEnabled() at connection open
+  - [ ] Initialize telemetry client via clientManager.getOrCreateClient()
+  - [ ] Increment feature flag cache reference count
+  - [ ] Store telemetry interceptor in connection
+- [ ] Add telemetry hooks to `statement.go`
+  - [ ] Add beforeExecute() hook at statement start
+  - [ ] Add afterExecute() hook at statement completion
+  - [ ] Add tag collection during execution (result format, chunk count, bytes, etc.)
+  - [ ] Call completeStatement() at statement end
 - [ ] Add cleanup in `Close()` methods
+  - [ ] Release client manager reference in connection.Close()
+  - [ ] Release feature flag cache reference
+  - [ ] Flush pending metrics before close
 - [ ] Add integration tests
+  - [ ] Test telemetry enabled via forceEnableTelemetry=true
+  - [ ] Test telemetry disabled by default
+  - [ ] Test metric collection and export end-to-end
+  - [ ] Test multiple concurrent connections
+  - [ ] Test latency measurement accuracy
+  - [ ] Test opt-in priority in driver context
 
-### Phase 6: Testing & Validation
+### Phase 8: Testing & Validation
 - [ ] Run benchmark tests
+  - [ ] Measure overhead when enabled
+  - [ ] Measure overhead when disabled
+  - [ ] Ensure <1% overhead when enabled
 - [ ] Perform load testing with concurrent connections
+  - [ ] Test 100+ concurrent connections
+  - [ ] Verify per-host client sharing
+  - [ ] Verify no rate limiting with per-host clients
 - [ ] Validate graceful shutdown
+  - [ ] Test reference counting cleanup
+  - [ ] Test final flush on shutdown
+  - [ ] Test shutdown method works correctly
 - [ ] Test circuit breaker behavior
-- [ ] Verify privacy compliance (no PII)
+  - [ ] Test circuit opening on repeated failures
+  - [ ] Test circuit recovery after timeout
+  - [ ] Test metrics dropped when circuit open
+- [ ] Test opt-in priority logic end-to-end
+  - [ ] Verify forceEnableTelemetry works in real driver
+  - [ ] Verify enableTelemetry works in real driver
+  - [ ] Verify server flag integration works
+- [ ] Verify privacy compliance
+  - [ ] Verify no SQL queries collected
+  - [ ] Verify no PII collected
+  - [ ] Verify tag filtering works (shouldExportToDatabricks)
 
-### Phase 7: Documentation
+### Phase 9: Partial Launch Preparation
+- [ ] Document `forceEnableTelemetry` and `enableTelemetry` flags
+- [ ] Create internal testing plan for Phase 1 (use forceEnableTelemetry=true)
+- [ ] Prepare beta opt-in documentation for Phase 2 (use enableTelemetry=true)
+- [ ] Set up monitoring for rollout health metrics
+- [ ] Document rollback procedures (set server flag to false)
+
+### Phase 10: Documentation
 - [ ] Document configuration options in README
-- [ ] Add examples for enabling/disabling telemetry
+- [ ] Add examples for opt-in flags
+- [ ] Document partial launch strategy and phases
 - [ ] Document metric tags and their meanings
 - [ ] Create troubleshooting guide
+- [ ] Document architecture and design decisions
 
 ---
 
