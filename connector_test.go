@@ -68,6 +68,7 @@ func TestNewConnector(t *testing.T) {
 			RetryWaitMax:     60 * time.Second,
 			Transport:        roundTripper,
 			CloudFetchConfig: expectedCloudFetchConfig,
+			EnableTelemetry: true,
 		}
 		expectedCfg := config.WithDefaults()
 		expectedCfg.DriverVersion = DriverVersion
@@ -110,6 +111,7 @@ func TestNewConnector(t *testing.T) {
 			RetryWaitMin:     1 * time.Second,
 			RetryWaitMax:     30 * time.Second,
 			CloudFetchConfig: expectedCloudFetchConfig,
+			EnableTelemetry: true,
 		}
 		expectedCfg := config.WithDefaults()
 		expectedCfg.UserConfig = expectedUserConfig
@@ -152,6 +154,7 @@ func TestNewConnector(t *testing.T) {
 			RetryWaitMin:     0,
 			RetryWaitMax:     0,
 			CloudFetchConfig: expectedCloudFetchConfig,
+			EnableTelemetry: true,
 		}
 		expectedCfg := config.WithDefaults()
 		expectedCfg.DriverVersion = DriverVersion
