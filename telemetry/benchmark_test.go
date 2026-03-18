@@ -20,7 +20,7 @@ func BenchmarkInterceptor_Overhead_Enabled(b *testing.B) {
 	}))
 	defer server.Close()
 
-	exporter := newTelemetryExporter(server.URL, httpClient, cfg)
+	exporter := newTelemetryExporter(server.URL, "test-version", httpClient, cfg)
 	aggregator := newMetricsAggregator(exporter, cfg)
 	defer aggregator.close(context.Background())
 
@@ -31,7 +31,7 @@ func BenchmarkInterceptor_Overhead_Enabled(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		statementID := "stmt-bench"
-		ctx = interceptor.BeforeExecute(ctx, statementID)
+		ctx = interceptor.BeforeExecute(ctx, "session-id", statementID)
 		interceptor.AfterExecute(ctx, nil)
 		interceptor.CompleteStatement(ctx, statementID, false)
 	}
@@ -48,7 +48,7 @@ func BenchmarkInterceptor_Overhead_Disabled(b *testing.B) {
 	}))
 	defer server.Close()
 
-	exporter := newTelemetryExporter(server.URL, httpClient, cfg)
+	exporter := newTelemetryExporter(server.URL, "test-version", httpClient, cfg)
 	aggregator := newMetricsAggregator(exporter, cfg)
 	defer aggregator.close(context.Background())
 
@@ -59,7 +59,7 @@ func BenchmarkInterceptor_Overhead_Disabled(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		statementID := "stmt-bench"
-		ctx = interceptor.BeforeExecute(ctx, statementID)
+		ctx = interceptor.BeforeExecute(ctx, "session-id", statementID)
 		interceptor.AfterExecute(ctx, nil)
 		interceptor.CompleteStatement(ctx, statementID, false)
 	}
@@ -75,7 +75,7 @@ func BenchmarkAggregator_RecordMetric(b *testing.B) {
 	}))
 	defer server.Close()
 
-	exporter := newTelemetryExporter(server.URL, httpClient, cfg)
+	exporter := newTelemetryExporter(server.URL, "test-version", httpClient, cfg)
 	aggregator := newMetricsAggregator(exporter, cfg)
 	defer aggregator.close(context.Background())
 
@@ -105,7 +105,7 @@ func BenchmarkExporter_Export(b *testing.B) {
 	}))
 	defer server.Close()
 
-	exporter := newTelemetryExporter(server.URL, httpClient, cfg)
+	exporter := newTelemetryExporter(server.URL, "test-version", httpClient, cfg)
 
 	ctx := context.Background()
 	metrics := []*telemetryMetric{
@@ -141,7 +141,7 @@ func BenchmarkConcurrentConnections_PerHostSharing(b *testing.B) {
 		for pb.Next() {
 			// Simulate getting a client (should share per host)
 			mgr := getClientManager()
-			client := mgr.getOrCreateClient(host, httpClient, cfg)
+			client := mgr.getOrCreateClient(host, "test-version", httpClient, cfg)
 			_ = client
 
 			// Release client
@@ -198,14 +198,14 @@ func TestLoadTesting_ConcurrentConnections(t *testing.T) {
 			defer wg.Done()
 
 			// Get client (should share)
-			client := mgr.getOrCreateClient(host, httpClient, cfg)
+			client := mgr.getOrCreateClient(host, "test-version", httpClient, cfg)
 			interceptor := client.GetInterceptor(true)
 
 			// Simulate some operations
 			ctx := context.Background()
 			for j := 0; j < 10; j++ {
 				statementID := "stmt-load"
-				ctx = interceptor.BeforeExecute(ctx, statementID)
+				ctx = interceptor.BeforeExecute(ctx, "session-id", statementID)
 				time.Sleep(1 * time.Millisecond) // Simulate work
 				interceptor.AfterExecute(ctx, nil)
 				interceptor.CompleteStatement(ctx, statementID, false)
@@ -237,8 +237,8 @@ func TestGracefulShutdown_ReferenceCountingCleanup(t *testing.T) {
 	mgr := getClientManager()
 
 	// Create multiple references
-	client1 := mgr.getOrCreateClient(host, httpClient, cfg)
-	client2 := mgr.getOrCreateClient(host, httpClient, cfg)
+	client1 := mgr.getOrCreateClient(host, "test-version", httpClient, cfg)
+	client2 := mgr.getOrCreateClient(host, "test-version", httpClient, cfg)
 
 	if client1 != client2 {
 		t.Error("Expected same client instance for same host")
@@ -292,7 +292,7 @@ func TestGracefulShutdown_FinalFlush(t *testing.T) {
 	}))
 	defer server.Close()
 
-	exporter := newTelemetryExporter(server.URL, httpClient, cfg)
+	exporter := newTelemetryExporter(server.URL, "test-version", httpClient, cfg)
 	aggregator := newMetricsAggregator(exporter, cfg)
 
 	// Record a metric

@@ -166,6 +166,30 @@ func (i *Interceptor) CompleteStatement(ctx context.Context, statementID string,
 	i.aggregator.completeStatement(ctx, statementID, failed)
 }
 
+// RecordOperation records an operation with type and latency.
+// Exported for use by the driver package.
+func (i *Interceptor) RecordOperation(ctx context.Context, sessionID string, operationType string, latencyMs int64) {
+	if !i.enabled {
+		return
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			// Silently handle panics
+		}
+	}()
+
+	metric := &telemetryMetric{
+		metricType:  "operation",
+		timestamp:   time.Now(),
+		sessionID:   sessionID,
+		latencyMs:   latencyMs,
+		tags:        map[string]interface{}{"operation_type": operationType},
+	}
+
+	i.aggregator.recordMetric(ctx, metric)
+}
+
 // Close flushes any pending per-connection metrics.
 // Does NOT close the shared aggregator — its lifecycle is managed via
 // ReleaseForConnection, which uses reference counting across all connections

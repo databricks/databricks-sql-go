@@ -30,13 +30,13 @@ func TestIntegration_EndToEnd_WithCircuitBreaker(t *testing.T) {
 		if r.Method != "POST" {
 			t.Errorf("Expected POST, got %s", r.Method)
 		}
-		if r.URL.Path != "/api/2.0/telemetry-ext" {
-			t.Errorf("Expected /api/2.0/telemetry-ext, got %s", r.URL.Path)
+		if r.URL.Path != "/telemetry-ext" {
+			t.Errorf("Expected /telemetry-ext, got %s", r.URL.Path)
 		}
 
-		// Parse payload
+		// Parse payload (new TelemetryRequest format)
 		body, _ := io.ReadAll(r.Body)
-		var payload telemetryPayload
+		var payload TelemetryRequest
 		if err := json.Unmarshal(body, &payload); err != nil {
 			t.Errorf("Failed to parse payload: %v", err)
 		}
@@ -46,7 +46,7 @@ func TestIntegration_EndToEnd_WithCircuitBreaker(t *testing.T) {
 	defer server.Close()
 
 	// Create telemetry client
-	exporter := newTelemetryExporter(server.URL, httpClient, cfg)
+	exporter := newTelemetryExporter(server.URL, "test-version", httpClient, cfg)
 	aggregator := newMetricsAggregator(exporter, cfg)
 	defer aggregator.close(context.Background())
 
@@ -56,7 +56,7 @@ func TestIntegration_EndToEnd_WithCircuitBreaker(t *testing.T) {
 	ctx := context.Background()
 	for i := 0; i < 10; i++ {
 		statementID := "stmt-integration"
-		ctx = interceptor.BeforeExecute(ctx, statementID)
+		ctx = interceptor.BeforeExecute(ctx, "session-id", statementID)
 		time.Sleep(10 * time.Millisecond) // Simulate work
 		interceptor.AfterExecute(ctx, nil)
 		interceptor.CompleteStatement(ctx, statementID, false)
@@ -93,7 +93,7 @@ func TestIntegration_CircuitBreakerOpening(t *testing.T) {
 	}))
 	defer server.Close()
 
-	exporter := newTelemetryExporter(server.URL, httpClient, cfg)
+	exporter := newTelemetryExporter(server.URL, "test-version", httpClient, cfg)
 	aggregator := newMetricsAggregator(exporter, cfg)
 	defer aggregator.close(context.Background())
 
@@ -104,7 +104,7 @@ func TestIntegration_CircuitBreakerOpening(t *testing.T) {
 	ctx := context.Background()
 	for i := 0; i < 50; i++ {
 		statementID := "stmt-circuit"
-		ctx = interceptor.BeforeExecute(ctx, statementID)
+		ctx = interceptor.BeforeExecute(ctx, "session-id", statementID)
 		interceptor.AfterExecute(ctx, nil)
 		interceptor.CompleteStatement(ctx, statementID, false)
 
@@ -129,7 +129,7 @@ func TestIntegration_CircuitBreakerOpening(t *testing.T) {
 	// Send more requests - should be dropped if circuit is open
 	for i := 0; i < 10; i++ {
 		statementID := "stmt-dropped"
-		ctx = interceptor.BeforeExecute(ctx, statementID)
+		ctx = interceptor.BeforeExecute(ctx, "session-id", statementID)
 		interceptor.AfterExecute(ctx, nil)
 		interceptor.CompleteStatement(ctx, statementID, false)
 	}
@@ -147,45 +147,10 @@ func TestIntegration_CircuitBreakerOpening(t *testing.T) {
 	}
 }
 
-// TestIntegration_OptInPriority tests the priority logic for telemetry enablement.
-func TestIntegration_OptInPriority_ForceEnable(t *testing.T) {
-	cfg := &Config{
-		ForceEnableTelemetry: true, // Priority 1: Force enable
-		EnableTelemetry:      false,
-		BatchSize:            100,
-		FlushInterval:        5 * time.Second,
-		MaxRetries:           3,
-		RetryDelay:           100 * time.Millisecond,
-	}
-
-	httpClient := &http.Client{Timeout: 5 * time.Second}
-
-	// Server that returns disabled
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		resp := map[string]interface{}{
-			"flags": map[string]bool{
-				"databricks.partnerplatform.clientConfigsFeatureFlags.enableTelemetryForGoDriver": false,
-			},
-		}
-		json.NewEncoder(w).Encode(resp)
-	}))
-	defer server.Close()
-
-	ctx := context.Background()
-
-	// Should be enabled due to ForceEnableTelemetry
-	result := isTelemetryEnabled(ctx, cfg, server.URL, httpClient)
-
-	if !result {
-		t.Error("Expected telemetry to be force enabled")
-	}
-}
-
 // TestIntegration_OptInPriority_ExplicitOptOut tests explicit opt-out.
 func TestIntegration_OptInPriority_ExplicitOptOut(t *testing.T) {
 	cfg := &Config{
-		ForceEnableTelemetry: false,
-		EnableTelemetry:      false, // Priority 2: Explicit opt-out
+		EnableTelemetry: false, // Priority 1 (client): Explicit opt-out
 		BatchSize:            100,
 		FlushInterval:        5 * time.Second,
 		MaxRetries:           3,
@@ -208,7 +173,7 @@ func TestIntegration_OptInPriority_ExplicitOptOut(t *testing.T) {
 	ctx := context.Background()
 
 	// Should be disabled due to explicit opt-out
-	result := isTelemetryEnabled(ctx, cfg, server.URL, httpClient)
+	result := isTelemetryEnabled(ctx, cfg, server.URL, "test-version", httpClient)
 
 	if result {
 		t.Error("Expected telemetry to be disabled by explicit opt-out")
@@ -228,7 +193,7 @@ func TestIntegration_PrivacyCompliance_NoQueryText(t *testing.T) {
 	}))
 	defer server.Close()
 
-	exporter := newTelemetryExporter(server.URL, httpClient, cfg)
+	exporter := newTelemetryExporter(server.URL, "test-version", httpClient, cfg)
 	aggregator := newMetricsAggregator(exporter, cfg)
 	defer aggregator.close(context.Background())
 
@@ -237,7 +202,7 @@ func TestIntegration_PrivacyCompliance_NoQueryText(t *testing.T) {
 	// Simulate execution with sensitive data in tags (should be filtered)
 	ctx := context.Background()
 	statementID := "stmt-privacy"
-	ctx = interceptor.BeforeExecute(ctx, statementID)
+	ctx = interceptor.BeforeExecute(ctx, "session-id", statementID)
 
 	// Try to add sensitive tags (should be filtered out)
 	interceptor.AddTag(ctx, "query.text", "SELECT * FROM users")
@@ -283,7 +248,7 @@ func TestIntegration_TagFiltering(t *testing.T) {
 	}))
 	defer server.Close()
 
-	exporter := newTelemetryExporter(server.URL, httpClient, cfg)
+	exporter := newTelemetryExporter(server.URL, "test-version", httpClient, cfg)
 
 	// Test metric with mixed tags
 	metric := &telemetryMetric{

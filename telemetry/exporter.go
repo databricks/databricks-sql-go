@@ -5,31 +5,38 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
+)
 
-	"github.com/databricks/databricks-sql-go/logger"
+const (
+	telemetryEndpointPath = "/telemetry-ext"
+	httpPrefix            = "http://"
+	httpsPrefix           = "https://"
+	defaultScheme         = "https://"
 )
 
 // telemetryExporter exports metrics to Databricks telemetry service.
 type telemetryExporter struct {
-	host           string
-	httpClient     *http.Client
+	host          string
+	driverVersion string
+	httpClient    *http.Client
 	circuitBreaker *circuitBreaker
-	cfg            *Config
+	cfg           *Config
 }
 
 // telemetryMetric represents a metric to export.
 type telemetryMetric struct {
-	metricType  string
-	timestamp   time.Time
-	workspaceID string
-	sessionID   string
-	statementID string
-	latencyMs   int64
-	errorType   string
-	tags        map[string]interface{}
+	metricType      string
+	timestamp       time.Time
+	workspaceID     string
+	sessionID       string
+	statementID     string
+	latencyMs       int64
+	errorType       string
+	tags            map[string]interface{}
 }
 
 // telemetryPayload is the JSON structure sent to Databricks.
@@ -49,10 +56,19 @@ type exportedMetric struct {
 	Tags        map[string]interface{} `json:"tags,omitempty"`
 }
 
+// ensureHTTPScheme adds https:// prefix to host if no scheme is present.
+func ensureHTTPScheme(host string) string {
+	if strings.HasPrefix(host, httpPrefix) || strings.HasPrefix(host, httpsPrefix) {
+		return host
+	}
+	return defaultScheme + host
+}
+
 // newTelemetryExporter creates a new exporter.
-func newTelemetryExporter(host string, httpClient *http.Client, cfg *Config) *telemetryExporter {
+func newTelemetryExporter(host string, driverVersion string, httpClient *http.Client, cfg *Config) *telemetryExporter {
 	return &telemetryExporter{
 		host:           host,
+		driverVersion:  driverVersion,
 		httpClient:     httpClient,
 		circuitBreaker: getCircuitBreakerManager().getCircuitBreaker(host),
 		cfg:            cfg,
@@ -65,8 +81,8 @@ func (e *telemetryExporter) export(ctx context.Context, metrics []*telemetryMetr
 	// Swallow all errors and panics
 	defer func() {
 		if r := recover(); r != nil {
-			// Intentionally swallow panic - telemetry must not impact driver
-			logger.Debug().Msgf("telemetry: export panic: %v", r)
+			// Log at trace level only
+			// logger.Trace().Msgf("telemetry: export panic: %v", r)
 		}
 	}()
 
@@ -81,38 +97,28 @@ func (e *telemetryExporter) export(ctx context.Context, metrics []*telemetryMetr
 	}
 
 	if err != nil {
-		// Intentionally swallow error - telemetry must not impact driver
-		_ = err // Log at trace level only: logger.Trace().Msgf("telemetry: export error: %v", err)
+		// Log at trace level only
+		// logger.Trace().Msgf("telemetry: export error: %v", err)
 	}
 }
 
 // doExport performs the actual export with retries and exponential backoff.
 func (e *telemetryExporter) doExport(ctx context.Context, metrics []*telemetryMetric) error {
-	// Convert metrics to exported format with tag filtering
-	exportedMetrics := make([]*exportedMetric, 0, len(metrics))
-	for _, m := range metrics {
-		exportedMetrics = append(exportedMetrics, m.toExportedMetric())
-	}
-
-	// Create payload
-	payload := &telemetryPayload{
-		Metrics: exportedMetrics,
-	}
-
-	// Serialize metrics
-	data, err := json.Marshal(payload)
+	// Create telemetry request with base64-encoded logs
+	request, err := createTelemetryRequest(metrics, e.driverVersion)
 	if err != nil {
-		return fmt.Errorf("failed to marshal metrics: %w", err)
+		return fmt.Errorf("failed to create telemetry request: %w", err)
+	}
+
+	// Serialize request
+	data, err := json.Marshal(request)
+	if err != nil {
+		return fmt.Errorf("failed to marshal request: %w", err)
 	}
 
 	// Determine endpoint
-	// Support both plain hosts and full URLs (for testing)
-	var endpoint string
-	if strings.HasPrefix(e.host, "http://") || strings.HasPrefix(e.host, "https://") {
-		endpoint = fmt.Sprintf("%s/telemetry-ext", e.host)
-	} else {
-		endpoint = fmt.Sprintf("https://%s/telemetry-ext", e.host)
-	}
+	hostURL := ensureHTTPScheme(e.host)
+	endpoint := hostURL + telemetryEndpointPath
 
 	// Retry logic with exponential backoff
 	maxRetries := e.cfg.MaxRetries
@@ -122,7 +128,6 @@ func (e *telemetryExporter) doExport(ctx context.Context, metrics []*telemetryMe
 			backoff := time.Duration(1<<uint(attempt-1)) * e.cfg.RetryDelay
 			select {
 			case <-time.After(backoff):
-				// Backoff completed, continue to retry
 			case <-ctx.Done():
 				return ctx.Err()
 			}
@@ -145,7 +150,8 @@ func (e *telemetryExporter) doExport(ctx context.Context, metrics []*telemetryMe
 			continue
 		}
 
-		// Close body to allow connection reuse
+		// Read response body
+		_, _ = io.ReadAll(resp.Body)
 		resp.Body.Close()
 
 		// Check status code
