@@ -184,6 +184,9 @@ func (ucfg UserConfig) WithDefaults() UserConfig {
 	ucfg.UseLz4Compression = false
 	ucfg.CloudFetchConfig = CloudFetchConfig{}.WithDefaults()
 
+	// EnableTelemetry defaults to unset (ConfigValue zero value),
+	// meaning telemetry is controlled by server feature flags.
+
 	return ucfg
 }
 
