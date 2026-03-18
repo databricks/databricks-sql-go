@@ -56,6 +56,39 @@ To disable Cloud Fetch (e.g., when handling smaller datasets or to avoid additio
 token:[your token]@[Workspace hostname]:[Port number][Endpoint HTTP Path]?useCloudFetch=false
 ```
 
+### Telemetry Configuration (Optional)
+
+The driver includes optional telemetry to help improve performance and reliability. Telemetry is **disabled by default** and requires explicit opt-in.
+
+**Opt-in to telemetry** (respects server-side feature flags):
+```
+token:[your token]@[Workspace hostname]:[Port number][Endpoint HTTP Path]?enableTelemetry=true
+```
+
+**Opt-out of telemetry** (explicitly disable):
+```
+token:[your token]@[Workspace hostname]:[Port number][Endpoint HTTP Path]?enableTelemetry=false
+```
+
+**Advanced configuration** (for testing/debugging):
+```
+token:[your token]@[Workspace hostname]:[Port number][Endpoint HTTP Path]?forceEnableTelemetry=true
+```
+
+**What data is collected:**
+- ✅ Query latency and performance metrics
+- ✅ Error codes (not error messages)
+- ✅ Feature usage (CloudFetch, LZ4, etc.)
+- ✅ Driver version and environment info
+
+**What is NOT collected:**
+- ❌ SQL query text
+- ❌ Query results or data values
+- ❌ Table/column names
+- ❌ User identities or credentials
+
+Telemetry has < 1% performance overhead and uses circuit breaker protection to ensure it never impacts your queries. For more details, see `telemetry/DESIGN.md` and `telemetry/TROUBLESHOOTING.md`.
+
 ### Connecting with a new Connector
 
 You can also connect with a new connector object. For example:

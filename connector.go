@@ -55,6 +55,8 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 	}
 
 	protocolVersion := int64(c.cfg.ThriftProtocolVersion)
+
+	sessionStart := time.Now()
 	session, err := tclient.OpenSession(ctx, &cli_service.TOpenSessionReq{
 		ClientProtocolI64: &protocolVersion,
 		Configuration:     sessionParams,
@@ -64,6 +66,8 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 		},
 		CanUseMultipleCatalogs: &c.cfg.CanUseMultipleCatalogs,
 	})
+	sessionLatencyMs := time.Since(sessionStart).Milliseconds()
+
 	if err != nil {
 		return nil, dbsqlerrint.NewRequestError(ctx, fmt.Sprintf("error connecting: host=%s port=%d, httpPath=%s", c.cfg.Host, c.cfg.Port, c.cfg.HTTPPath), err)
 	}
@@ -76,21 +80,19 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 	}
 	log := logger.WithContext(conn.id, driverctx.CorrelationIdFromContext(ctx), "")
 
-	// Initialize telemetry: pass user opt-in flag; if unset, feature flags decide
-	var enableTelemetry *bool
+	// Initialize telemetry if configured
 	if c.cfg.EnableTelemetry {
-		trueVal := true
-		enableTelemetry = &trueVal
-	}
-
-	conn.telemetry = telemetry.InitializeForConnection(
-		ctx,
-		c.cfg.Host,
-		c.client,
-		enableTelemetry,
-	)
-	if conn.telemetry != nil {
-		log.Debug().Msg("telemetry initialized for connection")
+		conn.telemetry = telemetry.InitializeForConnection(
+			ctx,
+			c.cfg.Host,
+			c.cfg.DriverVersion,
+			c.client,
+			c.cfg.EnableTelemetry,
+		)
+		if conn.telemetry != nil {
+			log.Debug().Msg("telemetry initialized for connection")
+			conn.telemetry.RecordOperation(ctx, conn.id, telemetry.OperationTypeCreateSession, sessionLatencyMs)
+		}
 	}
 
 	log.Info().Msgf("connect: host=%s port=%d httpPath=%s serverProtocolVersion=0x%X", c.cfg.Host, c.cfg.Port, c.cfg.HTTPPath, session.ServerProtocolVersion)

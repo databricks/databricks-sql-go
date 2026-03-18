@@ -4,8 +4,6 @@ import (
 	"context"
 	"sync"
 	"time"
-
-	"github.com/databricks/databricks-sql-go/logger"
 )
 
 // metricsAggregator aggregates metrics by statement and batches for export.
@@ -20,11 +18,10 @@ type metricsAggregator struct {
 	flushInterval time.Duration
 	stopCh        chan struct{}
 	flushTimer    *time.Ticker
+	closed        bool
 }
 
 // statementMetrics holds aggregated metrics for a statement.
-//
-//nolint:unused // Will be used in Phase 8+
 type statementMetrics struct {
 	statementID     string
 	sessionID       string
@@ -54,13 +51,12 @@ func newMetricsAggregator(exporter *telemetryExporter, cfg *Config) *metricsAggr
 }
 
 // recordMetric records a metric for aggregation.
-//
-//nolint:unused // Will be used in Phase 8+
 func (agg *metricsAggregator) recordMetric(ctx context.Context, metric *telemetryMetric) {
 	// Swallow all errors
 	defer func() {
 		if r := recover(); r != nil {
-			logger.Debug().Msgf("telemetry: recordMetric panic: %v", r)
+			// Log at trace level only
+			// logger.Trace().Msgf("telemetry: recordMetric panic: %v", r)
 		}
 	}()
 
@@ -68,13 +64,10 @@ func (agg *metricsAggregator) recordMetric(ctx context.Context, metric *telemetr
 	defer agg.mu.Unlock()
 
 	switch metric.metricType {
-	case "connection":
-		// Emit connection events immediately: connection lifecycle events must be captured
-		// before the connection closes, as we won't have another opportunity to flush
+	case "connection", "operation":
+		// Emit connection and operation events immediately
 		agg.batch = append(agg.batch, metric)
-		if len(agg.batch) >= agg.batchSize {
-			agg.flushUnlocked(ctx)
-		}
+		agg.flushUnlocked(ctx)
 
 	case "statement":
 		// Aggregate by statement ID
@@ -113,8 +106,7 @@ func (agg *metricsAggregator) recordMetric(ctx context.Context, metric *telemetr
 	case "error":
 		// Check if terminal error
 		if metric.errorType != "" && isTerminalError(&simpleError{msg: metric.errorType}) {
-			// Flush terminal errors immediately: terminal errors often lead to connection
-			// termination. If we wait for the next batch/timer flush, this data may be lost
+			// Flush terminal errors immediately
 			agg.batch = append(agg.batch, metric)
 			agg.flushUnlocked(ctx)
 		} else {
@@ -127,12 +119,10 @@ func (agg *metricsAggregator) recordMetric(ctx context.Context, metric *telemetr
 }
 
 // completeStatement marks a statement as complete and emits aggregated metric.
-//
-//nolint:unused // Will be used in Phase 8+
 func (agg *metricsAggregator) completeStatement(ctx context.Context, statementID string, failed bool) {
 	defer func() {
 		if r := recover(); r != nil {
-			logger.Debug().Msgf("telemetry: completeStatement panic: %v", r)
+			// Log at trace level only
 		}
 	}()
 
@@ -211,7 +201,7 @@ func (agg *metricsAggregator) flushUnlocked(ctx context.Context) {
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
-				logger.Debug().Msgf("telemetry: async export panic: %v", r)
+				// Log at trace level only
 			}
 		}()
 		agg.exporter.export(ctx, metrics)
@@ -220,19 +210,24 @@ func (agg *metricsAggregator) flushUnlocked(ctx context.Context) {
 
 // close stops the aggregator and flushes pending metrics.
 func (agg *metricsAggregator) close(ctx context.Context) error {
+	agg.mu.Lock()
+	if agg.closed {
+		agg.mu.Unlock()
+		return nil
+	}
+	agg.closed = true
+	agg.mu.Unlock()
+
 	close(agg.stopCh)
 	agg.flush(ctx)
 	return nil
 }
 
 // simpleError is a simple error implementation for testing.
-//
-//nolint:unused // Will be used in Phase 8+
 type simpleError struct {
 	msg string
 }
 
-//nolint:unused // Will be used in Phase 8+
 func (e *simpleError) Error() string {
 	return e.msg
 }
