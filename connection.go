@@ -127,6 +127,21 @@ func (c *conn) ExecContext(ctx context.Context, query string, args []driver.Name
 	log, ctx = client.LoggerAndContext(ctx, exStmtResp)
 	stagingErr := c.execStagingOperation(exStmtResp, ctx)
 
+	// Telemetry: track statement execution
+	var statementID string
+	if c.telemetry != nil && exStmtResp != nil && exStmtResp.OperationHandle != nil && exStmtResp.OperationHandle.OperationId != nil {
+		statementID = client.SprintGuid(exStmtResp.OperationHandle.OperationId.GUID)
+		ctx = c.telemetry.BeforeExecute(ctx, statementID)
+		defer func() {
+			finalErr := err
+			if stagingErr != nil {
+				finalErr = stagingErr
+			}
+			c.telemetry.AfterExecute(ctx, finalErr)
+			c.telemetry.CompleteStatement(ctx, statementID, finalErr != nil)
+		}()
+	}
+
 	if exStmtResp != nil && exStmtResp.OperationHandle != nil {
 		// since we have an operation handle we can close the operation if necessary
 		alreadyClosed := exStmtResp.DirectResults != nil && exStmtResp.DirectResults.CloseOperation != nil
@@ -171,6 +186,17 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 	exStmtResp, opStatusResp, err := c.runQuery(ctx, query, args)
 	log, ctx = client.LoggerAndContext(ctx, exStmtResp)
 	defer log.Duration(msg, start)
+
+	// Telemetry: track statement execution
+	var statementID string
+	if c.telemetry != nil && exStmtResp != nil && exStmtResp.OperationHandle != nil && exStmtResp.OperationHandle.OperationId != nil {
+		statementID = client.SprintGuid(exStmtResp.OperationHandle.OperationId.GUID)
+		ctx = c.telemetry.BeforeExecute(ctx, statementID)
+		defer func() {
+			c.telemetry.AfterExecute(ctx, err)
+			c.telemetry.CompleteStatement(ctx, statementID, err != nil)
+		}()
+	}
 
 	if err != nil {
 		log.Err(err).Msg("databricks: failed to run query") // To log query we need to redact credentials
