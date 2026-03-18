@@ -99,8 +99,7 @@ type UserConfig struct {
 	RetryWaitMax   time.Duration
 	RetryMax       int
 	// Telemetry configuration
-	EnableTelemetry          bool // Opt-in for telemetry (respects server feature flags)
-	ForceEnableTelemetry     bool // Force enable telemetry (bypasses server checks)
+	EnableTelemetry bool // Opt-in for telemetry; follows client > server > default priority
 	Transport                http.RoundTripper
 	UseLz4Compression        bool
 	EnableMetricViewMetadata bool
@@ -148,7 +147,6 @@ func (ucfg UserConfig) DeepCopy() UserConfig {
 		EnableMetricViewMetadata: ucfg.EnableMetricViewMetadata,
 		CloudFetchConfig:         ucfg.CloudFetchConfig,
 		EnableTelemetry:          ucfg.EnableTelemetry,
-		ForceEnableTelemetry:     ucfg.ForceEnableTelemetry,
 	}
 }
 
@@ -293,13 +291,6 @@ func ParseDSN(dsn string) (UserConfig, error) {
 			return UserConfig{}, err
 		}
 		ucfg.EnableTelemetry = enableTelemetry
-	}
-
-	if forceEnableTelemetry, ok, err := params.extractAsBool("forceEnableTelemetry"); ok {
-		if err != nil {
-			return UserConfig{}, err
-		}
-		ucfg.ForceEnableTelemetry = forceEnableTelemetry
 	}
 
 	// for timezone we do a case insensitive key match.
