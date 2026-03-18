@@ -99,7 +99,7 @@ type UserConfig struct {
 	RetryWaitMax   time.Duration
 	RetryMax       int
 	// Telemetry configuration
-	EnableTelemetry bool // Opt-in for telemetry; follows client > server > default priority
+	EnableTelemetry          bool // Opt-in for telemetry; follows client > server > default priority
 	Transport                http.RoundTripper
 	UseLz4Compression        bool
 	EnableMetricViewMetadata bool
