@@ -9,7 +9,7 @@ require (
 	github.com/golang-jwt/jwt/v5 v5.2.1
 	github.com/joho/godotenv v1.4.0
 	github.com/mattn/go-isatty v0.0.20
-	github.com/pierrec/lz4/v4 v4.1.15
+	github.com/pierrec/lz4/v4 v4.1.26
 	github.com/stretchr/testify v1.8.1
 	golang.org/x/oauth2 v0.7.0
 	gotest.tools/gotestsum v1.8.2
