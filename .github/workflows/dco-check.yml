@@ -10,52 +10,23 @@ permissions:
 
 jobs:
   dco-check:
-    runs-on:
-      group: databricks-protected-runner-group
-      labels: [linux-ubuntu-latest]
+    runs-on: ubuntu-latest
     name: Check DCO Sign-off
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0
-          ref: ${{ github.event.pull_request.head.ref }}
-          repository: ${{ github.event.pull_request.head.repo.full_name }}
-
-      - name: Add upstream remote (for forks)
-        run: |
-          if [ "${{ github.event.pull_request.head.repo.full_name }}" != "${{ github.repository }}" ]; then
-            echo "This is a fork, adding upstream remote"
-            git remote add upstream https://github.com/${{ github.repository }}.git
-            git fetch upstream ${{ github.event.pull_request.base.ref }}
-          else
-            echo "This is not a fork, using origin"
-          fi
 
       - name: Check DCO Sign-off
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           #!/bin/bash
           set -e
 
-          BASE_SHA="${{ github.event.pull_request.base.sha }}"
-          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
-
           echo "Checking commits from $BASE_SHA to $HEAD_SHA"
-
-          if ! git cat-file -e "$BASE_SHA" 2>/dev/null; then
-            echo "Error: Base commit $BASE_SHA not found"
-            echo "Trying to fetch from upstream..."
-            if [ "${{ github.event.pull_request.head.repo.full_name }}" != "${{ github.repository }}" ]; then
-              git fetch upstream ${{ github.event.pull_request.base.ref }}
-            else
-              git fetch origin ${{ github.event.pull_request.base.ref }}
-            fi
-          fi
-
-          if ! git cat-file -e "$HEAD_SHA" 2>/dev/null; then
-            echo "Error: Head commit $HEAD_SHA not found"
-            exit 1
-          fi
 
           COMMITS=$(git rev-list --no-merges "$BASE_SHA..$HEAD_SHA")
 
