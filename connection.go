@@ -587,7 +587,7 @@ func (c *conn) handleStagingRemove(ctx context.Context, presignedUrl string, hea
 	content, err := io.ReadAll(res.Body)
 
 	if err != nil || !Succeeded(res) {
-		return dbsqlerrint.NewDriverError(ctx, fmt.Sprintf("staging operation over HTTP was unsuccessful: %d-%s, nil", res.StatusCode, content), nil)
+		return dbsqlerrint.NewDriverError(ctx, fmt.Sprintf("staging operation over HTTP was unsuccessful: %d-%s", res.StatusCode, content), nil)
 	}
 
 	return nil
