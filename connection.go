@@ -23,14 +23,16 @@ import (
 	"github.com/databricks/databricks-sql-go/internal/sentinel"
 	"github.com/databricks/databricks-sql-go/internal/thrift_protocol"
 	"github.com/databricks/databricks-sql-go/logger"
+	"github.com/databricks/databricks-sql-go/telemetry"
 	"github.com/pkg/errors"
 )
 
 type conn struct {
-	id      string
-	cfg     *config.Config
-	client  cli_service.TCLIService
-	session *cli_service.TOpenSessionResp
+	id        string
+	cfg       *config.Config
+	client    cli_service.TCLIService
+	session   *cli_service.TOpenSessionResp
+	telemetry *telemetry.Interceptor // Optional telemetry interceptor
 }
 
 // Prepare prepares a statement with the query bound to this connection.
@@ -49,6 +51,12 @@ func (c *conn) PrepareContext(ctx context.Context, query string) (driver.Stmt, e
 func (c *conn) Close() error {
 	log := logger.WithContext(c.id, "", "")
 	ctx := driverctx.NewContextWithConnId(context.Background(), c.id)
+
+	// Close telemetry and release resources
+	if c.telemetry != nil {
+		_ = c.telemetry.Close(ctx)
+		telemetry.ReleaseForConnection(c.cfg.Host)
+	}
 
 	_, err := c.client.CloseSession(ctx, &cli_service.TCloseSessionReq{
 		SessionHandle: c.session.SessionHandle,

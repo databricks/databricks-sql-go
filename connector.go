@@ -20,6 +20,7 @@ import (
 	"github.com/databricks/databricks-sql-go/internal/config"
 	dbsqlerrint "github.com/databricks/databricks-sql-go/internal/errors"
 	"github.com/databricks/databricks-sql-go/logger"
+	"github.com/databricks/databricks-sql-go/telemetry"
 )
 
 type connector struct {
@@ -74,6 +75,17 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 		session: session,
 	}
 	log := logger.WithContext(conn.id, driverctx.CorrelationIdFromContext(ctx), "")
+
+	// Initialize telemetry: client config overlay decides; if unset, feature flags decide
+	conn.telemetry = telemetry.InitializeForConnection(
+		ctx,
+		c.cfg.Host,
+		c.client,
+		c.cfg.EnableTelemetry,
+	)
+	if conn.telemetry != nil {
+		log.Debug().Msg("telemetry initialized for connection")
+	}
 
 	log.Info().Msgf("connect: host=%s port=%d httpPath=%s serverProtocolVersion=0x%X", c.cfg.Host, c.cfg.Port, c.cfg.HTTPPath, session.ServerProtocolVersion)
 
