@@ -54,22 +54,25 @@ func classifyError(err error) string {
 
 	errMsg := strings.ToLower(err.Error())
 
-	// Check for common error patterns
-	patterns := map[string]string{
-		"timeout":        "timeout",
-		"context cancel": "cancelled",
-		"connection":     "connection_error",
-		"authentication": "auth_error",
-		"unauthorized":   "auth_error",
-		"forbidden":      "permission_error",
-		"not found":      "not_found",
-		"syntax":         "syntax_error",
-		"invalid":        "invalid_request",
+	// Ordered patterns — first match wins, ensuring deterministic classification.
+	patterns := []struct {
+		pattern   string
+		errorType string
+	}{
+		{"timeout", "timeout"},
+		{"context cancel", "cancelled"},
+		{"connection", "connection_error"},
+		{"authentication", "auth_error"},
+		{"unauthorized", "auth_error"},
+		{"forbidden", "permission_error"},
+		{"not found", "not_found"},
+		{"syntax", "syntax_error"},
+		{"invalid", "invalid_request"},
 	}
 
-	for pattern, errorType := range patterns {
-		if strings.Contains(errMsg, pattern) {
-			return errorType
+	for _, p := range patterns {
+		if strings.Contains(errMsg, p.pattern) {
+			return p.errorType
 		}
 	}
 

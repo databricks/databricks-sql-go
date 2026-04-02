@@ -99,8 +99,10 @@ type UserConfig struct {
 	RetryWaitMax   time.Duration
 	RetryMax       int
 	// Telemetry configuration
-	EnableTelemetry          bool // Opt-in for telemetry; follows client > server > default priority
-	Transport                http.RoundTripper
+	// Uses config overlay pattern: client > server > default.
+	// Unset = check server feature flag; explicitly true/false overrides the server.
+	EnableTelemetry ConfigValue[bool]
+	Transport       http.RoundTripper
 	UseLz4Compression        bool
 	EnableMetricViewMetadata bool
 	CloudFetchConfig
@@ -290,7 +292,7 @@ func ParseDSN(dsn string) (UserConfig, error) {
 		if err != nil {
 			return UserConfig{}, err
 		}
-		ucfg.EnableTelemetry = enableTelemetry
+		ucfg.EnableTelemetry = NewConfigValue(enableTelemetry)
 	}
 
 	// for timezone we do a case insensitive key match.

@@ -15,7 +15,7 @@ import (
 //   - ctx: Context for the initialization
 //   - host: Databricks host
 //   - httpClient: HTTP client for making requests
-//   - enableTelemetry: User opt-in flag (nil = unset, true = enable, false = disable)
+//   - enableTelemetry: Client config overlay (unset = check server flag, true/false = override server)
 //
 // Returns:
 //   - *Interceptor: Telemetry interceptor if enabled, nil otherwise
@@ -23,16 +23,11 @@ func InitializeForConnection(
 	ctx context.Context,
 	host string,
 	httpClient *http.Client,
-	enableTelemetry *bool,
+	enableTelemetry config.ConfigValue[bool],
 ) *Interceptor {
-	// Create telemetry config
+	// Create telemetry config and apply client overlay
 	cfg := DefaultConfig()
-
-	// Set EnableTelemetry based on user preference
-	if enableTelemetry != nil {
-		cfg.EnableTelemetry = config.NewConfigValue(*enableTelemetry)
-	}
-	// else: leave unset (will check server feature flag)
+	cfg.EnableTelemetry = enableTelemetry
 
 	// Check if telemetry should be enabled
 	if !isTelemetryEnabled(ctx, cfg, host, httpClient) {

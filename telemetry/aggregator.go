@@ -20,6 +20,11 @@ type metricsAggregator struct {
 	flushInterval time.Duration
 	stopCh        chan struct{}
 	flushTimer    *time.Ticker
+
+	closeOnce sync.Once
+	ctx       context.Context    // Cancellable context for in-flight exports
+	cancel    context.CancelFunc // Cancels ctx on close
+	exportSem chan struct{}       // Bounds concurrent export goroutines
 }
 
 // statementMetrics holds aggregated metrics for a statement.
@@ -38,6 +43,7 @@ type statementMetrics struct {
 
 // newMetricsAggregator creates a new metrics aggregator.
 func newMetricsAggregator(exporter *telemetryExporter, cfg *Config) *metricsAggregator {
+	ctx, cancel := context.WithCancel(context.Background())
 	agg := &metricsAggregator{
 		statements:    make(map[string]*statementMetrics),
 		batch:         make([]*telemetryMetric, 0, cfg.BatchSize),
@@ -45,6 +51,9 @@ func newMetricsAggregator(exporter *telemetryExporter, cfg *Config) *metricsAggr
 		batchSize:     cfg.BatchSize,
 		flushInterval: cfg.FlushInterval,
 		stopCh:        make(chan struct{}),
+		ctx:           ctx,
+		cancel:        cancel,
+		exportSem:     make(chan struct{}, 8), // Bound to 8 concurrent exports
 	}
 
 	// Start background flush timer
@@ -182,7 +191,7 @@ func (agg *metricsAggregator) flushLoop() {
 	for {
 		select {
 		case <-agg.flushTimer.C:
-			agg.flush(context.Background())
+			agg.flush(agg.ctx) // Use cancellable context so exports stop on shutdown
 		case <-agg.stopCh:
 			return
 		}
@@ -207,9 +216,18 @@ func (agg *metricsAggregator) flushUnlocked(ctx context.Context) {
 	copy(metrics, agg.batch)
 	agg.batch = agg.batch[:0]
 
+	// Acquire semaphore slot; skip export if already at capacity to prevent goroutine leaks
+	select {
+	case agg.exportSem <- struct{}{}:
+	default:
+		logger.Debug().Msg("telemetry: export semaphore full, dropping metrics batch")
+		return
+	}
+
 	// Export asynchronously
 	go func() {
 		defer func() {
+			<-agg.exportSem
 			if r := recover(); r != nil {
 				logger.Debug().Msgf("telemetry: async export panic: %v", r)
 			}
@@ -219,8 +237,12 @@ func (agg *metricsAggregator) flushUnlocked(ctx context.Context) {
 }
 
 // close stops the aggregator and flushes pending metrics.
+// Safe to call multiple times — subsequent calls are no-ops for the stop/cancel step.
 func (agg *metricsAggregator) close(ctx context.Context) error {
-	close(agg.stopCh)
+	agg.closeOnce.Do(func() {
+		close(agg.stopCh)
+		agg.cancel() // Cancel in-flight periodic export goroutines
+	})
 	agg.flush(ctx)
 	return nil
 }

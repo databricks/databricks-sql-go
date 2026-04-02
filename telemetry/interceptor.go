@@ -157,12 +157,16 @@ func (i *Interceptor) completeStatement(ctx context.Context, statementID string,
 	i.aggregator.completeStatement(ctx, statementID, failed)
 }
 
-// Close shuts down the interceptor and flushes pending metrics.
+// Close flushes any pending per-connection metrics.
+// Does NOT close the shared aggregator — its lifecycle is managed via
+// ReleaseForConnection, which uses reference counting across all connections
+// to the same host.
 // Exported for use by the driver package.
 func (i *Interceptor) Close(ctx context.Context) error {
 	if !i.enabled {
 		return nil
 	}
 
-	return i.aggregator.close(ctx)
+	i.aggregator.flush(ctx)
+	return nil
 }

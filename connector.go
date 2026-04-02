@@ -76,18 +76,12 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 	}
 	log := logger.WithContext(conn.id, driverctx.CorrelationIdFromContext(ctx), "")
 
-	// Initialize telemetry: pass user opt-in flag; if unset, feature flags decide
-	var enableTelemetry *bool
-	if c.cfg.EnableTelemetry {
-		trueVal := true
-		enableTelemetry = &trueVal
-	}
-
+	// Initialize telemetry: client config overlay decides; if unset, feature flags decide
 	conn.telemetry = telemetry.InitializeForConnection(
 		ctx,
 		c.cfg.Host,
 		c.client,
-		enableTelemetry,
+		c.cfg.EnableTelemetry,
 	)
 	if conn.telemetry != nil {
 		log.Debug().Msg("telemetry initialized for connection")
