@@ -200,7 +200,7 @@ func TestIsTelemetryEnabled_ExplicitOptOut(t *testing.T) {
 	defer server.Close()
 
 	cfg := &Config{
-		EnableTelemetry:      false, // Priority 2: Explicit opt-out
+		EnableTelemetry: false, // Priority 2: Explicit opt-out
 	}
 
 	ctx := context.Background()
@@ -223,7 +223,7 @@ func TestIsTelemetryEnabled_UserOptInServerEnabled(t *testing.T) {
 	defer server.Close()
 
 	cfg := &Config{
-		EnableTelemetry:      true, // User wants telemetry
+		EnableTelemetry: true, // User wants telemetry
 	}
 
 	ctx := context.Background()
@@ -251,7 +251,7 @@ func TestIsTelemetryEnabled_UserOptInServerDisabled(t *testing.T) {
 	defer server.Close()
 
 	cfg := &Config{
-		EnableTelemetry:      true, // User wants telemetry
+		EnableTelemetry: true, // User wants telemetry
 	}
 
 	ctx := context.Background()
@@ -279,7 +279,7 @@ func TestIsTelemetryEnabled_ServerFlagOnly(t *testing.T) {
 	defer server.Close()
 
 	cfg := &Config{
-		EnableTelemetry:      false, // Default: no explicit user preference
+		EnableTelemetry: false, // Default: no explicit user preference
 	}
 
 	ctx := context.Background()
@@ -321,7 +321,7 @@ func TestIsTelemetryEnabled_ServerError(t *testing.T) {
 	defer server.Close()
 
 	cfg := &Config{
-		EnableTelemetry:      true, // User wants telemetry
+		EnableTelemetry: true, // User wants telemetry
 	}
 
 	ctx := context.Background()
@@ -343,7 +343,7 @@ func TestIsTelemetryEnabled_ServerError(t *testing.T) {
 // TestIsTelemetryEnabled_ServerUnreachable tests unreachable server
 func TestIsTelemetryEnabled_ServerUnreachable(t *testing.T) {
 	cfg := &Config{
-		EnableTelemetry:      true, // User wants telemetry
+		EnableTelemetry: true, // User wants telemetry
 	}
 
 	ctx := context.Background()

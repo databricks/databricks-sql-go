@@ -180,11 +180,11 @@ func (i *Interceptor) RecordOperation(ctx context.Context, sessionID string, ope
 	}()
 
 	metric := &telemetryMetric{
-		metricType:  "operation",
-		timestamp:   time.Now(),
-		sessionID:   sessionID,
-		latencyMs:   latencyMs,
-		tags:        map[string]interface{}{"operation_type": operationType},
+		metricType: "operation",
+		timestamp:  time.Now(),
+		sessionID:  sessionID,
+		latencyMs:  latencyMs,
+		tags:       map[string]interface{}{"operation_type": operationType},
 	}
 
 	i.aggregator.recordMetric(ctx, metric)

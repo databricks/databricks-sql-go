@@ -151,10 +151,10 @@ func TestIntegration_CircuitBreakerOpening(t *testing.T) {
 func TestIntegration_OptInPriority_ExplicitOptOut(t *testing.T) {
 	cfg := &Config{
 		EnableTelemetry: false, // Priority 1 (client): Explicit opt-out
-		BatchSize:            100,
-		FlushInterval:        5 * time.Second,
-		MaxRetries:           3,
-		RetryDelay:           100 * time.Millisecond,
+		BatchSize:       100,
+		FlushInterval:   5 * time.Second,
+		MaxRetries:      3,
+		RetryDelay:      100 * time.Millisecond,
 	}
 
 	httpClient := &http.Client{Timeout: 5 * time.Second}
