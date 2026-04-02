@@ -15,18 +15,14 @@ type Interceptor struct {
 }
 
 // metricContext holds metric collection state in context.
-//
-//nolint:unused // Will be used in Phase 8+
 type metricContext struct {
 	statementID string
 	startTime   time.Time
 	tags        map[string]interface{}
 }
 
-//nolint:unused // Will be used in Phase 8+
 type contextKey int
 
-//nolint:unused // Will be used in Phase 8+
 const metricContextKey contextKey = 0
 
 // newInterceptor creates a new telemetry interceptor.
@@ -38,15 +34,11 @@ func newInterceptor(aggregator *metricsAggregator, enabled bool) *Interceptor {
 }
 
 // withMetricContext adds metric context to the context.
-//
-//nolint:unused // Will be used in Phase 8+
 func withMetricContext(ctx context.Context, mc *metricContext) context.Context {
 	return context.WithValue(ctx, metricContextKey, mc)
 }
 
 // getMetricContext retrieves metric context from the context.
-//
-//nolint:unused // Will be used in Phase 8+
 func getMetricContext(ctx context.Context) *metricContext {
 	if mc, ok := ctx.Value(metricContextKey).(*metricContext); ok {
 		return mc
