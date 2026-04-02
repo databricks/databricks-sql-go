@@ -65,7 +65,8 @@ func (agg *metricsAggregator) recordMetric(ctx context.Context, metric *telemetr
 	// Swallow all errors
 	defer func() {
 		if r := recover(); r != nil {
-			logger.Debug().Msgf("telemetry: recordMetric panic: %v", r)
+			// Log at trace level only
+			// logger.Trace().Msgf("telemetry: recordMetric panic: %v", r)
 		}
 	}()
 
@@ -73,13 +74,10 @@ func (agg *metricsAggregator) recordMetric(ctx context.Context, metric *telemetr
 	defer agg.mu.Unlock()
 
 	switch metric.metricType {
-	case "connection":
-		// Emit connection events immediately: connection lifecycle events must be captured
-		// before the connection closes, as we won't have another opportunity to flush
+	case "connection", "operation":
+		// Emit connection and operation events immediately
 		agg.batch = append(agg.batch, metric)
-		if len(agg.batch) >= agg.batchSize {
-			agg.flushUnlocked(ctx)
-		}
+		agg.flushUnlocked(ctx)
 
 	case "statement":
 		// Aggregate by statement ID
@@ -118,8 +116,7 @@ func (agg *metricsAggregator) recordMetric(ctx context.Context, metric *telemetr
 	case "error":
 		// Check if terminal error
 		if metric.errorType != "" && isTerminalError(&simpleError{msg: metric.errorType}) {
-			// Flush terminal errors immediately: terminal errors often lead to connection
-			// termination. If we wait for the next batch/timer flush, this data may be lost
+			// Flush terminal errors immediately
 			agg.batch = append(agg.batch, metric)
 			agg.flushUnlocked(ctx)
 		} else {
@@ -135,7 +132,7 @@ func (agg *metricsAggregator) recordMetric(ctx context.Context, metric *telemetr
 func (agg *metricsAggregator) completeStatement(ctx context.Context, statementID string, failed bool) {
 	defer func() {
 		if r := recover(); r != nil {
-			logger.Debug().Msgf("telemetry: completeStatement panic: %v", r)
+			// Log at trace level only
 		}
 	}()
 
@@ -223,7 +220,7 @@ func (agg *metricsAggregator) flushUnlocked(ctx context.Context) {
 		defer func() {
 			<-agg.exportSem
 			if r := recover(); r != nil {
-				logger.Debug().Msgf("telemetry: async export panic: %v", r)
+				// Log at trace level only
 			}
 		}()
 		agg.exporter.export(ctx, metrics)

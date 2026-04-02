@@ -14,6 +14,7 @@ import (
 // Parameters:
 //   - ctx: Context for the initialization
 //   - host: Databricks host
+//   - driverVersion: Driver version string
 //   - httpClient: HTTP client for making requests
 //   - enableTelemetry: Client config overlay (unset = check server flag, true/false = override server)
 //
@@ -22,28 +23,36 @@ import (
 func InitializeForConnection(
 	ctx context.Context,
 	host string,
+	driverVersion string,
 	httpClient *http.Client,
 	enableTelemetry config.ConfigValue[bool],
 ) *Interceptor {
-	// Create telemetry config and apply client overlay
+	// Create telemetry config and apply client overlay.
+	// ConfigValue[bool] semantics:
+	//   - unset  → true (let server feature flag decide)
+	//   - true   → true (server feature flag still consulted)
+	//   - false  → false (explicitly disabled, skip server flag check)
 	cfg := DefaultConfig()
-	cfg.EnableTelemetry = enableTelemetry
+	if val, isSet := enableTelemetry.Get(); isSet {
+		cfg.EnableTelemetry = val
+	} else {
+		cfg.EnableTelemetry = true // Unset: default to enabled, server flag decides
+	}
+
+	// Get feature flag cache context FIRST (for reference counting)
+	flagCache := getFeatureFlagCache()
+	flagCache.getOrCreateContext(host)
 
 	// Check if telemetry should be enabled
-	if !isTelemetryEnabled(ctx, cfg, host, httpClient) {
+	enabled := isTelemetryEnabled(ctx, cfg, host, driverVersion, httpClient)
+	if !enabled {
+		flagCache.releaseContext(host)
 		return nil
 	}
 
 	// Get or create telemetry client for this host
 	clientMgr := getClientManager()
-	telemetryClient := clientMgr.getOrCreateClient(host, httpClient, cfg)
-	if telemetryClient == nil {
-		return nil
-	}
-
-	// Get feature flag cache context (for reference counting)
-	flagCache := getFeatureFlagCache()
-	flagCache.getOrCreateContext(host)
+	telemetryClient := clientMgr.getOrCreateClient(host, driverVersion, httpClient, cfg)
 
 	// Return interceptor
 	return telemetryClient.GetInterceptor(true)
