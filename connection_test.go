@@ -10,6 +10,7 @@ import (
 	"github.com/apache/thrift/lib/go/thrift"
 	"github.com/pkg/errors"
 
+	"github.com/databricks/databricks-sql-go/driverctx"
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/client"
@@ -491,6 +492,121 @@ func TestConn_executeStatement_ProtocolFeatures(t *testing.T) {
 			})
 		}
 	}
+}
+
+func TestConn_executeStatement_QueryTags(t *testing.T) {
+	t.Parallel()
+
+	makeTestConn := func(captureReq *(*cli_service.TExecuteStatementReq)) *conn {
+		executeStatement := func(ctx context.Context, req *cli_service.TExecuteStatementReq) (r *cli_service.TExecuteStatementResp, err error) {
+			*captureReq = req
+			return &cli_service.TExecuteStatementResp{
+				Status: &cli_service.TStatus{
+					StatusCode: cli_service.TStatusCode_SUCCESS_STATUS,
+				},
+				OperationHandle: &cli_service.TOperationHandle{
+					OperationId: &cli_service.THandleIdentifier{
+						GUID:   []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16},
+						Secret: []byte("secret"),
+					},
+				},
+				DirectResults: &cli_service.TSparkDirectResults{
+					OperationStatus: &cli_service.TGetOperationStatusResp{
+						Status: &cli_service.TStatus{
+							StatusCode: cli_service.TStatusCode_SUCCESS_STATUS,
+						},
+						OperationState: cli_service.TOperationStatePtr(cli_service.TOperationState_FINISHED_STATE),
+					},
+				},
+			}, nil
+		}
+
+		return &conn{
+			session: getTestSession(),
+			client: &client.TestClient{
+				FnExecuteStatement: executeStatement,
+			},
+			cfg: config.WithDefaults(),
+		}
+	}
+
+	t.Run("query tags from context are set in ConfOverlay", func(t *testing.T) {
+		var capturedReq *cli_service.TExecuteStatementReq
+		testConn := makeTestConn(&capturedReq)
+
+		ctx := driverctx.NewContextWithQueryTags(context.Background(), map[string]string{
+			"team": "engineering",
+			"app":  "etl",
+		})
+
+		_, err := testConn.executeStatement(ctx, "SELECT 1", nil)
+		assert.NoError(t, err)
+		assert.NotNil(t, capturedReq.ConfOverlay)
+		// Map iteration is non-deterministic, so check both possible orderings
+		queryTags := capturedReq.ConfOverlay["query_tags"]
+		assert.True(t,
+			queryTags == "team:engineering,app:etl" || queryTags == "app:etl,team:engineering",
+			"unexpected query_tags value: %s", queryTags)
+	})
+
+	t.Run("no query tags in context means no ConfOverlay", func(t *testing.T) {
+		var capturedReq *cli_service.TExecuteStatementReq
+		testConn := makeTestConn(&capturedReq)
+
+		_, err := testConn.executeStatement(context.Background(), "SELECT 1", nil)
+		assert.NoError(t, err)
+		assert.Nil(t, capturedReq.ConfOverlay)
+	})
+
+	t.Run("empty query tags map means no ConfOverlay", func(t *testing.T) {
+		var capturedReq *cli_service.TExecuteStatementReq
+		testConn := makeTestConn(&capturedReq)
+
+		ctx := driverctx.NewContextWithQueryTags(context.Background(), map[string]string{})
+
+		_, err := testConn.executeStatement(ctx, "SELECT 1", nil)
+		assert.NoError(t, err)
+		assert.Nil(t, capturedReq.ConfOverlay)
+	})
+
+	t.Run("single query tag", func(t *testing.T) {
+		var capturedReq *cli_service.TExecuteStatementReq
+		testConn := makeTestConn(&capturedReq)
+
+		ctx := driverctx.NewContextWithQueryTags(context.Background(), map[string]string{
+			"team": "data-eng",
+		})
+
+		_, err := testConn.executeStatement(ctx, "SELECT 1", nil)
+		assert.NoError(t, err)
+		assert.Equal(t, "team:data-eng", capturedReq.ConfOverlay["query_tags"])
+	})
+
+	t.Run("query tags with special characters in values", func(t *testing.T) {
+		var capturedReq *cli_service.TExecuteStatementReq
+		testConn := makeTestConn(&capturedReq)
+
+		ctx := driverctx.NewContextWithQueryTags(context.Background(), map[string]string{
+			"url": "http://host:8080",
+		})
+
+		_, err := testConn.executeStatement(ctx, "SELECT 1", nil)
+		assert.NoError(t, err)
+		assert.Equal(t, `url:http\://host\:8080`, capturedReq.ConfOverlay["query_tags"])
+	})
+
+	t.Run("query tags with empty value", func(t *testing.T) {
+		var capturedReq *cli_service.TExecuteStatementReq
+		testConn := makeTestConn(&capturedReq)
+
+		ctx := driverctx.NewContextWithQueryTags(context.Background(), map[string]string{
+			"flag": "",
+		})
+
+		_, err := testConn.executeStatement(ctx, "SELECT 1", nil)
+		assert.NoError(t, err)
+		assert.Equal(t, "flag", capturedReq.ConfOverlay["query_tags"])
+	})
 }
 
 func TestConn_pollOperation(t *testing.T) {
