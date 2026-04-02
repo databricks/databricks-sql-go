@@ -22,15 +22,17 @@ func main() {
 		log.Fatal(err.Error())
 	}
 
-	// Session-level query tags: applied to all queries in this session.
+	// Connection-level query tags: applied to all queries in this session.
+	// WithQueryTags accepts a map and handles serialization automatically.
 	connector, err := dbsql.NewConnector(
 		dbsql.WithServerHostname(os.Getenv("DATABRICKS_HOST")),
 		dbsql.WithPort(port),
 		dbsql.WithHTTPPath(os.Getenv("DATABRICKS_HTTPPATH")),
 		dbsql.WithAccessToken(os.Getenv("DATABRICKS_ACCESSTOKEN")),
-		dbsql.WithSessionParams(map[string]string{
-			"QUERY_TAGS": "team:engineering,test:query-tags,driver:go",
-			"ansi_mode":  "false",
+		dbsql.WithQueryTags(map[string]string{
+			"team":   "engineering",
+			"test":   "query-tags",
+			"driver": "go",
 		}),
 	)
 	if err != nil {
@@ -40,8 +42,8 @@ func main() {
 	db := sql.OpenDB(connector)
 	defer db.Close()
 
-	// Example 1: Session-level query tags (set during connection)
-	fmt.Println("=== Session-level query tags ===")
+	// Example 1: Connection-level query tags (set during connection)
+	fmt.Println("=== Connection-level query tags ===")
 	ctx := context.Background()
 	var result int
 	err = db.QueryRowContext(ctx, "SELECT 1").Scan(&result)

@@ -268,6 +268,65 @@ func TestNewConnector(t *testing.T) {
 	})
 }
 
+func TestWithQueryTags(t *testing.T) {
+	t.Run("WithQueryTags serializes map into SessionParams QUERY_TAGS", func(t *testing.T) {
+		con, err := NewConnector(
+			WithQueryTags(map[string]string{
+				"team": "data-eng",
+			}),
+		)
+		require.NoError(t, err)
+		coni, ok := con.(*connector)
+		require.True(t, ok)
+		assert.Equal(t, "team:data-eng", coni.cfg.SessionParams["QUERY_TAGS"])
+	})
+
+	t.Run("WithQueryTags with multiple tags", func(t *testing.T) {
+		con, err := NewConnector(
+			WithQueryTags(map[string]string{
+				"team": "eng",
+				"app":  "etl",
+			}),
+		)
+		require.NoError(t, err)
+		coni, ok := con.(*connector)
+		require.True(t, ok)
+		// Map iteration is non-deterministic
+		qt := coni.cfg.SessionParams["QUERY_TAGS"]
+		assert.True(t, qt == "team:eng,app:etl" || qt == "app:etl,team:eng", "got: %s", qt)
+	})
+
+	t.Run("WithQueryTags with empty map does not set QUERY_TAGS", func(t *testing.T) {
+		con, err := NewConnector(
+			WithQueryTags(map[string]string{}),
+		)
+		require.NoError(t, err)
+		coni, ok := con.(*connector)
+		require.True(t, ok)
+		_, exists := coni.cfg.SessionParams["QUERY_TAGS"]
+		assert.False(t, exists)
+	})
+
+	t.Run("WithQueryTags overrides WithSessionParams QUERY_TAGS", func(t *testing.T) {
+		con, err := NewConnector(
+			WithSessionParams(map[string]string{
+				"QUERY_TAGS": "old:value",
+				"ansi_mode":  "false",
+			}),
+			WithQueryTags(map[string]string{
+				"team": "new-team",
+			}),
+		)
+		require.NoError(t, err)
+		coni, ok := con.(*connector)
+		require.True(t, ok)
+		// WithQueryTags should override the QUERY_TAGS from WithSessionParams
+		assert.Equal(t, "team:new-team", coni.cfg.SessionParams["QUERY_TAGS"])
+		// Other session params should be preserved
+		assert.Equal(t, "false", coni.cfg.SessionParams["ansi_mode"])
+	})
+}
+
 type mockRoundTripper struct{}
 
 var _ http.RoundTripper = mockRoundTripper{}

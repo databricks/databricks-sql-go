@@ -235,6 +235,23 @@ func WithSessionParams(params map[string]string) ConnOption {
 	}
 }
 
+// WithQueryTags sets session-level query tags from a map.
+// Tags are serialized and passed as QUERY_TAGS in the session configuration.
+// All queries in the session will carry these tags unless overridden at the statement level.
+// This is the preferred way to set session-level query tags, as it handles serialization
+// and escaping automatically (consistent with the statement-level API).
+func WithQueryTags(tags map[string]string) ConnOption {
+	return func(c *config.Config) {
+		serialized := SerializeQueryTags(tags)
+		if serialized != "" {
+			if c.SessionParams == nil {
+				c.SessionParams = make(map[string]string)
+			}
+			c.SessionParams["QUERY_TAGS"] = serialized
+		}
+	}
+}
+
 // WithSkipTLSHostVerify disables the verification of the hostname in the TLS certificate.
 // WARNING:
 // When this option is used, TLS is susceptible to machine-in-the-middle attacks.
