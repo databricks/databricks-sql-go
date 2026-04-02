@@ -24,7 +24,7 @@ type metricsAggregator struct {
 	closeOnce sync.Once
 	ctx       context.Context    // Cancellable context for in-flight exports
 	cancel    context.CancelFunc // Cancels ctx on close
-	exportSem chan struct{}       // Bounds concurrent export goroutines
+	exportSem chan struct{}      // Bounds concurrent export goroutines
 }
 
 // statementMetrics holds aggregated metrics for a statement.

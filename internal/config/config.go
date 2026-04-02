@@ -101,8 +101,8 @@ type UserConfig struct {
 	// Telemetry configuration
 	// Uses config overlay pattern: client > server > default.
 	// Unset = check server feature flag; explicitly true/false overrides the server.
-	EnableTelemetry ConfigValue[bool]
-	Transport       http.RoundTripper
+	EnableTelemetry          ConfigValue[bool]
+	Transport                http.RoundTripper
 	UseLz4Compression        bool
 	EnableMetricViewMetadata bool
 	CloudFetchConfig
