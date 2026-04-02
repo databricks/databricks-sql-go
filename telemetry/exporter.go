@@ -20,23 +20,23 @@ const (
 
 // telemetryExporter exports metrics to Databricks telemetry service.
 type telemetryExporter struct {
-	host          string
-	driverVersion string
-	httpClient    *http.Client
+	host           string
+	driverVersion  string
+	httpClient     *http.Client
 	circuitBreaker *circuitBreaker
-	cfg           *Config
+	cfg            *Config
 }
 
 // telemetryMetric represents a metric to export.
 type telemetryMetric struct {
-	metricType      string
-	timestamp       time.Time
-	workspaceID     string
-	sessionID       string
-	statementID     string
-	latencyMs       int64
-	errorType       string
-	tags            map[string]interface{}
+	metricType  string
+	timestamp   time.Time
+	workspaceID string
+	sessionID   string
+	statementID string
+	latencyMs   int64
+	errorType   string
+	tags        map[string]interface{}
 }
 
 // telemetryPayload is the JSON structure sent to Databricks.

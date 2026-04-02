@@ -42,8 +42,8 @@ type Config struct {
 // Note: Telemetry is disabled by default and requires explicit opt-in.
 func DefaultConfig() *Config {
 	return &Config{
-		Enabled:         false, // Disabled by default, requires explicit opt-in
-		EnableTelemetry: false,
+		Enabled:                 false, // Disabled by default, requires explicit opt-in
+		EnableTelemetry:         false,
 		BatchSize:               100,
 		FlushInterval:           5 * time.Second,
 		MaxRetries:              3,
@@ -121,4 +121,3 @@ func isTelemetryEnabled(ctx context.Context, cfg *Config, host string, driverVer
 
 	return serverEnabled
 }
-

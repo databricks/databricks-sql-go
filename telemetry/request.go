@@ -14,10 +14,10 @@ type TelemetryRequest struct {
 
 // TelemetryFrontendLog represents a single telemetry log entry.
 type TelemetryFrontendLog struct {
-	WorkspaceID         int64               `json:"workspace_id,omitempty"`
-	FrontendLogEventID  string              `json:"frontend_log_event_id,omitempty"`
-	Context             *FrontendLogContext `json:"context,omitempty"`
-	Entry               *FrontendLogEntry   `json:"entry,omitempty"`
+	WorkspaceID        int64               `json:"workspace_id,omitempty"`
+	FrontendLogEventID string              `json:"frontend_log_event_id,omitempty"`
+	Context            *FrontendLogContext `json:"context,omitempty"`
+	Entry              *FrontendLogEntry   `json:"entry,omitempty"`
 }
 
 // FrontendLogContext contains the client context.
@@ -72,19 +72,19 @@ type DriverConnectionParameters struct {
 
 // SQLExecutionEvent contains SQL execution details.
 type SQLExecutionEvent struct {
-	ResultFormat      string           `json:"result_format,omitempty"`
-	ChunkCount        int              `json:"chunk_count,omitempty"`
-	BytesDownloaded   int64            `json:"bytes_downloaded,omitempty"`
-	PollCount         int              `json:"poll_count,omitempty"`
-	OperationDetail   *OperationDetail `json:"operation_detail,omitempty"`
+	ResultFormat    string           `json:"result_format,omitempty"`
+	ChunkCount      int              `json:"chunk_count,omitempty"`
+	BytesDownloaded int64            `json:"bytes_downloaded,omitempty"`
+	PollCount       int              `json:"poll_count,omitempty"`
+	OperationDetail *OperationDetail `json:"operation_detail,omitempty"`
 }
 
 // OperationDetail contains operation-specific details.
 type OperationDetail struct {
-	OperationType              string `json:"operation_type,omitempty"`
-	NOperationStatusCalls      int64  `json:"n_operation_status_calls,omitempty"`
-	OperationStatusLatencyMs   int64  `json:"operation_status_latency_millis,omitempty"`
-	IsInternalCall             bool   `json:"is_internal_call,omitempty"`
+	OperationType            string `json:"operation_type,omitempty"`
+	NOperationStatusCalls    int64  `json:"n_operation_status_calls,omitempty"`
+	OperationStatusLatencyMs int64  `json:"operation_status_latency_millis,omitempty"`
+	IsInternalCall           bool   `json:"is_internal_call,omitempty"`
 }
 
 // DriverErrorInfo contains error information.
