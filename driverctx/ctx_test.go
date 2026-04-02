@@ -8,6 +8,52 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+func TestNewContextWithQueryTags(t *testing.T) {
+	t.Run("stores and retrieves query tags", func(t *testing.T) {
+		tags := map[string]string{"team": "engineering", "app": "etl"}
+		ctx := NewContextWithQueryTags(context.Background(), tags)
+		result := QueryTagsFromContext(ctx)
+		assert.Equal(t, tags, result)
+	})
+
+	t.Run("returns nil for context without query tags", func(t *testing.T) {
+		result := QueryTagsFromContext(context.Background())
+		assert.Nil(t, result)
+	})
+
+	t.Run("it maintains timeout", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
+		defer cancel()
+		tags := map[string]string{"team": "eng"}
+		ctx1 := NewContextWithQueryTags(ctx, tags)
+		result := QueryTagsFromContext(ctx1)
+		assert.Equal(t, tags, result)
+		dl, ok := ctx.Deadline()
+		dl1, ok1 := ctx1.Deadline()
+		assert.Equal(t, dl, dl1)
+		assert.True(t, ok)
+		assert.True(t, ok1)
+	})
+
+	t.Run("NewContextFromBackground preserves query tags", func(t *testing.T) {
+		tags := map[string]string{"team": "eng"}
+		ctx := NewContextWithConnId(context.Background(), "conn-1")
+		ctx = NewContextWithCorrelationId(ctx, "corr-1")
+		ctx = NewContextWithQueryTags(ctx, tags)
+
+		newCtx := NewContextFromBackground(ctx)
+		assert.Equal(t, tags, QueryTagsFromContext(newCtx))
+		assert.Equal(t, "conn-1", ConnIdFromContext(newCtx))
+		assert.Equal(t, "corr-1", CorrelationIdFromContext(newCtx))
+	})
+
+	t.Run("NewContextFromBackground without query tags", func(t *testing.T) {
+		ctx := NewContextWithConnId(context.Background(), "conn-1")
+		newCtx := NewContextFromBackground(ctx)
+		assert.Nil(t, QueryTagsFromContext(newCtx))
+	})
+}
+
 func TestNewContextWithCorrelationId(t *testing.T) {
 	t.Run("base case", func(t *testing.T) {
 
