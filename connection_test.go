@@ -607,6 +607,94 @@ func TestConn_executeStatement_QueryTags(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Equal(t, "flag", capturedReq.ConfOverlay["query_tags"])
 	})
+
+	t.Run("session-level and statement-level query tags coexist", func(t *testing.T) {
+		// Session-level tags are sent via TOpenSessionReq.Configuration at connect time.
+		// Statement-level tags are sent via TExecuteStatementReq.ConfOverlay at query time.
+		// They are independent fields on different requests, so both should work together.
+
+		var capturedOpenReq *cli_service.TOpenSessionReq
+		var capturedExecReq *cli_service.TExecuteStatementReq
+
+		testClient := &client.TestClient{
+			FnOpenSession: func(ctx context.Context, req *cli_service.TOpenSessionReq) (*cli_service.TOpenSessionResp, error) {
+				capturedOpenReq = req
+				return &cli_service.TOpenSessionResp{
+					Status: &cli_service.TStatus{
+						StatusCode: cli_service.TStatusCode_SUCCESS_STATUS,
+					},
+					SessionHandle: &cli_service.TSessionHandle{
+						SessionId: &cli_service.THandleIdentifier{
+							GUID: []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16},
+						},
+					},
+				}, nil
+			},
+			FnExecuteStatement: func(ctx context.Context, req *cli_service.TExecuteStatementReq) (*cli_service.TExecuteStatementResp, error) {
+				capturedExecReq = req
+				return &cli_service.TExecuteStatementResp{
+					Status: &cli_service.TStatus{
+						StatusCode: cli_service.TStatusCode_SUCCESS_STATUS,
+					},
+					OperationHandle: &cli_service.TOperationHandle{
+						OperationId: &cli_service.THandleIdentifier{
+							GUID:   []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16},
+							Secret: []byte("secret"),
+						},
+					},
+					DirectResults: &cli_service.TSparkDirectResults{
+						OperationStatus: &cli_service.TGetOperationStatusResp{
+							Status: &cli_service.TStatus{
+								StatusCode: cli_service.TStatusCode_SUCCESS_STATUS,
+							},
+							OperationState: cli_service.TOperationStatePtr(cli_service.TOperationState_FINISHED_STATE),
+						},
+					},
+				}, nil
+			},
+		}
+
+		// Simulate what connector.Connect() does: pass session params to OpenSession
+		sessionParams := map[string]string{
+			"QUERY_TAGS": "team:platform,env:prod",
+			"ansi_mode":  "false",
+		}
+		protocolVersion := int64(cli_service.TProtocolVersion_SPARK_CLI_SERVICE_PROTOCOL_V8)
+		session, err := testClient.OpenSession(context.Background(), &cli_service.TOpenSessionReq{
+			ClientProtocolI64: &protocolVersion,
+			Configuration:     sessionParams,
+		})
+		assert.NoError(t, err)
+
+		// Verify session-level tags were sent in OpenSession
+		assert.Equal(t, "team:platform,env:prod", capturedOpenReq.Configuration["QUERY_TAGS"])
+		assert.Equal(t, "false", capturedOpenReq.Configuration["ansi_mode"])
+
+		// Create conn with session that has session-level tags
+		cfg := config.WithDefaults()
+		cfg.SessionParams = sessionParams
+		testConn := &conn{
+			session: session,
+			client:  testClient,
+			cfg:     cfg,
+		}
+
+		// Execute with statement-level tags
+		ctx := driverctx.NewContextWithQueryTags(context.Background(), map[string]string{
+			"job": "nightly-etl",
+		})
+		_, err = testConn.executeStatement(ctx, "SELECT 1", nil)
+		assert.NoError(t, err)
+
+		// Statement-level tags should be in ConfOverlay
+		assert.Equal(t, "job:nightly-etl", capturedExecReq.ConfOverlay["query_tags"])
+
+		// ConfOverlay should ONLY have query_tags, not session params
+		_, hasAnsiMode := capturedExecReq.ConfOverlay["ansi_mode"]
+		assert.False(t, hasAnsiMode, "session params should not leak into ConfOverlay")
+		_, hasSessionQueryTags := capturedExecReq.ConfOverlay["QUERY_TAGS"]
+		assert.False(t, hasSessionQueryTags, "session-level QUERY_TAGS should not be in ConfOverlay")
+	})
 }
 
 func TestConn_pollOperation(t *testing.T) {
