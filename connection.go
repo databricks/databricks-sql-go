@@ -323,6 +323,7 @@ func (c *conn) executeStatement(ctx context.Context, query string, args []driver
 			TimestampAsArrow:     &c.cfg.UseArrowNativeTimestamp,
 			ComplexTypesAsArrow:  &c.cfg.UseArrowNativeComplexTypes,
 			IntervalTypesAsArrow: &c.cfg.UseArrowNativeIntervalTypes,
+			GeospatialAsArrow:    &c.cfg.UseArrowNativeGeospatial,
 		}
 	}
 

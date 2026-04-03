@@ -465,6 +465,12 @@ type ArrowConfig struct {
 	// the following are currently not supported
 	UseArrowNativeComplexTypes  bool
 	UseArrowNativeIntervalTypes bool
+
+	// UseArrowNativeGeospatial enables Arrow-native geospatial serialization.
+	// When true, the server returns geometry/geography columns as
+	// Struct<srid: Int32, wkb: Binary> instead of EWKT strings.
+	// Requires Databricks Runtime with SPARK-54232 support.
+	UseArrowNativeGeospatial bool
 }
 
 func (ucfg ArrowConfig) WithDefaults() ArrowConfig {
@@ -478,11 +484,12 @@ func (ucfg ArrowConfig) WithDefaults() ArrowConfig {
 // DeepCopy returns a true deep copy of UserConfig
 func (arrowConfig ArrowConfig) DeepCopy() ArrowConfig {
 	return ArrowConfig{
-		UseArrowBatches:             arrowConfig.UseArrowBatches,
-		UseArrowNativeDecimal:       arrowConfig.UseArrowNativeDecimal,
-		UseArrowNativeTimestamp:     arrowConfig.UseArrowNativeTimestamp,
-		UseArrowNativeComplexTypes:  arrowConfig.UseArrowNativeComplexTypes,
-		UseArrowNativeIntervalTypes: arrowConfig.UseArrowNativeIntervalTypes,
+		UseArrowBatches:              arrowConfig.UseArrowBatches,
+		UseArrowNativeDecimal:        arrowConfig.UseArrowNativeDecimal,
+		UseArrowNativeTimestamp:      arrowConfig.UseArrowNativeTimestamp,
+		UseArrowNativeComplexTypes:   arrowConfig.UseArrowNativeComplexTypes,
+		UseArrowNativeIntervalTypes:  arrowConfig.UseArrowNativeIntervalTypes,
+		UseArrowNativeGeospatial:     arrowConfig.UseArrowNativeGeospatial,
 	}
 }
 
