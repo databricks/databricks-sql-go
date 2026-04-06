@@ -200,7 +200,7 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 	var statementID string
 	if c.telemetry != nil && exStmtResp != nil && exStmtResp.OperationHandle != nil && exStmtResp.OperationHandle.OperationId != nil {
 		statementID = client.SprintGuid(exStmtResp.OperationHandle.OperationId.GUID)
-		ctx = c.telemetry.BeforeExecute(ctx, statementID)
+		ctx = c.telemetry.BeforeExecute(ctx, c.id, statementID)
 		defer func() {
 			c.telemetry.AfterExecute(ctx, err)
 			c.telemetry.CompleteStatement(ctx, statementID, err != nil)
