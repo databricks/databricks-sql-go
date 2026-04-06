@@ -123,6 +123,8 @@ func (c *conn) ExecContext(ctx context.Context, query string, args []driver.Name
 
 	corrId := driverctx.CorrelationIdFromContext(ctx)
 
+	// Capture execution start time for telemetry before running the query
+	executeStart := time.Now()
 	exStmtResp, opStatusResp, err := c.runQuery(ctx, query, args)
 	log, ctx = client.LoggerAndContext(ctx, exStmtResp)
 	stagingErr := c.execStagingOperation(exStmtResp, ctx)
@@ -132,7 +134,8 @@ func (c *conn) ExecContext(ctx context.Context, query string, args []driver.Name
 	var closeOpErr error // Track CloseOperation errors for telemetry
 	if c.telemetry != nil && exStmtResp != nil && exStmtResp.OperationHandle != nil && exStmtResp.OperationHandle.OperationId != nil {
 		statementID = client.SprintGuid(exStmtResp.OperationHandle.OperationId.GUID)
-		ctx = c.telemetry.BeforeExecute(ctx, statementID)
+		// Use BeforeExecuteWithTime to set the correct start time (before execution)
+		ctx = c.telemetry.BeforeExecuteWithTime(ctx, c.id, statementID, executeStart)
 		defer func() {
 			finalErr := err
 			if stagingErr != nil {
