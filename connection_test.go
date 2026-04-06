@@ -1037,7 +1037,7 @@ func TestConn_runQuery(t *testing.T) {
 			client:  testClient,
 			cfg:     config.WithDefaults(),
 		}
-		exStmtResp, opStatusResp, err := testConn.runQuery(context.Background(), "select 1", []driver.NamedValue{}, nil)
+		exStmtResp, opStatusResp, err := testConn.runQuery(context.Background(), "select 1", []driver.NamedValue{})
 		assert.Error(t, err)
 		assert.Nil(t, exStmtResp)
 		assert.Nil(t, opStatusResp)
@@ -1079,7 +1079,7 @@ func TestConn_runQuery(t *testing.T) {
 			client:  testClient,
 			cfg:     config.WithDefaults(),
 		}
-		exStmtResp, opStatusResp, err := testConn.runQuery(context.Background(), "select 1", []driver.NamedValue{}, nil)
+		exStmtResp, opStatusResp, err := testConn.runQuery(context.Background(), "select 1", []driver.NamedValue{})
 
 		assert.Error(t, err)
 		assert.Equal(t, 1, executeStatementCount)
@@ -1125,7 +1125,7 @@ func TestConn_runQuery(t *testing.T) {
 			client:  testClient,
 			cfg:     config.WithDefaults(),
 		}
-		exStmtResp, opStatusResp, err := testConn.runQuery(context.Background(), "select 1", []driver.NamedValue{}, nil)
+		exStmtResp, opStatusResp, err := testConn.runQuery(context.Background(), "select 1", []driver.NamedValue{})
 
 		assert.NoError(t, err)
 		assert.Equal(t, 1, executeStatementCount)
@@ -1172,7 +1172,7 @@ func TestConn_runQuery(t *testing.T) {
 			client:  testClient,
 			cfg:     config.WithDefaults(),
 		}
-		exStmtResp, opStatusResp, err := testConn.runQuery(context.Background(), "select 1", []driver.NamedValue{}, nil)
+		exStmtResp, opStatusResp, err := testConn.runQuery(context.Background(), "select 1", []driver.NamedValue{})
 
 		assert.Error(t, err)
 		assert.Equal(t, 1, executeStatementCount)
@@ -1225,7 +1225,7 @@ func TestConn_runQuery(t *testing.T) {
 			client:  testClient,
 			cfg:     config.WithDefaults(),
 		}
-		exStmtResp, opStatusResp, err := testConn.runQuery(context.Background(), "select 1", []driver.NamedValue{}, nil)
+		exStmtResp, opStatusResp, err := testConn.runQuery(context.Background(), "select 1", []driver.NamedValue{})
 
 		assert.NoError(t, err)
 		assert.Equal(t, 1, executeStatementCount)
@@ -1277,7 +1277,7 @@ func TestConn_runQuery(t *testing.T) {
 			client:  testClient,
 			cfg:     config.WithDefaults(),
 		}
-		exStmtResp, opStatusResp, err := testConn.runQuery(context.Background(), "select 1", []driver.NamedValue{}, nil)
+		exStmtResp, opStatusResp, err := testConn.runQuery(context.Background(), "select 1", []driver.NamedValue{})
 
 		assert.Error(t, err)
 		assert.Equal(t, 1, executeStatementCount)
@@ -1330,7 +1330,7 @@ func TestConn_runQuery(t *testing.T) {
 			client:  testClient,
 			cfg:     config.WithDefaults(),
 		}
-		exStmtResp, opStatusResp, err := testConn.runQuery(context.Background(), "select 1", []driver.NamedValue{}, nil)
+		exStmtResp, opStatusResp, err := testConn.runQuery(context.Background(), "select 1", []driver.NamedValue{})
 
 		assert.NoError(t, err)
 		assert.Equal(t, 1, executeStatementCount)
@@ -1383,7 +1383,7 @@ func TestConn_runQuery(t *testing.T) {
 			client:  testClient,
 			cfg:     config.WithDefaults(),
 		}
-		exStmtResp, opStatusResp, err := testConn.runQuery(context.Background(), "select 1", []driver.NamedValue{}, nil)
+		exStmtResp, opStatusResp, err := testConn.runQuery(context.Background(), "select 1", []driver.NamedValue{})
 
 		assert.Error(t, err)
 		assert.Equal(t, 1, executeStatementCount)
