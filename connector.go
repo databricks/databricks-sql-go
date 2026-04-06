@@ -20,6 +20,7 @@ import (
 	"github.com/databricks/databricks-sql-go/internal/config"
 	dbsqlerrint "github.com/databricks/databricks-sql-go/internal/errors"
 	"github.com/databricks/databricks-sql-go/logger"
+	"github.com/databricks/databricks-sql-go/telemetry"
 )
 
 type connector struct {
@@ -74,6 +75,17 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 		session: session,
 	}
 	log := logger.WithContext(conn.id, driverctx.CorrelationIdFromContext(ctx), "")
+
+	// Initialize telemetry: client config overlay decides; if unset, feature flags decide
+	conn.telemetry = telemetry.InitializeForConnection(
+		ctx,
+		c.cfg.Host,
+		c.client,
+		c.cfg.EnableTelemetry,
+	)
+	if conn.telemetry != nil {
+		log.Debug().Msg("telemetry initialized for connection")
+	}
 
 	log.Info().Msgf("connect: host=%s port=%d httpPath=%s serverProtocolVersion=0x%X", c.cfg.Host, c.cfg.Port, c.cfg.HTTPPath, session.ServerProtocolVersion)
 
@@ -232,6 +244,23 @@ func WithSessionParams(params map[string]string) ConnOption {
 			}
 		}
 		c.SessionParams = params
+	}
+}
+
+// WithQueryTags sets session-level query tags from a map.
+// Tags are serialized and passed as QUERY_TAGS in the session configuration.
+// All queries in the session will carry these tags unless overridden at the statement level.
+// This is the preferred way to set session-level query tags, as it handles serialization
+// and escaping automatically (consistent with the statement-level API).
+func WithQueryTags(tags map[string]string) ConnOption {
+	return func(c *config.Config) {
+		serialized := SerializeQueryTags(tags)
+		if serialized != "" {
+			if c.SessionParams == nil {
+				c.SessionParams = make(map[string]string)
+			}
+			c.SessionParams["QUERY_TAGS"] = serialized
+		}
 	}
 }
 
