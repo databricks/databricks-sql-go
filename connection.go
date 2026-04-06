@@ -216,7 +216,15 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 		return nil, dbsqlerrint.NewExecutionError(ctx, dbsqlerr.ErrQueryExecution, err, opStatusResp)
 	}
 
-	rows, err := rows.NewRows(ctx, exStmtResp.OperationHandle, c.client, c.cfg, exStmtResp.DirectResults)
+	// Telemetry callback for tracking row fetching metrics
+	telemetryUpdate := func(chunkCount int, bytesDownloaded int64) {
+		if c.telemetry != nil {
+			c.telemetry.AddTag(ctx, "chunk_count", chunkCount)
+			c.telemetry.AddTag(ctx, "bytes_downloaded", bytesDownloaded)
+		}
+	}
+
+	rows, err := rows.NewRows(ctx, exStmtResp.OperationHandle, c.client, c.cfg, exStmtResp.DirectResults, ctx, telemetryUpdate)
 	return rows, err
 
 }
@@ -646,7 +654,14 @@ func (c *conn) execStagingOperation(
 	}
 
 	if len(driverctx.StagingPathsFromContext(ctx)) != 0 {
-		row, err = rows.NewRows(ctx, exStmtResp.OperationHandle, c.client, c.cfg, exStmtResp.DirectResults)
+		// Telemetry callback for staging operation row fetching
+		telemetryUpdate := func(chunkCount int, bytesDownloaded int64) {
+			if c.telemetry != nil {
+				c.telemetry.AddTag(ctx, "chunk_count", chunkCount)
+				c.telemetry.AddTag(ctx, "bytes_downloaded", bytesDownloaded)
+			}
+		}
+		row, err = rows.NewRows(ctx, exStmtResp.OperationHandle, c.client, c.cfg, exStmtResp.DirectResults, ctx, telemetryUpdate)
 		if err != nil {
 			return dbsqlerrint.NewDriverError(ctx, "error reading row.", err)
 		}
