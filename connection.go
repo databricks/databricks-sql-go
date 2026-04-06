@@ -129,6 +129,7 @@ func (c *conn) ExecContext(ctx context.Context, query string, args []driver.Name
 
 	// Telemetry: track statement execution
 	var statementID string
+	var closeOpErr error // Track CloseOperation errors for telemetry
 	if c.telemetry != nil && exStmtResp != nil && exStmtResp.OperationHandle != nil && exStmtResp.OperationHandle.OperationId != nil {
 		statementID = client.SprintGuid(exStmtResp.OperationHandle.OperationId.GUID)
 		ctx = c.telemetry.BeforeExecute(ctx, statementID)
@@ -136,6 +137,10 @@ func (c *conn) ExecContext(ctx context.Context, query string, args []driver.Name
 			finalErr := err
 			if stagingErr != nil {
 				finalErr = stagingErr
+			}
+			// Include CloseOperation error in telemetry if it occurred
+			if closeOpErr != nil && finalErr == nil {
+				finalErr = closeOpErr
 			}
 			c.telemetry.AfterExecute(ctx, finalErr)
 			c.telemetry.CompleteStatement(ctx, statementID, finalErr != nil)
@@ -152,6 +157,7 @@ func (c *conn) ExecContext(ctx context.Context, query string, args []driver.Name
 			})
 			if err1 != nil {
 				log.Err(err1).Msg("databricks: failed to close operation after executing statement")
+				closeOpErr = err1 // Capture for telemetry
 			}
 		}
 	}
