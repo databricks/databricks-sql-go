@@ -192,6 +192,9 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 
 	// first we try to get the results synchronously.
 	// at any point in time that the context is done we must cancel and return
+
+	// Capture execution start time for telemetry before running the query
+	executeStart := time.Now()
 	exStmtResp, opStatusResp, err := c.runQuery(ctx, query, args)
 	log, ctx = client.LoggerAndContext(ctx, exStmtResp)
 	defer log.Duration(msg, start)
@@ -200,7 +203,8 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 	var statementID string
 	if c.telemetry != nil && exStmtResp != nil && exStmtResp.OperationHandle != nil && exStmtResp.OperationHandle.OperationId != nil {
 		statementID = client.SprintGuid(exStmtResp.OperationHandle.OperationId.GUID)
-		ctx = c.telemetry.BeforeExecute(ctx, c.id, statementID)
+		// Use BeforeExecuteWithTime to set the correct start time (before execution)
+		ctx = c.telemetry.BeforeExecuteWithTime(ctx, c.id, statementID, executeStart)
 		defer func() {
 			c.telemetry.AfterExecute(ctx, err)
 			c.telemetry.CompleteStatement(ctx, statementID, err != nil)
