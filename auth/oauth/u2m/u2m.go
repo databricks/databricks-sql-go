@@ -25,11 +25,16 @@ func GetConfig(ctx context.Context, hostName, clientID, clientSecret, callbackUR
 	}
 
 	config := oauth2.Config{
-		ClientID:     clientID,
-		ClientSecret: clientSecret,
-		Endpoint:     endpoint,
-		RedirectURL:  callbackURL,
-		Scopes:       scopes,
+		ClientID:    clientID,
+		Endpoint:    endpoint,
+		RedirectURL: callbackURL,
+		Scopes:      scopes,
+	}
+	// Only set ClientSecret if non-empty. For U2M (public apps using PKCE),
+	// sending an empty client_secret causes the server to reject with
+	// "Public app should not use a client secret".
+	if clientSecret != "" {
+		config.ClientSecret = clientSecret
 	}
 
 	return config, nil
