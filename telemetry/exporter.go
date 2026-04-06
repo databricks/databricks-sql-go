@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/databricks/databricks-sql-go/logger"
 )
 
 // telemetryExporter exports metrics to Databricks telemetry service.
@@ -64,7 +66,7 @@ func (e *telemetryExporter) export(ctx context.Context, metrics []*telemetryMetr
 	defer func() {
 		if r := recover(); r != nil {
 			// Intentionally swallow panic - telemetry must not impact driver
-			_ = r // Log at trace level only: logger.Trace().Msgf("telemetry: export panic: %v", r)
+			logger.Debug().Msgf("telemetry: export panic: %v", r)
 		}
 	}()
 
