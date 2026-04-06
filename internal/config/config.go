@@ -99,8 +99,9 @@ type UserConfig struct {
 	RetryWaitMax             time.Duration
 	RetryMax                 int
 	Transport                http.RoundTripper
-	UseLz4Compression        bool
-	EnableMetricViewMetadata bool
+	UseLz4Compression                bool
+	EnableMetricViewMetadata         bool
+	EnforceEmbeddedSchemaCorrectness bool
 	CloudFetchConfig
 }
 
@@ -280,6 +281,13 @@ func ParseDSN(dsn string) (UserConfig, error) {
 			return UserConfig{}, err
 		}
 		ucfg.EnableMetricViewMetadata = enableMetricViewMetadata
+	}
+
+	if enforceEmbeddedSchemaCorrectness, ok, err := params.extractAsBool("enforceEmbeddedSchemaCorrectness"); ok {
+		if err != nil {
+			return UserConfig{}, err
+		}
+		ucfg.EnforceEmbeddedSchemaCorrectness = enforceEmbeddedSchemaCorrectness
 	}
 
 	// for timezone we do a case insensitive key match.

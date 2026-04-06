@@ -323,6 +323,11 @@ func (c *conn) executeStatement(ctx context.Context, query string, args []driver
 		req.Parameters = parameters
 	}
 
+	// Add enforce embedded schema correctness if enabled
+	if c.cfg.EnforceEmbeddedSchemaCorrectness {
+		req.EnforceEmbeddedSchemaCorrectness = &c.cfg.EnforceEmbeddedSchemaCorrectness
+	}
+
 	resp, err := c.client.ExecuteStatement(ctx, &req)
 	var log *logger.DBSQLLogger
 	log, ctx = client.LoggerAndContext(ctx, resp)
