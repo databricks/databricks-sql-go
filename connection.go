@@ -123,9 +123,32 @@ func (c *conn) ExecContext(ctx context.Context, query string, args []driver.Name
 
 	corrId := driverctx.CorrelationIdFromContext(ctx)
 
+	// Capture execution start time for telemetry before running the query
+	executeStart := time.Now()
 	exStmtResp, opStatusResp, err := c.runQuery(ctx, query, args)
 	log, ctx = client.LoggerAndContext(ctx, exStmtResp)
 	stagingErr := c.execStagingOperation(exStmtResp, ctx)
+
+	// Telemetry: track statement execution
+	var statementID string
+	var closeOpErr error // Track CloseOperation errors for telemetry
+	if c.telemetry != nil && exStmtResp != nil && exStmtResp.OperationHandle != nil && exStmtResp.OperationHandle.OperationId != nil {
+		statementID = client.SprintGuid(exStmtResp.OperationHandle.OperationId.GUID)
+		// Use BeforeExecuteWithTime to set the correct start time (before execution)
+		ctx = c.telemetry.BeforeExecuteWithTime(ctx, c.id, statementID, executeStart)
+		defer func() {
+			finalErr := err
+			if stagingErr != nil {
+				finalErr = stagingErr
+			}
+			// Include CloseOperation error in telemetry if it occurred
+			if closeOpErr != nil && finalErr == nil {
+				finalErr = closeOpErr
+			}
+			c.telemetry.AfterExecute(ctx, finalErr)
+			c.telemetry.CompleteStatement(ctx, statementID, finalErr != nil)
+		}()
+	}
 
 	if exStmtResp != nil && exStmtResp.OperationHandle != nil {
 		// since we have an operation handle we can close the operation if necessary
@@ -137,6 +160,7 @@ func (c *conn) ExecContext(ctx context.Context, query string, args []driver.Name
 			})
 			if err1 != nil {
 				log.Err(err1).Msg("databricks: failed to close operation after executing statement")
+				closeOpErr = err1 // Capture for telemetry
 			}
 		}
 	}
@@ -168,9 +192,24 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 
 	// first we try to get the results synchronously.
 	// at any point in time that the context is done we must cancel and return
+
+	// Capture execution start time for telemetry before running the query
+	executeStart := time.Now()
 	exStmtResp, opStatusResp, err := c.runQuery(ctx, query, args)
 	log, ctx = client.LoggerAndContext(ctx, exStmtResp)
 	defer log.Duration(msg, start)
+
+	// Telemetry: track statement execution
+	var statementID string
+	if c.telemetry != nil && exStmtResp != nil && exStmtResp.OperationHandle != nil && exStmtResp.OperationHandle.OperationId != nil {
+		statementID = client.SprintGuid(exStmtResp.OperationHandle.OperationId.GUID)
+		// Use BeforeExecuteWithTime to set the correct start time (before execution)
+		ctx = c.telemetry.BeforeExecuteWithTime(ctx, c.id, statementID, executeStart)
+		defer func() {
+			c.telemetry.AfterExecute(ctx, err)
+			c.telemetry.CompleteStatement(ctx, statementID, err != nil)
+		}()
+	}
 
 	if err != nil {
 		log.Err(err).Msg("databricks: failed to run query") // To log query we need to redact credentials

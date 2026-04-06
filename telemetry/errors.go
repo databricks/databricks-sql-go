@@ -8,8 +8,7 @@ import (
 // isTerminalError returns true if error is terminal (non-retryable).
 // Terminal errors indicate user errors or permanent failures that won't
 // be resolved by retrying the operation.
-//
-//nolint:unused // Will be used in Phase 8+
+
 func isTerminalError(err error) bool {
 	if err == nil {
 		return false
@@ -45,8 +44,7 @@ func isTerminalError(err error) bool {
 
 // classifyError classifies an error for telemetry purposes.
 // Returns a string representation of the error type.
-//
-//nolint:unused // Will be used in Phase 8+
+
 func classifyError(err error) string {
 	if err == nil {
 		return ""
@@ -89,14 +87,12 @@ func isRetryableError(err error) bool {
 }
 
 // httpError represents an HTTP error with status code.
-//
-//nolint:unused // Will be used in Phase 8+
+
 type httpError struct {
 	statusCode int
 	message    string
 }
 
-//nolint:unused // Will be used in Phase 8+
 func (e *httpError) Error() string {
 	return e.message
 }
@@ -112,16 +108,14 @@ func newHTTPError(statusCode int, message string) error {
 }
 
 // isTerminalHTTPStatus returns true for non-retryable HTTP status codes.
-//
-//nolint:unused // Will be used in Phase 8+
+
 func isTerminalHTTPStatus(status int) bool {
 	// 4xx errors (except 429) are terminal
 	return status >= 400 && status < 500 && status != 429
 }
 
 // extractHTTPError extracts HTTP error information if available.
-//
-//nolint:unused // Will be used in Phase 8+
+
 func extractHTTPError(err error) (*httpError, bool) {
 	var httpErr *httpError
 	if errors.As(err, &httpErr) {
