@@ -200,6 +200,6 @@ func (i *Interceptor) Close(ctx context.Context) error {
 		return nil
 	}
 
-	i.aggregator.flush(ctx)
+	i.aggregator.flushSync(ctx)
 	return nil
 }

@@ -197,11 +197,27 @@ func (agg *metricsAggregator) flushLoop() {
 	}
 }
 
-// flush flushes pending metrics to exporter.
+// flush flushes pending metrics to exporter asynchronously (fire-and-forget).
 func (agg *metricsAggregator) flush(ctx context.Context) {
 	agg.mu.Lock()
 	defer agg.mu.Unlock()
 	agg.flushUnlocked(ctx)
+}
+
+// flushSync flushes pending metrics synchronously, blocking until the export
+// completes. Used on connection close to guarantee delivery before returning.
+func (agg *metricsAggregator) flushSync(ctx context.Context) {
+	agg.mu.Lock()
+	if len(agg.batch) == 0 {
+		agg.mu.Unlock()
+		return
+	}
+	metrics := make([]*telemetryMetric, len(agg.batch))
+	copy(metrics, agg.batch)
+	agg.batch = agg.batch[:0]
+	agg.mu.Unlock()
+
+	agg.exporter.export(ctx, metrics)
 }
 
 // flushUnlocked flushes without locking (caller must hold lock).
