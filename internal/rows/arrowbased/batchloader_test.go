@@ -356,13 +356,18 @@ func TestCloudFetchSchemaOverride(t *testing.T) {
 	correctSchema := arrow.NewSchema(correctFields, nil)
 	var schemaBuf bytes.Buffer
 	schemaWriter := ipc.NewWriter(&schemaBuf, ipc.WithSchema(correctSchema))
-	schemaWriter.Close()
+	if err := schemaWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
 	correctSchemaBytes := schemaBuf.Bytes()
 
 	// Serve stale IPC data via mock HTTP
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write(staleIPCBytes)
+		_, err := w.Write(staleIPCBytes)
+		if err != nil {
+			panic(err)
+		}
 	}))
 	defer server.Close()
 
