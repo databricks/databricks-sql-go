@@ -2,6 +2,7 @@ package telemetry
 
 import (
 	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"time"
 )
@@ -219,18 +220,9 @@ func createTelemetryRequest(metrics []*telemetryMetric, driverVersion string) (*
 	}, nil
 }
 
-// generateEventID generates a unique event ID.
+// generateEventID generates a unique event ID using crypto/rand.
 func generateEventID() string {
-	return time.Now().Format("20060102150405") + "-" + randomString(8)
-}
-
-// randomString generates a random alphanumeric string using crypto/rand.
-func randomString(length int) string {
-	const charset = "abcdefghijklmnopqrstuvwxyz0123456789"
-	b := make([]byte, length)
+	b := make([]byte, 8)
 	_, _ = rand.Read(b)
-	for i, v := range b {
-		b[i] = charset[int(v)%len(charset)]
-	}
-	return string(b)
+	return time.Now().Format("20060102150405") + "-" + hex.EncodeToString(b)
 }
