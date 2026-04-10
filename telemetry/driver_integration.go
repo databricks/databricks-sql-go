@@ -3,6 +3,7 @@ package telemetry
 import (
 	"context"
 	"net/http"
+	"time"
 
 	"github.com/databricks/databricks-sql-go/internal/config"
 )
@@ -26,6 +27,8 @@ func InitializeForConnection(
 	driverVersion string,
 	httpClient *http.Client,
 	enableTelemetry config.ConfigValue[bool],
+	batchSize int,
+	flushInterval time.Duration,
 ) *Interceptor {
 	// Create telemetry config and apply client overlay.
 	// ConfigValue[bool] semantics:
@@ -37,6 +40,12 @@ func InitializeForConnection(
 		cfg.EnableTelemetry = val
 	} else {
 		cfg.EnableTelemetry = true // Unset: default to enabled, server flag decides
+	}
+	if batchSize > 0 {
+		cfg.BatchSize = batchSize
+	}
+	if flushInterval > 0 {
+		cfg.FlushInterval = flushInterval
 	}
 
 	// Get feature flag cache context FIRST (for reference counting)

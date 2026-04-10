@@ -87,6 +87,8 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 		c.cfg.DriverVersion,
 		c.client,
 		c.cfg.EnableTelemetry,
+		c.cfg.TelemetryBatchSize,
+		c.cfg.TelemetryFlushInterval,
 	)
 	if conn.telemetry != nil {
 		log.Debug().Msg("telemetry initialized for connection")

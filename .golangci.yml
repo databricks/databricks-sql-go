@@ -1,24 +1,22 @@
+version: "2"
+
 linters:
   disable-all: true
   enable:
     - bodyclose
-    - deadcode
     - depguard
     - dogsled
     # - dupl
     - errcheck
-    # - exportloopref
     # - funlen
     # - gochecknoinits
     # - goconst
     # - gocritic
     # - gocyclo
-    - gofmt
     # - goimports
-    # - gomnd
+    # - mnd
     - goprintffuncname
     - gosec
-    - gosimple
     - govet
     - ineffassign
     # - lll
@@ -27,30 +25,28 @@ linters:
     # - noctx
     - nolintlint
     - staticcheck
-    - structcheck
     # - stylecheck
-    - typecheck
     # - unconvert
     # - unparam
     - unused
-    - varcheck
     # - whitespace
 
   # don't enable:
   # - asciicheck
-  # - scopelint
   # - gochecknoglobals
   # - gocognit
   # - godot
   # - godox
-  # - goerr113
-  # - interfacer
-  # - maligned
+  # - err113
+  # - ireturn
   # - nestif
-  # - prealloc
   # - testpackage
   # - revive
-  # - wsl
+
+formatters:
+  enable:
+    - gofmt
+    # - goimports
 
 linters-settings:
   depguard:
