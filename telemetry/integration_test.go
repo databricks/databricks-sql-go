@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -187,9 +188,13 @@ func TestIntegration_PrivacyCompliance_NoQueryText(t *testing.T) {
 	cfg.FlushInterval = 50 * time.Millisecond
 	httpClient := &http.Client{Timeout: 5 * time.Second}
 
+	var mu sync.Mutex
 	var capturedBody []byte
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		capturedBody, _ = io.ReadAll(r.Body)
+		body, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		capturedBody = body
+		mu.Unlock()
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
@@ -214,13 +219,17 @@ func TestIntegration_PrivacyCompliance_NoQueryText(t *testing.T) {
 	// Wait for flush
 	time.Sleep(200 * time.Millisecond)
 
-	if len(capturedBody) == 0 {
+	mu.Lock()
+	body := capturedBody
+	mu.Unlock()
+
+	if len(body) == 0 {
 		t.Fatal("Expected telemetry request to be sent")
 	}
 
 	// The exporter sends TelemetryRequest with ProtoLogs (JSON-encoded TelemetryFrontendLog).
 	// Verify sensitive values are absent from the serialised payload.
-	bodyStr := string(capturedBody)
+	bodyStr := string(body)
 	if strings.Contains(bodyStr, "SELECT * FROM users") {
 		t.Error("Query text must not be exported")
 	}

@@ -53,8 +53,12 @@ func InitializeForConnection(
 	// Get or create telemetry client for this host
 	clientMgr := getClientManager()
 	telemetryClient := clientMgr.getOrCreateClient(host, driverVersion, httpClient, cfg)
+	if telemetryClient == nil {
+		// Client failed to start; release the flag cache ref we incremented above
+		flagCache.releaseContext(host)
+		return nil
+	}
 
-	// Return interceptor
 	return telemetryClient.GetInterceptor(true)
 }
 

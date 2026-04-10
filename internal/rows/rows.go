@@ -59,7 +59,6 @@ type rows struct {
 	ctx context.Context
 
 	// Telemetry tracking
-	telemetryCtx    context.Context
 	telemetryUpdate func(chunkCount int, bytesDownloaded int64)
 	chunkCount      int
 	bytesDownloaded int64
@@ -78,7 +77,6 @@ func NewRows(
 	client cli_service.TCLIService,
 	config *config.Config,
 	directResults *cli_service.TSparkDirectResults,
-	telemetryCtx context.Context,
 	telemetryUpdate func(chunkCount int, bytesDownloaded int64),
 ) (driver.Rows, dbsqlerr.DBError) {
 
@@ -119,7 +117,6 @@ func NewRows(
 		config:          config,
 		logger_:         logger,
 		ctx:             ctx,
-		telemetryCtx:    telemetryCtx,
 		telemetryUpdate: telemetryUpdate,
 		chunkCount:      0,
 		bytesDownloaded: 0,

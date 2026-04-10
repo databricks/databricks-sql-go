@@ -166,9 +166,9 @@ func (i *Interceptor) CompleteStatement(ctx context.Context, statementID string,
 	i.aggregator.completeStatement(ctx, statementID, failed)
 }
 
-// RecordOperation records an operation with type and latency.
+// RecordOperation records an operation with type, latency, and optional error.
 // Exported for use by the driver package.
-func (i *Interceptor) RecordOperation(ctx context.Context, sessionID string, operationType string, latencyMs int64) {
+func (i *Interceptor) RecordOperation(ctx context.Context, sessionID string, operationType string, latencyMs int64, err error) {
 	if !i.enabled {
 		return
 	}
@@ -187,6 +187,10 @@ func (i *Interceptor) RecordOperation(ctx context.Context, sessionID string, ope
 		tags:       map[string]interface{}{"operation_type": operationType},
 	}
 
+	if err != nil {
+		metric.errorType = classifyError(err)
+	}
+
 	i.aggregator.recordMetric(ctx, metric)
 }
 
@@ -199,6 +203,12 @@ func (i *Interceptor) Close(ctx context.Context) error {
 	if !i.enabled {
 		return nil
 	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Debug().Msgf("telemetry: Close panic: %v", r)
+		}
+	}()
 
 	i.aggregator.flushSync(ctx)
 	return nil

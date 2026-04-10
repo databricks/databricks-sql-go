@@ -58,9 +58,9 @@ func (c *conn) Close() error {
 		SessionHandle: c.session.SessionHandle,
 	})
 
-	// Record DELETE_SESSION, then flush and release telemetry
+	// Record DELETE_SESSION regardless of error (matches JDBC), then flush and release
 	if c.telemetry != nil {
-		c.telemetry.RecordOperation(ctx, c.id, telemetry.OperationTypeDeleteSession, time.Since(closeStart).Milliseconds())
+		c.telemetry.RecordOperation(ctx, c.id, telemetry.OperationTypeDeleteSession, time.Since(closeStart).Milliseconds(), err)
 		_ = c.telemetry.Close(ctx)
 		telemetry.ReleaseForConnection(c.cfg.Host)
 	}
@@ -163,7 +163,7 @@ func (c *conn) ExecContext(ctx context.Context, query string, args []driver.Name
 				OperationHandle: exStmtResp.OperationHandle,
 			})
 			if c.telemetry != nil {
-				c.telemetry.RecordOperation(ctx, c.id, telemetry.OperationTypeCloseStatement, time.Since(closeOpStart).Milliseconds())
+				c.telemetry.RecordOperation(ctx, c.id, telemetry.OperationTypeCloseStatement, time.Since(closeOpStart).Milliseconds(), err1)
 			}
 			if err1 != nil {
 				log.Err(err1).Msg("databricks: failed to close operation after executing statement")
@@ -231,7 +231,7 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 		}
 	}
 
-	rows, err := rows.NewRows(ctx, exStmtResp.OperationHandle, c.client, c.cfg, exStmtResp.DirectResults, ctx, telemetryUpdate)
+	rows, err := rows.NewRows(ctx, exStmtResp.OperationHandle, c.client, c.cfg, exStmtResp.DirectResults, telemetryUpdate)
 	return rows, err
 
 }
@@ -398,8 +398,11 @@ func (c *conn) executeStatement(ctx context.Context, query string, args []driver
 
 	executeStart := time.Now()
 	resp, err := c.client.ExecuteStatement(ctx, &req)
+	// Record the Thrift call latency as a separate operation metric.
+	// This is distinct from the statement-level metric (BeforeExecuteWithTime), which
+	// measures end-to-end latency including polling and row fetching.
 	if c.telemetry != nil {
-		c.telemetry.RecordOperation(ctx, c.id, telemetry.OperationTypeExecuteStatement, time.Since(executeStart).Milliseconds())
+		c.telemetry.RecordOperation(ctx, c.id, telemetry.OperationTypeExecuteStatement, time.Since(executeStart).Milliseconds(), err)
 	}
 	var log *logger.DBSQLLogger
 	log, ctx = client.LoggerAndContext(ctx, resp)
@@ -672,7 +675,7 @@ func (c *conn) execStagingOperation(
 				c.telemetry.AddTag(ctx, "bytes_downloaded", bytesDownloaded)
 			}
 		}
-		row, err = rows.NewRows(ctx, exStmtResp.OperationHandle, c.client, c.cfg, exStmtResp.DirectResults, ctx, telemetryUpdate)
+		row, err = rows.NewRows(ctx, exStmtResp.OperationHandle, c.client, c.cfg, exStmtResp.DirectResults, telemetryUpdate)
 		if err != nil {
 			return dbsqlerrint.NewDriverError(ctx, "error reading row.", err)
 		}

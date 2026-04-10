@@ -95,48 +95,60 @@ func (c *featureFlagCache) isTelemetryEnabled(ctx context.Context, host string, 
 		return false, nil
 	}
 
-	// Check if cache is valid (with proper locking)
+	// Fast path: check cache under read lock.
 	flagCtx.mu.RLock()
 	if flagCtx.enabled != nil && time.Since(flagCtx.lastFetched) < flagCtx.cacheDuration {
 		enabled := *flagCtx.enabled
 		flagCtx.mu.RUnlock()
 		return enabled, nil
 	}
-
-	// Check if another goroutine is already fetching
 	if flagCtx.fetching {
-		// Return cached value if available, otherwise wait
 		if flagCtx.enabled != nil {
 			enabled := *flagCtx.enabled
 			flagCtx.mu.RUnlock()
 			return enabled, nil
 		}
 		flagCtx.mu.RUnlock()
-		// No cached value and fetch in progress, return false
 		return false, nil
 	}
-
-	// Mark as fetching
-	flagCtx.fetching = true
 	flagCtx.mu.RUnlock()
 
-	// Fetch fresh value
+	// Slow path: need a write lock to set fetching=true.
+	// Re-check all conditions under write lock (double-checked locking) to avoid
+	// a data race and to prevent duplicate fetches from concurrent goroutines.
+	flagCtx.mu.Lock()
+	if flagCtx.enabled != nil && time.Since(flagCtx.lastFetched) < flagCtx.cacheDuration {
+		enabled := *flagCtx.enabled
+		flagCtx.mu.Unlock()
+		return enabled, nil
+	}
+	if flagCtx.fetching {
+		if flagCtx.enabled != nil {
+			enabled := *flagCtx.enabled
+			flagCtx.mu.Unlock()
+			return enabled, nil
+		}
+		flagCtx.mu.Unlock()
+		return false, nil
+	}
+	flagCtx.fetching = true
+	flagCtx.mu.Unlock()
+
+	// Fetch fresh value (outside lock so other readers are not blocked).
 	enabled, err := fetchFeatureFlag(ctx, host, driverVersion, httpClient)
 
-	// Update cache (with proper locking)
+	// Update cache.
 	flagCtx.mu.Lock()
 	flagCtx.fetching = false
 	if err == nil {
 		flagCtx.enabled = &enabled
 		flagCtx.lastFetched = time.Now()
 	}
-	// On error, keep the old cached value if it exists
 	result := false
 	var returnErr error
 	if err != nil {
 		if flagCtx.enabled != nil {
-			result = *flagCtx.enabled
-			returnErr = nil // Return cached value without error
+			result = *flagCtx.enabled // Return stale cached value on error
 		} else {
 			returnErr = err
 		}
