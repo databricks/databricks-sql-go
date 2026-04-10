@@ -167,7 +167,7 @@ func TestIntegration_OptInPriority_ExplicitOptOut(t *testing.T) {
 				"databricks.partnerplatform.clientConfigsFeatureFlags.enableTelemetryForGoDriver": true,
 			},
 		}
-		json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(resp)
 	}))
 	defer server.Close()
 
@@ -241,7 +241,7 @@ func TestIntegration_FieldMapping(t *testing.T) {
 	var capturedRequest TelemetryRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
-		json.Unmarshal(body, &capturedRequest)
+		_ = json.Unmarshal(body, &capturedRequest)
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()

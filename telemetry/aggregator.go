@@ -65,8 +65,7 @@ func (agg *metricsAggregator) recordMetric(ctx context.Context, metric *telemetr
 	// Swallow all errors
 	defer func() {
 		if r := recover(); r != nil {
-			// Log at trace level only
-			// logger.Trace().Msgf("telemetry: recordMetric panic: %v", r)
+			logger.Trace().Msgf("telemetry: recordMetric panic: %v", r)
 		}
 	}()
 
@@ -141,7 +140,7 @@ func (agg *metricsAggregator) recordMetric(ctx context.Context, metric *telemetr
 func (agg *metricsAggregator) completeStatement(ctx context.Context, statementID string, failed bool) {
 	defer func() {
 		if r := recover(); r != nil {
-			// Log at trace level only
+			logger.Trace().Msgf("telemetry: completeStatement panic: %v", r)
 		}
 	}()
 
@@ -229,7 +228,7 @@ func (agg *metricsAggregator) flushUnlocked(ctx context.Context) {
 		defer func() {
 			<-agg.exportSem
 			if r := recover(); r != nil {
-				// Log at trace level only
+				logger.Trace().Msgf("telemetry: async export panic: %v", r)
 			}
 		}()
 		agg.exporter.export(ctx, metrics)

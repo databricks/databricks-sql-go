@@ -145,7 +145,7 @@ func BenchmarkConcurrentConnections_PerHostSharing(b *testing.B) {
 			_ = client
 
 			// Release client
-			mgr.releaseClient(host)
+			_ = mgr.releaseClient(host)
 		}
 	})
 }
@@ -212,7 +212,7 @@ func TestLoadTesting_ConcurrentConnections(t *testing.T) {
 			}
 
 			// Release client
-			mgr.releaseClient(host)
+			_ = mgr.releaseClient(host)
 		}()
 	}
 

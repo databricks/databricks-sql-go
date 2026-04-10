@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/databricks/databricks-sql-go/logger"
 )
 
 const (
@@ -37,11 +39,6 @@ type telemetryMetric struct {
 	latencyMs   int64
 	errorType   string
 	tags        map[string]interface{}
-}
-
-// telemetryPayload is the JSON structure sent to Databricks.
-type telemetryPayload struct {
-	Metrics []*exportedMetric `json:"metrics"`
 }
 
 // exportedMetric is a single metric in the payload.
@@ -81,8 +78,7 @@ func (e *telemetryExporter) export(ctx context.Context, metrics []*telemetryMetr
 	// Swallow all errors and panics
 	defer func() {
 		if r := recover(); r != nil {
-			// Log at trace level only
-			// logger.Trace().Msgf("telemetry: export panic: %v", r)
+			logger.Trace().Msgf("telemetry: export panic: %v", r)
 		}
 	}()
 
@@ -97,8 +93,7 @@ func (e *telemetryExporter) export(ctx context.Context, metrics []*telemetryMetr
 	}
 
 	if err != nil {
-		// Log at trace level only
-		// logger.Trace().Msgf("telemetry: export error: %v", err)
+		logger.Trace().Msgf("telemetry: export error: %v", err)
 	}
 }
 
