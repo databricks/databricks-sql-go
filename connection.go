@@ -52,15 +52,18 @@ func (c *conn) Close() error {
 	log := logger.WithContext(c.id, "", "")
 	ctx := driverctx.NewContextWithConnId(context.Background(), c.id)
 
-	// Close telemetry and release resources
-	if c.telemetry != nil {
-		_ = c.telemetry.Close(ctx)
-		telemetry.ReleaseForConnection(c.cfg.Host)
-	}
-
+	// Time CloseSession so we can record DELETE_SESSION before flushing telemetry
+	closeStart := time.Now()
 	_, err := c.client.CloseSession(ctx, &cli_service.TCloseSessionReq{
 		SessionHandle: c.session.SessionHandle,
 	})
+
+	// Record DELETE_SESSION, then flush and release telemetry
+	if c.telemetry != nil {
+		c.telemetry.RecordOperation(ctx, c.id, telemetry.OperationTypeDeleteSession, time.Since(closeStart).Milliseconds())
+		_ = c.telemetry.Close(ctx)
+		telemetry.ReleaseForConnection(c.cfg.Host)
+	}
 
 	if err != nil {
 		log.Err(err).Msg("databricks: failed to close connection")
@@ -155,9 +158,13 @@ func (c *conn) ExecContext(ctx context.Context, query string, args []driver.Name
 		alreadyClosed := exStmtResp.DirectResults != nil && exStmtResp.DirectResults.CloseOperation != nil
 		newCtx := driverctx.NewContextWithCorrelationId(driverctx.NewContextWithConnId(context.Background(), c.id), corrId)
 		if !alreadyClosed && (opStatusResp == nil || opStatusResp.GetOperationState() != cli_service.TOperationState_CLOSED_STATE) {
+			closeOpStart := time.Now()
 			_, err1 := c.client.CloseOperation(newCtx, &cli_service.TCloseOperationReq{
 				OperationHandle: exStmtResp.OperationHandle,
 			})
+			if c.telemetry != nil {
+				c.telemetry.RecordOperation(ctx, c.id, telemetry.OperationTypeCloseStatement, time.Since(closeOpStart).Milliseconds())
+			}
 			if err1 != nil {
 				log.Err(err1).Msg("databricks: failed to close operation after executing statement")
 				closeOpErr = err1 // Capture for telemetry
@@ -389,7 +396,11 @@ func (c *conn) executeStatement(ctx context.Context, query string, args []driver
 		}
 	}
 
+	executeStart := time.Now()
 	resp, err := c.client.ExecuteStatement(ctx, &req)
+	if c.telemetry != nil {
+		c.telemetry.RecordOperation(ctx, c.id, telemetry.OperationTypeExecuteStatement, time.Since(executeStart).Milliseconds())
+	}
 	var log *logger.DBSQLLogger
 	log, ctx = client.LoggerAndContext(ctx, resp)
 
