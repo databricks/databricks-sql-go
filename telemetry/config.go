@@ -39,10 +39,11 @@ type Config struct {
 }
 
 // DefaultConfig returns default telemetry configuration.
-// Note: Telemetry is disabled by default and requires explicit opt-in.
+// Note: Telemetry is disabled by default. The default will remain false until
+// server-side feature flags are wired in to control the rollout.
 func DefaultConfig() *Config {
 	return &Config{
-		Enabled:                 false, // Disabled by default, requires explicit opt-in
+		Enabled:                 false,
 		EnableTelemetry:         false,
 		BatchSize:               100,
 		FlushInterval:           5 * time.Second,
@@ -58,12 +59,9 @@ func DefaultConfig() *Config {
 func ParseTelemetryConfig(params map[string]string) *Config {
 	cfg := DefaultConfig()
 
-	// Check for enableTelemetry flag (follows client > server > default priority)
 	if v, ok := params["enableTelemetry"]; ok {
-		if v == "true" || v == "1" {
-			cfg.EnableTelemetry = true
-		} else if v == "false" || v == "0" {
-			cfg.EnableTelemetry = false
+		if b, err := strconv.ParseBool(v); err == nil {
+			cfg.EnableTelemetry = b
 		}
 	}
 

@@ -4,21 +4,46 @@ import (
 	"os"
 	"runtime"
 	"strings"
+	"sync"
 )
 
+// sysInfoOnce caches the parts of system configuration that are invariant across calls
+// (OS info, runtime, process name) to avoid repeated os.ReadFile on every metric.
+var (
+	sysInfoOnce    sync.Once
+	cachedOSName   string
+	cachedOSVer    string
+	cachedArch     string
+	cachedRuntime  string
+	cachedLocale   string
+	cachedProcess  string
+)
+
+func initSysInfo() {
+	sysInfoOnce.Do(func() {
+		cachedOSName  = getOSName()
+		cachedOSVer   = getOSVersion()
+		cachedArch    = runtime.GOARCH
+		cachedRuntime = runtime.Version()
+		cachedLocale  = getLocaleName()
+		cachedProcess = getProcessName()
+	})
+}
+
 func getSystemConfiguration(driverVersion string) *DriverSystemConfiguration {
+	initSysInfo()
 	return &DriverSystemConfiguration{
-		OSName:          getOSName(),
-		OSVersion:       getOSVersion(),
-		OSArch:          runtime.GOARCH,
+		OSName:          cachedOSName,
+		OSVersion:       cachedOSVer,
+		OSArch:          cachedArch,
 		DriverName:      "databricks-sql-go",
 		DriverVersion:   driverVersion,
 		RuntimeName:     "go",
-		RuntimeVersion:  runtime.Version(),
+		RuntimeVersion:  cachedRuntime,
 		RuntimeVendor:   "",
-		LocaleName:      getLocaleName(),
+		LocaleName:      cachedLocale,
 		CharSetEncoding: "UTF-8",
-		ProcessName:     getProcessName(),
+		ProcessName:     cachedProcess,
 	}
 }
 

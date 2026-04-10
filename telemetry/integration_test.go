@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -183,12 +184,12 @@ func TestIntegration_OptInPriority_ExplicitOptOut(t *testing.T) {
 // TestIntegration_PrivacyCompliance verifies no sensitive data is collected.
 func TestIntegration_PrivacyCompliance_NoQueryText(t *testing.T) {
 	cfg := DefaultConfig()
+	cfg.FlushInterval = 50 * time.Millisecond
 	httpClient := &http.Client{Timeout: 5 * time.Second}
 
-	var capturedPayload telemetryPayload
+	var capturedBody []byte
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		json.Unmarshal(body, &capturedPayload)
+		capturedBody, _ = io.ReadAll(r.Body)
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
@@ -199,15 +200,13 @@ func TestIntegration_PrivacyCompliance_NoQueryText(t *testing.T) {
 
 	interceptor := newInterceptor(aggregator, true)
 
-	// Simulate execution with sensitive data in tags (should be filtered)
 	ctx := context.Background()
 	statementID := "stmt-privacy"
 	ctx = interceptor.BeforeExecute(ctx, "session-id", statementID)
 
-	// Try to add sensitive tags (should be filtered out)
+	// Add sensitive tags — none of these should appear in the exported telemetry
 	interceptor.AddTag(ctx, "query.text", "SELECT * FROM users")
 	interceptor.AddTag(ctx, "user.email", "user@example.com")
-	interceptor.AddTag(ctx, "workspace.id", "ws-123") // This should be allowed
 
 	interceptor.AfterExecute(ctx, nil)
 	interceptor.CompleteStatement(ctx, statementID, false)
@@ -215,77 +214,89 @@ func TestIntegration_PrivacyCompliance_NoQueryText(t *testing.T) {
 	// Wait for flush
 	time.Sleep(200 * time.Millisecond)
 
-	// Verify no sensitive data in captured payload
-	if len(capturedPayload.Metrics) > 0 {
-		for _, metric := range capturedPayload.Metrics {
-			if _, ok := metric.Tags["query.text"]; ok {
-				t.Error("Query text should not be exported")
-			}
-			if _, ok := metric.Tags["user.email"]; ok {
-				t.Error("User email should not be exported")
-			}
-			// workspace.id should be allowed
-			if _, ok := metric.Tags["workspace.id"]; !ok {
-				t.Error("workspace.id should be exported")
-			}
-		}
+	if len(capturedBody) == 0 {
+		t.Fatal("Expected telemetry request to be sent")
 	}
 
-	t.Log("Privacy compliance test passed: sensitive data filtered")
+	// The exporter sends TelemetryRequest with ProtoLogs (JSON-encoded TelemetryFrontendLog).
+	// Verify sensitive values are absent from the serialised payload.
+	bodyStr := string(capturedBody)
+	if strings.Contains(bodyStr, "SELECT * FROM users") {
+		t.Error("Query text must not be exported")
+	}
+	if strings.Contains(bodyStr, "user@example.com") {
+		t.Error("User email must not be exported")
+	}
+
+	t.Log("Privacy compliance test passed: sensitive data not present in payload")
 }
 
-// TestIntegration_TagFiltering verifies tag filtering works correctly.
-func TestIntegration_TagFiltering(t *testing.T) {
+// TestIntegration_FieldMapping verifies that only known metric fields are exported
+// in the TelemetryRequest format (no generic tag pass-through).
+func TestIntegration_FieldMapping(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.FlushInterval = 50 * time.Millisecond
 	httpClient := &http.Client{Timeout: 5 * time.Second}
 
-	var capturedPayload telemetryPayload
+	var capturedRequest TelemetryRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
-		json.Unmarshal(body, &capturedPayload)
+		json.Unmarshal(body, &capturedRequest)
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
 
 	exporter := newTelemetryExporter(server.URL, "test-version", httpClient, cfg)
 
-	// Test metric with mixed tags
 	metric := &telemetryMetric{
 		metricType:  "connection",
 		timestamp:   time.Now(),
 		workspaceID: "ws-test",
+		sessionID:   "sess-1",
+		latencyMs:   42,
 		tags: map[string]interface{}{
-			"workspace.id":   "ws-123",         // Should export
-			"driver.version": "1.0.0",          // Should export
-			"server.address": "localhost:8080", // Should NOT export (local only)
-			"unknown.tag":    "value",          // Should NOT export
+			"chunk_count":      3,
+			"bytes_downloaded": int64(1024),
+			"unknown.tag":      "value", // should NOT appear in output
 		},
 	}
 
 	ctx := context.Background()
 	exporter.export(ctx, []*telemetryMetric{metric})
 
-	// Wait for export
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(150 * time.Millisecond)
 
-	// Verify filtering
-	if len(capturedPayload.Metrics) > 0 {
-		exported := capturedPayload.Metrics[0]
+	if len(capturedRequest.ProtoLogs) == 0 {
+		t.Fatal("Expected at least one ProtoLog entry")
+	}
 
-		if _, ok := exported.Tags["workspace.id"]; !ok {
-			t.Error("workspace.id should be exported")
-		}
-		if _, ok := exported.Tags["driver.version"]; !ok {
-			t.Error("driver.version should be exported")
-		}
-		if _, ok := exported.Tags["server.address"]; ok {
-			t.Error("server.address should NOT be exported")
-		}
-		if _, ok := exported.Tags["unknown.tag"]; ok {
-			t.Error("unknown.tag should NOT be exported")
+	// Each ProtoLog entry is a JSON-encoded TelemetryFrontendLog.
+	var log TelemetryFrontendLog
+	if err := json.Unmarshal([]byte(capturedRequest.ProtoLogs[0]), &log); err != nil {
+		t.Fatalf("Failed to unmarshal ProtoLog: %v", err)
+	}
+
+	if log.Entry == nil || log.Entry.SQLDriverLog == nil {
+		t.Fatal("Expected SQLDriverLog to be populated")
+	}
+
+	entry := log.Entry.SQLDriverLog
+	if entry.SessionID != "sess-1" {
+		t.Errorf("Expected session_id=sess-1, got %q", entry.SessionID)
+	}
+	if entry.OperationLatencyMs != 42 {
+		t.Errorf("Expected latency=42, got %d", entry.OperationLatencyMs)
+	}
+	if entry.SQLOperation != nil && entry.SQLOperation.ChunkDetails != nil {
+		if entry.SQLOperation.ChunkDetails.TotalChunksIterated != 3 {
+			t.Errorf("Expected total_chunks_iterated=3, got %d", entry.SQLOperation.ChunkDetails.TotalChunksIterated)
 		}
 	}
 
-	t.Log("Tag filtering test passed")
+	// unknown.tag must not appear anywhere in the serialised output
+	if strings.Contains(capturedRequest.ProtoLogs[0], "unknown.tag") {
+		t.Error("unknown.tag must not be exported")
+	}
+
+	t.Log("Field mapping test passed")
 }

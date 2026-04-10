@@ -70,11 +70,6 @@ token:[your token]@[Workspace hostname]:[Port number][Endpoint HTTP Path]?enable
 token:[your token]@[Workspace hostname]:[Port number][Endpoint HTTP Path]?enableTelemetry=false
 ```
 
-**Advanced configuration** (for testing/debugging):
-```
-token:[your token]@[Workspace hostname]:[Port number][Endpoint HTTP Path]?forceEnableTelemetry=true
-```
-
 **What data is collected:**
 - ✅ Query latency and performance metrics
 - ✅ Error codes (not error messages)

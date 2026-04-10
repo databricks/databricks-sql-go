@@ -74,10 +74,19 @@ func (agg *metricsAggregator) recordMetric(ctx context.Context, metric *telemetr
 	defer agg.mu.Unlock()
 
 	switch metric.metricType {
-	case "connection", "operation":
-		// Emit connection and operation events immediately
+	case "connection":
+		// Connection events flush immediately: lifecycle events must be captured before
+		// the connection closes, as we won't have another opportunity to flush.
 		agg.batch = append(agg.batch, metric)
 		agg.flushUnlocked(ctx)
+
+	case "operation":
+		// Operation events batch normally to avoid a goroutine-per-call if more
+		// operation types are recorded per connection in the future.
+		agg.batch = append(agg.batch, metric)
+		if len(agg.batch) >= agg.batchSize {
+			agg.flushUnlocked(ctx)
+		}
 
 	case "statement":
 		// Aggregate by statement ID
