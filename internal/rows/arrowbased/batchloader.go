@@ -15,6 +15,8 @@ import (
 
 	"net/http"
 
+	"github.com/apache/arrow/go/v12/arrow"
+	"github.com/apache/arrow/go/v12/arrow/array"
 	"github.com/apache/arrow/go/v12/arrow/ipc"
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
@@ -55,18 +57,35 @@ func NewCloudIPCStreamIterator(
 	return bi, nil
 }
 
-// NewCloudBatchIterator creates a cloud-based BatchIterator for backward compatibility
+// NewCloudBatchIterator creates a cloud-based BatchIterator for backward compatibility.
+// arrowSchemaBytes is the authoritative schema from GetResultSetMetadata, used to
+// override stale column names in cached Arrow IPC files.
 func NewCloudBatchIterator(
 	ctx context.Context,
 	files []*cli_service.TSparkArrowResultLink,
 	startRowOffset int64,
+	arrowSchemaBytes []byte,
 	cfg *config.Config,
 ) (BatchIterator, dbsqlerr.DBError) {
 	ipcIterator, err := NewCloudIPCStreamIterator(ctx, files, startRowOffset, cfg)
 	if err != nil {
 		return nil, err
 	}
-	return NewBatchIterator(ipcIterator, startRowOffset), nil
+
+	var overrideSchema *arrow.Schema
+	if len(arrowSchemaBytes) > 0 {
+		var schemaErr error
+		overrideSchema, schemaErr = schemaFromIPCBytes(arrowSchemaBytes)
+		if schemaErr != nil {
+			logger.Warn().Msgf("CloudFetch: failed to parse override schema: %v", schemaErr)
+		}
+	}
+
+	return &batchIterator{
+		ipcIterator:    ipcIterator,
+		startRowOffset: startRowOffset,
+		overrideSchema: overrideSchema,
+	}, nil
 }
 
 func NewLocalIPCStreamIterator(
@@ -400,6 +419,7 @@ type BatchIterator interface {
 type batchIterator struct {
 	ipcIterator    IPCStreamIterator
 	startRowOffset int64
+	overrideSchema *arrow.Schema // authoritative schema to fix stale CloudFetch column names
 }
 
 // NewBatchIterator creates a BatchIterator from an IPCStreamIterator
@@ -419,6 +439,24 @@ func (bi *batchIterator) Next() (SparkArrowBatch, error) {
 	records, err := getArrowRecords(reader, bi.startRowOffset)
 	if err != nil {
 		return nil, err
+	}
+
+	// When using CloudFetch, cached Arrow IPC files may contain stale column
+	// names from a previous query. Replace the embedded schema with the
+	// authoritative schema from GetResultSetMetadata.
+	if bi.overrideSchema != nil && len(records) > 0 && len(bi.overrideSchema.Fields()) == len(records[0].Columns()) {
+		for i, rec := range records {
+			sar, ok := rec.(*sparkArrowRecord)
+			if !ok {
+				continue
+			}
+			corrected := array.NewRecord(bi.overrideSchema, sar.Columns(), sar.NumRows())
+			sar.Release()
+			records[i] = &sparkArrowRecord{
+				Delimiter: sar.Delimiter,
+				Record:    corrected,
+			}
+		}
 	}
 
 	// Calculate total rows in this batch
@@ -442,4 +480,14 @@ func (bi *batchIterator) HasNext() bool {
 
 func (bi *batchIterator) Close() {
 	bi.ipcIterator.Close()
+}
+
+// schemaFromIPCBytes parses Arrow schema bytes (IPC format) into an *arrow.Schema.
+func schemaFromIPCBytes(schemaBytes []byte) (*arrow.Schema, error) {
+	reader, err := ipc.NewReader(bytes.NewReader(schemaBytes))
+	if err != nil {
+		return nil, err
+	}
+	defer reader.Release()
+	return reader.Schema(), nil
 }
