@@ -50,7 +50,7 @@ func TestIntegration_EndToEnd_WithCircuitBreaker(t *testing.T) {
 	// Create telemetry client
 	exporter := newTelemetryExporter(server.URL, "test-version", httpClient, cfg)
 	aggregator := newMetricsAggregator(exporter, cfg)
-	defer aggregator.close(context.Background())
+	defer aggregator.close(context.Background()) //nolint:errcheck
 
 	interceptor := newInterceptor(aggregator, true)
 
@@ -97,7 +97,7 @@ func TestIntegration_CircuitBreakerOpening(t *testing.T) {
 
 	exporter := newTelemetryExporter(server.URL, "test-version", httpClient, cfg)
 	aggregator := newMetricsAggregator(exporter, cfg)
-	defer aggregator.close(context.Background())
+	defer aggregator.close(context.Background()) //nolint:errcheck
 
 	interceptor := newInterceptor(aggregator, true)
 	cb := exporter.circuitBreaker
@@ -201,7 +201,7 @@ func TestIntegration_PrivacyCompliance_NoQueryText(t *testing.T) {
 
 	exporter := newTelemetryExporter(server.URL, "test-version", httpClient, cfg)
 	aggregator := newMetricsAggregator(exporter, cfg)
-	defer aggregator.close(context.Background())
+	defer aggregator.close(context.Background()) //nolint:errcheck
 
 	interceptor := newInterceptor(aggregator, true)
 

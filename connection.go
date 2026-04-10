@@ -96,7 +96,7 @@ func (c *conn) Ping(ctx context.Context) error {
 		log.Err(err).Msg("databricks: failed to ping")
 		return dbsqlerrint.NewBadConnectionError(err)
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 
 	log.Debug().Msg("databricks: ping successful")
 	return nil
@@ -536,11 +536,11 @@ func (c *conn) handleStagingPut(ctx context.Context, presignedUrl string, header
 	}
 	client := &http.Client{}
 
-	dat, err := os.Open(localFile)
+	dat, err := os.Open(localFile) //nolint:gosec // localFile is provided by the application, not user input
 	if err != nil {
 		return dbsqlerrint.NewDriverError(ctx, "error reading local file", err)
 	}
-	defer dat.Close()
+	defer dat.Close() //nolint:errcheck
 
 	info, err := dat.Stat()
 	if err != nil {
@@ -557,7 +557,7 @@ func (c *conn) handleStagingPut(ctx context.Context, presignedUrl string, header
 	if err != nil {
 		return dbsqlerrint.NewDriverError(ctx, "error sending http request", err)
 	}
-	defer res.Body.Close()
+	defer res.Body.Close() //nolint:errcheck
 	content, err := io.ReadAll(res.Body)
 
 	if err != nil || !Succeeded(res) {
@@ -581,7 +581,7 @@ func (c *conn) handleStagingGet(ctx context.Context, presignedUrl string, header
 	if err != nil {
 		return dbsqlerrint.NewDriverError(ctx, "error sending http request", err)
 	}
-	defer res.Body.Close()
+	defer res.Body.Close() //nolint:errcheck
 	content, err := io.ReadAll(res.Body)
 
 	if err != nil || !Succeeded(res) {
@@ -605,7 +605,7 @@ func (c *conn) handleStagingRemove(ctx context.Context, presignedUrl string, hea
 	if err != nil {
 		return dbsqlerrint.NewDriverError(ctx, "error sending http request", err)
 	}
-	defer res.Body.Close()
+	defer res.Body.Close() //nolint:errcheck
 	content, err := io.ReadAll(res.Body)
 
 	if err != nil || !Succeeded(res) {
@@ -679,7 +679,7 @@ func (c *conn) execStagingOperation(
 		if err != nil {
 			return dbsqlerrint.NewDriverError(ctx, "error reading row.", err)
 		}
-		defer row.Close()
+		defer row.Close() //nolint:errcheck
 
 	} else {
 		return dbsqlerrint.NewDriverError(ctx, "staging ctx must be provided.", nil)
@@ -692,7 +692,7 @@ func (c *conn) execStagingOperation(
 	if err != nil {
 		return dbsqlerrint.NewDriverError(ctx, "error fetching staging operation results", err)
 	}
-	var stringValues []string = make([]string, 4)
+	stringValues := make([]string, 4)
 	for i, val := range sqlRow { // this will either be 3 (remove op) or 4 (put/get) elements
 		if s, ok := val.(string); ok {
 			stringValues[i] = s

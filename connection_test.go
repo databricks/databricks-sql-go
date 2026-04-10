@@ -165,8 +165,8 @@ func TestConn_executeStatement(t *testing.T) {
 		for _, opTest := range operationStateTests {
 			closeOperationCount = 0
 			executeStatementCount = 0
-			executeStatementResp.DirectResults.OperationStatus.OperationState = &opTest.state
-			executeStatementResp.DirectResults.OperationStatus.DisplayMessage = &opTest.err
+			executeStatementResp.DirectResults.OperationStatus.OperationState = &opTest.state //nolint:gosec // G601: pointer is used only within this loop iteration
+			executeStatementResp.DirectResults.OperationStatus.DisplayMessage = &opTest.err   //nolint:gosec // G601: pointer is used only within this loop iteration
 			_, err := testConn.ExecContext(context.Background(), "select 1", []driver.NamedValue{})
 			if opTest.err == "" {
 				assert.NoError(t, err)

@@ -147,7 +147,7 @@ func (e *telemetryExporter) doExport(ctx context.Context, metrics []*telemetryMe
 
 		// Read response body
 		_, _ = io.ReadAll(resp.Body)
-		resp.Body.Close()
+		resp.Body.Close() //nolint:errcheck,gosec // G104: close after response is read
 
 		// Check status code
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {

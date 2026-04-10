@@ -182,7 +182,7 @@ func createTelemetryRequest(metrics []*telemetryMetric, driverVersion string) (*
 			}
 			if chunkCount, ok := tags["chunk_count"].(int); ok && chunkCount > 0 {
 				sqlOp.ChunkDetails = &ChunkDetails{
-					TotalChunksIterated: int32(chunkCount),
+					TotalChunksIterated: int32(chunkCount), //nolint:gosec // chunk count is always small
 				}
 			}
 
@@ -191,7 +191,7 @@ func createTelemetryRequest(metrics []*telemetryMetric, driverVersion string) (*
 					OperationType: opType,
 				}
 				if pollCount, ok := tags["poll_count"].(int); ok {
-					detail.NOperationStatusCalls = int32(pollCount)
+					detail.NOperationStatusCalls = int32(pollCount) //nolint:gosec // poll count is always small
 				}
 				sqlOp.OperationDetail = detail
 			}

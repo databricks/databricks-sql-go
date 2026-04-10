@@ -4,7 +4,7 @@ linters:
   disable-all: true
   enable:
     - bodyclose
-    - depguard
+    # - depguard  # config was flagging all legitimate imports; needs proper file-scoped rules to be useful
     - dogsled
     # - dupl
     - errcheck
@@ -49,12 +49,6 @@ formatters:
     # - goimports
 
 linters-settings:
-  depguard:
-    rules:
-      main:
-        allow:
-          - $gostd
-          - github.com/databricks/databricks-sql-go
   gosec:
     exclude-generated: true
     severity: "low"

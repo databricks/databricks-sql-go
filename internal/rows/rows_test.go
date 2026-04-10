@@ -425,7 +425,7 @@ func TestColumnsWithDirectResults(t *testing.T) {
 	assert.Nil(t, err)
 
 	rowSet := d.(*rows)
-	defer rowSet.Close()
+	defer rowSet.Close() //nolint:errcheck
 
 	req2 := &cli_service.TGetResultSetMetadataReq{}
 	metadata, _ := client.GetResultSetMetadata(context.Background(), req2)
@@ -1381,17 +1381,18 @@ func getRowsTestSimpleClient(getMetadataCount, fetchResultsCount *int) cli_servi
 
 	fetchResults := func(ctx context.Context, req *cli_service.TFetchResultsReq) (_r *cli_service.TFetchResultsResp, _err error) {
 		*fetchResultsCount++
-		if req.Orientation == cli_service.TFetchOrientation_FETCH_NEXT {
+		switch req.Orientation {
+		case cli_service.TFetchOrientation_FETCH_NEXT:
 			if pageIndex+1 >= len(pages) {
 				return nil, errors.New("can't fetch past end of result set")
 			}
 			pageIndex++
-		} else if req.Orientation == cli_service.TFetchOrientation_FETCH_PRIOR {
+		case cli_service.TFetchOrientation_FETCH_PRIOR:
 			if pageIndex-1 < 0 {
 				return nil, errors.New("can't fetch prior to start of result set")
 			}
 			pageIndex--
-		} else {
+		default:
 			return nil, errors.New("invalid fetch results orientation")
 		}
 

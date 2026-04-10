@@ -298,8 +298,8 @@ func WithTransport(t http.RoundTripper) ConnOption {
 	return func(c *config.Config) {
 		c.Transport = t
 
-		if c.CloudFetchConfig.HTTPClient == nil {
-			c.CloudFetchConfig.HTTPClient = &http.Client{
+		if c.HTTPClient == nil {
+			c.HTTPClient = &http.Client{
 				Transport: t,
 			}
 		}

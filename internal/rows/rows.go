@@ -97,7 +97,7 @@ func NewRows(
 	}
 
 	var pageSize int64 = 10000
-	var location *time.Location = time.UTC
+	location := time.UTC
 	if config != nil {
 		pageSize = int64(config.MaxRows)
 
@@ -453,7 +453,7 @@ func (r *rows) getResultSetSchema() (*cli_service.TTableSchema, dbsqlerr.DBError
 
 // fetchResultPage will fetch the result page containing the next row, if necessary
 func (r *rows) fetchResultPage() error {
-	var err dbsqlerr.DBError = isValidRows(r)
+	err := isValidRows(r)
 	if err != nil {
 		return err
 	}

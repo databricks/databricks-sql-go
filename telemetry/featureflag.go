@@ -187,7 +187,7 @@ func fetchFeatureFlag(ctx context.Context, host string, driverVersion string, ht
 	if err != nil {
 		return false, fmt.Errorf("failed to fetch feature flag: %w", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	if resp.StatusCode != http.StatusOK {
 		// Read and discard body to allow HTTP connection reuse

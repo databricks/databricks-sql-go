@@ -33,7 +33,7 @@ type metricsAggregator struct {
 	flushTimer    *time.Ticker
 
 	closeOnce   sync.Once
-	ctx         context.Context    // Cancellable context — cancelled on close to stop workers
+	ctx         context.Context // Cancellable context — cancelled on close to stop workers
 	cancel      context.CancelFunc
 	exportQueue chan exportJob // Worker queue; drop batch only when full (matches JDBC LinkedBlockingQueue)
 }
@@ -52,7 +52,7 @@ type statementMetrics struct {
 
 // newMetricsAggregator creates a new metrics aggregator.
 func newMetricsAggregator(exporter *telemetryExporter, cfg *Config) *metricsAggregator {
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(context.Background()) //nolint:gosec // cancel stored in agg.cancel and called on close
 	agg := &metricsAggregator{
 		statements:    make(map[string]*statementMetrics),
 		batch:         make([]*telemetryMetric, 0, cfg.BatchSize),

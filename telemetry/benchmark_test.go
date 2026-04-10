@@ -27,7 +27,7 @@ func BenchmarkInterceptor_Overhead_Enabled(b *testing.B) {
 
 	exporter := newTelemetryExporter("localhost", "test-version", &http.Client{}, cfg)
 	agg := newMetricsAggregator(exporter, cfg)
-	defer agg.close(context.Background())
+	defer agg.close(context.Background()) //nolint:errcheck
 
 	interceptor := newInterceptor(agg, true)
 	ctx := context.Background()
@@ -46,7 +46,7 @@ func BenchmarkInterceptor_Overhead_Disabled(b *testing.B) {
 	cfg := DefaultConfig()
 	exporter := newTelemetryExporter("localhost", "test-version", &http.Client{}, cfg)
 	agg := newMetricsAggregator(exporter, cfg)
-	defer agg.close(context.Background())
+	defer agg.close(context.Background()) //nolint:errcheck
 
 	interceptor := newInterceptor(agg, false)
 	ctx := context.Background()
@@ -68,7 +68,7 @@ func BenchmarkAggregator_RecordMetric(b *testing.B) {
 
 	exporter := newTelemetryExporter("localhost", "test-version", &http.Client{}, cfg)
 	agg := newMetricsAggregator(exporter, cfg)
-	defer agg.close(context.Background())
+	defer agg.close(context.Background()) //nolint:errcheck
 
 	ctx := context.Background()
 	metric := &telemetryMetric{
