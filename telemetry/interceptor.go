@@ -175,7 +175,7 @@ func (i *Interceptor) RecordOperation(ctx context.Context, sessionID string, ope
 
 	defer func() {
 		if r := recover(); r != nil {
-			// Silently handle panics
+			logger.Trace().Msgf("telemetry: recordOperation panic: %v", r)
 		}
 	}()
 

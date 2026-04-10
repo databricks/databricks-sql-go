@@ -10,22 +10,22 @@ import (
 // sysInfoOnce caches the parts of system configuration that are invariant across calls
 // (OS info, runtime, process name) to avoid repeated os.ReadFile on every metric.
 var (
-	sysInfoOnce    sync.Once
-	cachedOSName   string
-	cachedOSVer    string
-	cachedArch     string
-	cachedRuntime  string
-	cachedLocale   string
-	cachedProcess  string
+	sysInfoOnce   sync.Once
+	cachedOSName  string
+	cachedOSVer   string
+	cachedArch    string
+	cachedRuntime string
+	cachedLocale  string
+	cachedProcess string
 )
 
 func initSysInfo() {
 	sysInfoOnce.Do(func() {
-		cachedOSName  = getOSName()
-		cachedOSVer   = getOSVersion()
-		cachedArch    = runtime.GOARCH
+		cachedOSName = getOSName()
+		cachedOSVer = getOSVersion()
+		cachedArch = runtime.GOARCH
 		cachedRuntime = runtime.Version()
-		cachedLocale  = getLocaleName()
+		cachedLocale = getLocaleName()
 		cachedProcess = getProcessName()
 	})
 }

@@ -76,20 +76,20 @@ type HostDetails struct {
 // DriverConnectionParameters maps to DriverConnectionParameters in the proto schema.
 // Only fields populated by the Go driver are included; others are omitted.
 type DriverConnectionParameters struct {
-	HTTPPath              string       `json:"http_path,omitempty"`
-	Mode                  string       `json:"mode,omitempty"`
-	HostInfo              *HostDetails `json:"host_info,omitempty"`
-	UseProxy              bool         `json:"use_proxy,omitempty"`
-	AuthMech              string       `json:"auth_mech,omitempty"`
-	AuthFlow              string       `json:"auth_flow,omitempty"`
-	AuthScope             string       `json:"auth_scope,omitempty"`
-	UseSystemProxy        bool         `json:"use_system_proxy,omitempty"`
-	UseCFProxy            bool         `json:"use_cf_proxy,omitempty"`
-	EnableArrow           bool         `json:"enable_arrow,omitempty"`
-	EnableDirectResults   bool         `json:"enable_direct_results,omitempty"`
-	QueryTags             string       `json:"query_tags,omitempty"`
-	EnableMetricViewMeta  bool         `json:"enable_metric_view_metadata,omitempty"`
-	SocketTimeout         int64        `json:"socket_timeout,omitempty"`
+	HTTPPath             string       `json:"http_path,omitempty"`
+	Mode                 string       `json:"mode,omitempty"`
+	HostInfo             *HostDetails `json:"host_info,omitempty"`
+	UseProxy             bool         `json:"use_proxy,omitempty"`
+	AuthMech             string       `json:"auth_mech,omitempty"`
+	AuthFlow             string       `json:"auth_flow,omitempty"`
+	AuthScope            string       `json:"auth_scope,omitempty"`
+	UseSystemProxy       bool         `json:"use_system_proxy,omitempty"`
+	UseCFProxy           bool         `json:"use_cf_proxy,omitempty"`
+	EnableArrow          bool         `json:"enable_arrow,omitempty"`
+	EnableDirectResults  bool         `json:"enable_direct_results,omitempty"`
+	QueryTags            string       `json:"query_tags,omitempty"`
+	EnableMetricViewMeta bool         `json:"enable_metric_view_metadata,omitempty"`
+	SocketTimeout        int64        `json:"socket_timeout,omitempty"`
 }
 
 // SQLExecutionEvent maps to SqlExecutionEvent in the proto schema.
@@ -107,11 +107,11 @@ type SQLExecutionEvent struct {
 
 // ChunkDetails maps to ChunkDetails in the proto schema.
 type ChunkDetails struct {
-	InitialChunkLatencyMs    int64 `json:"initial_chunk_latency_millis,omitempty"`
-	SlowestChunkLatencyMs    int64 `json:"slowest_chunk_latency_millis,omitempty"`
-	TotalChunksPresent       int32 `json:"total_chunks_present,omitempty"`
-	TotalChunksIterated      int32 `json:"total_chunks_iterated,omitempty"`
-	SumChunksDownloadTimeMs  int64 `json:"sum_chunks_download_time_millis,omitempty"`
+	InitialChunkLatencyMs   int64 `json:"initial_chunk_latency_millis,omitempty"`
+	SlowestChunkLatencyMs   int64 `json:"slowest_chunk_latency_millis,omitempty"`
+	TotalChunksPresent      int32 `json:"total_chunks_present,omitempty"`
+	TotalChunksIterated     int32 `json:"total_chunks_iterated,omitempty"`
+	SumChunksDownloadTimeMs int64 `json:"sum_chunks_download_time_millis,omitempty"`
 }
 
 // ResultLatency maps to ResultLatency in the proto schema.
