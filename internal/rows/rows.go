@@ -59,7 +59,13 @@ type rows struct {
 	ctx context.Context
 
 	// Telemetry tracking
-	telemetryUpdate func(chunkCount int, bytesDownloaded int64)
+	// telemetryUpdate is called after each chunk is fetched with:
+	//   chunkCount: total chunks fetched so far (including direct results)
+	//   bytesDownloaded: cumulative bytes
+	//   chunkIndex: 0-based index of the chunk just fetched
+	//   chunkLatencyMs: fetch latency for this chunk (0 for direct results)
+	//   totalChunksPresent: server-reported total, 0 if unknown
+	telemetryUpdate func(chunkCount int, bytesDownloaded int64, chunkIndex int, chunkLatencyMs int64, totalChunksPresent int32)
 	closeCallback   func(latencyMs int64, err error)
 	chunkCount      int
 	bytesDownloaded int64
@@ -78,7 +84,7 @@ func NewRows(
 	client cli_service.TCLIService,
 	config *config.Config,
 	directResults *cli_service.TSparkDirectResults,
-	telemetryUpdate func(chunkCount int, bytesDownloaded int64),
+	telemetryUpdate func(chunkCount int, bytesDownloaded int64, chunkIndex int, chunkLatencyMs int64, totalChunksPresent int32),
 	closeCallback func(latencyMs int64, err error),
 ) (driver.Rows, dbsqlerr.DBError) {
 
@@ -148,7 +154,18 @@ func NewRows(
 		}
 
 		if r.telemetryUpdate != nil {
-			r.telemetryUpdate(r.chunkCount, r.bytesDownloaded)
+			// Determine totalChunksPresent for direct results.
+			// If the server already closed the operation, all data is here (totalPresent=1).
+			// For CloudFetch direct results, use the number of result links.
+			var totalPresent int32
+			if directResults.CloseOperation != nil {
+				totalPresent = int32(r.chunkCount)
+			} else if directResults.ResultSet != nil && directResults.ResultSet.Results != nil &&
+				directResults.ResultSet.Results.ResultLinks != nil {
+				totalPresent = int32(len(directResults.ResultSet.Results.ResultLinks)) //nolint:gosec
+			}
+			// chunkIndex=0, chunkLatencyMs=0: direct results have no separate fetch latency.
+			r.telemetryUpdate(r.chunkCount, r.bytesDownloaded, 0, 0, totalPresent)
 		}
 	}
 
@@ -480,7 +497,11 @@ func (r *rows) fetchResultPage() error {
 		r.RowScanner = nil
 	}
 
+	// Record 0-based chunk index before fetching (direct results occupied index 0 if present).
+	chunkIndex := r.chunkCount
+	fetchStart := time.Now()
 	fetchResult, err1 := r.ResultPageIterator.Next()
+	chunkLatencyMs := time.Since(fetchStart).Milliseconds()
 	if err1 != nil {
 		return err1
 	}
@@ -494,8 +515,14 @@ func (r *rows) fetchResultPage() error {
 		}
 	}
 
+	// For CloudFetch, the result links in the response reveal the server-reported total.
+	var totalPresent int32
+	if fetchResult != nil && fetchResult.Results != nil && fetchResult.Results.ResultLinks != nil {
+		totalPresent = int32(len(fetchResult.Results.ResultLinks)) //nolint:gosec
+	}
+
 	if r.telemetryUpdate != nil {
-		r.telemetryUpdate(r.chunkCount, r.bytesDownloaded)
+		r.telemetryUpdate(r.chunkCount, r.bytesDownloaded, chunkIndex, chunkLatencyMs, totalPresent)
 	}
 
 	err1 = r.makeRowScanner(fetchResult)

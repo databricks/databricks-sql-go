@@ -225,11 +225,42 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 		return nil, dbsqlerrint.NewExecutionError(ctx, dbsqlerr.ErrQueryExecution, err, opStatusResp)
 	}
 
+	// Per-chunk timing state captured in the closure below.
+	var (
+		chunkTimingInitialMs  int64
+		chunkTimingSlowestMs  int64
+		chunkTimingSumMs      int64
+		chunkTimingInitialSet bool
+		chunkTotalPresent     int32
+	)
+
 	// Telemetry callback for tracking row fetching metrics
-	telemetryUpdate := func(chunkCount int, bytesDownloaded int64) {
-		if c.telemetry != nil {
-			c.telemetry.AddTag(ctx, "chunk_count", chunkCount)
-			c.telemetry.AddTag(ctx, "bytes_downloaded", bytesDownloaded)
+	telemetryUpdate := func(chunkCount int, bytesDownloaded int64, chunkIndex int, chunkLatencyMs int64, totalChunksPresent int32) {
+		if c.telemetry == nil {
+			return
+		}
+		c.telemetry.AddTag(ctx, "chunk_count", chunkCount)
+		c.telemetry.AddTag(ctx, "bytes_downloaded", bytesDownloaded)
+
+		// Aggregate per-chunk fetch latencies (skip direct results where latency is 0).
+		if chunkLatencyMs > 0 {
+			if !chunkTimingInitialSet {
+				chunkTimingInitialMs = chunkLatencyMs
+				chunkTimingInitialSet = true
+			}
+			if chunkLatencyMs > chunkTimingSlowestMs {
+				chunkTimingSlowestMs = chunkLatencyMs
+			}
+			chunkTimingSumMs += chunkLatencyMs
+			c.telemetry.AddTag(ctx, "chunk_initial_latency_ms", chunkTimingInitialMs)
+			c.telemetry.AddTag(ctx, "chunk_slowest_latency_ms", chunkTimingSlowestMs)
+			c.telemetry.AddTag(ctx, "chunk_sum_latency_ms", chunkTimingSumMs)
+		}
+
+		// Record total chunks present from first server report.
+		if totalChunksPresent > 0 && chunkTotalPresent == 0 {
+			chunkTotalPresent = totalChunksPresent
+			c.telemetry.AddTag(ctx, "chunk_total_present", int(chunkTotalPresent))
 		}
 	}
 
@@ -673,8 +704,8 @@ func (c *conn) execStagingOperation(
 	}
 
 	if len(driverctx.StagingPathsFromContext(ctx)) != 0 {
-		// Telemetry callback for staging operation row fetching
-		telemetryUpdate := func(chunkCount int, bytesDownloaded int64) {
+		// Telemetry callback for staging operation row fetching (chunk timing not tracked for staging ops).
+		telemetryUpdate := func(chunkCount int, bytesDownloaded int64, chunkIndex int, chunkLatencyMs int64, totalChunksPresent int32) {
 			if c.telemetry != nil {
 				c.telemetry.AddTag(ctx, "chunk_count", chunkCount)
 				c.telemetry.AddTag(ctx, "bytes_downloaded", bytesDownloaded)

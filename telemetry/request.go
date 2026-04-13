@@ -184,6 +184,18 @@ func createTelemetryRequest(metrics []*telemetryMetric, driverVersion string) (*
 				sqlOp.ChunkDetails = &ChunkDetails{
 					TotalChunksIterated: int32(chunkCount), //nolint:gosec // chunk count is always small
 				}
+				if v, ok := tags["chunk_initial_latency_ms"].(int64); ok && v > 0 {
+					sqlOp.ChunkDetails.InitialChunkLatencyMs = v
+				}
+				if v, ok := tags["chunk_slowest_latency_ms"].(int64); ok && v > 0 {
+					sqlOp.ChunkDetails.SlowestChunkLatencyMs = v
+				}
+				if v, ok := tags["chunk_sum_latency_ms"].(int64); ok && v > 0 {
+					sqlOp.ChunkDetails.SumChunksDownloadTimeMs = v
+				}
+				if v, ok := tags["chunk_total_present"].(int); ok && v > 0 {
+					sqlOp.ChunkDetails.TotalChunksPresent = int32(v) //nolint:gosec // chunk count is always small
+				}
 			}
 
 			if opType, ok := tags["operation_type"].(string); ok {

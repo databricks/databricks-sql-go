@@ -21,6 +21,14 @@ const (
 	TagPollLatency           = "poll.latency_ms"
 )
 
+// Tag names for chunk timing metrics
+const (
+	TagChunkInitialLatencyMs = "chunk_initial_latency_ms"
+	TagChunkSlowestLatencyMs = "chunk_slowest_latency_ms"
+	TagChunkSumLatencyMs     = "chunk_sum_latency_ms"
+	TagChunkTotalPresent     = "chunk_total_present"
+)
+
 // Tag names for error metrics
 const (
 	TagErrorType = "error.type"
@@ -77,6 +85,10 @@ func statementTags() []tagDefinition {
 		{TagCompressionEnabled, exportDatabricks, "Compression enabled", false},
 		{TagPollCount, exportDatabricks, "Poll count", false},
 		{TagPollLatency, exportDatabricks, "Poll latency", false},
+		{TagChunkInitialLatencyMs, exportDatabricks, "Initial chunk fetch latency ms", false},
+		{TagChunkSlowestLatencyMs, exportDatabricks, "Slowest chunk fetch latency ms", false},
+		{TagChunkSumLatencyMs, exportDatabricks, "Sum of chunk fetch latencies ms", false},
+		{TagChunkTotalPresent, exportDatabricks, "Total chunks reported by server", false},
 	}
 }
 
