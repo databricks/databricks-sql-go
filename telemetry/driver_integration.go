@@ -40,11 +40,9 @@ func InitializeForConnection(
 	// Priority: client DSN > server feature flag > default (disabled).
 	cfg := DefaultConfig()
 	if val, isSet := enableTelemetry.Get(); isSet {
-		// Client explicitly set enableTelemetry via DSN — overrides server flag.
-		cfg.EnableTelemetry = val
-		cfg.ClientExplicit = true
+		cfg.EnableTelemetry = &val // non-nil: client explicitly set via DSN
 	}
-	// When unset: ClientExplicit=false, server feature flag controls enablement.
+	// When unset: cfg.EnableTelemetry remains nil, server feature flag controls enablement.
 	if batchSize > 0 {
 		cfg.BatchSize = batchSize
 	}

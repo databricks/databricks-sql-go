@@ -149,27 +149,21 @@ func TestIntegration_CircuitBreakerOpening(t *testing.T) {
 	}
 }
 
-// TestIntegration_OptInPriority_ExplicitOptOut tests explicit opt-out via DSN.
-// Client DSN setting (enableTelemetry=false) overrides server feature flag.
+// TestIntegration_OptInPriority_ExplicitOptOut: EnableTelemetry=&false overrides server.
 func TestIntegration_OptInPriority_ExplicitOptOut(t *testing.T) {
+	f := false
 	cfg := &Config{
-		EnableTelemetry: false, // Client explicitly disabled via DSN
-		ClientExplicit:  true,  // DSN was set — overrides server
+		EnableTelemetry: &f, // client explicitly disabled via DSN — server not consulted
 		BatchSize:       100,
 		FlushInterval:   5 * time.Second,
 		MaxRetries:      3,
 		RetryDelay:      100 * time.Millisecond,
 	}
 
-	httpClient := &http.Client{Timeout: 5 * time.Second}
-
-	ctx := context.Background()
-
-	// Should be disabled due to explicit client opt-out; server is not consulted.
-	result := isTelemetryEnabled(ctx, cfg, "http://unreachable-host", "test-version", httpClient)
+	result := isTelemetryEnabled(context.Background(), cfg, "http://unreachable-host", "test-version", &http.Client{Timeout: 5 * time.Second})
 
 	if result {
-		t.Error("Expected telemetry to be disabled by explicit client opt-out (client overrides server)")
+		t.Error("Expected telemetry to be disabled when EnableTelemetry=&false, got enabled")
 	}
 }
 

@@ -12,14 +12,11 @@ type Config struct {
 	// Enabled controls whether telemetry is active
 	Enabled bool
 
-	// EnableTelemetry indicates user wants telemetry enabled.
-	// Follows client > server > default priority.
-	EnableTelemetry bool
-
-	// ClientExplicit is true when the client explicitly set EnableTelemetry via DSN.
-	// When true, EnableTelemetry is used directly (overrides the server feature flag).
-	// When false (default), the server feature flag controls enablement.
-	ClientExplicit bool
+	// EnableTelemetry is a tristate for the client DSN setting:
+	//   nil   — not set by the client; server feature flag controls enablement
+	//   &true — client explicitly opted in (overrides server flag)
+	//   &false— client explicitly opted out (overrides server flag)
+	EnableTelemetry *bool
 
 	// BatchSize is the number of metrics to batch before flushing
 	BatchSize int
@@ -44,12 +41,11 @@ type Config struct {
 }
 
 // DefaultConfig returns default telemetry configuration.
-// Note: Telemetry is disabled by default. The default will remain false until
-// server-side feature flags are wired in to control the rollout.
+// EnableTelemetry is nil (unset): the server feature flag controls enablement.
 func DefaultConfig() *Config {
 	return &Config{
 		Enabled:                 false,
-		EnableTelemetry:         false,
+		EnableTelemetry:         nil, // unset — server feature flag decides
 		BatchSize:               100,
 		FlushInterval:           5 * time.Second,
 		MaxRetries:              3,
@@ -66,8 +62,7 @@ func ParseTelemetryConfig(params map[string]string) *Config {
 
 	if v, ok := params["enableTelemetry"]; ok {
 		if b, err := strconv.ParseBool(v); err == nil {
-			cfg.EnableTelemetry = b
-			cfg.ClientExplicit = true // client explicitly set via DSN
+			cfg.EnableTelemetry = &b // non-nil: client explicitly set via DSN
 		}
 	}
 
@@ -98,38 +93,20 @@ func ParseTelemetryConfig(params map[string]string) *Config {
 	return cfg
 }
 
-// isTelemetryEnabled checks if telemetry should be enabled for this connection.
-// Implements the priority-based decision tree for telemetry enablement.
+// isTelemetryEnabled returns true in exactly two cases:
+//  1. The client explicitly set enableTelemetry=true in the DSN.
+//  2. The client did not set enableTelemetry and the server feature flag is enabled
+//     (databricks.partnerplatform.clientConfigsFeatureFlags.enableTelemetryForGoDriver).
 //
-// Priority (highest to lowest):
-//  1. Client DSN setting (enableTelemetry=true|false) — overrides server when ClientExplicit=true
-//  2. Server feature flag (databricks.partnerplatform.clientConfigsFeatureFlags.enableTelemetryForGoDriver)
-//  3. Default: disabled
-//
-// Parameters:
-//   - ctx: Context for the request
-//   - cfg: Telemetry configuration
-//   - host: Databricks host to check feature flags against
-//   - driverVersion: Driver version string
-//   - httpClient: HTTP client for making feature flag requests
-//
-// Returns:
-//   - bool: true if telemetry should be enabled, false otherwise
+// In all other cases — explicit opt-out or server flag absent/unreachable — returns false.
 func isTelemetryEnabled(ctx context.Context, cfg *Config, host string, driverVersion string, httpClient *http.Client) bool {
-	// Priority 1: Client DSN setting overrides server when explicitly set
-	// enableTelemetry=true  → enabled (no server check)
-	// enableTelemetry=false → disabled (no server check)
-	if cfg.ClientExplicit {
-		return cfg.EnableTelemetry
+	if cfg.EnableTelemetry != nil {
+		return *cfg.EnableTelemetry
 	}
 
-	// Priority 2: Check server-side feature flag (no explicit client setting)
-	flagCache := getFeatureFlagCache()
-	serverEnabled, err := flagCache.isTelemetryEnabled(ctx, host, driverVersion, httpClient)
+	serverEnabled, err := getFeatureFlagCache().isTelemetryEnabled(ctx, host, driverVersion, httpClient)
 	if err != nil {
-		// Priority 3: Default disabled on server error
 		return false
 	}
-
 	return serverEnabled
 }
