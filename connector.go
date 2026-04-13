@@ -313,6 +313,15 @@ func WithCloudFetch(useCloudFetch bool) ConnOption {
 	}
 }
 
+// WithArrowNativeGeospatial enables Arrow-native geospatial serialization.
+// When true, geometry/geography columns are returned as Struct<srid: Int32, wkb: Binary>
+// instead of EWKT strings. Requires Databricks Runtime with SPARK-54232 support.
+func WithArrowNativeGeospatial(enable bool) ConnOption {
+	return func(c *config.Config) {
+		c.UseArrowNativeGeospatial = enable
+	}
+}
+
 // WithMaxDownloadThreads sets up maximum download threads for cloud fetch. Default is 10.
 func WithMaxDownloadThreads(numThreads int) ConnOption {
 	return func(c *config.Config) {
