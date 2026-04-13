@@ -239,7 +239,7 @@ func TestArrowRowScanner(t *testing.T) {
 
 		d, _ := NewArrowRowScanner(metadataResp, rowSet, nil, nil, context.Background())
 
-		var ars *arrowRowScanner = d.(*arrowRowScanner)
+		ars := d.(*arrowRowScanner)
 
 		err := ars.makeColumnValuesContainers(ars, rowscanner.NewDelimiter(0, 1))
 		require.Nil(t, err)
@@ -315,7 +315,7 @@ func TestArrowRowScanner(t *testing.T) {
 
 		d, _ := NewArrowRowScanner(metadataResp, rowSet, &cfg, nil, context.Background())
 
-		var ars *arrowRowScanner = d.(*arrowRowScanner)
+		ars := d.(*arrowRowScanner)
 
 		err := ars.makeColumnValuesContainers(ars, rowscanner.NewDelimiter(0, 1))
 		require.Nil(t, err)
@@ -417,7 +417,7 @@ func TestArrowRowScanner(t *testing.T) {
 		d, err1 := NewArrowRowScanner(metadataResp, rowSet, &cfg, nil, context.Background())
 		require.Nil(t, err1)
 
-		var ars *arrowRowScanner = d.(*arrowRowScanner)
+		ars := d.(*arrowRowScanner)
 
 		err := ars.makeColumnValuesContainers(ars, rowscanner.NewDelimiter(0, 0))
 		require.Nil(t, err)
@@ -485,7 +485,7 @@ func TestArrowRowScanner(t *testing.T) {
 
 		d, _ := NewArrowRowScanner(metadataResp, rowSet, &cfg, nil, context.Background())
 
-		var ars *arrowRowScanner = d.(*arrowRowScanner)
+		ars := d.(*arrowRowScanner)
 
 		assert.Nil(t, ars.rowValues)
 
@@ -555,7 +555,7 @@ func TestArrowRowScanner(t *testing.T) {
 
 		d, _ := NewArrowRowScanner(metadataResp, rowSet, &cfg, nil, nil)
 
-		var ars *arrowRowScanner = d.(*arrowRowScanner)
+		ars := d.(*arrowRowScanner)
 
 		fbi := &fakeBatchIterator{
 			batches: []SparkArrowBatch{
@@ -593,7 +593,7 @@ func TestArrowRowScanner(t *testing.T) {
 
 		d, _ := NewArrowRowScanner(metadataResp, rowSet, &cfg, nil, nil)
 
-		var ars *arrowRowScanner = d.(*arrowRowScanner)
+		ars := d.(*arrowRowScanner)
 
 		fbi := &fakeBatchIterator{
 			batches: []SparkArrowBatch{
@@ -632,7 +632,7 @@ func TestArrowRowScanner(t *testing.T) {
 
 		d, _ := NewArrowRowScanner(metadataResp, rowSet, &cfg, nil, nil)
 
-		var ars *arrowRowScanner = d.(*arrowRowScanner)
+		ars := d.(*arrowRowScanner)
 
 		fbi := &fakeBatchIterator{
 			batches: []SparkArrowBatch{
@@ -673,7 +673,7 @@ func TestArrowRowScanner(t *testing.T) {
 
 		d, _ := NewArrowRowScanner(metadataResp, rowSet, &cfg, nil, nil)
 
-		var ars *arrowRowScanner = d.(*arrowRowScanner)
+		ars := d.(*arrowRowScanner)
 
 		fbi := &fakeBatchIterator{
 			batches: []SparkArrowBatch{
@@ -709,7 +709,7 @@ func TestArrowRowScanner(t *testing.T) {
 
 		d, _ := NewArrowRowScanner(metadataResp, rowSet, &cfg, nil, context.Background())
 
-		var ars *arrowRowScanner = d.(*arrowRowScanner)
+		ars := d.(*arrowRowScanner)
 
 		fbi := &fakeBatchIterator{
 			batches: []SparkArrowBatch{
@@ -766,7 +766,7 @@ func TestArrowRowScanner(t *testing.T) {
 
 		var scale int32 = 10
 		var precision int32 = 2
-		var columns []*cli_service.TColumnDesc = []*cli_service.TColumnDesc{
+		columns := []*cli_service.TColumnDesc{
 			{
 				ColumnName: "array_col",
 				TypeDesc: &cli_service.TTypeDesc{
@@ -858,7 +858,7 @@ func TestArrowRowScanner(t *testing.T) {
 
 			d, _ := NewArrowRowScanner(metadataResp, rowSet, &cfg, nil, context.Background())
 
-			var ars *arrowRowScanner = d.(*arrowRowScanner)
+			ars := d.(*arrowRowScanner)
 			ars.UseArrowNativeComplexTypes = true
 			ars.UseArrowNativeDecimal = true
 			ars.UseArrowNativeIntervalTypes = true
@@ -1202,7 +1202,7 @@ func TestArrowRowScanner(t *testing.T) {
 		// verify that the returned values for the complex type
 		// columns are valid json strings
 		var foo []any
-		var s string = dest[10].(string)
+		s := dest[10].(string)
 		err := json.Unmarshal([]byte(s), &foo)
 		assert.Nil(t, err)
 

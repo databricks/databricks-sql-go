@@ -8,6 +8,17 @@ import (
 	"github.com/databricks/databricks-sql-go/logger"
 )
 
+const (
+	exportWorkerCount = 10   // Fixed worker pool size — matches JDBC's newFixedThreadPool(10)
+	exportQueueSize   = 1000 // Buffered queue — effectively unbounded for normal workloads
+)
+
+// exportJob holds a batch of metrics pending async export.
+type exportJob struct {
+	ctx     context.Context
+	metrics []*telemetryMetric
+}
+
 // metricsAggregator aggregates metrics by statement and batches for export.
 type metricsAggregator struct {
 	mu sync.RWMutex
@@ -21,10 +32,10 @@ type metricsAggregator struct {
 	stopCh        chan struct{}
 	flushTimer    *time.Ticker
 
-	closeOnce sync.Once
-	ctx       context.Context    // Cancellable context for in-flight exports
-	cancel    context.CancelFunc // Cancels ctx on close
-	exportSem chan struct{}      // Bounds concurrent export goroutines
+	closeOnce   sync.Once
+	ctx         context.Context // Cancellable context — cancelled on close to stop workers
+	cancel      context.CancelFunc
+	exportQueue chan exportJob // Worker queue; drop batch only when full (matches JDBC LinkedBlockingQueue)
 }
 
 // statementMetrics holds aggregated metrics for a statement.
@@ -41,7 +52,7 @@ type statementMetrics struct {
 
 // newMetricsAggregator creates a new metrics aggregator.
 func newMetricsAggregator(exporter *telemetryExporter, cfg *Config) *metricsAggregator {
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(context.Background()) //nolint:gosec // cancel stored in agg.cancel and called on close
 	agg := &metricsAggregator{
 		statements:    make(map[string]*statementMetrics),
 		batch:         make([]*telemetryMetric, 0, cfg.BatchSize),
@@ -51,7 +62,12 @@ func newMetricsAggregator(exporter *telemetryExporter, cfg *Config) *metricsAggr
 		stopCh:        make(chan struct{}),
 		ctx:           ctx,
 		cancel:        cancel,
-		exportSem:     make(chan struct{}, 8), // Bound to 8 concurrent exports
+		exportQueue:   make(chan exportJob, exportQueueSize),
+	}
+
+	// Start fixed worker pool — matches JDBC's newFixedThreadPool(10)
+	for i := 0; i < exportWorkerCount; i++ {
+		go agg.exportWorker()
 	}
 
 	// Start background flush timer
@@ -60,12 +76,27 @@ func newMetricsAggregator(exporter *telemetryExporter, cfg *Config) *metricsAggr
 	return agg
 }
 
+// exportWorker processes export jobs from the queue until the aggregator is cancelled.
+func (agg *metricsAggregator) exportWorker() {
+	for {
+		select {
+		case job, ok := <-agg.exportQueue:
+			if !ok {
+				return
+			}
+			agg.exporter.export(job.ctx, job.metrics)
+		case <-agg.ctx.Done():
+			return
+		}
+	}
+}
+
 // recordMetric records a metric for aggregation.
 func (agg *metricsAggregator) recordMetric(ctx context.Context, metric *telemetryMetric) {
 	// Swallow all errors
 	defer func() {
 		if r := recover(); r != nil {
-			logger.Debug().Msgf("telemetry: recordMetric panic: %v", r)
+			logger.Trace().Msgf("telemetry: recordMetric panic: %v", r)
 		}
 	}()
 
@@ -74,10 +105,18 @@ func (agg *metricsAggregator) recordMetric(ctx context.Context, metric *telemetr
 
 	switch metric.metricType {
 	case "connection":
-		// Emit connection events immediately: connection lifecycle events must be captured
-		// before the connection closes, as we won't have another opportunity to flush
+		// Connection events flush immediately: lifecycle events must be captured before
+		// the connection closes, as we won't have another opportunity to flush.
 		agg.batch = append(agg.batch, metric)
-		if len(agg.batch) >= agg.batchSize {
+		agg.flushUnlocked(ctx)
+
+	case "operation":
+		agg.batch = append(agg.batch, metric)
+		// Terminal operations (session/statement close) flush immediately so metrics
+		// are not lost if the connection closes before the next batch flush — matching
+		// JDBC behavior where CLOSE_STATEMENT and DELETE_SESSION trigger immediate export.
+		opType, _ := metric.tags["operation_type"].(string)
+		if isTerminalOperationType(opType) || len(agg.batch) >= agg.batchSize {
 			agg.flushUnlocked(ctx)
 		}
 
@@ -118,8 +157,7 @@ func (agg *metricsAggregator) recordMetric(ctx context.Context, metric *telemetr
 	case "error":
 		// Check if terminal error
 		if metric.errorType != "" && isTerminalError(&simpleError{msg: metric.errorType}) {
-			// Flush terminal errors immediately: terminal errors often lead to connection
-			// termination. If we wait for the next batch/timer flush, this data may be lost
+			// Flush terminal errors immediately
 			agg.batch = append(agg.batch, metric)
 			agg.flushUnlocked(ctx)
 		} else {
@@ -135,7 +173,7 @@ func (agg *metricsAggregator) recordMetric(ctx context.Context, metric *telemetr
 func (agg *metricsAggregator) completeStatement(ctx context.Context, statementID string, failed bool) {
 	defer func() {
 		if r := recover(); r != nil {
-			logger.Debug().Msgf("telemetry: completeStatement panic: %v", r)
+			logger.Trace().Msgf("telemetry: completeStatement panic: %v", r)
 		}
 	}()
 
@@ -192,52 +230,63 @@ func (agg *metricsAggregator) flushLoop() {
 	}
 }
 
-// flush flushes pending metrics to exporter.
+// flush flushes pending metrics to exporter asynchronously (fire-and-forget).
 func (agg *metricsAggregator) flush(ctx context.Context) {
 	agg.mu.Lock()
 	defer agg.mu.Unlock()
 	agg.flushUnlocked(ctx)
 }
 
-// flushUnlocked flushes without locking (caller must hold lock).
+// flushSync flushes pending metrics synchronously, blocking until the export
+// completes. Used on connection close to guarantee delivery before returning.
+func (agg *metricsAggregator) flushSync(ctx context.Context) {
+	agg.mu.Lock()
+	if len(agg.batch) == 0 {
+		agg.mu.Unlock()
+		return
+	}
+	metrics := make([]*telemetryMetric, len(agg.batch))
+	copy(metrics, agg.batch)
+	agg.batch = agg.batch[:0]
+	agg.mu.Unlock()
+
+	agg.exporter.export(ctx, metrics)
+}
+
+// flushUnlocked submits the current batch to the export worker queue (caller must hold lock).
+// Matches JDBC's executorService.submit() — drops only when the queue is full, not merely
+// when workers are busy. Workers drain the queue until the aggregator context is cancelled.
 func (agg *metricsAggregator) flushUnlocked(ctx context.Context) {
 	if len(agg.batch) == 0 {
 		return
 	}
 
-	// Copy batch and clear
 	metrics := make([]*telemetryMetric, len(agg.batch))
 	copy(metrics, agg.batch)
 	agg.batch = agg.batch[:0]
 
-	// Acquire semaphore slot; skip export if already at capacity to prevent goroutine leaks
 	select {
-	case agg.exportSem <- struct{}{}:
+	case agg.exportQueue <- exportJob{ctx: ctx, metrics: metrics}:
 	default:
-		logger.Debug().Msg("telemetry: export semaphore full, dropping metrics batch")
-		return
+		// Queue full — drop batch silently (matches JDBC's RejectedExecutionException path)
+		logger.Debug().Msg("telemetry: export queue full, dropping metrics batch")
 	}
-
-	// Export asynchronously
-	go func() {
-		defer func() {
-			<-agg.exportSem
-			if r := recover(); r != nil {
-				logger.Debug().Msgf("telemetry: async export panic: %v", r)
-			}
-		}()
-		agg.exporter.export(ctx, metrics)
-	}()
 }
 
 // close stops the aggregator and flushes pending metrics.
-// Safe to call multiple times — subsequent calls are no-ops for the stop/cancel step.
+// Safe to call multiple times — subsequent calls are no-ops (closeOnce).
+//
+// Shutdown order matters:
+//  1. Stop periodic flush (close stopCh) so no new async exports are queued.
+//  2. Synchronously flush the current batch directly (flushSync bypasses the
+//     worker queue, so it works even after workers are stopped).
+//  3. Cancel the aggregator context to stop the 10 export worker goroutines.
 func (agg *metricsAggregator) close(ctx context.Context) error {
 	agg.closeOnce.Do(func() {
-		close(agg.stopCh)
-		agg.cancel() // Cancel in-flight periodic export goroutines
+		close(agg.stopCh)  // Stop periodic flush loop
+		agg.flushSync(ctx) // Final flush — direct export, no workers needed
+		agg.cancel()       // Stop export workers after final flush
 	})
-	agg.flush(ctx)
 	return nil
 }
 

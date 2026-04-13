@@ -57,6 +57,11 @@ type rows struct {
 	logger_ *dbsqllog.DBSQLLogger
 
 	ctx context.Context
+
+	// Telemetry tracking
+	telemetryUpdate func(chunkCount int, bytesDownloaded int64)
+	chunkCount      int
+	bytesDownloaded int64
 }
 
 var _ driver.Rows = (*rows)(nil)
@@ -72,6 +77,7 @@ func NewRows(
 	client cli_service.TCLIService,
 	config *config.Config,
 	directResults *cli_service.TSparkDirectResults,
+	telemetryUpdate func(chunkCount int, bytesDownloaded int64),
 ) (driver.Rows, dbsqlerr.DBError) {
 
 	connId := driverctx.ConnIdFromContext(ctx)
@@ -91,7 +97,7 @@ func NewRows(
 	}
 
 	var pageSize int64 = 10000
-	var location *time.Location = time.UTC
+	location := time.UTC
 	if config != nil {
 		pageSize = int64(config.MaxRows)
 
@@ -103,14 +109,17 @@ func NewRows(
 	logger.Debug().Msgf("databricks: creating Rows, pageSize: %d, location: %v", pageSize, location)
 
 	r := &rows{
-		client:        client,
-		opHandle:      opHandle,
-		connId:        connId,
-		correlationId: correlationId,
-		location:      location,
-		config:        config,
-		logger_:       logger,
-		ctx:           ctx,
+		client:          client,
+		opHandle:        opHandle,
+		connId:          connId,
+		correlationId:   correlationId,
+		location:        location,
+		config:          config,
+		logger_:         logger,
+		ctx:             ctx,
+		telemetryUpdate: telemetryUpdate,
+		chunkCount:      0,
+		bytesDownloaded: 0,
 	}
 
 	// if we already have results for the query do some additional initialization
@@ -126,6 +135,17 @@ func NewRows(
 		err := r.makeRowScanner(directResults.ResultSet)
 		if err != nil {
 			return r, err
+		}
+
+		r.chunkCount++
+		if directResults.ResultSet != nil && directResults.ResultSet.Results != nil && directResults.ResultSet.Results.ArrowBatches != nil {
+			for _, batch := range directResults.ResultSet.Results.ArrowBatches {
+				r.bytesDownloaded += int64(len(batch.Batch))
+			}
+		}
+
+		if r.telemetryUpdate != nil {
+			r.telemetryUpdate(r.chunkCount, r.bytesDownloaded)
 		}
 	}
 
@@ -433,7 +453,7 @@ func (r *rows) getResultSetSchema() (*cli_service.TTableSchema, dbsqlerr.DBError
 
 // fetchResultPage will fetch the result page containing the next row, if necessary
 func (r *rows) fetchResultPage() error {
-	var err dbsqlerr.DBError = isValidRows(r)
+	err := isValidRows(r)
 	if err != nil {
 		return err
 	}
@@ -456,6 +476,19 @@ func (r *rows) fetchResultPage() error {
 	fetchResult, err1 := r.ResultPageIterator.Next()
 	if err1 != nil {
 		return err1
+	}
+
+	r.chunkCount++
+	if fetchResult != nil && fetchResult.Results != nil {
+		if fetchResult.Results.ArrowBatches != nil {
+			for _, batch := range fetchResult.Results.ArrowBatches {
+				r.bytesDownloaded += int64(len(batch.Batch))
+			}
+		}
+	}
+
+	if r.telemetryUpdate != nil {
+		r.telemetryUpdate(r.chunkCount, r.bytesDownloaded)
 	}
 
 	err1 = r.makeRowScanner(fetchResult)

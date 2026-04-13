@@ -519,7 +519,7 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if req.Body != nil {
 		defer func() {
 			if !reqBodyClosed {
-				req.Body.Close()
+				req.Body.Close() //nolint:errcheck,gosec // G104: close in deferred cleanup
 			}
 		}()
 	}

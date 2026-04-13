@@ -271,7 +271,7 @@ func TestCloudFetchIterator(t *testing.T) {
 		cfg := config.WithDefaults()
 		cfg.UseLz4Compression = false
 		cfg.MaxDownloadThreads = 1
-		cfg.UserConfig.CloudFetchConfig.HTTPClient = customHTTPClient
+		cfg.HTTPClient = customHTTPClient
 
 		bi, err := NewCloudBatchIterator(
 			context.Background(),
@@ -309,7 +309,7 @@ func TestCloudFetchIterator(t *testing.T) {
 		cfg.UseLz4Compression = false
 		cfg.MaxDownloadThreads = 1
 		// Explicitly set HTTPClient to nil to verify fallback behavior
-		cfg.UserConfig.CloudFetchConfig.HTTPClient = nil
+		cfg.HTTPClient = nil
 
 		bi, err := NewCloudBatchIterator(
 			context.Background(),

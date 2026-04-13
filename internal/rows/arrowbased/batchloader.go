@@ -35,8 +35,8 @@ func NewCloudIPCStreamIterator(
 	cfg *config.Config,
 ) (IPCStreamIterator, dbsqlerr.DBError) {
 	httpClient := http.DefaultClient
-	if cfg.UserConfig.CloudFetchConfig.HTTPClient != nil {
-		httpClient = cfg.UserConfig.CloudFetchConfig.HTTPClient
+	if cfg.HTTPClient != nil {
+		httpClient = cfg.HTTPClient
 	}
 
 	bi := &cloudIPCStreamIterator{
@@ -160,7 +160,7 @@ func (bi *cloudIPCStreamIterator) Next() (io.Reader, error) {
 			link.RowCount,
 		)
 
-		cancelCtx, cancelFn := context.WithCancel(bi.ctx)
+		cancelCtx, cancelFn := context.WithCancel(bi.ctx) //nolint:gosec // cancelFn stored in task and called on completion
 		task := &cloudFetchDownloadTask{
 			ctx:                cancelCtx,
 			cancel:             cancelFn,
@@ -269,7 +269,7 @@ func (cft *cloudFetchDownloadTask) Run() {
 
 		// Read all data into memory before closing
 		buf, err := io.ReadAll(getReader(data, cft.useLz4Compression))
-		data.Close()
+		data.Close() //nolint:errcheck,gosec // G104: close after reading data
 		if err != nil {
 			cft.resultChan <- cloudFetchDownloadTaskResult{data: nil, err: err}
 			return

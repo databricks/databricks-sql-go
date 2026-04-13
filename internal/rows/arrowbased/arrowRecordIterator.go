@@ -82,7 +82,7 @@ func (ri *arrowRecordIterator) Close() {
 		}
 
 		if ri.resultPageIterator != nil {
-			ri.resultPageIterator.Close()
+			ri.resultPageIterator.Close() //nolint:errcheck,gosec // G104: close in cleanup
 		}
 	}
 }

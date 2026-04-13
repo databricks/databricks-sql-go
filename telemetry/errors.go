@@ -78,14 +78,6 @@ func classifyError(err error) string {
 	return "error"
 }
 
-// isRetryableError returns true if the error is retryable.
-// This is the inverse of isTerminalError.
-//
-//nolint:deadcode,unused // Will be used in Phase 8+
-func isRetryableError(err error) bool {
-	return !isTerminalError(err)
-}
-
 // httpError represents an HTTP error with status code.
 
 type httpError struct {
@@ -95,16 +87,6 @@ type httpError struct {
 
 func (e *httpError) Error() string {
 	return e.message
-}
-
-// newHTTPError creates a new HTTP error.
-//
-//nolint:deadcode,unused // Will be used in Phase 8+
-func newHTTPError(statusCode int, message string) error {
-	return &httpError{
-		statusCode: statusCode,
-		message:    message,
-	}
 }
 
 // isTerminalHTTPStatus returns true for non-retryable HTTP status codes.
