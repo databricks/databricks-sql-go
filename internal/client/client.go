@@ -20,6 +20,7 @@ import (
 	"time"
 
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
+	"github.com/databricks/databricks-sql-go/internal/agent"
 	dbsqlerrint "github.com/databricks/databricks-sql-go/internal/errors"
 
 	"github.com/apache/thrift/lib/go/thrift"
@@ -294,6 +295,9 @@ func InitThriftClient(cfg *config.Config, httpclient *http.Client) (*ThriftServi
 		userAgent := fmt.Sprintf("%s/%s", cfg.DriverName, cfg.DriverVersion)
 		if cfg.UserAgentEntry != "" {
 			userAgent = fmt.Sprintf("%s/%s (%s)", cfg.DriverName, cfg.DriverVersion, cfg.UserAgentEntry)
+		}
+		if agentProduct := agent.Detect(); agentProduct != "" {
+			userAgent = fmt.Sprintf("%s agent/%s", userAgent, agentProduct)
 		}
 		thriftHttpClient.SetHeader("User-Agent", userAgent)
 
