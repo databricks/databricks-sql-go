@@ -2,7 +2,7 @@ package telemetry
 
 import (
 	"context"
-	"encoding/json"
+
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -206,12 +206,8 @@ func TestIsTelemetryEnabled_ClientOverrideEnabled(t *testing.T) {
 	// Setup: Create a server that returns disabled
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Server says disabled, but client override should win
-		resp := map[string]interface{}{
-			"flags": map[string]bool{
-				"databricks.partnerplatform.clientConfigsFeatureFlags.enableTelemetryForGoDriver": false,
-			},
-		}
-		_ = json.NewEncoder(w).Encode(resp)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"flags": [{"name": "databricks.partnerplatform.clientConfigsFeatureFlags.enableTelemetryForGoDriver", "value": "false"}]}`))
 	}))
 	defer server.Close()
 
@@ -228,7 +224,7 @@ func TestIsTelemetryEnabled_ClientOverrideEnabled(t *testing.T) {
 	defer flagCache.releaseContext(server.URL)
 
 	// Client override should bypass server check
-	result := isTelemetryEnabled(ctx, cfg, server.URL, httpClient)
+	result := isTelemetryEnabled(ctx, cfg, server.URL, httpClient, nil)
 
 	if !result {
 		t.Error("Expected telemetry to be enabled when client explicitly sets enableTelemetry=true, got disabled")
@@ -240,12 +236,8 @@ func TestIsTelemetryEnabled_ClientOverrideDisabled(t *testing.T) {
 	// Setup: Create a server that returns enabled
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Server says enabled, but client override should win
-		resp := map[string]interface{}{
-			"flags": map[string]bool{
-				"databricks.partnerplatform.clientConfigsFeatureFlags.enableTelemetryForGoDriver": true,
-			},
-		}
-		_ = json.NewEncoder(w).Encode(resp)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"flags": [{"name": "databricks.partnerplatform.clientConfigsFeatureFlags.enableTelemetryForGoDriver", "value": "true"}]}`))
 	}))
 	defer server.Close()
 
@@ -261,7 +253,7 @@ func TestIsTelemetryEnabled_ClientOverrideDisabled(t *testing.T) {
 	flagCache.getOrCreateContext(server.URL)
 	defer flagCache.releaseContext(server.URL)
 
-	result := isTelemetryEnabled(ctx, cfg, server.URL, httpClient)
+	result := isTelemetryEnabled(ctx, cfg, server.URL, httpClient, nil)
 
 	if result {
 		t.Error("Expected telemetry to be disabled when client explicitly sets enableTelemetry=false, got enabled")
@@ -272,12 +264,8 @@ func TestIsTelemetryEnabled_ClientOverrideDisabled(t *testing.T) {
 func TestIsTelemetryEnabled_ServerEnabled(t *testing.T) {
 	// Setup: Create a server that returns enabled
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		resp := map[string]interface{}{
-			"flags": map[string]bool{
-				"databricks.partnerplatform.clientConfigsFeatureFlags.enableTelemetryForGoDriver": true,
-			},
-		}
-		_ = json.NewEncoder(w).Encode(resp)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"flags": [{"name": "databricks.partnerplatform.clientConfigsFeatureFlags.enableTelemetryForGoDriver", "value": "true"}]}`))
 	}))
 	defer server.Close()
 
@@ -293,7 +281,7 @@ func TestIsTelemetryEnabled_ServerEnabled(t *testing.T) {
 	flagCache.getOrCreateContext(server.URL)
 	defer flagCache.releaseContext(server.URL)
 
-	result := isTelemetryEnabled(ctx, cfg, server.URL, httpClient)
+	result := isTelemetryEnabled(ctx, cfg, server.URL, httpClient, nil)
 
 	if !result {
 		t.Error("Expected telemetry to be enabled when server flag is true, got disabled")
@@ -304,12 +292,8 @@ func TestIsTelemetryEnabled_ServerEnabled(t *testing.T) {
 func TestIsTelemetryEnabled_ServerDisabled(t *testing.T) {
 	// Setup: Create a server that returns disabled
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		resp := map[string]interface{}{
-			"flags": map[string]bool{
-				"databricks.partnerplatform.clientConfigsFeatureFlags.enableTelemetryForGoDriver": false,
-			},
-		}
-		_ = json.NewEncoder(w).Encode(resp)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"flags": [{"name": "databricks.partnerplatform.clientConfigsFeatureFlags.enableTelemetryForGoDriver", "value": "false"}]}`))
 	}))
 	defer server.Close()
 
@@ -325,7 +309,7 @@ func TestIsTelemetryEnabled_ServerDisabled(t *testing.T) {
 	flagCache.getOrCreateContext(server.URL)
 	defer flagCache.releaseContext(server.URL)
 
-	result := isTelemetryEnabled(ctx, cfg, server.URL, httpClient)
+	result := isTelemetryEnabled(ctx, cfg, server.URL, httpClient, nil)
 
 	if result {
 		t.Error("Expected telemetry to be disabled when server flag is false, got enabled")
@@ -340,7 +324,7 @@ func TestIsTelemetryEnabled_FailSafeDefault(t *testing.T) {
 	httpClient := &http.Client{Timeout: 5 * time.Second}
 
 	// No server available, should default to disabled (fail-safe)
-	result := isTelemetryEnabled(ctx, cfg, "nonexistent-host", httpClient)
+	result := isTelemetryEnabled(ctx, cfg, "nonexistent-host", httpClient, nil)
 
 	if result {
 		t.Error("Expected telemetry to be disabled when server unavailable (fail-safe), got enabled")
@@ -367,7 +351,7 @@ func TestIsTelemetryEnabled_ServerError(t *testing.T) {
 	flagCache.getOrCreateContext(server.URL)
 	defer flagCache.releaseContext(server.URL)
 
-	result := isTelemetryEnabled(ctx, cfg, server.URL, httpClient)
+	result := isTelemetryEnabled(ctx, cfg, server.URL, httpClient, nil)
 
 	// On error, should default to disabled (fail-safe)
 	if result {
@@ -390,7 +374,7 @@ func TestIsTelemetryEnabled_ServerUnreachable(t *testing.T) {
 	flagCache.getOrCreateContext(unreachableHost)
 	defer flagCache.releaseContext(unreachableHost)
 
-	result := isTelemetryEnabled(ctx, cfg, unreachableHost, httpClient)
+	result := isTelemetryEnabled(ctx, cfg, unreachableHost, httpClient, nil)
 
 	// On error, should default to disabled (fail-safe)
 	if result {
@@ -418,7 +402,7 @@ func TestIsTelemetryEnabled_ClientOverridesServerError(t *testing.T) {
 	flagCache.getOrCreateContext(server.URL)
 	defer flagCache.releaseContext(server.URL)
 
-	result := isTelemetryEnabled(ctx, cfg, server.URL, httpClient)
+	result := isTelemetryEnabled(ctx, cfg, server.URL, httpClient, nil)
 
 	// Client override should work even when server errors
 	if !result {

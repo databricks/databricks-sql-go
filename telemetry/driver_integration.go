@@ -16,6 +16,7 @@ import (
 //   - host: Databricks host
 //   - httpClient: HTTP client for making requests
 //   - enableTelemetry: Client config overlay (unset = check server flag, true/false = override server)
+//   - extraHeaders: Additional HTTP headers for SPOG routing (e.g. x-databricks-org-id)
 //
 // Returns:
 //   - *Interceptor: Telemetry interceptor if enabled, nil otherwise
@@ -24,13 +25,14 @@ func InitializeForConnection(
 	host string,
 	httpClient *http.Client,
 	enableTelemetry config.ConfigValue[bool],
+	extraHeaders map[string]string,
 ) *Interceptor {
 	// Create telemetry config and apply client overlay
 	cfg := DefaultConfig()
 	cfg.EnableTelemetry = enableTelemetry
 
 	// Check if telemetry should be enabled
-	if !isTelemetryEnabled(ctx, cfg, host, httpClient) {
+	if !isTelemetryEnabled(ctx, cfg, host, httpClient, extraHeaders) {
 		return nil
 	}
 

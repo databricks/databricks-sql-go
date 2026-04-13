@@ -102,7 +102,7 @@ func ParseTelemetryConfig(params map[string]string) *Config {
 //
 // Returns:
 //   - bool: true if telemetry should be enabled, false otherwise
-func isTelemetryEnabled(ctx context.Context, cfg *Config, host string, httpClient *http.Client) bool {
+func isTelemetryEnabled(ctx context.Context, cfg *Config, host string, httpClient *http.Client, extraHeaders map[string]string) bool {
 	// Priority 1: Client explicitly set (overrides server)
 	if cfg.EnableTelemetry.IsSet() {
 		val, _ := cfg.EnableTelemetry.Get()
@@ -111,7 +111,7 @@ func isTelemetryEnabled(ctx context.Context, cfg *Config, host string, httpClien
 
 	// Priority 2: Check server-side feature flag
 	flagCache := getFeatureFlagCache()
-	serverEnabled, err := flagCache.isTelemetryEnabled(ctx, host, httpClient)
+	serverEnabled, err := flagCache.isTelemetryEnabled(ctx, host, httpClient, extraHeaders)
 	if err != nil {
 		// Priority 3: Fail-safe default (disabled)
 		return false

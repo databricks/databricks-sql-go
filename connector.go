@@ -6,6 +6,7 @@ import (
 	"database/sql/driver"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -76,12 +77,16 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 	}
 	log := logger.WithContext(conn.id, driverctx.CorrelationIdFromContext(ctx), "")
 
+	// Extract SPOG routing headers from ?o= in HTTPPath
+	spogHeaders := extractSpogHeaders(c.cfg.HTTPPath)
+
 	// Initialize telemetry: client config overlay decides; if unset, feature flags decide
 	conn.telemetry = telemetry.InitializeForConnection(
 		ctx,
 		c.cfg.Host,
 		c.client,
 		c.cfg.EnableTelemetry,
+		spogHeaders,
 	)
 	if conn.telemetry != nil {
 		log.Debug().Msg("telemetry initialized for connection")
@@ -107,6 +112,7 @@ func NewConnector(options ...ConnOption) (driver.Connector, error) {
 	// config with default options
 	cfg := config.WithDefaults()
 	cfg.DriverVersion = DriverVersion
+	telemetry.SetDriverVersion(DriverVersion)
 
 	for _, opt := range options {
 		opt(cfg)
@@ -115,6 +121,25 @@ func NewConnector(options ...ConnOption) (driver.Connector, error) {
 	client := client.RetryableClient(cfg)
 
 	return &connector{cfg: cfg, client: client}, nil
+}
+
+// extractSpogHeaders extracts ?o=<workspaceId> from httpPath and returns
+// an x-databricks-org-id header for SPOG routing.
+func extractSpogHeaders(httpPath string) map[string]string {
+	if !strings.Contains(httpPath, "?") {
+		return nil
+	}
+	// Parse query string from httpPath
+	parts := strings.SplitN(httpPath, "?", 2)
+	params, err := url.ParseQuery(parts[1])
+	if err != nil {
+		return nil
+	}
+	orgID := params.Get("o")
+	if orgID == "" {
+		return nil
+	}
+	return map[string]string{"x-databricks-org-id": orgID}
 }
 
 func withUserConfig(ucfg config.UserConfig) ConnOption {

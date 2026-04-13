@@ -25,11 +25,19 @@ func GetConfig(ctx context.Context, hostName, clientID, clientSecret, callbackUR
 	}
 
 	config := oauth2.Config{
-		ClientID:     clientID,
-		ClientSecret: clientSecret,
-		Endpoint:     endpoint,
-		RedirectURL:  callbackURL,
-		Scopes:       scopes,
+		ClientID:    clientID,
+		Endpoint:    endpoint,
+		RedirectURL: callbackURL,
+		Scopes:      scopes,
+	}
+	if clientSecret != "" {
+		config.ClientSecret = clientSecret
+	} else {
+		// For U2M (public apps using PKCE), force AuthStyleInParams to avoid
+		// sending Basic auth with empty password. AuthStyleInHeader sends
+		// "Authorization: Basic base64(clientID:)" which the server rejects
+		// with "Public app should not use a client secret".
+		config.Endpoint.AuthStyle = oauth2.AuthStyleInParams
 	}
 
 	return config, nil
