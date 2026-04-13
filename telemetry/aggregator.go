@@ -277,15 +277,32 @@ func (agg *metricsAggregator) flushUnlocked(ctx context.Context) {
 // Safe to call multiple times — subsequent calls are no-ops (closeOnce).
 //
 // Shutdown order matters:
-//  1. Stop periodic flush (close stopCh) so no new async exports are queued.
-//  2. Synchronously flush the current batch directly (flushSync bypasses the
-//     worker queue, so it works even after workers are stopped).
-//  3. Cancel the aggregator context to stop the 10 export worker goroutines.
+//  1. Stop periodic flush (close stopCh) so no new async flushes are queued.
+//  2. Flush agg.batch synchronously (direct export, bypasses worker queue).
+//  3. Drain agg.exportQueue — process any jobs already submitted by prior
+//     flushUnlocked calls (e.g. CLOSE_STATEMENT from rows.Close()) before
+//     workers are cancelled.  Without this step those jobs are silently
+//     dropped when cancel() fires.
+//  4. Cancel the aggregator context to stop the 10 export worker goroutines.
 func (agg *metricsAggregator) close(ctx context.Context) error {
 	agg.closeOnce.Do(func() {
-		close(agg.stopCh)  // Stop periodic flush loop
-		agg.flushSync(ctx) // Final flush — direct export, no workers needed
-		agg.cancel()       // Stop export workers after final flush
+		close(agg.stopCh)  // 1. Stop periodic flush loop
+		agg.flushSync(ctx) // 2. Flush agg.batch directly
+
+		// 3. Drain any jobs already sitting in the exportQueue.
+		// flushUnlocked cleared agg.batch into the queue; flushSync above sees
+		// an empty batch, so queue items would otherwise be lost when workers
+		// are cancelled in step 4.
+		for {
+			select {
+			case job := <-agg.exportQueue:
+				agg.exporter.export(job.ctx, job.metrics)
+			default:
+				goto drained
+			}
+		}
+	drained:
+		agg.cancel() // 4. Stop export workers (queue is now empty)
 	})
 	return nil
 }
