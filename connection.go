@@ -139,6 +139,7 @@ func (c *conn) ExecContext(ctx context.Context, query string, args []driver.Name
 		statementID = client.SprintGuid(exStmtResp.OperationHandle.OperationId.GUID)
 		// Use BeforeExecuteWithTime to set the correct start time (before execution)
 		ctx = c.telemetry.BeforeExecuteWithTime(ctx, c.id, statementID, executeStart)
+		c.telemetry.AddTag(ctx, "operation_type", telemetry.OperationTypeExecuteStatement)
 		defer func() {
 			finalErr := err
 			if stagingErr != nil {
@@ -212,6 +213,7 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 		statementID = client.SprintGuid(exStmtResp.OperationHandle.OperationId.GUID)
 		// Use BeforeExecuteWithTime to set the correct start time (before execution)
 		ctx = c.telemetry.BeforeExecuteWithTime(ctx, c.id, statementID, executeStart)
+		c.telemetry.AddTag(ctx, "operation_type", telemetry.OperationTypeExecuteStatement)
 		defer func() {
 			c.telemetry.AfterExecute(ctx, err)
 			c.telemetry.CompleteStatement(ctx, statementID, err != nil)
@@ -231,7 +233,17 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 		}
 	}
 
-	rows, err := rows.NewRows(ctx, exStmtResp.OperationHandle, c.client, c.cfg, exStmtResp.DirectResults, telemetryUpdate)
+	// Telemetry callback for CLOSE_STATEMENT — fired from rows.Close()
+	var closeCallback func(latencyMs int64, err error)
+	if c.telemetry != nil {
+		interceptor := c.telemetry
+		connID := c.id
+		closeCallback = func(latencyMs int64, closeErr error) {
+			interceptor.RecordOperation(ctx, connID, telemetry.OperationTypeCloseStatement, latencyMs, closeErr)
+		}
+	}
+
+	rows, err := rows.NewRows(ctx, exStmtResp.OperationHandle, c.client, c.cfg, exStmtResp.DirectResults, telemetryUpdate, closeCallback)
 	return rows, err
 
 }
@@ -396,14 +408,7 @@ func (c *conn) executeStatement(ctx context.Context, query string, args []driver
 		}
 	}
 
-	executeStart := time.Now()
 	resp, err := c.client.ExecuteStatement(ctx, &req)
-	// Record the Thrift call latency as a separate operation metric.
-	// This is distinct from the statement-level metric (BeforeExecuteWithTime), which
-	// measures end-to-end latency including polling and row fetching.
-	if c.telemetry != nil {
-		c.telemetry.RecordOperation(ctx, c.id, telemetry.OperationTypeExecuteStatement, time.Since(executeStart).Milliseconds(), err)
-	}
 	var log *logger.DBSQLLogger
 	log, ctx = client.LoggerAndContext(ctx, resp)
 
@@ -675,7 +680,7 @@ func (c *conn) execStagingOperation(
 				c.telemetry.AddTag(ctx, "bytes_downloaded", bytesDownloaded)
 			}
 		}
-		row, err = rows.NewRows(ctx, exStmtResp.OperationHandle, c.client, c.cfg, exStmtResp.DirectResults, telemetryUpdate)
+		row, err = rows.NewRows(ctx, exStmtResp.OperationHandle, c.client, c.cfg, exStmtResp.DirectResults, telemetryUpdate, nil)
 		if err != nil {
 			return dbsqlerrint.NewDriverError(ctx, "error reading row.", err)
 		}

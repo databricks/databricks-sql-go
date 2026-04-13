@@ -60,6 +60,7 @@ type rows struct {
 
 	// Telemetry tracking
 	telemetryUpdate func(chunkCount int, bytesDownloaded int64)
+	closeCallback   func(latencyMs int64, err error)
 	chunkCount      int
 	bytesDownloaded int64
 }
@@ -78,6 +79,7 @@ func NewRows(
 	config *config.Config,
 	directResults *cli_service.TSparkDirectResults,
 	telemetryUpdate func(chunkCount int, bytesDownloaded int64),
+	closeCallback func(latencyMs int64, err error),
 ) (driver.Rows, dbsqlerr.DBError) {
 
 	connId := driverctx.ConnIdFromContext(ctx)
@@ -118,6 +120,7 @@ func NewRows(
 		logger_:         logger,
 		ctx:             ctx,
 		telemetryUpdate: telemetryUpdate,
+		closeCallback:   closeCallback,
 		chunkCount:      0,
 		bytesDownloaded: 0,
 	}
@@ -210,7 +213,11 @@ func (r *rows) Close() error {
 
 	if r.ResultPageIterator != nil {
 		r.logger().Debug().Msgf("databricks: closing Rows operation")
+		closeStart := time.Now()
 		err := r.ResultPageIterator.Close()
+		if r.closeCallback != nil {
+			r.closeCallback(time.Since(closeStart).Milliseconds(), err)
+		}
 		if err != nil {
 			r.logger().Err(err).Msg(errRowsCloseFailed)
 			return dbsqlerr_int.NewRequestError(r.ctx, errRowsCloseFailed, err)
