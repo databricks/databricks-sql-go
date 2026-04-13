@@ -149,24 +149,6 @@ func TestIntegration_CircuitBreakerOpening(t *testing.T) {
 	}
 }
 
-// TestIntegration_OptInPriority_ExplicitOptOut: EnableTelemetry=&false overrides server.
-func TestIntegration_OptInPriority_ExplicitOptOut(t *testing.T) {
-	f := false
-	cfg := &Config{
-		EnableTelemetry: &f, // client explicitly disabled via DSN — server not consulted
-		BatchSize:       100,
-		FlushInterval:   5 * time.Second,
-		MaxRetries:      3,
-		RetryDelay:      100 * time.Millisecond,
-	}
-
-	result := isTelemetryEnabled(context.Background(), cfg, "http://unreachable-host", "test-version", &http.Client{Timeout: 5 * time.Second})
-
-	if result {
-		t.Error("Expected telemetry to be disabled when EnableTelemetry=&false, got enabled")
-	}
-}
-
 // TestIntegration_PrivacyCompliance verifies no sensitive data is collected.
 func TestIntegration_PrivacyCompliance_NoQueryText(t *testing.T) {
 	cfg := DefaultConfig()
@@ -223,76 +205,6 @@ func TestIntegration_PrivacyCompliance_NoQueryText(t *testing.T) {
 	}
 
 	t.Log("Privacy compliance test passed: sensitive data not present in payload")
-}
-
-// TestIntegration_FieldMapping verifies that only known metric fields are exported
-// in the TelemetryRequest format (no generic tag pass-through).
-func TestIntegration_FieldMapping(t *testing.T) {
-	cfg := DefaultConfig()
-	cfg.FlushInterval = 50 * time.Millisecond
-	httpClient := &http.Client{Timeout: 5 * time.Second}
-
-	var capturedRequest TelemetryRequest
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		_ = json.Unmarshal(body, &capturedRequest)
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
-
-	exporter := newTelemetryExporter(server.URL, "test-version", httpClient, cfg)
-
-	metric := &telemetryMetric{
-		metricType:  "connection",
-		timestamp:   time.Now(),
-		workspaceID: "ws-test",
-		sessionID:   "sess-1",
-		latencyMs:   42,
-		tags: map[string]interface{}{
-			"chunk_count":      3,
-			"bytes_downloaded": int64(1024),
-			"unknown.tag":      "value", // should NOT appear in output
-		},
-	}
-
-	ctx := context.Background()
-	exporter.export(ctx, []*telemetryMetric{metric})
-
-	time.Sleep(150 * time.Millisecond)
-
-	if len(capturedRequest.ProtoLogs) == 0 {
-		t.Fatal("Expected at least one ProtoLog entry")
-	}
-
-	// Each ProtoLog entry is a JSON-encoded TelemetryFrontendLog.
-	var log TelemetryFrontendLog
-	if err := json.Unmarshal([]byte(capturedRequest.ProtoLogs[0]), &log); err != nil {
-		t.Fatalf("Failed to unmarshal ProtoLog: %v", err)
-	}
-
-	if log.Entry == nil || log.Entry.SQLDriverLog == nil {
-		t.Fatal("Expected SQLDriverLog to be populated")
-	}
-
-	entry := log.Entry.SQLDriverLog
-	if entry.SessionID != "sess-1" {
-		t.Errorf("Expected session_id=sess-1, got %q", entry.SessionID)
-	}
-	if entry.OperationLatencyMs != 42 {
-		t.Errorf("Expected latency=42, got %d", entry.OperationLatencyMs)
-	}
-	if entry.SQLOperation != nil && entry.SQLOperation.ChunkDetails != nil {
-		if entry.SQLOperation.ChunkDetails.TotalChunksIterated != 3 {
-			t.Errorf("Expected total_chunks_iterated=3, got %d", entry.SQLOperation.ChunkDetails.TotalChunksIterated)
-		}
-	}
-
-	// unknown.tag must not appear anywhere in the serialised output
-	if strings.Contains(capturedRequest.ProtoLogs[0], "unknown.tag") {
-		t.Error("unknown.tag must not be exported")
-	}
-
-	t.Log("Field mapping test passed")
 }
 
 // TestIntegration_TelemetryEventCorrectnessAllFields verifies that every field of the
