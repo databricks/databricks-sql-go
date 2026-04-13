@@ -149,10 +149,12 @@ func TestIntegration_CircuitBreakerOpening(t *testing.T) {
 	}
 }
 
-// TestIntegration_OptInPriority_ExplicitOptOut tests explicit opt-out.
+// TestIntegration_OptInPriority_ExplicitOptOut tests explicit opt-out via DSN.
+// Client DSN setting (enableTelemetry=false) overrides server feature flag.
 func TestIntegration_OptInPriority_ExplicitOptOut(t *testing.T) {
 	cfg := &Config{
-		EnableTelemetry: false, // Priority 1 (client): Explicit opt-out
+		EnableTelemetry: false, // Client explicitly disabled via DSN
+		ClientExplicit:  true,  // DSN was set — overrides server
 		BatchSize:       100,
 		FlushInterval:   5 * time.Second,
 		MaxRetries:      3,
@@ -161,24 +163,13 @@ func TestIntegration_OptInPriority_ExplicitOptOut(t *testing.T) {
 
 	httpClient := &http.Client{Timeout: 5 * time.Second}
 
-	// Server that returns enabled
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		resp := map[string]interface{}{
-			"flags": map[string]bool{
-				"databricks.partnerplatform.clientConfigsFeatureFlags.enableTelemetryForGoDriver": true,
-			},
-		}
-		_ = json.NewEncoder(w).Encode(resp)
-	}))
-	defer server.Close()
-
 	ctx := context.Background()
 
-	// Should be disabled due to explicit opt-out
-	result := isTelemetryEnabled(ctx, cfg, server.URL, "test-version", httpClient)
+	// Should be disabled due to explicit client opt-out; server is not consulted.
+	result := isTelemetryEnabled(ctx, cfg, "http://unreachable-host", "test-version", httpClient)
 
 	if result {
-		t.Error("Expected telemetry to be disabled by explicit opt-out")
+		t.Error("Expected telemetry to be disabled by explicit client opt-out (client overrides server)")
 	}
 }
 
@@ -308,4 +299,178 @@ func TestIntegration_FieldMapping(t *testing.T) {
 	}
 
 	t.Log("Field mapping test passed")
+}
+
+// TestIntegration_TelemetryEventCorrectnessAllFields verifies that every field of the
+// TelemetryRequest and nested TelemetryFrontendLog is correctly populated and present
+// when a metric is exported.  This is the canonical correctness check for the wire format.
+func TestIntegration_TelemetryEventCorrectnessAllFields(t *testing.T) {
+	const (
+		testDriverVersion = "9.9.9-test"
+		testSessionID     = "sess-correctness-123"
+		testStatementID   = "stmt-correctness-456"
+		testLatencyMs     = int64(123)
+		testOperationType = "EXECUTE_STATEMENT"
+		testChunkCount    = 7
+		testPollCount     = 4
+		testErrorName     = "NETWORK_ERROR"
+	)
+
+	cfg := DefaultConfig()
+	cfg.FlushInterval = 50 * time.Millisecond
+	httpClient := &http.Client{Timeout: 5 * time.Second}
+
+	var mu sync.Mutex
+	var capturedReq TelemetryRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		_ = json.Unmarshal(body, &capturedReq)
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	exporter := newTelemetryExporter(server.URL, testDriverVersion, httpClient, cfg)
+
+	metric := &telemetryMetric{
+		metricType:  "operation",
+		timestamp:   time.Now(),
+		sessionID:   testSessionID,
+		statementID: testStatementID,
+		latencyMs:   testLatencyMs,
+		errorType:   testErrorName,
+		tags: map[string]interface{}{
+			"operation_type": testOperationType,
+			"chunk_count":    testChunkCount,
+			"poll_count":     testPollCount,
+		},
+	}
+
+	ctx := context.Background()
+	exporter.export(ctx, []*telemetryMetric{metric})
+	time.Sleep(200 * time.Millisecond)
+
+	mu.Lock()
+	req := capturedReq
+	mu.Unlock()
+
+	// --- TelemetryRequest top-level fields ---
+	if req.UploadTime == 0 {
+		t.Error("TelemetryRequest.UploadTime must be non-zero")
+	}
+	if req.Items == nil {
+		t.Error("TelemetryRequest.Items must not be nil (required by server schema)")
+	}
+	if len(req.ProtoLogs) == 0 {
+		t.Fatal("TelemetryRequest.ProtoLogs must contain at least one entry")
+	}
+
+	// --- Parse TelemetryFrontendLog from ProtoLogs[0] ---
+	var frontendLog TelemetryFrontendLog
+	if err := json.Unmarshal([]byte(req.ProtoLogs[0]), &frontendLog); err != nil {
+		t.Fatalf("Failed to unmarshal ProtoLogs[0] as TelemetryFrontendLog: %v", err)
+	}
+
+	// FrontendLogEventID must be generated (non-empty, unique timestamp-based ID)
+	if frontendLog.FrontendLogEventID == "" {
+		t.Error("TelemetryFrontendLog.FrontendLogEventID must be non-empty")
+	}
+
+	// --- Context / ClientContext ---
+	if frontendLog.Context == nil {
+		t.Fatal("TelemetryFrontendLog.Context must not be nil")
+	}
+	if frontendLog.Context.ClientContext == nil {
+		t.Fatal("FrontendLogContext.ClientContext must not be nil")
+	}
+	cc := frontendLog.Context.ClientContext
+	if cc.ClientType != "golang" {
+		t.Errorf("ClientContext.ClientType must be %q, got %q", "golang", cc.ClientType)
+	}
+	if cc.ClientVersion != testDriverVersion {
+		t.Errorf("ClientContext.ClientVersion must be %q, got %q", testDriverVersion, cc.ClientVersion)
+	}
+
+	// --- Entry / SQLDriverLog ---
+	if frontendLog.Entry == nil {
+		t.Fatal("TelemetryFrontendLog.Entry must not be nil")
+	}
+	if frontendLog.Entry.SQLDriverLog == nil {
+		t.Fatal("FrontendLogEntry.SQLDriverLog must not be nil")
+	}
+	ev := frontendLog.Entry.SQLDriverLog
+
+	if ev.SessionID != testSessionID {
+		t.Errorf("TelemetryEvent.SessionID must be %q, got %q", testSessionID, ev.SessionID)
+	}
+	if ev.SQLStatementID != testStatementID {
+		t.Errorf("TelemetryEvent.SQLStatementID must be %q, got %q", testStatementID, ev.SQLStatementID)
+	}
+	if ev.OperationLatencyMs != testLatencyMs {
+		t.Errorf("TelemetryEvent.OperationLatencyMs must be %d, got %d", testLatencyMs, ev.OperationLatencyMs)
+	}
+
+	// --- SystemConfiguration ---
+	if ev.SystemConfiguration == nil {
+		t.Fatal("TelemetryEvent.SystemConfiguration must not be nil")
+	}
+	sc := ev.SystemConfiguration
+	if sc.DriverName != "databricks-sql-go" {
+		t.Errorf("SystemConfiguration.DriverName must be %q, got %q", "databricks-sql-go", sc.DriverName)
+	}
+	if sc.DriverVersion != testDriverVersion {
+		t.Errorf("SystemConfiguration.DriverVersion must be %q, got %q", testDriverVersion, sc.DriverVersion)
+	}
+	if sc.RuntimeName != "go" {
+		t.Errorf("SystemConfiguration.RuntimeName must be %q, got %q", "go", sc.RuntimeName)
+	}
+	if sc.RuntimeVersion == "" {
+		t.Error("SystemConfiguration.RuntimeVersion must be non-empty")
+	}
+	if sc.OSName == "" {
+		t.Error("SystemConfiguration.OSName must be non-empty")
+	}
+	if sc.OSArch == "" {
+		t.Error("SystemConfiguration.OSArch must be non-empty")
+	}
+	if sc.CharSetEncoding != "UTF-8" {
+		t.Errorf("SystemConfiguration.CharSetEncoding must be %q, got %q", "UTF-8", sc.CharSetEncoding)
+	}
+	if sc.ProcessName == "" {
+		t.Error("SystemConfiguration.ProcessName must be non-empty")
+	}
+
+	// --- SQLOperation / OperationDetail ---
+	if ev.SQLOperation == nil {
+		t.Fatal("TelemetryEvent.SQLOperation must not be nil for operation metrics with tags")
+	}
+	if ev.SQLOperation.OperationDetail == nil {
+		t.Fatal("SQLExecutionEvent.OperationDetail must not be nil when operation_type tag is set")
+	}
+	od := ev.SQLOperation.OperationDetail
+	if od.OperationType != testOperationType {
+		t.Errorf("OperationDetail.OperationType must be %q, got %q", testOperationType, od.OperationType)
+	}
+	if od.NOperationStatusCalls != int32(testPollCount) {
+		t.Errorf("OperationDetail.NOperationStatusCalls must be %d, got %d", testPollCount, od.NOperationStatusCalls)
+	}
+
+	// ChunkDetails must be populated for chunk_count tag
+	if ev.SQLOperation.ChunkDetails == nil {
+		t.Fatal("SQLExecutionEvent.ChunkDetails must not be nil when chunk_count tag is set")
+	}
+	if ev.SQLOperation.ChunkDetails.TotalChunksIterated != int32(testChunkCount) {
+		t.Errorf("ChunkDetails.TotalChunksIterated must be %d, got %d", testChunkCount, ev.SQLOperation.ChunkDetails.TotalChunksIterated)
+	}
+
+	// --- ErrorInfo ---
+	if ev.ErrorInfo == nil {
+		t.Fatal("TelemetryEvent.ErrorInfo must not be nil when errorType is set")
+	}
+	if ev.ErrorInfo.ErrorName != testErrorName {
+		t.Errorf("DriverErrorInfo.ErrorName must be %q, got %q", testErrorName, ev.ErrorInfo.ErrorName)
+	}
+
+	t.Log("Telemetry event correctness check passed: all fields verified")
 }

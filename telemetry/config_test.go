@@ -189,18 +189,127 @@ func TestParseTelemetryConfig_MultipleParams(t *testing.T) {
 	}
 }
 
+func TestParseTelemetryConfig_RetryCount(t *testing.T) {
+	params := map[string]string{
+		"telemetry_retry_count": "5",
+	}
+	cfg := ParseTelemetryConfig(params)
+
+	if cfg.MaxRetries != 5 {
+		t.Errorf("Expected MaxRetries 5, got %d", cfg.MaxRetries)
+	}
+}
+
+func TestParseTelemetryConfig_RetryCountZero(t *testing.T) {
+	params := map[string]string{
+		"telemetry_retry_count": "0",
+	}
+	cfg := ParseTelemetryConfig(params)
+
+	if cfg.MaxRetries != 0 {
+		t.Errorf("Expected MaxRetries 0 (disable retries), got %d", cfg.MaxRetries)
+	}
+}
+
+func TestParseTelemetryConfig_RetryCountInvalid(t *testing.T) {
+	params := map[string]string{
+		"telemetry_retry_count": "invalid",
+	}
+	cfg := ParseTelemetryConfig(params)
+
+	// Should fall back to default
+	if cfg.MaxRetries != 3 {
+		t.Errorf("Expected MaxRetries to fallback to 3, got %d", cfg.MaxRetries)
+	}
+}
+
+func TestParseTelemetryConfig_RetryDelay(t *testing.T) {
+	params := map[string]string{
+		"telemetry_retry_delay": "500ms",
+	}
+	cfg := ParseTelemetryConfig(params)
+
+	if cfg.RetryDelay != 500*time.Millisecond {
+		t.Errorf("Expected RetryDelay 500ms, got %v", cfg.RetryDelay)
+	}
+}
+
+func TestParseTelemetryConfig_RetryDelayInvalid(t *testing.T) {
+	params := map[string]string{
+		"telemetry_retry_delay": "invalid",
+	}
+	cfg := ParseTelemetryConfig(params)
+
+	// Should fall back to default
+	if cfg.RetryDelay != 100*time.Millisecond {
+		t.Errorf("Expected RetryDelay to fallback to 100ms, got %v", cfg.RetryDelay)
+	}
+}
+
+func TestParseTelemetryConfig_ClientExplicit_Set(t *testing.T) {
+	params := map[string]string{
+		"enableTelemetry": "true",
+	}
+	cfg := ParseTelemetryConfig(params)
+
+	if !cfg.ClientExplicit {
+		t.Error("Expected ClientExplicit=true when enableTelemetry DSN param is present")
+	}
+}
+
+func TestParseTelemetryConfig_ClientExplicit_NotSet(t *testing.T) {
+	params := map[string]string{}
+	cfg := ParseTelemetryConfig(params)
+
+	if cfg.ClientExplicit {
+		t.Error("Expected ClientExplicit=false when enableTelemetry DSN param is absent")
+	}
+}
+
+func TestParseTelemetryConfig_AllParams(t *testing.T) {
+	params := map[string]string{
+		"enableTelemetry":          "true",
+		"telemetry_batch_size":     "200",
+		"telemetry_flush_interval": "30s",
+		"telemetry_retry_count":    "5",
+		"telemetry_retry_delay":    "250ms",
+	}
+	cfg := ParseTelemetryConfig(params)
+
+	if !cfg.EnableTelemetry {
+		t.Error("Expected EnableTelemetry to be true")
+	}
+	if !cfg.ClientExplicit {
+		t.Error("Expected ClientExplicit to be true")
+	}
+	if cfg.BatchSize != 200 {
+		t.Errorf("Expected BatchSize 200, got %d", cfg.BatchSize)
+	}
+	if cfg.FlushInterval != 30*time.Second {
+		t.Errorf("Expected FlushInterval 30s, got %v", cfg.FlushInterval)
+	}
+	if cfg.MaxRetries != 5 {
+		t.Errorf("Expected MaxRetries 5, got %d", cfg.MaxRetries)
+	}
+	if cfg.RetryDelay != 250*time.Millisecond {
+		t.Errorf("Expected RetryDelay 250ms, got %v", cfg.RetryDelay)
+	}
+}
+
 // TestIsTelemetryEnabled_ExplicitOptOut tests Priority 1 (client opt-out): enableTelemetry=false
+// Client explicitly opts out via DSN — server flag is NOT consulted.
 func TestIsTelemetryEnabled_ExplicitOptOut(t *testing.T) {
 	// Setup: Create a server that returns enabled
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Even if server says enabled, explicit opt-out should disable
+		// Even if server says enabled, explicit client opt-out must win
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"flags": [{"name": "databricks.partnerplatform.clientConfigsFeatureFlags.enableTelemetryForGoDriver", "value": "true"}], "ttl_seconds": 300}`))
 	}))
 	defer server.Close()
 
 	cfg := &Config{
-		EnableTelemetry: false, // Priority 2: Explicit opt-out
+		EnableTelemetry: false, // Client explicitly disabled via DSN
+		ClientExplicit:  true,  // Marks that client set this, overriding server
 	}
 
 	ctx := context.Background()
@@ -209,12 +318,32 @@ func TestIsTelemetryEnabled_ExplicitOptOut(t *testing.T) {
 	result := isTelemetryEnabled(ctx, cfg, server.URL, "test-version", httpClient)
 
 	if result {
-		t.Error("Expected telemetry to be disabled with EnableTelemetry=false, got enabled")
+		t.Error("Expected telemetry to be disabled with ClientExplicit=true, EnableTelemetry=false, got enabled")
 	}
 }
 
-// TestIsTelemetryEnabled_UserOptInServerEnabled tests Priority 1 (client opt-in): user opts in + server enabled
+// TestIsTelemetryEnabled_UserOptInServerEnabled tests Priority 1 (client opt-in): client DSN=true → enabled,
+// server flag is NOT consulted when client explicitly sets enableTelemetry=true.
 func TestIsTelemetryEnabled_UserOptInServerEnabled(t *testing.T) {
+	cfg := &Config{
+		EnableTelemetry: true, // Client explicitly enabled via DSN
+		ClientExplicit:  true, // Marks that client set this, overriding server
+	}
+
+	ctx := context.Background()
+	httpClient := &http.Client{Timeout: 5 * time.Second}
+
+	// No server setup needed — client override skips server flag check entirely.
+	result := isTelemetryEnabled(ctx, cfg, "http://unreachable-host", "test-version", httpClient)
+
+	if !result {
+		t.Error("Expected telemetry to be enabled with ClientExplicit=true, EnableTelemetry=true, got disabled")
+	}
+}
+
+// TestIsTelemetryEnabled_DefaultChecksServerFlag tests Priority 2: when no DSN param is set,
+// the server feature flag controls enablement.
+func TestIsTelemetryEnabled_DefaultChecksServerFlag(t *testing.T) {
 	// Setup: Create a server that returns enabled
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -223,7 +352,7 @@ func TestIsTelemetryEnabled_UserOptInServerEnabled(t *testing.T) {
 	defer server.Close()
 
 	cfg := &Config{
-		EnableTelemetry: true, // User wants telemetry
+		// ClientExplicit=false (zero value): no DSN setting, server flag controls
 	}
 
 	ctx := context.Background()
@@ -237,12 +366,33 @@ func TestIsTelemetryEnabled_UserOptInServerEnabled(t *testing.T) {
 	result := isTelemetryEnabled(ctx, cfg, server.URL, "test-version", httpClient)
 
 	if !result {
-		t.Error("Expected telemetry to be enabled when user opts in and server allows, got disabled")
+		t.Error("Expected telemetry to be enabled when server flag is true and no client DSN override, got disabled")
 	}
 }
 
-// TestIsTelemetryEnabled_UserOptInServerDisabled tests: user opts in but server disabled
+// TestIsTelemetryEnabled_UserOptInServerDisabled tests Priority 1 (client wins over server):
+// client explicitly sets enableTelemetry=true, server returns disabled → client wins → enabled.
 func TestIsTelemetryEnabled_UserOptInServerDisabled(t *testing.T) {
+	cfg := &Config{
+		EnableTelemetry: true, // Client explicitly enabled via DSN
+		ClientExplicit:  true, // Client overrides server
+	}
+
+	ctx := context.Background()
+	httpClient := &http.Client{Timeout: 5 * time.Second}
+
+	// No real server needed — client explicit setting skips server flag check.
+	result := isTelemetryEnabled(ctx, cfg, "http://unreachable-host", "test-version", httpClient)
+
+	// Client explicitly opted in — result must be true regardless of server.
+	if !result {
+		t.Error("Expected telemetry to be enabled when client explicitly opts in (client overrides server), got disabled")
+	}
+}
+
+// TestIsTelemetryEnabled_DefaultServerDisabled tests Priority 2: when no DSN param is set
+// and server flag is disabled, telemetry is disabled.
+func TestIsTelemetryEnabled_DefaultServerDisabled(t *testing.T) {
 	// Setup: Create a server that returns disabled
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -251,7 +401,7 @@ func TestIsTelemetryEnabled_UserOptInServerDisabled(t *testing.T) {
 	defer server.Close()
 
 	cfg := &Config{
-		EnableTelemetry: true, // User wants telemetry
+		// ClientExplicit=false (zero value): no DSN setting, server flag controls
 	}
 
 	ctx := context.Background()
@@ -265,11 +415,13 @@ func TestIsTelemetryEnabled_UserOptInServerDisabled(t *testing.T) {
 	result := isTelemetryEnabled(ctx, cfg, server.URL, "test-version", httpClient)
 
 	if result {
-		t.Error("Expected telemetry to be disabled when server disables it, got enabled")
+		t.Error("Expected telemetry to be disabled when server flag is false and no client DSN override, got enabled")
 	}
 }
 
-// TestIsTelemetryEnabled_ServerFlagOnly tests: default EnableTelemetry=false is always disabled
+// TestIsTelemetryEnabled_ServerFlagOnly tests Priority 2 (server flag controls):
+// when no DSN setting is provided, the server feature flag alone decides.
+// Server returns true → telemetry enabled.
 func TestIsTelemetryEnabled_ServerFlagOnly(t *testing.T) {
 	// Setup: Create a server that returns enabled
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -279,7 +431,7 @@ func TestIsTelemetryEnabled_ServerFlagOnly(t *testing.T) {
 	defer server.Close()
 
 	cfg := &Config{
-		EnableTelemetry: false, // Default: no explicit user preference
+		// ClientExplicit=false, EnableTelemetry=false (zero values): no DSN override, server decides
 	}
 
 	ctx := context.Background()
@@ -292,9 +444,9 @@ func TestIsTelemetryEnabled_ServerFlagOnly(t *testing.T) {
 
 	result := isTelemetryEnabled(ctx, cfg, server.URL, "test-version", httpClient)
 
-	// When enableTelemetry is false (default), should return false (Priority 2)
-	if result {
-		t.Error("Expected telemetry to be disabled with default EnableTelemetry=false, got enabled")
+	// No client DSN override → server controls → server says true → enabled
+	if !result {
+		t.Error("Expected telemetry to be enabled when server flag is true and no client DSN override, got disabled")
 	}
 }
 
@@ -312,7 +464,8 @@ func TestIsTelemetryEnabled_Default(t *testing.T) {
 	}
 }
 
-// TestIsTelemetryEnabled_ServerError tests error handling
+// TestIsTelemetryEnabled_ServerError tests Priority 3 (default disabled):
+// when no client DSN override and server flag check errors, telemetry is disabled.
 func TestIsTelemetryEnabled_ServerError(t *testing.T) {
 	// Setup: Create a server that returns error
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -321,7 +474,7 @@ func TestIsTelemetryEnabled_ServerError(t *testing.T) {
 	defer server.Close()
 
 	cfg := &Config{
-		EnableTelemetry: true, // User wants telemetry
+		// ClientExplicit=false: no DSN override, server flag controls
 	}
 
 	ctx := context.Background()
@@ -334,16 +487,17 @@ func TestIsTelemetryEnabled_ServerError(t *testing.T) {
 
 	result := isTelemetryEnabled(ctx, cfg, server.URL, "test-version", httpClient)
 
-	// On error, should default to disabled
+	// Server error with no client override → default disabled
 	if result {
-		t.Error("Expected telemetry to be disabled on server error, got enabled")
+		t.Error("Expected telemetry to be disabled on server error (no client DSN override), got enabled")
 	}
 }
 
-// TestIsTelemetryEnabled_ServerUnreachable tests unreachable server
+// TestIsTelemetryEnabled_ServerUnreachable tests Priority 3 (default disabled):
+// when no client DSN override and server is unreachable, telemetry is disabled.
 func TestIsTelemetryEnabled_ServerUnreachable(t *testing.T) {
 	cfg := &Config{
-		EnableTelemetry: true, // User wants telemetry
+		// ClientExplicit=false: no DSN override, server flag controls
 	}
 
 	ctx := context.Background()
@@ -357,8 +511,8 @@ func TestIsTelemetryEnabled_ServerUnreachable(t *testing.T) {
 
 	result := isTelemetryEnabled(ctx, cfg, unreachableHost, "test-version", httpClient)
 
-	// On error, should default to disabled
+	// Unreachable server with no client override → default disabled
 	if result {
-		t.Error("Expected telemetry to be disabled when server unreachable, got enabled")
+		t.Error("Expected telemetry to be disabled when server unreachable (no client DSN override), got enabled")
 	}
 }

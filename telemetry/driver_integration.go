@@ -18,6 +18,10 @@ import (
 //   - driverVersion: Driver version string
 //   - httpClient: HTTP client for making requests
 //   - enableTelemetry: Client config overlay (unset = check server flag, true/false = override server)
+//   - batchSize: Number of metrics per batch (0 = use default)
+//   - flushInterval: Flush interval (0 = use default)
+//   - retryCount: Max retry attempts (0 = use default)
+//   - retryDelay: Base delay between retries (0 = use default)
 //
 // Returns:
 //   - *Interceptor: Telemetry interceptor if enabled, nil otherwise
@@ -29,23 +33,29 @@ func InitializeForConnection(
 	enableTelemetry config.ConfigValue[bool],
 	batchSize int,
 	flushInterval time.Duration,
+	retryCount int,
+	retryDelay time.Duration,
 ) *Interceptor {
 	// Create telemetry config and apply client overlay.
-	// ConfigValue[bool] semantics:
-	//   - unset  → true (let server feature flag decide)
-	//   - true   → true (server feature flag still consulted)
-	//   - false  → false (explicitly disabled, skip server flag check)
+	// Priority: client DSN > server feature flag > default (disabled).
 	cfg := DefaultConfig()
 	if val, isSet := enableTelemetry.Get(); isSet {
+		// Client explicitly set enableTelemetry via DSN — overrides server flag.
 		cfg.EnableTelemetry = val
-	} else {
-		cfg.EnableTelemetry = true // Unset: default to enabled, server flag decides
+		cfg.ClientExplicit = true
 	}
+	// When unset: ClientExplicit=false, server feature flag controls enablement.
 	if batchSize > 0 {
 		cfg.BatchSize = batchSize
 	}
 	if flushInterval > 0 {
 		cfg.FlushInterval = flushInterval
+	}
+	if retryCount > 0 {
+		cfg.MaxRetries = retryCount
+	}
+	if retryDelay > 0 {
+		cfg.RetryDelay = retryDelay
 	}
 
 	// Get feature flag cache context FIRST (for reference counting)
