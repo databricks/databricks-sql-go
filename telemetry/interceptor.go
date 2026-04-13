@@ -20,6 +20,12 @@ type metricContext struct {
 	statementID string
 	startTime   time.Time
 	tags        map[string]interface{}
+
+	// capturedLatencyMs is set by FinalizeLatency() to freeze the execute-phase
+	// latency before row iteration begins.  AfterExecute uses this value instead
+	// of re-measuring from startTime (which would include row-scan time).
+	capturedLatencyMs int64
+	latencyCaptured   bool
 }
 
 type contextKey int
@@ -83,6 +89,22 @@ func (i *Interceptor) BeforeExecuteWithTime(ctx context.Context, sessionID strin
 	return withMetricContext(ctx, mc)
 }
 
+// FinalizeLatency freezes the elapsed time as the statement's execution latency.
+// Call this when the execute phase is complete (i.e. when QueryContext returns) so
+// that AfterExecute, even if called later from rows.Close(), still reports
+// execute-only latency rather than total latency that would include row iteration.
+// Exported for use by the driver package.
+func (i *Interceptor) FinalizeLatency(ctx context.Context) {
+	if !i.enabled {
+		return
+	}
+	mc := getMetricContext(ctx)
+	if mc != nil && !mc.latencyCaptured {
+		mc.capturedLatencyMs = time.Since(mc.startTime).Milliseconds()
+		mc.latencyCaptured = true
+	}
+}
+
 // AfterExecute is called after statement execution.
 // Records the metric with timing and error information.
 // Exported for use by the driver package.
@@ -103,12 +125,20 @@ func (i *Interceptor) AfterExecute(ctx context.Context, err error) {
 		}
 	}()
 
+	// Use pre-captured latency if available (set by FinalizeLatency), otherwise
+	// fall back to measuring from startTime (covers the error-path where
+	// FinalizeLatency was never called).
+	latencyMs := time.Since(mc.startTime).Milliseconds()
+	if mc.latencyCaptured {
+		latencyMs = mc.capturedLatencyMs
+	}
+
 	metric := &telemetryMetric{
 		metricType:  "statement",
 		timestamp:   mc.startTime,
 		sessionID:   mc.sessionID,
 		statementID: mc.statementID,
-		latencyMs:   time.Since(mc.startTime).Milliseconds(),
+		latencyMs:   latencyMs,
 		tags:        mc.tags,
 	}
 

@@ -207,25 +207,34 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 	log, ctx = client.LoggerAndContext(ctx, exStmtResp)
 	defer log.Duration(msg, start)
 
-	// Telemetry: track statement execution
+	// Telemetry: set up metric context for the statement.
+	// BeforeExecuteWithTime anchors startTime to before runQuery() ran.
 	var statementID string
 	if c.telemetry != nil && exStmtResp != nil && exStmtResp.OperationHandle != nil && exStmtResp.OperationHandle.OperationId != nil {
 		statementID = client.SprintGuid(exStmtResp.OperationHandle.OperationId.GUID)
-		// Use BeforeExecuteWithTime to set the correct start time (before execution)
 		ctx = c.telemetry.BeforeExecuteWithTime(ctx, c.id, statementID, executeStart)
 		c.telemetry.AddTag(ctx, "operation_type", telemetry.OperationTypeExecuteStatement)
-		defer func() {
-			c.telemetry.AfterExecute(ctx, err)
-			c.telemetry.CompleteStatement(ctx, statementID, err != nil)
-		}()
 	}
 
 	if err != nil {
+		// Error path: finalize and emit the EXECUTE_STATEMENT metric immediately —
+		// there are no rows to iterate so the metric is complete right now.
+		if c.telemetry != nil && statementID != "" {
+			c.telemetry.AfterExecute(ctx, err)
+			c.telemetry.CompleteStatement(ctx, statementID, true)
+		}
 		log.Err(err).Msg("databricks: failed to run query") // To log query we need to redact credentials
 		return nil, dbsqlerrint.NewExecutionError(ctx, dbsqlerr.ErrQueryExecution, err, opStatusResp)
 	}
 
-	// Per-chunk timing state captured in the closure below.
+	// Success path: freeze execute latency NOW (before row iteration inflates time.Since).
+	// AfterExecute/CompleteStatement are called from closeCallback after all chunks
+	// are fetched, so the final metric carries complete chunk timing data.
+	if c.telemetry != nil && statementID != "" {
+		c.telemetry.FinalizeLatency(ctx)
+	}
+
+	// Per-chunk timing state accumulated across all fetchResultPage calls.
 	var (
 		chunkTimingInitialMs  int64
 		chunkTimingSlowestMs  int64
@@ -234,7 +243,7 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 		chunkTotalPresent     int32
 	)
 
-	// Telemetry callback for tracking row fetching metrics
+	// Telemetry callback invoked after each result page is fetched.
 	telemetryUpdate := func(chunkCount int, bytesDownloaded int64, chunkIndex int, chunkLatencyMs int64, totalChunksPresent int32) {
 		if c.telemetry == nil {
 			return
@@ -257,16 +266,29 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 			c.telemetry.AddTag(ctx, "chunk_sum_latency_ms", chunkTimingSumMs)
 		}
 
-		// Record total chunks present from first server report.
+		// Record server-reported total chunks from first non-zero report.
 		if totalChunksPresent > 0 && chunkTotalPresent == 0 {
 			chunkTotalPresent = totalChunksPresent
 			c.telemetry.AddTag(ctx, "chunk_total_present", int(chunkTotalPresent))
 		}
 	}
 
-	// Telemetry callback for CLOSE_STATEMENT — fired from rows.Close()
+	// closeCallback is invoked from rows.Close() after all rows have been consumed.
+	// At that point chunk timing is fully accumulated in ctx tags, so we finalize
+	// EXECUTE_STATEMENT here rather than at QueryContext return time.
 	var closeCallback func(latencyMs int64, err error)
-	if c.telemetry != nil {
+	if c.telemetry != nil && statementID != "" {
+		interceptor := c.telemetry
+		connID := c.id
+		stmtID := statementID
+		closeCallback = func(latencyMs int64, closeErr error) {
+			// Emit EXECUTE_STATEMENT with complete chunk data now that iteration is done.
+			interceptor.AfterExecute(ctx, nil)
+			interceptor.CompleteStatement(ctx, stmtID, false)
+			// Emit CLOSE_STATEMENT as a separate operation event.
+			interceptor.RecordOperation(ctx, connID, telemetry.OperationTypeCloseStatement, latencyMs, closeErr)
+		}
+	} else if c.telemetry != nil {
 		interceptor := c.telemetry
 		connID := c.id
 		closeCallback = func(latencyMs int64, closeErr error) {
