@@ -1,22 +1,24 @@
-version: "2"
-
 linters:
   disable-all: true
   enable:
     - bodyclose
-    # - depguard  # config was flagging all legitimate imports; needs proper file-scoped rules to be useful
+    - deadcode
+    - depguard
     - dogsled
     # - dupl
     - errcheck
+    # - exportloopref
     # - funlen
     # - gochecknoinits
     # - goconst
     # - gocritic
     # - gocyclo
+    - gofmt
     # - goimports
-    # - mnd
+    # - gomnd
     - goprintffuncname
     - gosec
+    - gosimple
     - govet
     - ineffassign
     # - lll
@@ -25,30 +27,38 @@ linters:
     # - noctx
     - nolintlint
     - staticcheck
+    - structcheck
     # - stylecheck
+    - typecheck
     # - unconvert
     # - unparam
     - unused
+    - varcheck
     # - whitespace
 
   # don't enable:
   # - asciicheck
+  # - scopelint
   # - gochecknoglobals
   # - gocognit
   # - godot
   # - godox
-  # - err113
-  # - ireturn
+  # - goerr113
+  # - interfacer
+  # - maligned
   # - nestif
+  # - prealloc
   # - testpackage
   # - revive
-
-formatters:
-  enable:
-    - gofmt
-    # - goimports
+  # - wsl
 
 linters-settings:
+  depguard:
+    rules:
+      main:
+        allow:
+          - $gostd
+          - github.com/databricks/databricks-sql-go
   gosec:
     exclude-generated: true
     severity: "low"
