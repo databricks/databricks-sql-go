@@ -227,7 +227,7 @@ func (a *chunkTimingAccumulator) record(latencyMs int64) bool {
 }
 
 // applyTags writes the current timing state to the telemetry context.
-func (a *chunkTimingAccumulator) applyTags(interceptor *telemetry.Interceptor, ctx context.Context) {
+func (a *chunkTimingAccumulator) applyTags(ctx context.Context, interceptor *telemetry.Interceptor) {
 	interceptor.AddTag(ctx, telemetry.TagChunkInitialLatencyMs, a.initialMs)
 	interceptor.AddTag(ctx, telemetry.TagChunkSlowestLatencyMs, a.slowestMs)
 	interceptor.AddTag(ctx, telemetry.TagChunkSumLatencyMs, a.sumMs)
@@ -298,7 +298,7 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 
 		// Aggregate per-chunk fetch latencies (skip direct results where latency is 0).
 		if timing.record(chunkLatencyMs) {
-			timing.applyTags(c.telemetry, ctx)
+			timing.applyTags(ctx, c.telemetry)
 		}
 		// chunk_total_present is set definitively in closeCallback once all pages are known.
 	}
@@ -312,7 +312,7 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 		cloudFetchCallback = func(downloadMs int64) {
 			timing.cloudFetchFileCount++ // always count files for chunk_total_present, even sub-ms downloads
 			if timing.record(downloadMs) {
-				timing.applyTags(c.telemetry, ctx)
+				timing.applyTags(ctx, c.telemetry)
 			}
 		}
 	}
@@ -330,7 +330,7 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 		connID := c.id
 		stmtID := statementID
 		// Detach from caller's context so cancellation doesn't lose telemetry.
-		telemetryCtx := context.WithoutCancel(ctx)
+		telemetryCtx := context2.WithoutCancel(ctx)
 		closeCallback = func(latencyMs int64, chunkCount int, iterErr error, closeErr error) {
 			// Set chunk_total_present to the definitive total now that all iteration is done.
 			// For CloudFetch, use cloudFetchFileCount (actual S3 downloads) — this handles
@@ -352,7 +352,7 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 	} else if c.telemetry != nil {
 		interceptor := c.telemetry
 		connID := c.id
-		telemetryCtx := context.WithoutCancel(ctx)
+		telemetryCtx := context2.WithoutCancel(ctx)
 		closeCallback = func(latencyMs int64, _ int, _ error, closeErr error) {
 			interceptor.RecordOperation(telemetryCtx, connID, "", telemetry.OperationTypeCloseStatement, latencyMs, closeErr)
 		}

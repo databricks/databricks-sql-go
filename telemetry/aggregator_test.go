@@ -311,7 +311,7 @@ func TestAggregatorClose_RespectsContextTimeout(t *testing.T) {
 	agg.recordMetric(context.Background(), &telemetryMetric{
 		metricType: "operation",
 		timestamp:  time.Now(),
-		tags:       map[string]interface{}{"operation_type": OperationTypeCloseStatement},
+		tags:       map[string]interface{}{TagOperationType: OperationTypeCloseStatement},
 	})
 
 	// Wait for the worker to actually start the HTTP request, rather than using

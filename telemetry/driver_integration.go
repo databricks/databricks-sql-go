@@ -59,9 +59,15 @@ func InitializeForConnection(ctx context.Context, opts TelemetryInitOptions) *In
 	}
 	if opts.RetryCount >= 0 {
 		cfg.MaxRetries = opts.RetryCount
+		if cfg.MaxRetries > maxTelemetryRetryCount {
+			cfg.MaxRetries = maxTelemetryRetryCount
+		}
 	}
 	if opts.RetryDelay > 0 {
 		cfg.RetryDelay = opts.RetryDelay
+		if cfg.RetryDelay > maxTelemetryRetryDelay {
+			cfg.RetryDelay = maxTelemetryRetryDelay
+		}
 	}
 
 	// Get feature flag cache context FIRST (for reference counting)
