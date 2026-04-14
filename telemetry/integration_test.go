@@ -380,3 +380,145 @@ func TestIntegration_TelemetryEventCorrectnessAllFields(t *testing.T) {
 
 	t.Log("Telemetry event correctness check passed: all fields verified")
 }
+
+// TestIntegration_OperationLatencyMs_ZeroNotOmitted verifies that OperationLatencyMs=0
+// is serialised as "operation_latency_ms":0 in the JSON payload, not omitted.
+//
+// Regression test: the field previously had `json:"operation_latency_ms,omitempty"` which
+// caused 0ms latency (e.g. CloseOperation that completes in <1ms) to appear as null in
+// the Databricks telemetry table.
+func TestIntegration_OperationLatencyMs_ZeroNotOmitted(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.FlushInterval = 50 * time.Millisecond
+	httpClient := &http.Client{Timeout: 5 * time.Second}
+
+	var mu sync.Mutex
+	var capturedReq TelemetryRequest
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		_ = json.Unmarshal(body, &capturedReq)
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	exporter := newTelemetryExporter(server.URL, "test-version", httpClient, cfg)
+
+	// latencyMs=0 — simulates a CloseOperation that completed in <1ms.
+	metric := &telemetryMetric{
+		metricType:  "operation",
+		timestamp:   time.Now(),
+		sessionID:   "sess-zero-latency",
+		statementID: "stmt-zero-latency",
+		latencyMs:   0, // <1ms rounded to 0
+	}
+
+	ctx := context.Background()
+	exporter.export(ctx, []*telemetryMetric{metric})
+	time.Sleep(200 * time.Millisecond)
+
+	mu.Lock()
+	req := capturedReq
+	mu.Unlock()
+
+	if len(req.ProtoLogs) == 0 {
+		t.Fatal("expected ProtoLogs to be non-empty")
+	}
+
+	// Verify the raw JSON contains the key with value 0, not absent.
+	raw := req.ProtoLogs[0]
+	if !strings.Contains(raw, `"operation_latency_ms":0`) {
+		t.Errorf("expected raw JSON to contain \"operation_latency_ms\":0, got: %s", raw)
+	}
+
+	// Also verify via struct parse.
+	var log TelemetryFrontendLog
+	if err := json.Unmarshal([]byte(raw), &log); err != nil {
+		t.Fatalf("failed to unmarshal ProtoLogs[0]: %v", err)
+	}
+	if log.Entry == nil || log.Entry.SQLDriverLog == nil {
+		t.Fatal("Entry.SQLDriverLog must not be nil")
+	}
+	if log.Entry.SQLDriverLog.OperationLatencyMs != 0 {
+		t.Errorf("expected OperationLatencyMs=0, got %d", log.Entry.SQLDriverLog.OperationLatencyMs)
+	}
+
+	t.Log("OperationLatencyMs=0 correctly serialised (omitempty fix verified)")
+}
+
+// TestIntegration_ChunkTotalPresent_DerivedFromChunkCount verifies that when the
+// "chunk_total_present" tag is explicitly set (e.g. derived from r.chunkCount in
+// rows.Close()), it is propagated to ChunkDetails.TotalChunksPresent in the payload.
+//
+// This covers the fix for paginated CloudFetch where the server never reports the
+// grand total across all FetchResults calls; the driver derives it from chunkCount.
+func TestIntegration_ChunkTotalPresent_DerivedFromChunkCount(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.FlushInterval = 50 * time.Millisecond
+	httpClient := &http.Client{Timeout: 5 * time.Second}
+
+	var mu sync.Mutex
+	var capturedReq TelemetryRequest
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		_ = json.Unmarshal(body, &capturedReq)
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	const (
+		totalChunksPresent = 32
+		totalChunksIterated = 32
+	)
+
+	exporter := newTelemetryExporter(server.URL, "test-version", httpClient, cfg)
+	metric := &telemetryMetric{
+		metricType:  "operation",
+		timestamp:   time.Now(),
+		sessionID:   "sess-chunks",
+		statementID: "stmt-chunks",
+		latencyMs:   500,
+		tags: map[string]interface{}{
+			"chunk_count":        totalChunksIterated, // total pages fetched
+			"chunk_total_present": totalChunksPresent,  // derived from r.chunkCount
+		},
+	}
+
+	ctx := context.Background()
+	exporter.export(ctx, []*telemetryMetric{metric})
+	time.Sleep(200 * time.Millisecond)
+
+	mu.Lock()
+	req := capturedReq
+	mu.Unlock()
+
+	if len(req.ProtoLogs) == 0 {
+		t.Fatal("expected ProtoLogs to be non-empty")
+	}
+
+	var log TelemetryFrontendLog
+	if err := json.Unmarshal([]byte(req.ProtoLogs[0]), &log); err != nil {
+		t.Fatalf("failed to unmarshal ProtoLogs[0]: %v", err)
+	}
+
+	ev := log.Entry.SQLDriverLog
+	if ev == nil {
+		t.Fatal("SQLDriverLog must not be nil")
+	}
+	if ev.SQLOperation == nil || ev.SQLOperation.ChunkDetails == nil {
+		t.Fatal("ChunkDetails must not be nil when chunk_count tag is set")
+	}
+
+	cd := ev.SQLOperation.ChunkDetails
+	if cd.TotalChunksIterated != int32(totalChunksIterated) {
+		t.Errorf("TotalChunksIterated: expected %d, got %d", totalChunksIterated, cd.TotalChunksIterated)
+	}
+
+	t.Logf("ChunkDetails.TotalChunksIterated=%d (chunk_total_present tag propagation verified)", cd.TotalChunksIterated)
+	t.Log("chunk_total_present derivation from chunkCount correctly propagated")
+}

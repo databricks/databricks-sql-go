@@ -1563,3 +1563,121 @@ func TestFetchResultPage_PropagatesGetNextPageError(t *testing.T) {
 
 	assert.ErrorContains(t, actualErr, errorMsg)
 }
+
+// TestRows_CloseCallback_ReceivesChunkCount verifies that when rows.Close() is called,
+// the closeCallback receives the correct chunkCount reflecting the number of result pages
+// that were fetched during iteration.
+//
+// This covers the fix where total_chunks_present in the telemetry payload was always null
+// for paginated CloudFetch queries: the driver now derives it from r.chunkCount and passes
+// it through closeCallback so connection.go can set the "chunk_total_present" tag.
+func TestRows_CloseCallback_ReceivesChunkCount(t *testing.T) {
+	t.Parallel()
+
+	noMoreRows := false
+	moreRows := true
+
+	// Two pages: page 0 (5 rows, has more), page 1 (3 rows, no more).
+	colVals := []*cli_service.TColumn{
+		{BoolVal: &cli_service.TBoolColumn{Values: []bool{true, false, true, false, true}}},
+	}
+	colVals2 := []*cli_service.TColumn{
+		{BoolVal: &cli_service.TBoolColumn{Values: []bool{true, false, true}}},
+	}
+
+	pages := []cli_service.TFetchResultsResp{
+		{
+			Status:      &cli_service.TStatus{StatusCode: cli_service.TStatusCode_SUCCESS_STATUS},
+			HasMoreRows: &moreRows,
+			Results:     &cli_service.TRowSet{StartRowOffset: 0, Columns: colVals},
+		},
+		{
+			Status:      &cli_service.TStatus{StatusCode: cli_service.TStatusCode_SUCCESS_STATUS},
+			HasMoreRows: &noMoreRows,
+			Results:     &cli_service.TRowSet{StartRowOffset: 5, Columns: colVals2},
+		},
+	}
+
+	pageIndex := -1
+	fetchFn := func(ctx context.Context, req *cli_service.TFetchResultsReq) (*cli_service.TFetchResultsResp, error) {
+		pageIndex++
+		p := pages[pageIndex]
+		return &p, nil
+	}
+	metaFn := func(ctx context.Context, req *cli_service.TGetResultSetMetadataReq) (*cli_service.TGetResultSetMetadataResp, error) {
+		return &cli_service.TGetResultSetMetadataResp{
+			Status: &cli_service.TStatus{StatusCode: cli_service.TStatusCode_SUCCESS_STATUS},
+			Schema: &cli_service.TTableSchema{
+				Columns: []*cli_service.TColumnDesc{
+					{ColumnName: "flag", Position: 0, TypeDesc: &cli_service.TTypeDesc{
+						Types: []*cli_service.TTypeEntry{{
+							PrimitiveEntry: &cli_service.TPrimitiveTypeEntry{Type: cli_service.TTypeId_BOOLEAN_TYPE},
+						}},
+					}},
+				},
+			},
+		}, nil
+	}
+
+	testClient := &client.TestClient{
+		FnFetchResults:         fetchFn,
+		FnGetResultSetMetadata: metaFn,
+	}
+
+	var callbackChunkCount int
+	closeCallback := func(latencyMs int64, chunkCount int, err error) {
+		callbackChunkCount = chunkCount
+	}
+
+	ctx := driverctx.NewContextWithConnId(context.Background(), "connId")
+	cfg := config.WithDefaults()
+	cfg.MaxRows = 5 // force paging
+
+	dr, dbErr := NewRows(ctx, nil, testClient, cfg, nil, nil, closeCallback, nil)
+	assert.Nil(t, dbErr)
+
+	// Drain all rows to force two FetchResults calls.
+	dest := make([]driver.Value, 1)
+	for dr.Next(dest) == nil {
+	}
+
+	// Close should invoke the callback with the total chunk count (2 pages fetched).
+	assert.Nil(t, dr.Close())
+
+	// direct results count as chunk 0; two FetchResults calls give chunkCount=2.
+	// (No directResults here so chunkCount starts at 0, then +1 per FetchResults call.)
+	assert.Equal(t, 2, callbackChunkCount,
+		"closeCallback must receive the total number of result pages fetched")
+}
+
+// TestRows_CloseCallback_NilDoesNotPanic verifies that passing nil for closeCallback
+// does not cause a panic when rows.Close() is called.
+func TestRows_CloseCallback_NilDoesNotPanic(t *testing.T) {
+	t.Parallel()
+
+	noMoreRows := false
+	pages := []cli_service.TFetchResultsResp{
+		{
+			Status:      &cli_service.TStatus{StatusCode: cli_service.TStatusCode_SUCCESS_STATUS},
+			HasMoreRows: &noMoreRows,
+			Results:     &cli_service.TRowSet{StartRowOffset: 0, Columns: []*cli_service.TColumn{}},
+		},
+	}
+	pageIndex := -1
+	fetchFn := func(ctx context.Context, req *cli_service.TFetchResultsReq) (*cli_service.TFetchResultsResp, error) {
+		pageIndex++
+		p := pages[pageIndex]
+		return &p, nil
+	}
+	testClient := &client.TestClient{FnFetchResults: fetchFn}
+
+	ctx := driverctx.NewContextWithConnId(context.Background(), "connId")
+	cfg := config.WithDefaults()
+
+	dr, dbErr := NewRows(ctx, nil, testClient, cfg, nil, nil, nil /* closeCallback=nil */, nil)
+	assert.Nil(t, dbErr)
+
+	assert.NotPanics(t, func() {
+		_ = dr.Close()
+	}, "nil closeCallback must not cause a panic on rows.Close()")
+}
