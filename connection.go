@@ -184,7 +184,7 @@ func (c *conn) ExecContext(ctx context.Context, query string, args []driver.Name
 
 	if stagingErr != nil {
 		log.Err(stagingErr).Msgf("databricks: failed to execute query: query %s", query)
-		return nil, dbsqlerrint.NewExecutionError(ctx, dbsqlerr.ErrQueryExecution, err, opStatusResp)
+		return nil, dbsqlerrint.NewExecutionError(ctx, dbsqlerr.ErrQueryExecution, stagingErr, opStatusResp)
 	}
 
 	res := result{AffectedRows: opStatusResp.GetNumModifiedRows()}
@@ -311,12 +311,12 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 	// closeCallback is invoked from rows.Close() after all rows have been consumed.
 	// At that point chunk timing is fully accumulated in ctx tags, so we finalize
 	// EXECUTE_STATEMENT here rather than at QueryContext return time.
-	var closeCallback func(latencyMs int64, chunkCount int, err error)
+	var closeCallback func(latencyMs int64, chunkCount int, iterErr error, closeErr error)
 	if c.telemetry != nil && statementID != "" {
 		interceptor := c.telemetry
 		connID := c.id
 		stmtID := statementID
-		closeCallback = func(latencyMs int64, chunkCount int, closeErr error) {
+		closeCallback = func(latencyMs int64, chunkCount int, iterErr error, closeErr error) {
 			// Set chunk_total_present to the definitive total now that all iteration is done.
 			// For CloudFetch, use cloudFetchFileCount (actual S3 downloads) — this handles
 			// both paginated CF (1 link/page, so file count == page count) and bulk CF
@@ -327,18 +327,17 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 			} else if chunkCount > 0 {
 				interceptor.AddTag(ctx, "chunk_total_present", chunkCount)
 			}
-			// Emit EXECUTE_STATEMENT with complete chunk data now that iteration is done.
-			// closeErr carries the first iteration error (from Next/fetchResultPage)
-			// if row consumption failed, or the CloseOperation RPC error otherwise.
-			interceptor.AfterExecute(ctx, closeErr)
-			interceptor.CompleteStatement(ctx, stmtID, closeErr != nil)
-			// Emit CLOSE_STATEMENT as a separate operation event.
+			// EXECUTE_STATEMENT uses the iteration error (row consumption failure)
+			// to correctly report whether the statement succeeded or failed.
+			interceptor.AfterExecute(ctx, iterErr)
+			interceptor.CompleteStatement(ctx, stmtID, iterErr != nil)
+			// CLOSE_STATEMENT uses the actual CloseOperation RPC error.
 			interceptor.RecordOperation(ctx, connID, stmtID, telemetry.OperationTypeCloseStatement, latencyMs, closeErr)
 		}
 	} else if c.telemetry != nil {
 		interceptor := c.telemetry
 		connID := c.id
-		closeCallback = func(latencyMs int64, _ int, closeErr error) {
+		closeCallback = func(latencyMs int64, _ int, _ error, closeErr error) {
 			interceptor.RecordOperation(ctx, connID, "", telemetry.OperationTypeCloseStatement, latencyMs, closeErr)
 		}
 	}

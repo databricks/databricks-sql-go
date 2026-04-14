@@ -1625,7 +1625,7 @@ func TestRows_CloseCallback_ReceivesChunkCount(t *testing.T) {
 	}
 
 	var callbackChunkCount int
-	closeCallback := func(latencyMs int64, chunkCount int, err error) {
+	closeCallback := func(latencyMs int64, chunkCount int, iterErr error, closeErr error) {
 		callbackChunkCount = chunkCount
 	}
 

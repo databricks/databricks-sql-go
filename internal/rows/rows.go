@@ -71,7 +71,7 @@ type rows struct {
 	// It receives the individual file download duration so that telemetry can track
 	// initial/slowest/sum download times matching JDBC's per-chunk HTTP GET timing.
 	cloudFetchCallback func(downloadMs int64)
-	closeCallback      func(latencyMs int64, chunkCount int, err error)
+	closeCallback      func(latencyMs int64, chunkCount int, iterErr error, closeErr error)
 	chunkCount         int
 	bytesDownloaded    int64
 	iterationErr       error // first error from Next()/fetchResultPage, passed to closeCallback
@@ -90,7 +90,9 @@ type TelemetryCallbacks struct {
 	// OnChunkFetched is called after each result page fetch with chunk-level stats.
 	OnChunkFetched func(chunkCount int, bytesDownloaded int64, chunkIndex int, chunkLatencyMs int64, totalChunksPresent int32)
 	// OnClose is called from rows.Close() after all rows have been consumed.
-	OnClose func(latencyMs int64, chunkCount int, err error)
+	// iterErr is the first error from Next()/fetchResultPage (nil if iteration succeeded).
+	// closeErr is the error from the CloseOperation RPC (nil if close succeeded).
+	OnClose func(latencyMs int64, chunkCount int, iterErr error, closeErr error)
 	// OnCloudFetchFile is called per S3 file download for CloudFetch result sets.
 	OnCloudFetchFile func(downloadMs int64)
 }
@@ -252,13 +254,7 @@ func (r *rows) Close() error {
 		closeStart := time.Now()
 		err := r.ResultPageIterator.Close()
 		if r.closeCallback != nil {
-			// Report the iteration error if any Next() call failed during row
-			// consumption; otherwise report the CloseOperation RPC error.
-			cbErr := r.iterationErr
-			if cbErr == nil {
-				cbErr = err
-			}
-			r.closeCallback(time.Since(closeStart).Milliseconds(), r.chunkCount, cbErr)
+			r.closeCallback(time.Since(closeStart).Milliseconds(), r.chunkCount, r.iterationErr, err)
 		}
 		if err != nil {
 			r.logger().Err(err).Msg(errRowsCloseFailed)
@@ -305,6 +301,7 @@ func (r *rows) Next(dest []driver.Value) error {
 	// Put values into the destination slice
 	err = r.ScanRow(dest, r.nextRowNumber)
 	if err != nil {
+		r.trackIterationErr(err)
 		return err
 	}
 
