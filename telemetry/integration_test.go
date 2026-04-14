@@ -472,7 +472,7 @@ func TestIntegration_ChunkTotalPresent_DerivedFromChunkCount(t *testing.T) {
 	defer server.Close()
 
 	const (
-		totalChunksPresent = 32
+		totalChunksPresent  = 32
 		totalChunksIterated = 32
 	)
 
@@ -484,7 +484,7 @@ func TestIntegration_ChunkTotalPresent_DerivedFromChunkCount(t *testing.T) {
 		statementID: "stmt-chunks",
 		latencyMs:   500,
 		tags: map[string]interface{}{
-			"chunk_count":        totalChunksIterated, // total pages fetched
+			"chunk_count":         totalChunksIterated, // total pages fetched
 			"chunk_total_present": totalChunksPresent,  // derived from r.chunkCount
 		},
 	}

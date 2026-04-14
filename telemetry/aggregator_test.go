@@ -12,18 +12,6 @@ import (
 	"time"
 )
 
-// slowExporter wraps a real HTTP server but adds a configurable delay per export
-// so we can reliably test the inFlight.Wait() shutdown ordering.
-type slowExporter struct {
-	*telemetryExporter
-	delay time.Duration
-}
-
-func (s *slowExporter) export(ctx context.Context, metrics []*telemetryMetric) {
-	time.Sleep(s.delay)
-	s.telemetryExporter.export(ctx, metrics)
-}
-
 // TestAggregatorClose_WaitsForInFlightWorkerExports verifies that close() does not
 // return until every metric picked up by an export worker has been delivered.
 //

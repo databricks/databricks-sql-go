@@ -35,7 +35,7 @@ type metricsAggregator struct {
 	closeOnce   sync.Once
 	ctx         context.Context // Cancellable context — cancelled on close to stop workers
 	cancel      context.CancelFunc
-	exportQueue chan exportJob  // Worker queue; drop batch only when full (matches JDBC LinkedBlockingQueue)
+	exportQueue chan exportJob // Worker queue; drop batch only when full (matches JDBC LinkedBlockingQueue)
 	inFlight    sync.WaitGroup // tracks jobs submitted to exportQueue but not yet exported
 }
 
