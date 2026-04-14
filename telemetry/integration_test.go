@@ -247,9 +247,9 @@ func TestIntegration_TelemetryEventCorrectnessAllFields(t *testing.T) {
 		latencyMs:   testLatencyMs,
 		errorType:   testErrorName,
 		tags: map[string]interface{}{
-			TagOperationType:    testOperationType,
-			TagResultChunkCount: testChunkCount,
-			TagPollCount:        testPollCount,
+			TagOperationType: testOperationType,
+			TagChunkCount:    testChunkCount,
+			TagPollCount:     testPollCount,
 		},
 	}
 
@@ -484,7 +484,7 @@ func TestIntegration_ChunkTotalPresent_DerivedFromChunkCount(t *testing.T) {
 		statementID: "stmt-chunks",
 		latencyMs:   500,
 		tags: map[string]interface{}{
-			TagResultChunkCount: totalChunksIterated, // total pages fetched
+			TagChunkCount:        totalChunksIterated, // total pages fetched
 			TagChunkTotalPresent: totalChunksPresent,  // derived from r.chunkCount
 		},
 	}

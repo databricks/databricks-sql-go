@@ -1975,6 +1975,59 @@ func TestConn_execStagingOperation(t *testing.T) {
 	})
 }
 
+func TestChunkTimingAccumulator_Record(t *testing.T) {
+	tests := []struct {
+		name       string
+		latencies  []int64
+		wantInit   int64
+		wantSlow   int64
+		wantSum    int64
+		wantReturn []bool
+	}{
+		{"zero latency skipped", []int64{0}, 0, 0, 0, []bool{false}},
+		{"negative skipped", []int64{-5}, 0, 0, 0, []bool{false}},
+		{"single positive", []int64{10}, 10, 10, 10, []bool{true}},
+		{"initial preserved across calls", []int64{10, 20}, 10, 20, 30, []bool{true, true}},
+		{"slowest tracks max not last", []int64{30, 10, 50}, 30, 50, 90, []bool{true, true, true}},
+		{"zero interleaved skipped", []int64{10, 0, 20}, 10, 20, 30, []bool{true, false, true}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var a chunkTimingAccumulator
+			for i, lat := range tt.latencies {
+				got := a.record(lat)
+				if got != tt.wantReturn[i] {
+					t.Errorf("record(%d) = %v, want %v", lat, got, tt.wantReturn[i])
+				}
+			}
+			if a.initialMs != tt.wantInit {
+				t.Errorf("initialMs = %d, want %d", a.initialMs, tt.wantInit)
+			}
+			if a.slowestMs != tt.wantSlow {
+				t.Errorf("slowestMs = %d, want %d", a.slowestMs, tt.wantSlow)
+			}
+			if a.sumMs != tt.wantSum {
+				t.Errorf("sumMs = %d, want %d", a.sumMs, tt.wantSum)
+			}
+		})
+	}
+}
+
+func TestChunkTimingAccumulator_CloudFetchFileCount(t *testing.T) {
+	var a chunkTimingAccumulator
+	a.cloudFetchFileCount++
+	a.record(0) // sub-ms download — still counted but not timed
+	a.cloudFetchFileCount++
+	a.record(5)
+
+	if a.cloudFetchFileCount != 2 {
+		t.Errorf("cloudFetchFileCount = %d, want 2", a.cloudFetchFileCount)
+	}
+	if a.initialMs != 5 {
+		t.Errorf("initialMs = %d, want 5 (zero-latency file should not set initial)", a.initialMs)
+	}
+}
+
 func getTestSession() *cli_service.TOpenSessionResp {
 	return &cli_service.TOpenSessionResp{SessionHandle: &cli_service.TSessionHandle{
 		SessionId: &cli_service.THandleIdentifier{

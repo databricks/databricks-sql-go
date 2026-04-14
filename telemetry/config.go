@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"strconv"
 	"time"
+
+	"github.com/databricks/databricks-sql-go/logger"
 )
 
 const (
@@ -96,13 +98,21 @@ func ParseTelemetryConfig(params map[string]string) *Config {
 	}
 
 	if v, ok := params["telemetry_retry_count"]; ok {
-		if n, err := strconv.Atoi(v); err == nil && n >= 0 && n <= maxTelemetryRetryCount {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			if n > maxTelemetryRetryCount {
+				logger.Debug().Msgf("telemetry: retry_count %d exceeds max %d, clamping", n, maxTelemetryRetryCount)
+				n = maxTelemetryRetryCount
+			}
 			cfg.MaxRetries = n
 		}
 	}
 
 	if v, ok := params["telemetry_retry_delay"]; ok {
-		if d, err := time.ParseDuration(v); err == nil && d > 0 && d <= maxTelemetryRetryDelay {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			if d > maxTelemetryRetryDelay {
+				logger.Debug().Msgf("telemetry: retry_delay %v exceeds max %v, clamping", d, maxTelemetryRetryDelay)
+				d = maxTelemetryRetryDelay
+			}
 			cfg.RetryDelay = d
 		}
 	}

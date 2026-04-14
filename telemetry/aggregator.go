@@ -138,10 +138,10 @@ func (agg *metricsAggregator) recordMetric(ctx context.Context, metric *telemetr
 
 		// Update aggregated values
 		stmt.totalLatency += time.Duration(metric.latencyMs) * time.Millisecond
-		if chunkCount, ok := metric.tags[TagResultChunkCount].(int); ok {
+		if chunkCount, ok := metric.tags[TagChunkCount].(int); ok {
 			stmt.chunkCount += chunkCount
 		}
-		if bytes, ok := metric.tags[TagResultBytesDownloaded].(int64); ok {
+		if bytes, ok := metric.tags[TagBytesDownloaded].(int64); ok {
 			stmt.bytesDownloaded += bytes
 		}
 		if pollCount, ok := metric.tags[TagPollCount].(int); ok {
@@ -201,8 +201,8 @@ func (agg *metricsAggregator) completeStatement(ctx context.Context, statementID
 	}
 
 	// Add aggregated counts
-	metric.tags[TagResultChunkCount] = stmt.chunkCount
-	metric.tags[TagResultBytesDownloaded] = stmt.bytesDownloaded
+	metric.tags[TagChunkCount] = stmt.chunkCount
+	metric.tags[TagBytesDownloaded] = stmt.bytesDownloaded
 	metric.tags[TagPollCount] = stmt.pollCount
 
 	// Add error information if failed

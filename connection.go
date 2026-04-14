@@ -288,17 +288,23 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 	// called from database/sql's awaitDone goroutine on context cancellation.
 	var timing chunkTimingAccumulator
 
+	// Detach from caller's context so that telemetry tag writes and flushes
+	// survive context cancellation (e.g. query timeout, database/sql awaitDone).
+	// All three callbacks (telemetryUpdate, cloudFetchCallback, closeCallback)
+	// use this detached context uniformly.
+	telemetryCtx := context2.WithoutCancel(ctx)
+
 	// Telemetry callback invoked after each result page is fetched.
 	telemetryUpdate := func(chunkCount int, bytesDownloaded int64, chunkIndex int, chunkLatencyMs int64, _ int32) {
 		if c.telemetry == nil {
 			return
 		}
-		c.telemetry.AddTag(ctx, telemetry.TagResultChunkCount, chunkCount)
-		c.telemetry.AddTag(ctx, telemetry.TagResultBytesDownloaded, bytesDownloaded)
+		c.telemetry.AddTag(telemetryCtx, telemetry.TagChunkCount, chunkCount)
+		c.telemetry.AddTag(telemetryCtx, telemetry.TagBytesDownloaded, bytesDownloaded)
 
 		// Aggregate per-chunk fetch latencies (skip direct results where latency is 0).
 		if timing.record(chunkLatencyMs) {
-			timing.applyTags(ctx, c.telemetry)
+			timing.applyTags(telemetryCtx, c.telemetry)
 		}
 		// chunk_total_present is set definitively in closeCallback once all pages are known.
 	}
@@ -312,25 +318,19 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 		cloudFetchCallback = func(downloadMs int64) {
 			timing.cloudFetchFileCount++ // always count files for chunk_total_present, even sub-ms downloads
 			if timing.record(downloadMs) {
-				timing.applyTags(ctx, c.telemetry)
+				timing.applyTags(telemetryCtx, c.telemetry)
 			}
 		}
 	}
 
 	// closeCallback is invoked from rows.Close() after all rows have been consumed.
-	// At that point chunk timing is fully accumulated in ctx tags, so we finalize
-	// EXECUTE_STATEMENT here rather than at QueryContext return time.
-	//
-	// We capture a detached context (background with telemetry values) so that
-	// telemetry is still recorded even if the caller's ctx has been cancelled
-	// (e.g. query timeout or context.WithCancel from database/sql's awaitDone).
+	// At that point chunk timing is fully accumulated in telemetryCtx tags, so we
+	// finalize EXECUTE_STATEMENT here rather than at QueryContext return time.
 	var closeCallback func(latencyMs int64, chunkCount int, iterErr error, closeErr error)
 	if c.telemetry != nil && statementID != "" {
 		interceptor := c.telemetry
 		connID := c.id
 		stmtID := statementID
-		// Detach from caller's context so cancellation doesn't lose telemetry.
-		telemetryCtx := context2.WithoutCancel(ctx)
 		closeCallback = func(latencyMs int64, chunkCount int, iterErr error, closeErr error) {
 			// Set chunk_total_present to the definitive total now that all iteration is done.
 			// For CloudFetch, use cloudFetchFileCount (actual S3 downloads) — this handles
@@ -352,7 +352,6 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 	} else if c.telemetry != nil {
 		interceptor := c.telemetry
 		connID := c.id
-		telemetryCtx := context2.WithoutCancel(ctx)
 		closeCallback = func(latencyMs int64, _ int, _ error, closeErr error) {
 			interceptor.RecordOperation(telemetryCtx, connID, "", telemetry.OperationTypeCloseStatement, latencyMs, closeErr)
 		}
@@ -795,8 +794,8 @@ func (c *conn) execStagingOperation(
 		// Telemetry callback for staging operation row fetching (chunk timing not tracked for staging ops).
 		telemetryUpdate := func(chunkCount int, bytesDownloaded int64, chunkIndex int, chunkLatencyMs int64, totalChunksPresent int32) {
 			if c.telemetry != nil {
-				c.telemetry.AddTag(ctx, telemetry.TagResultChunkCount, chunkCount)
-				c.telemetry.AddTag(ctx, telemetry.TagResultBytesDownloaded, bytesDownloaded)
+				c.telemetry.AddTag(ctx, telemetry.TagChunkCount, chunkCount)
+				c.telemetry.AddTag(ctx, telemetry.TagBytesDownloaded, bytesDownloaded)
 			}
 		}
 		row, err = rows.NewRows(ctx, exStmtResp.OperationHandle, c.client, c.cfg, exStmtResp.DirectResults, &rows.TelemetryCallbacks{

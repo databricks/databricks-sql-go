@@ -180,7 +180,7 @@ func createTelemetryRequest(metrics []*telemetryMetric, driverVersion string) (*
 			if v, ok := tags[TagResultFormat].(string); ok {
 				sqlOp.ExecutionResult = v
 			}
-			if chunkCount, ok := tags[TagResultChunkCount].(int); ok && chunkCount > 0 {
+			if chunkCount, ok := tags[TagChunkCount].(int); ok && chunkCount > 0 {
 				sqlOp.ChunkDetails = &ChunkDetails{
 					TotalChunksIterated: int32(chunkCount), //nolint:gosec // chunk count is always small
 				}

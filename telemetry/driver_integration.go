@@ -34,6 +34,9 @@ type TelemetryInitOptions struct {
 	FlushInterval time.Duration
 
 	// RetryCount is max retry attempts (-1 = use default 3; 0 = disable retries).
+	// IMPORTANT: Go's zero-value for int is 0, which disables retries. Callers
+	// constructing TelemetryInitOptions must set RetryCount = -1 explicitly to
+	// get the default retry behavior.
 	RetryCount int
 
 	// RetryDelay is the base delay between retries (0 = use default 100ms).

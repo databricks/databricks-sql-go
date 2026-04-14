@@ -153,6 +153,34 @@ func TestParseTelemetryConfig_RetryDelayInvalid(t *testing.T) {
 	}
 }
 
+func TestParseTelemetryConfig_RetryCountExceedsCap(t *testing.T) {
+	cfg := ParseTelemetryConfig(map[string]string{"telemetry_retry_count": "15"})
+	if cfg.MaxRetries != maxTelemetryRetryCount {
+		t.Errorf("Expected MaxRetries clamped to %d, got %d", maxTelemetryRetryCount, cfg.MaxRetries)
+	}
+}
+
+func TestParseTelemetryConfig_RetryCountAtCap(t *testing.T) {
+	cfg := ParseTelemetryConfig(map[string]string{"telemetry_retry_count": "10"})
+	if cfg.MaxRetries != 10 {
+		t.Errorf("Expected MaxRetries 10, got %d", cfg.MaxRetries)
+	}
+}
+
+func TestParseTelemetryConfig_RetryDelayExceedsCap(t *testing.T) {
+	cfg := ParseTelemetryConfig(map[string]string{"telemetry_retry_delay": "60s"})
+	if cfg.RetryDelay != maxTelemetryRetryDelay {
+		t.Errorf("Expected RetryDelay clamped to %v, got %v", maxTelemetryRetryDelay, cfg.RetryDelay)
+	}
+}
+
+func TestParseTelemetryConfig_RetryDelayAtCap(t *testing.T) {
+	cfg := ParseTelemetryConfig(map[string]string{"telemetry_retry_delay": "30s"})
+	if cfg.RetryDelay != 30*time.Second {
+		t.Errorf("Expected RetryDelay 30s, got %v", cfg.RetryDelay)
+	}
+}
+
 func TestParseTelemetryConfig_AllParams(t *testing.T) {
 	cfg := ParseTelemetryConfig(map[string]string{
 		"enableTelemetry":          "true",
