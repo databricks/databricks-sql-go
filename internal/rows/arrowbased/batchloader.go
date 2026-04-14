@@ -196,7 +196,10 @@ func (bi *cloudIPCStreamIterator) Next() (io.Reader, error) {
 	task.cancel()
 
 	// Notify telemetry with per-file download time (matches JDBC's per-chunk HTTP GET timing).
-	if bi.onFileDownloaded != nil && downloadMs > 0 {
+	// Always invoke for successfully completed downloads so the caller can count files;
+	// sub-millisecond downloads report downloadMs=0 and the caller decides whether to
+	// include them in timing aggregation.
+	if bi.onFileDownloaded != nil {
 		bi.onFileDownloaded(downloadMs)
 	}
 

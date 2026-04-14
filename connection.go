@@ -130,16 +130,20 @@ func (c *conn) ExecContext(ctx context.Context, query string, args []driver.Name
 	executeStart := time.Now()
 	exStmtResp, opStatusResp, err := c.runQuery(ctx, query, args)
 	log, ctx = client.LoggerAndContext(ctx, exStmtResp)
-	stagingErr := c.execStagingOperation(exStmtResp, ctx)
 
-	// Telemetry: track statement execution
+	// Telemetry: set up metric context BEFORE staging operation so that the
+	// staging op's telemetryUpdate callback can attach tags to the metric context.
 	var statementID string
 	var closeOpErr error // Track CloseOperation errors for telemetry
 	if c.telemetry != nil && exStmtResp != nil && exStmtResp.OperationHandle != nil && exStmtResp.OperationHandle.OperationId != nil {
 		statementID = client.SprintGuid(exStmtResp.OperationHandle.OperationId.GUID)
-		// Use BeforeExecuteWithTime to set the correct start time (before execution)
 		ctx = c.telemetry.BeforeExecuteWithTime(ctx, c.id, statementID, executeStart)
 		c.telemetry.AddTag(ctx, "operation_type", telemetry.OperationTypeExecuteStatement)
+	}
+
+	stagingErr := c.execStagingOperation(exStmtResp, ctx)
+
+	if c.telemetry != nil && statementID != "" {
 		defer func() {
 			finalErr := err
 			if stagingErr != nil {
@@ -236,10 +240,11 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 
 	// Per-chunk timing state accumulated across all fetchResultPage calls.
 	// These variables are safe without a mutex because they are only mutated
-	// from callbacks invoked sequentially by the single goroutine that calls
-	// rows.Next() (telemetryUpdate from fetchResultPage, cloudFetchCallback
-	// from cloudIPCStreamIterator.Next). closeCallback runs from rows.Close()
-	// on the same goroutine after iteration ends.
+	// from callbacks serialized by database/sql's closemu lock:
+	// telemetryUpdate and cloudFetchCallback run inside rows.Next() (which
+	// holds closemu.RLock), and closeCallback runs inside rows.Close() (which
+	// holds closemu.Lock). This ensures mutual exclusion even when Close() is
+	// called from database/sql's awaitDone goroutine on context cancellation.
 	var (
 		chunkTimingInitialMs  int64
 		chunkTimingSlowestMs  int64
@@ -285,10 +290,10 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 	var cloudFetchCallback func(downloadMs int64)
 	if c.telemetry != nil {
 		cloudFetchCallback = func(downloadMs int64) {
+			cloudFetchFileCount++ // always count files for chunk_total_present, even sub-ms downloads
 			if downloadMs <= 0 {
-				return
+				return // skip timing aggregation for sub-millisecond downloads
 			}
-			cloudFetchFileCount++ // track actual S3 downloads for chunk_total_present
 			if !chunkTimingInitialSet {
 				chunkTimingInitialMs = downloadMs
 				chunkTimingInitialSet = true
@@ -323,8 +328,10 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 				interceptor.AddTag(ctx, "chunk_total_present", chunkCount)
 			}
 			// Emit EXECUTE_STATEMENT with complete chunk data now that iteration is done.
-			interceptor.AfterExecute(ctx, nil)
-			interceptor.CompleteStatement(ctx, stmtID, false)
+			// closeErr carries the first iteration error (from Next/fetchResultPage)
+			// if row consumption failed, or the CloseOperation RPC error otherwise.
+			interceptor.AfterExecute(ctx, closeErr)
+			interceptor.CompleteStatement(ctx, stmtID, closeErr != nil)
 			// Emit CLOSE_STATEMENT as a separate operation event.
 			interceptor.RecordOperation(ctx, connID, stmtID, telemetry.OperationTypeCloseStatement, latencyMs, closeErr)
 		}

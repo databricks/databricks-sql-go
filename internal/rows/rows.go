@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"io"
 	"math"
 	"reflect"
 	"time"
@@ -73,6 +74,7 @@ type rows struct {
 	closeCallback      func(latencyMs int64, chunkCount int, err error)
 	chunkCount         int
 	bytesDownloaded    int64
+	iterationErr       error // first error from Next()/fetchResultPage, passed to closeCallback
 }
 
 var _ driver.Rows = (*rows)(nil)
@@ -250,7 +252,13 @@ func (r *rows) Close() error {
 		closeStart := time.Now()
 		err := r.ResultPageIterator.Close()
 		if r.closeCallback != nil {
-			r.closeCallback(time.Since(closeStart).Milliseconds(), r.chunkCount, err)
+			// Report the iteration error if any Next() call failed during row
+			// consumption; otherwise report the CloseOperation RPC error.
+			cbErr := r.iterationErr
+			if cbErr == nil {
+				cbErr = err
+			}
+			r.closeCallback(time.Since(closeStart).Milliseconds(), r.chunkCount, cbErr)
 		}
 		if err != nil {
 			r.logger().Err(err).Msg(errRowsCloseFailed)
@@ -273,6 +281,7 @@ func (r *rows) Close() error {
 func (r *rows) Next(dest []driver.Value) error {
 	err := isValidRows(r)
 	if err != nil {
+		r.trackIterationErr(err)
 		return err
 	}
 
@@ -283,11 +292,13 @@ func (r *rows) Next(dest []driver.Value) error {
 	if b, e = r.isNextRowInPage(); !b && e == nil {
 		err := r.fetchResultPage()
 		if err != nil {
+			r.trackIterationErr(err)
 			return err
 		}
 	}
 
 	if e != nil {
+		r.trackIterationErr(e)
 		return e
 	}
 
@@ -605,6 +616,14 @@ func (r *rows) makeRowScanner(fetchResults *cli_service.TFetchResultsResp) dbsql
 	r.RowScanner = rs
 
 	return err
+}
+
+// trackIterationErr records the first non-EOF error from Next()/fetchResultPage
+// so that closeCallback can report it as the statement's error.
+func (r *rows) trackIterationErr(err error) {
+	if r != nil && r.iterationErr == nil && err != nil && err != io.EOF {
+		r.iterationErr = err
+	}
 }
 
 func (r *rows) logger() *dbsqllog.DBSQLLogger {

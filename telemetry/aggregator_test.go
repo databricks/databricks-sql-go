@@ -282,7 +282,16 @@ func TestAggregatorFlushUnlocked_DropWhenQueueFull(t *testing.T) {
 func TestAggregatorClose_RespectsContextTimeout(t *testing.T) {
 	const serverDelay = 5 * time.Second
 
+	// serverGotRequest is signaled when the HTTP handler receives a request,
+	// confirming a worker has picked up the job and started an HTTP export.
+	serverGotRequest := make(chan struct{}, 1)
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Signal that the worker has started the HTTP export.
+		select {
+		case serverGotRequest <- struct{}{}:
+		default:
+		}
 		// Simulate a hung/slow telemetry server that takes much longer than our timeout.
 		time.Sleep(serverDelay)
 		w.WriteHeader(http.StatusOK)
@@ -305,8 +314,14 @@ func TestAggregatorClose_RespectsContextTimeout(t *testing.T) {
 		tags:       map[string]interface{}{"operation_type": OperationTypeCloseStatement},
 	})
 
-	// Give the worker a moment to pick up the job and start the HTTP request.
-	time.Sleep(50 * time.Millisecond)
+	// Wait for the worker to actually start the HTTP request, rather than using
+	// a racy time.Sleep. This ensures close() enters the inFlight.Wait path
+	// (step 4) rather than draining the job synchronously (step 3).
+	select {
+	case <-serverGotRequest:
+	case <-time.After(5 * time.Second):
+		t.Fatal("worker did not pick up the job and start HTTP export in time")
+	}
 
 	// Call close() with a short timeout — it must return when the context expires,
 	// NOT wait for the full serverDelay.
