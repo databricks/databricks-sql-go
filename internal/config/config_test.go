@@ -51,7 +51,7 @@ func TestParseConfig(t *testing.T) {
 		},
 		{
 			name: "with https scheme",
-			args: args{dsn: "https://token:supersecret@example.cloud.databricks.com:443/sql/1.0/endpoints/12346a5b5b0e123a"},
+			args: args{dsn: "https://token:supersecret@example.cloud.databricks.com:443/sql/1.0/endpoints/12346a5b5b0e123a"}, //nolint:gosec // G101: test DSN with example password, not a real credential
 			wantCfg: UserConfig{
 				Protocol:         "https",
 				Host:             "example.cloud.databricks.com",

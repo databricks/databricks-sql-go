@@ -146,7 +146,7 @@ func TestExternalTokenProvider(t *testing.T) {
 		callCount := 0
 		tokenFunc := func() (string, error) {
 			callCount++
-			return "external-token-" + string(rune(callCount)), nil
+			return "external-token-" + string(rune(callCount)), nil //nolint:gosec // G115: test counter, values are always small
 		}
 
 		provider := NewExternalTokenProvider(tokenFunc)
@@ -211,7 +211,7 @@ func TestExternalTokenProvider(t *testing.T) {
 		counter := 0
 		tokenFunc := func() (string, error) {
 			counter++
-			return "token-" + string(rune(counter)), nil
+			return "token-" + string(rune(counter)), nil //nolint:gosec // G115: test counter, values are always small
 		}
 
 		provider := NewExternalTokenProvider(tokenFunc)

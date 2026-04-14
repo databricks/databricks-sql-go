@@ -102,6 +102,8 @@ type UserConfig struct {
 	// Uses config overlay pattern: client > server > default.
 	// Unset = check server feature flag; explicitly true/false overrides the server.
 	EnableTelemetry          ConfigValue[bool]
+	TelemetryBatchSize       int           // 0 = use default (100)
+	TelemetryFlushInterval   time.Duration // 0 = use default (5s)
 	Transport                http.RoundTripper
 	UseLz4Compression        bool
 	EnableMetricViewMetadata bool
@@ -149,6 +151,8 @@ func (ucfg UserConfig) DeepCopy() UserConfig {
 		EnableMetricViewMetadata: ucfg.EnableMetricViewMetadata,
 		CloudFetchConfig:         ucfg.CloudFetchConfig,
 		EnableTelemetry:          ucfg.EnableTelemetry,
+		TelemetryBatchSize:       ucfg.TelemetryBatchSize,
+		TelemetryFlushInterval:   ucfg.TelemetryFlushInterval,
 	}
 }
 
@@ -183,6 +187,9 @@ func (ucfg UserConfig) WithDefaults() UserConfig {
 	}
 	ucfg.UseLz4Compression = false
 	ucfg.CloudFetchConfig = CloudFetchConfig{}.WithDefaults()
+
+	// EnableTelemetry defaults to unset (ConfigValue zero value),
+	// meaning telemetry is controlled by server feature flags.
 
 	return ucfg
 }
@@ -293,6 +300,19 @@ func ParseDSN(dsn string) (UserConfig, error) {
 			return UserConfig{}, err
 		}
 		ucfg.EnableTelemetry = NewConfigValue(enableTelemetry)
+	}
+	if batchSize, ok, err := params.extractAsInt("telemetry_batch_size"); ok {
+		if err != nil {
+			return UserConfig{}, err
+		}
+		if batchSize > 0 {
+			ucfg.TelemetryBatchSize = batchSize
+		}
+	}
+	if flushInterval, ok := params.extract("telemetry_flush_interval"); ok {
+		if d, err := time.ParseDuration(flushInterval); err == nil && d > 0 {
+			ucfg.TelemetryFlushInterval = d
+		}
 	}
 
 	// for timezone we do a case insensitive key match.

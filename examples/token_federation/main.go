@@ -44,7 +44,7 @@ func main() {
 	case "custom":
 		runCustomProviderExample()
 	default:
-		log.Fatalf("Unknown example: %s (use: static, external, custom)", example)
+		log.Fatalf("Unknown example: %s (use: static, external, custom)", example) //nolint:gosec // G706: CLI arg, log injection not a concern
 	}
 }
 
@@ -143,7 +143,7 @@ func runCustomProviderExample() {
 // testConnection verifies the connection works
 func testConnection(connector driver.Connector) {
 	db := sql.OpenDB(connector)
-	defer db.Close()
+	defer db.Close() //nolint:errcheck
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

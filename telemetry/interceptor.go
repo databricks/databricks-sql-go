@@ -15,18 +15,15 @@ type Interceptor struct {
 }
 
 // metricContext holds metric collection state in context.
-//
-//nolint:unused // Will be used in Phase 8+
 type metricContext struct {
+	sessionID   string
 	statementID string
 	startTime   time.Time
 	tags        map[string]interface{}
 }
 
-//nolint:unused // Will be used in Phase 8+
 type contextKey int
 
-//nolint:unused // Will be used in Phase 8+
 const metricContextKey contextKey = 0
 
 // newInterceptor creates a new telemetry interceptor.
@@ -38,15 +35,11 @@ func newInterceptor(aggregator *metricsAggregator, enabled bool) *Interceptor {
 }
 
 // withMetricContext adds metric context to the context.
-//
-//nolint:unused // Will be used in Phase 8+
 func withMetricContext(ctx context.Context, mc *metricContext) context.Context {
 	return context.WithValue(ctx, metricContextKey, mc)
 }
 
 // getMetricContext retrieves metric context from the context.
-//
-//nolint:unused // Will be used in Phase 8+
 func getMetricContext(ctx context.Context) *metricContext {
 	if mc, ok := ctx.Value(metricContextKey).(*metricContext); ok {
 		return mc
@@ -54,16 +47,16 @@ func getMetricContext(ctx context.Context) *metricContext {
 	return nil
 }
 
-// beforeExecute is called before statement execution.
+// BeforeExecute is called before statement execution.
 // Returns a new context with metric tracking attached.
-//
-//nolint:unused // Will be used in Phase 8+
-func (i *Interceptor) beforeExecute(ctx context.Context, statementID string) context.Context {
+// Exported for use by the driver package.
+func (i *Interceptor) BeforeExecute(ctx context.Context, sessionID string, statementID string) context.Context {
 	if !i.enabled {
 		return ctx
 	}
 
 	mc := &metricContext{
+		sessionID:   sessionID,
 		statementID: statementID,
 		startTime:   time.Now(),
 		tags:        make(map[string]interface{}),
@@ -72,11 +65,28 @@ func (i *Interceptor) beforeExecute(ctx context.Context, statementID string) con
 	return withMetricContext(ctx, mc)
 }
 
-// afterExecute is called after statement execution.
+// BeforeExecuteWithTime is called before statement execution with a custom start time.
+// This is useful when the statement ID is not known until after execution starts.
+// Exported for use by the driver package.
+func (i *Interceptor) BeforeExecuteWithTime(ctx context.Context, sessionID string, statementID string, startTime time.Time) context.Context {
+	if !i.enabled {
+		return ctx
+	}
+
+	mc := &metricContext{
+		sessionID:   sessionID,
+		statementID: statementID,
+		startTime:   startTime,
+		tags:        make(map[string]interface{}),
+	}
+
+	return withMetricContext(ctx, mc)
+}
+
+// AfterExecute is called after statement execution.
 // Records the metric with timing and error information.
-//
-//nolint:unused // Will be used in Phase 8+
-func (i *Interceptor) afterExecute(ctx context.Context, err error) {
+// Exported for use by the driver package.
+func (i *Interceptor) AfterExecute(ctx context.Context, err error) {
 	if !i.enabled {
 		return
 	}
@@ -96,6 +106,7 @@ func (i *Interceptor) afterExecute(ctx context.Context, err error) {
 	metric := &telemetryMetric{
 		metricType:  "statement",
 		timestamp:   mc.startTime,
+		sessionID:   mc.sessionID,
 		statementID: mc.statementID,
 		latencyMs:   time.Since(mc.startTime).Milliseconds(),
 		tags:        mc.tags,
@@ -109,10 +120,9 @@ func (i *Interceptor) afterExecute(ctx context.Context, err error) {
 	i.aggregator.recordMetric(ctx, metric)
 }
 
-// addTag adds a tag to the current metric context.
-//
-//nolint:unused // Will be used in Phase 8+
-func (i *Interceptor) addTag(ctx context.Context, key string, value interface{}) {
+// AddTag adds a tag to the current metric context.
+// Exported for use by the driver package.
+func (i *Interceptor) AddTag(ctx context.Context, key string, value interface{}) {
 	if !i.enabled {
 		return
 	}
@@ -146,15 +156,42 @@ func (i *Interceptor) recordConnection(ctx context.Context, tags map[string]inte
 	i.aggregator.recordMetric(ctx, metric)
 }
 
-// completeStatement marks a statement as complete and flushes aggregated metrics.
-//
-//nolint:unused // Will be used in Phase 8+
-func (i *Interceptor) completeStatement(ctx context.Context, statementID string, failed bool) {
+// CompleteStatement marks a statement as complete and flushes aggregated metrics.
+// Exported for use by the driver package.
+func (i *Interceptor) CompleteStatement(ctx context.Context, statementID string, failed bool) {
 	if !i.enabled {
 		return
 	}
 
 	i.aggregator.completeStatement(ctx, statementID, failed)
+}
+
+// RecordOperation records an operation with type, latency, and optional error.
+// Exported for use by the driver package.
+func (i *Interceptor) RecordOperation(ctx context.Context, sessionID string, operationType string, latencyMs int64, err error) {
+	if !i.enabled {
+		return
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Trace().Msgf("telemetry: recordOperation panic: %v", r)
+		}
+	}()
+
+	metric := &telemetryMetric{
+		metricType: "operation",
+		timestamp:  time.Now(),
+		sessionID:  sessionID,
+		latencyMs:  latencyMs,
+		tags:       map[string]interface{}{"operation_type": operationType},
+	}
+
+	if err != nil {
+		metric.errorType = classifyError(err)
+	}
+
+	i.aggregator.recordMetric(ctx, metric)
 }
 
 // Close flushes any pending per-connection metrics.
@@ -167,6 +204,12 @@ func (i *Interceptor) Close(ctx context.Context) error {
 		return nil
 	}
 
-	i.aggregator.flush(ctx)
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Debug().Msgf("telemetry: Close panic: %v", r)
+		}
+	}()
+
+	i.aggregator.flushSync(ctx)
 	return nil
 }

@@ -263,8 +263,8 @@ func TestNewConnector(t *testing.T) {
 
 		coni, ok := con.(*connector)
 		require.True(t, ok)
-		assert.NotNil(t, coni.cfg.CloudFetchConfig.HTTPClient)
-		assert.Equal(t, customTransport, coni.cfg.CloudFetchConfig.HTTPClient.Transport)
+		assert.NotNil(t, coni.cfg.HTTPClient)
+		assert.Equal(t, customTransport, coni.cfg.HTTPClient.Transport)
 	})
 }
 

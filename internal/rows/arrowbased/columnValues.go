@@ -53,7 +53,7 @@ func (rv *rowValues) SetColumnValues(columnIndex int, values arrow.ArrayData) er
 }
 
 func (rv *rowValues) IsNull(columnIndex int, rowNumber int64) bool {
-	var b bool = true
+	b := true
 	if columnIndex < len(rv.columnValueHolders) {
 		b = rv.columnValueHolders[columnIndex].IsNull(int(rowNumber - rv.Start()))
 	}

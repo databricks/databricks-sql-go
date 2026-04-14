@@ -3,6 +3,7 @@ package telemetry
 import (
 	"context"
 	"net/http"
+	"time"
 
 	"github.com/databricks/databricks-sql-go/internal/config"
 )
@@ -14,6 +15,7 @@ import (
 // Parameters:
 //   - ctx: Context for the initialization
 //   - host: Databricks host
+//   - driverVersion: Driver version string
 //   - httpClient: HTTP client for making requests
 //   - enableTelemetry: Client config overlay (unset = check server flag, true/false = override server)
 //
@@ -22,30 +24,50 @@ import (
 func InitializeForConnection(
 	ctx context.Context,
 	host string,
+	driverVersion string,
 	httpClient *http.Client,
 	enableTelemetry config.ConfigValue[bool],
+	batchSize int,
+	flushInterval time.Duration,
 ) *Interceptor {
-	// Create telemetry config and apply client overlay
+	// Create telemetry config and apply client overlay.
+	// ConfigValue[bool] semantics:
+	//   - unset  → true (let server feature flag decide)
+	//   - true   → true (server feature flag still consulted)
+	//   - false  → false (explicitly disabled, skip server flag check)
 	cfg := DefaultConfig()
-	cfg.EnableTelemetry = enableTelemetry
+	if val, isSet := enableTelemetry.Get(); isSet {
+		cfg.EnableTelemetry = val
+	} else {
+		cfg.EnableTelemetry = true // Unset: default to enabled, server flag decides
+	}
+	if batchSize > 0 {
+		cfg.BatchSize = batchSize
+	}
+	if flushInterval > 0 {
+		cfg.FlushInterval = flushInterval
+	}
+
+	// Get feature flag cache context FIRST (for reference counting)
+	flagCache := getFeatureFlagCache()
+	flagCache.getOrCreateContext(host)
 
 	// Check if telemetry should be enabled
-	if !isTelemetryEnabled(ctx, cfg, host, httpClient) {
+	enabled := isTelemetryEnabled(ctx, cfg, host, driverVersion, httpClient)
+	if !enabled {
+		flagCache.releaseContext(host)
 		return nil
 	}
 
 	// Get or create telemetry client for this host
 	clientMgr := getClientManager()
-	telemetryClient := clientMgr.getOrCreateClient(host, httpClient, cfg)
+	telemetryClient := clientMgr.getOrCreateClient(host, driverVersion, httpClient, cfg)
 	if telemetryClient == nil {
+		// Client failed to start; release the flag cache ref we incremented above
+		flagCache.releaseContext(host)
 		return nil
 	}
 
-	// Get feature flag cache context (for reference counting)
-	flagCache := getFeatureFlagCache()
-	flagCache.getOrCreateContext(host)
-
-	// Return interceptor
 	return telemetryClient.GetInterceptor(true)
 }
 

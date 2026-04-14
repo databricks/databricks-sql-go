@@ -43,7 +43,7 @@ func main() {
 		log.Fatal(err)
 	}
 	db := sql.OpenDB(connector)
-	defer db.Close()
+	defer db.Close() //nolint:errcheck
 	db.SetMaxOpenConns(1)
 
 	// ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -84,7 +84,7 @@ func main() {
 		log.Fatal(err1)
 	}
 	db1 := sql.OpenDB(connector1)
-	defer db1.Close()
+	defer db1.Close() //nolint:errcheck
 
 	res1 := &time.Time{}
 	res2 := &time.Time{}

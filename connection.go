@@ -52,15 +52,18 @@ func (c *conn) Close() error {
 	log := logger.WithContext(c.id, "", "")
 	ctx := driverctx.NewContextWithConnId(context.Background(), c.id)
 
-	// Close telemetry and release resources
-	if c.telemetry != nil {
-		_ = c.telemetry.Close(ctx)
-		telemetry.ReleaseForConnection(c.cfg.Host)
-	}
-
+	// Time CloseSession so we can record DELETE_SESSION before flushing telemetry
+	closeStart := time.Now()
 	_, err := c.client.CloseSession(ctx, &cli_service.TCloseSessionReq{
 		SessionHandle: c.session.SessionHandle,
 	})
+
+	// Record DELETE_SESSION regardless of error (matches JDBC), then flush and release
+	if c.telemetry != nil {
+		c.telemetry.RecordOperation(ctx, c.id, telemetry.OperationTypeDeleteSession, time.Since(closeStart).Milliseconds(), err)
+		_ = c.telemetry.Close(ctx)
+		telemetry.ReleaseForConnection(c.cfg.Host)
+	}
 
 	if err != nil {
 		log.Err(err).Msg("databricks: failed to close connection")
@@ -93,7 +96,7 @@ func (c *conn) Ping(ctx context.Context) error {
 		log.Err(err).Msg("databricks: failed to ping")
 		return dbsqlerrint.NewBadConnectionError(err)
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 
 	log.Debug().Msg("databricks: ping successful")
 	return nil
@@ -123,20 +126,48 @@ func (c *conn) ExecContext(ctx context.Context, query string, args []driver.Name
 
 	corrId := driverctx.CorrelationIdFromContext(ctx)
 
+	// Capture execution start time for telemetry before running the query
+	executeStart := time.Now()
 	exStmtResp, opStatusResp, err := c.runQuery(ctx, query, args)
 	log, ctx = client.LoggerAndContext(ctx, exStmtResp)
 	stagingErr := c.execStagingOperation(exStmtResp, ctx)
+
+	// Telemetry: track statement execution
+	var statementID string
+	var closeOpErr error // Track CloseOperation errors for telemetry
+	if c.telemetry != nil && exStmtResp != nil && exStmtResp.OperationHandle != nil && exStmtResp.OperationHandle.OperationId != nil {
+		statementID = client.SprintGuid(exStmtResp.OperationHandle.OperationId.GUID)
+		// Use BeforeExecuteWithTime to set the correct start time (before execution)
+		ctx = c.telemetry.BeforeExecuteWithTime(ctx, c.id, statementID, executeStart)
+		defer func() {
+			finalErr := err
+			if stagingErr != nil {
+				finalErr = stagingErr
+			}
+			// Include CloseOperation error in telemetry if it occurred
+			if closeOpErr != nil && finalErr == nil {
+				finalErr = closeOpErr
+			}
+			c.telemetry.AfterExecute(ctx, finalErr)
+			c.telemetry.CompleteStatement(ctx, statementID, finalErr != nil)
+		}()
+	}
 
 	if exStmtResp != nil && exStmtResp.OperationHandle != nil {
 		// since we have an operation handle we can close the operation if necessary
 		alreadyClosed := exStmtResp.DirectResults != nil && exStmtResp.DirectResults.CloseOperation != nil
 		newCtx := driverctx.NewContextWithCorrelationId(driverctx.NewContextWithConnId(context.Background(), c.id), corrId)
 		if !alreadyClosed && (opStatusResp == nil || opStatusResp.GetOperationState() != cli_service.TOperationState_CLOSED_STATE) {
+			closeOpStart := time.Now()
 			_, err1 := c.client.CloseOperation(newCtx, &cli_service.TCloseOperationReq{
 				OperationHandle: exStmtResp.OperationHandle,
 			})
+			if c.telemetry != nil {
+				c.telemetry.RecordOperation(ctx, c.id, telemetry.OperationTypeCloseStatement, time.Since(closeOpStart).Milliseconds(), err1)
+			}
 			if err1 != nil {
 				log.Err(err1).Msg("databricks: failed to close operation after executing statement")
+				closeOpErr = err1 // Capture for telemetry
 			}
 		}
 	}
@@ -168,16 +199,39 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 
 	// first we try to get the results synchronously.
 	// at any point in time that the context is done we must cancel and return
+
+	// Capture execution start time for telemetry before running the query
+	executeStart := time.Now()
 	exStmtResp, opStatusResp, err := c.runQuery(ctx, query, args)
 	log, ctx = client.LoggerAndContext(ctx, exStmtResp)
 	defer log.Duration(msg, start)
+
+	// Telemetry: track statement execution
+	var statementID string
+	if c.telemetry != nil && exStmtResp != nil && exStmtResp.OperationHandle != nil && exStmtResp.OperationHandle.OperationId != nil {
+		statementID = client.SprintGuid(exStmtResp.OperationHandle.OperationId.GUID)
+		// Use BeforeExecuteWithTime to set the correct start time (before execution)
+		ctx = c.telemetry.BeforeExecuteWithTime(ctx, c.id, statementID, executeStart)
+		defer func() {
+			c.telemetry.AfterExecute(ctx, err)
+			c.telemetry.CompleteStatement(ctx, statementID, err != nil)
+		}()
+	}
 
 	if err != nil {
 		log.Err(err).Msg("databricks: failed to run query") // To log query we need to redact credentials
 		return nil, dbsqlerrint.NewExecutionError(ctx, dbsqlerr.ErrQueryExecution, err, opStatusResp)
 	}
 
-	rows, err := rows.NewRows(ctx, exStmtResp.OperationHandle, c.client, c.cfg, exStmtResp.DirectResults)
+	// Telemetry callback for tracking row fetching metrics
+	telemetryUpdate := func(chunkCount int, bytesDownloaded int64) {
+		if c.telemetry != nil {
+			c.telemetry.AddTag(ctx, "chunk_count", chunkCount)
+			c.telemetry.AddTag(ctx, "bytes_downloaded", bytesDownloaded)
+		}
+	}
+
+	rows, err := rows.NewRows(ctx, exStmtResp.OperationHandle, c.client, c.cfg, exStmtResp.DirectResults, telemetryUpdate)
 	return rows, err
 
 }
@@ -342,7 +396,14 @@ func (c *conn) executeStatement(ctx context.Context, query string, args []driver
 		}
 	}
 
+	executeStart := time.Now()
 	resp, err := c.client.ExecuteStatement(ctx, &req)
+	// Record the Thrift call latency as a separate operation metric.
+	// This is distinct from the statement-level metric (BeforeExecuteWithTime), which
+	// measures end-to-end latency including polling and row fetching.
+	if c.telemetry != nil {
+		c.telemetry.RecordOperation(ctx, c.id, telemetry.OperationTypeExecuteStatement, time.Since(executeStart).Milliseconds(), err)
+	}
 	var log *logger.DBSQLLogger
 	log, ctx = client.LoggerAndContext(ctx, resp)
 
@@ -475,11 +536,11 @@ func (c *conn) handleStagingPut(ctx context.Context, presignedUrl string, header
 	}
 	client := &http.Client{}
 
-	dat, err := os.Open(localFile)
+	dat, err := os.Open(localFile) //nolint:gosec // localFile is provided by the application, not user input
 	if err != nil {
 		return dbsqlerrint.NewDriverError(ctx, "error reading local file", err)
 	}
-	defer dat.Close()
+	defer dat.Close() //nolint:errcheck
 
 	info, err := dat.Stat()
 	if err != nil {
@@ -496,7 +557,7 @@ func (c *conn) handleStagingPut(ctx context.Context, presignedUrl string, header
 	if err != nil {
 		return dbsqlerrint.NewDriverError(ctx, "error sending http request", err)
 	}
-	defer res.Body.Close()
+	defer res.Body.Close() //nolint:errcheck
 	content, err := io.ReadAll(res.Body)
 
 	if err != nil || !Succeeded(res) {
@@ -520,7 +581,7 @@ func (c *conn) handleStagingGet(ctx context.Context, presignedUrl string, header
 	if err != nil {
 		return dbsqlerrint.NewDriverError(ctx, "error sending http request", err)
 	}
-	defer res.Body.Close()
+	defer res.Body.Close() //nolint:errcheck
 	content, err := io.ReadAll(res.Body)
 
 	if err != nil || !Succeeded(res) {
@@ -544,7 +605,7 @@ func (c *conn) handleStagingRemove(ctx context.Context, presignedUrl string, hea
 	if err != nil {
 		return dbsqlerrint.NewDriverError(ctx, "error sending http request", err)
 	}
-	defer res.Body.Close()
+	defer res.Body.Close() //nolint:errcheck
 	content, err := io.ReadAll(res.Body)
 
 	if err != nil || !Succeeded(res) {
@@ -607,11 +668,18 @@ func (c *conn) execStagingOperation(
 	}
 
 	if len(driverctx.StagingPathsFromContext(ctx)) != 0 {
-		row, err = rows.NewRows(ctx, exStmtResp.OperationHandle, c.client, c.cfg, exStmtResp.DirectResults)
+		// Telemetry callback for staging operation row fetching
+		telemetryUpdate := func(chunkCount int, bytesDownloaded int64) {
+			if c.telemetry != nil {
+				c.telemetry.AddTag(ctx, "chunk_count", chunkCount)
+				c.telemetry.AddTag(ctx, "bytes_downloaded", bytesDownloaded)
+			}
+		}
+		row, err = rows.NewRows(ctx, exStmtResp.OperationHandle, c.client, c.cfg, exStmtResp.DirectResults, telemetryUpdate)
 		if err != nil {
 			return dbsqlerrint.NewDriverError(ctx, "error reading row.", err)
 		}
-		defer row.Close()
+		defer row.Close() //nolint:errcheck
 
 	} else {
 		return dbsqlerrint.NewDriverError(ctx, "staging ctx must be provided.", nil)
@@ -624,7 +692,7 @@ func (c *conn) execStagingOperation(
 	if err != nil {
 		return dbsqlerrint.NewDriverError(ctx, "error fetching staging operation results", err)
 	}
-	var stringValues []string = make([]string, 4)
+	stringValues := make([]string, 4)
 	for i, val := range sqlRow { // this will either be 3 (remove op) or 4 (put/get) elements
 		if s, ok := val.(string); ok {
 			stringValues[i] = s

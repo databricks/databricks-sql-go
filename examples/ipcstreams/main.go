@@ -37,13 +37,13 @@ func main() {
 	}
 
 	db := sql.OpenDB(connector)
-	defer db.Close()
+	defer db.Close() //nolint:errcheck
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	conn, _ := db.Conn(ctx)
-	defer conn.Close()
+	defer conn.Close() //nolint:errcheck
 
 	query := `SELECT * FROM samples.nyctaxi.trips LIMIT 1000`
 
@@ -57,7 +57,7 @@ func main() {
 	if err != nil {
 		log.Fatal("Failed to execute query: ", err)
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 
 	// Get the IPC stream iterator
 	ipcStreams, err := rows.(dbsqlrows.Rows).GetArrowIPCStreams(ctx)

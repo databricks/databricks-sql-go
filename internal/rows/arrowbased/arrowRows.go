@@ -127,7 +127,7 @@ func NewArrowRowScanner(resultSetMetadata *cli_service.TGetResultSetMetadataResp
 		return nil, err2
 	}
 
-	var location *time.Location = time.UTC
+	location := time.UTC
 	if cfg != nil {
 		if cfg.Location != nil {
 			location = cfg.Location
