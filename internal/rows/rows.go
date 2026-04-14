@@ -521,8 +521,7 @@ func (r *rows) fetchResultPage() error {
 		}
 	}
 
-	// For CloudFetch, the result links in the response reveal the server-reported total.
-	// The FetchResults RPC only returns presigned URLs for CloudFetch — the actual data
+	// For CloudFetch, the FetchResults RPC only returns presigned S3 URLs — the actual data
 	// transfer happens later via S3 HTTP GETs timed by cloudFetchCallback. Report 0 latency
 	// here so the Thrift round-trip is not misreported as chunk download time.
 	var totalPresent int32

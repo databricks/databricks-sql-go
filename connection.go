@@ -240,11 +240,16 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 		chunkTimingSlowestMs  int64
 		chunkTimingSumMs      int64
 		chunkTimingInitialSet bool
-		chunkTotalPresent     int32
+		// cloudFetchFileCount counts individual S3 files downloaded via CloudFetch.
+		// Used to set chunk_total_present correctly for both bulk and paginated CloudFetch:
+		//   - paginated CF (1 link/FetchResults): file count == page count == correct total
+		//   - bulk CF (all links in DirectResults): file count == actual S3 downloads
+		// For inline ArrowBatch results this stays 0 and chunk_total_present falls back to chunkCount.
+		cloudFetchFileCount int
 	)
 
 	// Telemetry callback invoked after each result page is fetched.
-	telemetryUpdate := func(chunkCount int, bytesDownloaded int64, chunkIndex int, chunkLatencyMs int64, totalChunksPresent int32) {
+	telemetryUpdate := func(chunkCount int, bytesDownloaded int64, chunkIndex int, chunkLatencyMs int64, _ int32) {
 		if c.telemetry == nil {
 			return
 		}
@@ -265,12 +270,7 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 			c.telemetry.AddTag(ctx, "chunk_slowest_latency_ms", chunkTimingSlowestMs)
 			c.telemetry.AddTag(ctx, "chunk_sum_latency_ms", chunkTimingSumMs)
 		}
-
-		// Record server-reported total chunks from first non-zero report.
-		if totalChunksPresent > 0 && chunkTotalPresent == 0 {
-			chunkTotalPresent = totalChunksPresent
-			c.telemetry.AddTag(ctx, "chunk_total_present", int(chunkTotalPresent))
-		}
+		// chunk_total_present is set definitively in closeCallback once all pages are known.
 	}
 
 	// cloudFetchCallback is invoked per S3 file download for CloudFetch result sets.
@@ -283,6 +283,7 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 			if downloadMs <= 0 {
 				return
 			}
+			cloudFetchFileCount++ // track actual S3 downloads for chunk_total_present
 			if !chunkTimingInitialSet {
 				chunkTimingInitialMs = downloadMs
 				chunkTimingInitialSet = true
@@ -306,9 +307,14 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 		connID := c.id
 		stmtID := statementID
 		closeCallback = func(latencyMs int64, chunkCount int, closeErr error) {
-			// If the server never reported total chunks (paginated CloudFetch / inline),
-			// derive it from the final chunk count now that all iteration is complete.
-			if chunkTotalPresent == 0 && chunkCount > 0 {
+			// Set chunk_total_present to the definitive total now that all iteration is done.
+			// For CloudFetch, use cloudFetchFileCount (actual S3 downloads) — this handles
+			// both paginated CF (1 link/page, so file count == page count) and bulk CF
+			// (all links in DirectResults, so file count == total S3 files).
+			// For inline ArrowBatch, cloudFetchFileCount is 0; fall back to chunkCount.
+			if cloudFetchFileCount > 0 {
+				interceptor.AddTag(ctx, "chunk_total_present", cloudFetchFileCount)
+			} else if chunkCount > 0 {
 				interceptor.AddTag(ctx, "chunk_total_present", chunkCount)
 			}
 			// Emit EXECUTE_STATEMENT with complete chunk data now that iteration is done.
