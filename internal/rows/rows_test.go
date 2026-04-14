@@ -421,7 +421,7 @@ func TestColumnsWithDirectResults(t *testing.T) {
 	ctx := driverctx.NewContextWithConnId(context.Background(), "connId")
 	ctx = driverctx.NewContextWithCorrelationId(ctx, "corrId")
 
-	d, err := NewRows(ctx, nil, client, nil, nil, nil, nil, nil)
+	d, err := NewRows(ctx, nil, client, nil, nil, nil)
 	assert.Nil(t, err)
 
 	rowSet := d.(*rows)
@@ -720,7 +720,7 @@ func TestRowsCloseOptimization(t *testing.T) {
 	ctx := driverctx.NewContextWithConnId(context.Background(), "connId")
 	ctx = driverctx.NewContextWithCorrelationId(ctx, "corrId")
 	opHandle := &cli_service.TOperationHandle{OperationId: &cli_service.THandleIdentifier{GUID: []byte{'f', 'o'}}}
-	rowSet, _ := NewRows(ctx, opHandle, client, nil, nil, nil, nil, nil)
+	rowSet, _ := NewRows(ctx, opHandle, client, nil, nil, nil)
 
 	// rowSet has no direct results calling Close should result in call to client to close operation
 	err := rowSet.Close()
@@ -733,7 +733,7 @@ func TestRowsCloseOptimization(t *testing.T) {
 		ResultSet:         &cli_service.TFetchResultsResp{Results: &cli_service.TRowSet{Columns: []*cli_service.TColumn{}}},
 	}
 	closeCount = 0
-	rowSet, _ = NewRows(ctx, opHandle, client, nil, directResults, nil, nil, nil)
+	rowSet, _ = NewRows(ctx, opHandle, client, nil, directResults, nil)
 	err = rowSet.Close()
 	assert.Nil(t, err, "rows.Close should not throw an error")
 	assert.Equal(t, 1, closeCount)
@@ -746,7 +746,7 @@ func TestRowsCloseOptimization(t *testing.T) {
 		ResultSetMetadata: &cli_service.TGetResultSetMetadataResp{Schema: &cli_service.TTableSchema{}},
 		ResultSet:         &cli_service.TFetchResultsResp{Results: &cli_service.TRowSet{Columns: []*cli_service.TColumn{}}},
 	}
-	rowSet, _ = NewRows(ctx, opHandle, client, nil, directResults, nil, nil, nil)
+	rowSet, _ = NewRows(ctx, opHandle, client, nil, directResults, nil)
 	err = rowSet.Close()
 	assert.Nil(t, err, "rows.Close should not throw an error")
 	assert.Equal(t, 0, closeCount)
@@ -816,7 +816,7 @@ func TestGetArrowBatches(t *testing.T) {
 
 		client := getSimpleClient([]cli_service.TFetchResultsResp{fetchResp1, fetchResp2})
 		cfg := config.WithDefaults()
-		rows, err := NewRows(ctx, nil, client, cfg, executeStatementResp.DirectResults, nil, nil, nil)
+		rows, err := NewRows(ctx, nil, client, cfg, executeStatementResp.DirectResults, nil)
 		assert.Nil(t, err)
 
 		rows2, ok := rows.(dbsqlrows.Rows)
@@ -889,7 +889,7 @@ func TestGetArrowBatches(t *testing.T) {
 
 		client := getSimpleClient([]cli_service.TFetchResultsResp{fetchResp1, fetchResp2, fetchResp3})
 		cfg := config.WithDefaults()
-		rows, err := NewRows(ctx, nil, client, cfg, nil, nil, nil, nil)
+		rows, err := NewRows(ctx, nil, client, cfg, nil, nil)
 		assert.Nil(t, err)
 
 		rows2, ok := rows.(dbsqlrows.Rows)
@@ -950,7 +950,7 @@ func TestGetArrowBatches(t *testing.T) {
 
 		client := getSimpleClient([]cli_service.TFetchResultsResp{fetchResp1})
 		cfg := config.WithDefaults()
-		rows, err := NewRows(ctx, nil, client, cfg, nil, nil, nil, nil)
+		rows, err := NewRows(ctx, nil, client, cfg, nil, nil)
 		assert.Nil(t, err)
 
 		rows2, ok := rows.(dbsqlrows.Rows)
@@ -977,7 +977,7 @@ func TestGetArrowBatches(t *testing.T) {
 
 		client := getSimpleClient([]cli_service.TFetchResultsResp{})
 		cfg := config.WithDefaults()
-		rows, err := NewRows(ctx, nil, client, cfg, executeStatementResp.DirectResults, nil, nil, nil)
+		rows, err := NewRows(ctx, nil, client, cfg, executeStatementResp.DirectResults, nil)
 		assert.Nil(t, err)
 
 		rows2, ok := rows.(dbsqlrows.Rows)
@@ -1557,7 +1557,7 @@ func TestFetchResultPage_PropagatesGetNextPageError(t *testing.T) {
 
 	executeStatementResp := cli_service.TExecuteStatementResp{}
 	cfg := config.WithDefaults()
-	rows, _ := NewRows(ctx, nil, client, cfg, executeStatementResp.DirectResults, nil, nil, nil)
+	rows, _ := NewRows(ctx, nil, client, cfg, executeStatementResp.DirectResults, nil)
 	// Call Next and ensure it propagates the error from getNextPage
 	actualErr := rows.Next(nil)
 
@@ -1633,7 +1633,7 @@ func TestRows_CloseCallback_ReceivesChunkCount(t *testing.T) {
 	cfg := config.WithDefaults()
 	cfg.MaxRows = 5 // force paging
 
-	dr, dbErr := NewRows(ctx, nil, testClient, cfg, nil, nil, closeCallback, nil)
+	dr, dbErr := NewRows(ctx, nil, testClient, cfg, nil, &TelemetryCallbacks{OnClose: closeCallback})
 	assert.Nil(t, dbErr)
 
 	// Drain all rows to force two FetchResults calls.
@@ -1674,7 +1674,7 @@ func TestRows_CloseCallback_NilDoesNotPanic(t *testing.T) {
 	ctx := driverctx.NewContextWithConnId(context.Background(), "connId")
 	cfg := config.WithDefaults()
 
-	dr, dbErr := NewRows(ctx, nil, testClient, cfg, nil, nil, nil /* closeCallback=nil */, nil)
+	dr, dbErr := NewRows(ctx, nil, testClient, cfg, nil, nil)
 	assert.Nil(t, dbErr)
 
 	assert.NotPanics(t, func() {

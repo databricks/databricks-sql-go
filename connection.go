@@ -235,6 +235,11 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 	}
 
 	// Per-chunk timing state accumulated across all fetchResultPage calls.
+	// These variables are safe without a mutex because they are only mutated
+	// from callbacks invoked sequentially by the single goroutine that calls
+	// rows.Next() (telemetryUpdate from fetchResultPage, cloudFetchCallback
+	// from cloudIPCStreamIterator.Next). closeCallback runs from rows.Close()
+	// on the same goroutine after iteration ends.
 	var (
 		chunkTimingInitialMs  int64
 		chunkTimingSlowestMs  int64
@@ -331,7 +336,11 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 		}
 	}
 
-	rows, err := rows.NewRows(ctx, exStmtResp.OperationHandle, c.client, c.cfg, exStmtResp.DirectResults, telemetryUpdate, closeCallback, cloudFetchCallback)
+	rows, err := rows.NewRows(ctx, exStmtResp.OperationHandle, c.client, c.cfg, exStmtResp.DirectResults, &rows.TelemetryCallbacks{
+		OnChunkFetched:   telemetryUpdate,
+		OnClose:          closeCallback,
+		OnCloudFetchFile: cloudFetchCallback,
+	})
 	return rows, err
 
 }
@@ -768,7 +777,9 @@ func (c *conn) execStagingOperation(
 				c.telemetry.AddTag(ctx, "bytes_downloaded", bytesDownloaded)
 			}
 		}
-		row, err = rows.NewRows(ctx, exStmtResp.OperationHandle, c.client, c.cfg, exStmtResp.DirectResults, telemetryUpdate, nil, nil)
+		row, err = rows.NewRows(ctx, exStmtResp.OperationHandle, c.client, c.cfg, exStmtResp.DirectResults, &rows.TelemetryCallbacks{
+			OnChunkFetched: telemetryUpdate,
+		})
 		if err != nil {
 			return dbsqlerrint.NewDriverError(ctx, "error reading row.", err)
 		}

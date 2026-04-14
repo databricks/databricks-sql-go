@@ -85,8 +85,10 @@ func (agg *metricsAggregator) exportWorker() {
 			if !ok {
 				return
 			}
-			agg.exporter.export(job.ctx, job.metrics)
-			agg.inFlight.Done()
+			func() {
+				defer agg.inFlight.Done()
+				agg.exporter.export(job.ctx, job.metrics)
+			}()
 		case <-agg.ctx.Done():
 			return
 		}
@@ -311,7 +313,15 @@ func (agg *metricsAggregator) close(ctx context.Context) error {
 	drained:
 		// 4. Wait for jobs already picked up by workers before the drain above.
 		// Workers call inFlight.Done() after their HTTP export completes.
-		agg.inFlight.Wait()
+		// Use a goroutine + select so we respect the caller's context deadline;
+		// without this, a hung HTTP export would block conn.Close() indefinitely.
+		waitCh := make(chan struct{})
+		go func() { agg.inFlight.Wait(); close(waitCh) }()
+		select {
+		case <-waitCh:
+		case <-ctx.Done():
+			logger.Debug().Msg("telemetry: close timed out waiting for in-flight exports")
+		}
 
 		agg.cancel() // 5. Stop export workers (all in-flight exports complete)
 	})

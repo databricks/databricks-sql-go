@@ -82,15 +82,24 @@ var _ driver.RowsColumnTypeNullable = (*rows)(nil)
 var _ driver.RowsColumnTypeLength = (*rows)(nil)
 var _ dbsqlrows.Rows = (*rows)(nil)
 
+// TelemetryCallbacks bundles the optional telemetry hooks passed into NewRows.
+// Pass nil when telemetry is not active; individual fields may also be nil.
+type TelemetryCallbacks struct {
+	// OnChunkFetched is called after each result page fetch with chunk-level stats.
+	OnChunkFetched func(chunkCount int, bytesDownloaded int64, chunkIndex int, chunkLatencyMs int64, totalChunksPresent int32)
+	// OnClose is called from rows.Close() after all rows have been consumed.
+	OnClose func(latencyMs int64, chunkCount int, err error)
+	// OnCloudFetchFile is called per S3 file download for CloudFetch result sets.
+	OnCloudFetchFile func(downloadMs int64)
+}
+
 func NewRows(
 	ctx context.Context,
 	opHandle *cli_service.TOperationHandle,
 	client cli_service.TCLIService,
 	config *config.Config,
 	directResults *cli_service.TSparkDirectResults,
-	telemetryUpdate func(chunkCount int, bytesDownloaded int64, chunkIndex int, chunkLatencyMs int64, totalChunksPresent int32),
-	closeCallback func(latencyMs int64, chunkCount int, err error),
-	cloudFetchCallback func(downloadMs int64),
+	callbacks *TelemetryCallbacks,
 ) (driver.Rows, dbsqlerr.DBError) {
 
 	connId := driverctx.ConnIdFromContext(ctx)
@@ -122,19 +131,21 @@ func NewRows(
 	logger.Debug().Msgf("databricks: creating Rows, pageSize: %d, location: %v", pageSize, location)
 
 	r := &rows{
-		client:             client,
-		opHandle:           opHandle,
-		connId:             connId,
-		correlationId:      correlationId,
-		location:           location,
-		config:             config,
-		logger_:            logger,
-		ctx:                ctx,
-		telemetryUpdate:    telemetryUpdate,
-		cloudFetchCallback: cloudFetchCallback,
-		closeCallback:      closeCallback,
-		chunkCount:         0,
-		bytesDownloaded:    0,
+		client:          client,
+		opHandle:        opHandle,
+		connId:          connId,
+		correlationId:   correlationId,
+		location:        location,
+		config:          config,
+		logger_:         logger,
+		ctx:             ctx,
+		chunkCount:      0,
+		bytesDownloaded: 0,
+	}
+	if callbacks != nil {
+		r.telemetryUpdate = callbacks.OnChunkFetched
+		r.cloudFetchCallback = callbacks.OnCloudFetchFile
+		r.closeCallback = callbacks.OnClose
 	}
 
 	// if we already have results for the query do some additional initialization

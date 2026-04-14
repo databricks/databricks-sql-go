@@ -20,7 +20,7 @@ import (
 //   - enableTelemetry: Client config overlay (unset = check server flag, true/false = override server)
 //   - batchSize: Number of metrics per batch (0 = use default)
 //   - flushInterval: Flush interval (0 = use default)
-//   - retryCount: Max retry attempts (0 = use default)
+//   - retryCount: Max retry attempts (-1 = use default (3); 0 = disable retries)
 //   - retryDelay: Base delay between retries (0 = use default)
 //
 // Returns:
@@ -49,7 +49,7 @@ func InitializeForConnection(
 	if flushInterval > 0 {
 		cfg.FlushInterval = flushInterval
 	}
-	if retryCount > 0 {
+	if retryCount >= 0 {
 		cfg.MaxRetries = retryCount
 	}
 	if retryDelay > 0 {

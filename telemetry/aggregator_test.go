@@ -272,3 +272,58 @@ func TestAggregatorFlushUnlocked_DropWhenQueueFull(t *testing.T) {
 		t.Fatal("inFlight.Wait() blocked — inFlight counter is unbalanced after queue-full drop")
 	}
 }
+
+// TestAggregatorClose_RespectsContextTimeout verifies that close() returns promptly
+// when the caller's context deadline expires, rather than blocking indefinitely on a
+// hung HTTP export.
+//
+// Regression test for the scenario where a telemetry server is unresponsive and
+// conn.Close() would hang forever waiting for in-flight exports to finish.
+func TestAggregatorClose_RespectsContextTimeout(t *testing.T) {
+	const serverDelay = 5 * time.Second
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Simulate a hung/slow telemetry server that takes much longer than our timeout.
+		time.Sleep(serverDelay)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	cfg := DefaultConfig()
+	cfg.FlushInterval = 10 * time.Second
+	cfg.BatchSize = 1
+	httpClient := &http.Client{Timeout: 10 * time.Second}
+
+	exporter := newTelemetryExporter(server.URL, "test-version", httpClient, cfg)
+	agg := newMetricsAggregator(exporter, cfg)
+
+	// Record a metric that triggers an immediate flush (terminal op).
+	// A worker will pick it up and start a slow HTTP export.
+	agg.recordMetric(context.Background(), &telemetryMetric{
+		metricType: "operation",
+		timestamp:  time.Now(),
+		tags:       map[string]interface{}{"operation_type": OperationTypeCloseStatement},
+	})
+
+	// Give the worker a moment to pick up the job and start the HTTP request.
+	time.Sleep(50 * time.Millisecond)
+
+	// Call close() with a short timeout — it must return when the context expires,
+	// NOT wait for the full serverDelay.
+	timeout := 200 * time.Millisecond
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	closeStart := time.Now()
+	_ = agg.close(ctx)
+	closeDuration := time.Since(closeStart)
+
+	// close() must have returned near the timeout, not after serverDelay.
+	if closeDuration >= serverDelay {
+		t.Errorf("close() blocked for %v (server delay %v); expected it to respect the %v context timeout", closeDuration, serverDelay, timeout)
+	}
+	// Allow some slack but it should be well under the server delay.
+	if closeDuration > 1*time.Second {
+		t.Errorf("close() took %v; expected it to return near the %v context timeout", closeDuration, timeout)
+	}
+}

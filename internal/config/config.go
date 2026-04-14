@@ -104,7 +104,7 @@ type UserConfig struct {
 	EnableTelemetry          ConfigValue[bool]
 	TelemetryBatchSize       int           // 0 = use default (100)
 	TelemetryFlushInterval   time.Duration // 0 = use default (5s)
-	TelemetryRetryCount      int           // 0 = use default (3); set via telemetry_retry_count
+	TelemetryRetryCount      int           // -1 = use default (3); 0 = disable retries; set via telemetry_retry_count
 	TelemetryRetryDelay      time.Duration // 0 = use default (100ms); set via telemetry_retry_delay
 	Transport                http.RoundTripper
 	UseLz4Compression        bool
@@ -194,6 +194,10 @@ func (ucfg UserConfig) WithDefaults() UserConfig {
 
 	// EnableTelemetry defaults to unset (ConfigValue zero value),
 	// meaning telemetry is controlled by server feature flags.
+
+	// TelemetryRetryCount uses -1 as "not set" so that an explicit 0 from the
+	// DSN (meaning "disable retries") is distinguishable from the default.
+	ucfg.TelemetryRetryCount = -1
 
 	return ucfg
 }
