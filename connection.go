@@ -60,7 +60,7 @@ func (c *conn) Close() error {
 
 	// Record DELETE_SESSION regardless of error (matches JDBC), then flush and release
 	if c.telemetry != nil {
-		c.telemetry.RecordOperation(ctx, c.id, telemetry.OperationTypeDeleteSession, time.Since(closeStart).Milliseconds(), err)
+		c.telemetry.RecordOperation(ctx, c.id, "", telemetry.OperationTypeDeleteSession, time.Since(closeStart).Milliseconds(), err)
 		_ = c.telemetry.Close(ctx)
 		telemetry.ReleaseForConnection(c.cfg.Host)
 	}
@@ -164,7 +164,7 @@ func (c *conn) ExecContext(ctx context.Context, query string, args []driver.Name
 				OperationHandle: exStmtResp.OperationHandle,
 			})
 			if c.telemetry != nil {
-				c.telemetry.RecordOperation(ctx, c.id, telemetry.OperationTypeCloseStatement, time.Since(closeOpStart).Milliseconds(), err1)
+				c.telemetry.RecordOperation(ctx, c.id, statementID, telemetry.OperationTypeCloseStatement, time.Since(closeOpStart).Milliseconds(), err1)
 			}
 			if err1 != nil {
 				log.Err(err1).Msg("databricks: failed to close operation after executing statement")
@@ -273,30 +273,59 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 		}
 	}
 
+	// cloudFetchCallback is invoked per S3 file download for CloudFetch result sets.
+	// It aggregates individual file download times into the same initial/slowest/sum vars
+	// used for inline chunk timing, matching JDBC's per-chunk HTTP GET timing model.
+	// For inline (non-CloudFetch) result sets this is never called.
+	var cloudFetchCallback func(downloadMs int64)
+	if c.telemetry != nil {
+		cloudFetchCallback = func(downloadMs int64) {
+			if downloadMs <= 0 {
+				return
+			}
+			if !chunkTimingInitialSet {
+				chunkTimingInitialMs = downloadMs
+				chunkTimingInitialSet = true
+			}
+			if downloadMs > chunkTimingSlowestMs {
+				chunkTimingSlowestMs = downloadMs
+			}
+			chunkTimingSumMs += downloadMs
+			c.telemetry.AddTag(ctx, "chunk_initial_latency_ms", chunkTimingInitialMs)
+			c.telemetry.AddTag(ctx, "chunk_slowest_latency_ms", chunkTimingSlowestMs)
+			c.telemetry.AddTag(ctx, "chunk_sum_latency_ms", chunkTimingSumMs)
+		}
+	}
+
 	// closeCallback is invoked from rows.Close() after all rows have been consumed.
 	// At that point chunk timing is fully accumulated in ctx tags, so we finalize
 	// EXECUTE_STATEMENT here rather than at QueryContext return time.
-	var closeCallback func(latencyMs int64, err error)
+	var closeCallback func(latencyMs int64, chunkCount int, err error)
 	if c.telemetry != nil && statementID != "" {
 		interceptor := c.telemetry
 		connID := c.id
 		stmtID := statementID
-		closeCallback = func(latencyMs int64, closeErr error) {
+		closeCallback = func(latencyMs int64, chunkCount int, closeErr error) {
+			// If the server never reported total chunks (paginated CloudFetch / inline),
+			// derive it from the final chunk count now that all iteration is complete.
+			if chunkTotalPresent == 0 && chunkCount > 0 {
+				interceptor.AddTag(ctx, "chunk_total_present", chunkCount)
+			}
 			// Emit EXECUTE_STATEMENT with complete chunk data now that iteration is done.
 			interceptor.AfterExecute(ctx, nil)
 			interceptor.CompleteStatement(ctx, stmtID, false)
 			// Emit CLOSE_STATEMENT as a separate operation event.
-			interceptor.RecordOperation(ctx, connID, telemetry.OperationTypeCloseStatement, latencyMs, closeErr)
+			interceptor.RecordOperation(ctx, connID, stmtID, telemetry.OperationTypeCloseStatement, latencyMs, closeErr)
 		}
 	} else if c.telemetry != nil {
 		interceptor := c.telemetry
 		connID := c.id
-		closeCallback = func(latencyMs int64, closeErr error) {
-			interceptor.RecordOperation(ctx, connID, telemetry.OperationTypeCloseStatement, latencyMs, closeErr)
+		closeCallback = func(latencyMs int64, _ int, closeErr error) {
+			interceptor.RecordOperation(ctx, connID, "", telemetry.OperationTypeCloseStatement, latencyMs, closeErr)
 		}
 	}
 
-	rows, err := rows.NewRows(ctx, exStmtResp.OperationHandle, c.client, c.cfg, exStmtResp.DirectResults, telemetryUpdate, closeCallback)
+	rows, err := rows.NewRows(ctx, exStmtResp.OperationHandle, c.client, c.cfg, exStmtResp.DirectResults, telemetryUpdate, closeCallback, cloudFetchCallback)
 	return rows, err
 
 }
@@ -733,7 +762,7 @@ func (c *conn) execStagingOperation(
 				c.telemetry.AddTag(ctx, "bytes_downloaded", bytesDownloaded)
 			}
 		}
-		row, err = rows.NewRows(ctx, exStmtResp.OperationHandle, c.client, c.cfg, exStmtResp.DirectResults, telemetryUpdate, nil)
+		row, err = rows.NewRows(ctx, exStmtResp.OperationHandle, c.client, c.cfg, exStmtResp.DirectResults, telemetryUpdate, nil, nil)
 		if err != nil {
 			return dbsqlerrint.NewDriverError(ctx, "error reading row.", err)
 		}

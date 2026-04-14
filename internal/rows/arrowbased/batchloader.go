@@ -33,6 +33,7 @@ func NewCloudIPCStreamIterator(
 	files []*cli_service.TSparkArrowResultLink,
 	startRowOffset int64,
 	cfg *config.Config,
+	onFileDownloaded func(downloadMs int64),
 ) (IPCStreamIterator, dbsqlerr.DBError) {
 	httpClient := http.DefaultClient
 	if cfg.HTTPClient != nil {
@@ -40,12 +41,13 @@ func NewCloudIPCStreamIterator(
 	}
 
 	bi := &cloudIPCStreamIterator{
-		ctx:            ctx,
-		cfg:            cfg,
-		startRowOffset: startRowOffset,
-		pendingLinks:   NewQueue[cli_service.TSparkArrowResultLink](),
-		downloadTasks:  NewQueue[cloudFetchDownloadTask](),
-		httpClient:     httpClient,
+		ctx:              ctx,
+		cfg:              cfg,
+		startRowOffset:   startRowOffset,
+		pendingLinks:     NewQueue[cli_service.TSparkArrowResultLink](),
+		downloadTasks:    NewQueue[cloudFetchDownloadTask](),
+		httpClient:       httpClient,
+		onFileDownloaded: onFileDownloaded,
 	}
 
 	for _, link := range files {
@@ -61,8 +63,9 @@ func NewCloudBatchIterator(
 	files []*cli_service.TSparkArrowResultLink,
 	startRowOffset int64,
 	cfg *config.Config,
+	onFileDownloaded func(downloadMs int64),
 ) (BatchIterator, dbsqlerr.DBError) {
-	ipcIterator, err := NewCloudIPCStreamIterator(ctx, files, startRowOffset, cfg)
+	ipcIterator, err := NewCloudIPCStreamIterator(ctx, files, startRowOffset, cfg, onFileDownloaded)
 	if err != nil {
 		return nil, err
 	}
@@ -141,12 +144,13 @@ func (bi *localIPCStreamIterator) Close() {
 }
 
 type cloudIPCStreamIterator struct {
-	ctx            context.Context
-	cfg            *config.Config
-	startRowOffset int64
-	pendingLinks   Queue[cli_service.TSparkArrowResultLink]
-	downloadTasks  Queue[cloudFetchDownloadTask]
-	httpClient     *http.Client
+	ctx              context.Context
+	cfg              *config.Config
+	startRowOffset   int64
+	pendingLinks     Queue[cli_service.TSparkArrowResultLink]
+	downloadTasks    Queue[cloudFetchDownloadTask]
+	httpClient       *http.Client
+	onFileDownloaded func(downloadMs int64) // nil for non-telemetry paths
 }
 
 var _ IPCStreamIterator = (*cloudIPCStreamIterator)(nil)
@@ -180,7 +184,7 @@ func (bi *cloudIPCStreamIterator) Next() (io.Reader, error) {
 		return nil, io.EOF
 	}
 
-	data, err := task.GetResult()
+	data, downloadMs, err := task.GetResult()
 
 	// once we've got an errored out task - cancel the remaining ones
 	if err != nil {
@@ -190,6 +194,12 @@ func (bi *cloudIPCStreamIterator) Next() (io.Reader, error) {
 
 	// explicitly call cancel function on successfully completed task to avoid context leak
 	task.cancel()
+
+	// Notify telemetry with per-file download time (matches JDBC's per-chunk HTTP GET timing).
+	if bi.onFileDownloaded != nil && downloadMs > 0 {
+		bi.onFileDownloaded(downloadMs)
+	}
+
 	return data, nil
 }
 
@@ -206,8 +216,9 @@ func (bi *cloudIPCStreamIterator) Close() {
 }
 
 type cloudFetchDownloadTaskResult struct {
-	data io.Reader
-	err  error
+	data       io.Reader
+	err        error
+	downloadMs int64 // wall-clock time for HTTP GET + decompression
 }
 
 type cloudFetchDownloadTask struct {
@@ -221,7 +232,7 @@ type cloudFetchDownloadTask struct {
 	httpClient         *http.Client
 }
 
-func (cft *cloudFetchDownloadTask) GetResult() (io.Reader, error) {
+func (cft *cloudFetchDownloadTask) GetResult() (io.Reader, int64, error) {
 	link := cft.link
 
 	result, ok := <-cft.resultChan
@@ -233,14 +244,14 @@ func (cft *cloudFetchDownloadTask) GetResult() (io.Reader, error) {
 				link.RowCount,
 				result.err.Error(),
 			)
-			return nil, result.err
+			return nil, 0, result.err
 		}
 		logger.Debug().Msgf(
 			"CloudFetch: received data for link at offset %d row count %d",
 			link.StartRowOffset,
 			link.RowCount,
 		)
-		return result.data, nil
+		return result.data, result.downloadMs, nil
 	}
 
 	// This branch should never be reached. If you see this message - something got really wrong
@@ -249,7 +260,7 @@ func (cft *cloudFetchDownloadTask) GetResult() (io.Reader, error) {
 		link.StartRowOffset,
 		link.RowCount,
 	)
-	return nil, nil
+	return nil, 0, nil
 }
 
 func (cft *cloudFetchDownloadTask) Run() {
@@ -261,6 +272,7 @@ func (cft *cloudFetchDownloadTask) Run() {
 			cft.link.StartRowOffset,
 			cft.link.RowCount,
 		)
+		downloadStart := time.Now()
 		data, err := fetchBatchBytes(cft.ctx, cft.link, cft.minTimeToExpiry, cft.speedThresholdMbps, cft.httpClient)
 		if err != nil {
 			cft.resultChan <- cloudFetchDownloadTaskResult{data: nil, err: err}
@@ -270,6 +282,7 @@ func (cft *cloudFetchDownloadTask) Run() {
 		// Read all data into memory before closing
 		buf, err := io.ReadAll(getReader(data, cft.useLz4Compression))
 		data.Close() //nolint:errcheck,gosec // G104: close after reading data
+		downloadMs := time.Since(downloadStart).Milliseconds()
 		if err != nil {
 			cft.resultChan <- cloudFetchDownloadTaskResult{data: nil, err: err}
 			return
@@ -281,7 +294,7 @@ func (cft *cloudFetchDownloadTask) Run() {
 			cft.link.RowCount,
 		)
 
-		cft.resultChan <- cloudFetchDownloadTaskResult{data: bytes.NewReader(buf), err: nil}
+		cft.resultChan <- cloudFetchDownloadTaskResult{data: bytes.NewReader(buf), err: nil, downloadMs: downloadMs}
 	}()
 }
 

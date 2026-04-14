@@ -48,7 +48,7 @@ type TelemetryEvent struct {
 	VolumeOperation            *VolumeOperationEvent       `json:"vol_operation,omitempty"`
 	SQLOperation               *SQLExecutionEvent          `json:"sql_operation,omitempty"`
 	ErrorInfo                  *DriverErrorInfo            `json:"error_info,omitempty"`
-	OperationLatencyMs         int64                       `json:"operation_latency_ms,omitempty"`
+	OperationLatencyMs         int64                       `json:"operation_latency_ms"`
 }
 
 // DriverSystemConfiguration maps to DriverSystemConfiguration in the proto schema.

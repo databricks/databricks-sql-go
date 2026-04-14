@@ -63,12 +63,16 @@ type rows struct {
 	//   chunkCount: total chunks fetched so far (including direct results)
 	//   bytesDownloaded: cumulative bytes
 	//   chunkIndex: 0-based index of the chunk just fetched
-	//   chunkLatencyMs: fetch latency for this chunk (0 for direct results)
+	//   chunkLatencyMs: fetch latency for this chunk (0 for direct results or CloudFetch pages)
 	//   totalChunksPresent: server-reported total, 0 if unknown
 	telemetryUpdate func(chunkCount int, bytesDownloaded int64, chunkIndex int, chunkLatencyMs int64, totalChunksPresent int32)
-	closeCallback   func(latencyMs int64, err error)
-	chunkCount      int
-	bytesDownloaded int64
+	// cloudFetchCallback is invoked per S3 file download for CloudFetch result sets.
+	// It receives the individual file download duration so that telemetry can track
+	// initial/slowest/sum download times matching JDBC's per-chunk HTTP GET timing.
+	cloudFetchCallback func(downloadMs int64)
+	closeCallback      func(latencyMs int64, chunkCount int, err error)
+	chunkCount         int
+	bytesDownloaded    int64
 }
 
 var _ driver.Rows = (*rows)(nil)
@@ -85,7 +89,8 @@ func NewRows(
 	config *config.Config,
 	directResults *cli_service.TSparkDirectResults,
 	telemetryUpdate func(chunkCount int, bytesDownloaded int64, chunkIndex int, chunkLatencyMs int64, totalChunksPresent int32),
-	closeCallback func(latencyMs int64, err error),
+	closeCallback func(latencyMs int64, chunkCount int, err error),
+	cloudFetchCallback func(downloadMs int64),
 ) (driver.Rows, dbsqlerr.DBError) {
 
 	connId := driverctx.ConnIdFromContext(ctx)
@@ -117,18 +122,19 @@ func NewRows(
 	logger.Debug().Msgf("databricks: creating Rows, pageSize: %d, location: %v", pageSize, location)
 
 	r := &rows{
-		client:          client,
-		opHandle:        opHandle,
-		connId:          connId,
-		correlationId:   correlationId,
-		location:        location,
-		config:          config,
-		logger_:         logger,
-		ctx:             ctx,
-		telemetryUpdate: telemetryUpdate,
-		closeCallback:   closeCallback,
-		chunkCount:      0,
-		bytesDownloaded: 0,
+		client:             client,
+		opHandle:           opHandle,
+		connId:             connId,
+		correlationId:      correlationId,
+		location:           location,
+		config:             config,
+		logger_:            logger,
+		ctx:                ctx,
+		telemetryUpdate:    telemetryUpdate,
+		cloudFetchCallback: cloudFetchCallback,
+		closeCallback:      closeCallback,
+		chunkCount:         0,
+		bytesDownloaded:    0,
 	}
 
 	// if we already have results for the query do some additional initialization
@@ -233,7 +239,7 @@ func (r *rows) Close() error {
 		closeStart := time.Now()
 		err := r.ResultPageIterator.Close()
 		if r.closeCallback != nil {
-			r.closeCallback(time.Since(closeStart).Milliseconds(), err)
+			r.closeCallback(time.Since(closeStart).Milliseconds(), r.chunkCount, err)
 		}
 		if err != nil {
 			r.logger().Err(err).Msg(errRowsCloseFailed)
@@ -516,13 +522,23 @@ func (r *rows) fetchResultPage() error {
 	}
 
 	// For CloudFetch, the result links in the response reveal the server-reported total.
+	// The FetchResults RPC only returns presigned URLs for CloudFetch — the actual data
+	// transfer happens later via S3 HTTP GETs timed by cloudFetchCallback. Report 0 latency
+	// here so the Thrift round-trip is not misreported as chunk download time.
 	var totalPresent int32
+	isCloudFetch := false
 	if fetchResult != nil && fetchResult.Results != nil && fetchResult.Results.ResultLinks != nil {
 		totalPresent = int32(len(fetchResult.Results.ResultLinks)) //nolint:gosec
+		isCloudFetch = true
+	}
+
+	effectiveLatencyMs := chunkLatencyMs
+	if isCloudFetch {
+		effectiveLatencyMs = 0
 	}
 
 	if r.telemetryUpdate != nil {
-		r.telemetryUpdate(r.chunkCount, r.bytesDownloaded, chunkIndex, chunkLatencyMs, totalPresent)
+		r.telemetryUpdate(r.chunkCount, r.bytesDownloaded, chunkIndex, effectiveLatencyMs, totalPresent)
 	}
 
 	err1 = r.makeRowScanner(fetchResult)
@@ -559,9 +575,9 @@ func (r *rows) makeRowScanner(fetchResults *cli_service.TFetchResultsResp) dbsql
 		if fetchResults.Results.Columns != nil {
 			rs, err = columnbased.NewColumnRowScanner(schema, fetchResults.Results, r.config, r.logger(), r.ctx)
 		} else if fetchResults.Results.ArrowBatches != nil {
-			rs, err = arrowbased.NewArrowRowScanner(r.resultSetMetadata, fetchResults.Results, r.config, r.logger(), r.ctx)
+			rs, err = arrowbased.NewArrowRowScanner(r.resultSetMetadata, fetchResults.Results, r.config, r.logger(), r.ctx, nil)
 		} else if fetchResults.Results.ResultLinks != nil {
-			rs, err = arrowbased.NewArrowRowScanner(r.resultSetMetadata, fetchResults.Results, r.config, r.logger(), r.ctx)
+			rs, err = arrowbased.NewArrowRowScanner(r.resultSetMetadata, fetchResults.Results, r.config, r.logger(), r.ctx, r.cloudFetchCallback)
 		} else {
 			r.logger().Error().Msg(errRowsUnknowRowType)
 			err = dbsqlerr_int.NewDriverError(r.ctx, errRowsUnknowRowType, nil)

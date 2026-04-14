@@ -94,7 +94,7 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 	)
 	if conn.telemetry != nil {
 		log.Debug().Msg("telemetry initialized for connection")
-		conn.telemetry.RecordOperation(ctx, conn.id, telemetry.OperationTypeCreateSession, sessionLatencyMs, nil)
+		conn.telemetry.RecordOperation(ctx, conn.id, "", telemetry.OperationTypeCreateSession, sessionLatencyMs, nil)
 	}
 
 	log.Info().Msgf("connect: host=%s port=%d httpPath=%s serverProtocolVersion=0x%X", c.cfg.Host, c.cfg.Port, c.cfg.HTTPPath, session.ServerProtocolVersion)

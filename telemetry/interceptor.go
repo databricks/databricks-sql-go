@@ -197,8 +197,10 @@ func (i *Interceptor) CompleteStatement(ctx context.Context, statementID string,
 }
 
 // RecordOperation records an operation with type, latency, and optional error.
+// statementID is included when the operation is scoped to a specific statement (e.g. CLOSE_STATEMENT).
+// Pass "" for session-level operations (CREATE_SESSION, DELETE_SESSION).
 // Exported for use by the driver package.
-func (i *Interceptor) RecordOperation(ctx context.Context, sessionID string, operationType string, latencyMs int64, err error) {
+func (i *Interceptor) RecordOperation(ctx context.Context, sessionID string, statementID string, operationType string, latencyMs int64, err error) {
 	if !i.enabled {
 		return
 	}
@@ -210,11 +212,12 @@ func (i *Interceptor) RecordOperation(ctx context.Context, sessionID string, ope
 	}()
 
 	metric := &telemetryMetric{
-		metricType: "operation",
-		timestamp:  time.Now(),
-		sessionID:  sessionID,
-		latencyMs:  latencyMs,
-		tags:       map[string]interface{}{"operation_type": operationType},
+		metricType:  "operation",
+		timestamp:   time.Now(),
+		sessionID:   sessionID,
+		statementID: statementID,
+		latencyMs:   latencyMs,
+		tags:        map[string]interface{}{"operation_type": operationType},
 	}
 
 	if err != nil {

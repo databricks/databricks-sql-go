@@ -77,6 +77,7 @@ func TestCloudFetchIterator(t *testing.T) {
 			links,
 			startRowOffset,
 			cfg,
+			nil,
 		)
 		if err != nil {
 			panic(err)
@@ -151,6 +152,7 @@ func TestCloudFetchIterator(t *testing.T) {
 			links,
 			startRowOffset,
 			cfg,
+			nil,
 		)
 		if err != nil {
 			panic(err)
@@ -209,6 +211,7 @@ func TestCloudFetchIterator(t *testing.T) {
 			links,
 			startRowOffset,
 			cfg,
+			nil,
 		)
 		if err != nil {
 			panic(err)
@@ -283,6 +286,7 @@ func TestCloudFetchIterator(t *testing.T) {
 			}},
 			startRowOffset,
 			cfg,
+			nil,
 		)
 		assert.Nil(t, err)
 
@@ -321,6 +325,7 @@ func TestCloudFetchIterator(t *testing.T) {
 			}},
 			startRowOffset,
 			cfg,
+			nil,
 		)
 		assert.Nil(t, err)
 
