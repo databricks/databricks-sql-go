@@ -247,9 +247,9 @@ func TestIntegration_TelemetryEventCorrectnessAllFields(t *testing.T) {
 		latencyMs:   testLatencyMs,
 		errorType:   testErrorName,
 		tags: map[string]interface{}{
-			"operation_type": testOperationType,
-			"chunk_count":    testChunkCount,
-			"poll_count":     testPollCount,
+			TagOperationType:    testOperationType,
+			TagResultChunkCount: testChunkCount,
+			TagPollCount:        testPollCount,
 		},
 	}
 
@@ -484,8 +484,8 @@ func TestIntegration_ChunkTotalPresent_DerivedFromChunkCount(t *testing.T) {
 		statementID: "stmt-chunks",
 		latencyMs:   500,
 		tags: map[string]interface{}{
-			"chunk_count":         totalChunksIterated, // total pages fetched
-			"chunk_total_present": totalChunksPresent,  // derived from r.chunkCount
+			TagResultChunkCount: totalChunksIterated, // total pages fetched
+			TagChunkTotalPresent: totalChunksPresent,  // derived from r.chunkCount
 		},
 	}
 
@@ -518,7 +518,7 @@ func TestIntegration_ChunkTotalPresent_DerivedFromChunkCount(t *testing.T) {
 	if cd.TotalChunksIterated != int32(totalChunksIterated) {
 		t.Errorf("TotalChunksIterated: expected %d, got %d", totalChunksIterated, cd.TotalChunksIterated)
 	}
-
-	t.Logf("ChunkDetails.TotalChunksIterated=%d (chunk_total_present tag propagation verified)", cd.TotalChunksIterated)
-	t.Log("chunk_total_present derivation from chunkCount correctly propagated")
+	if cd.TotalChunksPresent != int32(totalChunksPresent) {
+		t.Errorf("TotalChunksPresent: expected %d, got %d", totalChunksPresent, cd.TotalChunksPresent)
+	}
 }

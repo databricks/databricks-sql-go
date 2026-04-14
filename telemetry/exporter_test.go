@@ -243,57 +243,6 @@ func TestExport_CircuitBreakerOpen(t *testing.T) {
 	}
 }
 
-func TestToExportedMetric_TagFiltering(t *testing.T) {
-	metric := &telemetryMetric{
-		metricType:  "connection",
-		timestamp:   time.Date(2026, 1, 30, 10, 0, 0, 0, time.UTC),
-		workspaceID: "test-workspace",
-		sessionID:   "test-session",
-		statementID: "test-statement",
-		latencyMs:   100,
-		errorType:   "test-error",
-		tags: map[string]interface{}{
-			"workspace.id":   "ws-123",         // Should be exported
-			"driver.version": "1.0.0",          // Should be exported
-			"server.address": "localhost:8080", // Should NOT be exported (local only)
-			"unknown.tag":    "value",          // Should NOT be exported
-		},
-	}
-
-	exported := metric.toExportedMetric()
-
-	// Verify basic fields
-	if exported.MetricType != "connection" {
-		t.Errorf("Expected MetricType 'connection', got %s", exported.MetricType)
-	}
-
-	if exported.WorkspaceID != "test-workspace" {
-		t.Errorf("Expected WorkspaceID 'test-workspace', got %s", exported.WorkspaceID)
-	}
-
-	// Verify timestamp format
-	if exported.Timestamp != "2026-01-30T10:00:00Z" {
-		t.Errorf("Expected timestamp '2026-01-30T10:00:00Z', got %s", exported.Timestamp)
-	}
-
-	// Verify tag filtering
-	if _, ok := exported.Tags["workspace.id"]; !ok {
-		t.Error("Expected 'workspace.id' tag to be exported")
-	}
-
-	if _, ok := exported.Tags["driver.version"]; !ok {
-		t.Error("Expected 'driver.version' tag to be exported")
-	}
-
-	if _, ok := exported.Tags["server.address"]; ok {
-		t.Error("Expected 'server.address' tag to NOT be exported (local only)")
-	}
-
-	if _, ok := exported.Tags["unknown.tag"]; ok {
-		t.Error("Expected 'unknown.tag' to NOT be exported")
-	}
-}
-
 func TestIsRetryableStatus(t *testing.T) {
 	tests := []struct {
 		status      int

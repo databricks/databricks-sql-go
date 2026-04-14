@@ -15,6 +15,15 @@ type Interceptor struct {
 }
 
 // metricContext holds metric collection state in context.
+//
+// Thread safety: metricContext.tags is NOT protected by its own mutex.
+// It relies on database/sql's closemu for serialization:
+//   - Writes (AddTag) happen during rows.Next() under closemu.RLock
+//   - Final reads (AfterExecute/closeCallback) happen during rows.Close() under closemu.Lock
+//
+// This ensures mutual exclusion between concurrent Next() and Close() calls,
+// including Close() triggered by database/sql's awaitDone goroutine on context
+// cancellation. Do NOT access tags outside of these serialized paths.
 type metricContext struct {
 	sessionID   string
 	statementID string
@@ -217,7 +226,7 @@ func (i *Interceptor) RecordOperation(ctx context.Context, sessionID string, sta
 		sessionID:   sessionID,
 		statementID: statementID,
 		latencyMs:   latencyMs,
-		tags:        map[string]interface{}{"operation_type": operationType},
+		tags:        map[string]interface{}{TagOperationType: operationType},
 	}
 
 	if err != nil {

@@ -7,6 +7,16 @@ import (
 	"time"
 )
 
+const (
+	// maxTelemetryRetryCount caps DSN-provided retry count to prevent
+	// excessive retries from misconfiguration.
+	maxTelemetryRetryCount = 10
+
+	// maxTelemetryRetryDelay caps DSN-provided retry delay to prevent
+	// excessively long backoff from misconfiguration.
+	maxTelemetryRetryDelay = 30 * time.Second
+)
+
 // Config holds telemetry configuration.
 type Config struct {
 	// Enabled controls whether telemetry is active
@@ -41,7 +51,14 @@ type Config struct {
 }
 
 // DefaultConfig returns default telemetry configuration.
-// EnableTelemetry is nil (unset): the server feature flag controls enablement.
+//
+// BEHAVIORAL NOTE (SDR-approved): When EnableTelemetry is nil (the default),
+// telemetry enablement is controlled by the server-side feature flag
+// (databricks.partnerplatform.clientConfigsFeatureFlags.enableTelemetryForGoDriver).
+// This means telemetry may be active without the user explicitly opting in.
+// The user can always override by setting enableTelemetry=true or enableTelemetry=false
+// in the DSN or via WithEnableTelemetry(). No PII is collected; only aggregate
+// driver performance metrics are sent to the Databricks telemetry endpoint.
 func DefaultConfig() *Config {
 	return &Config{
 		Enabled:                 false,
@@ -79,13 +96,13 @@ func ParseTelemetryConfig(params map[string]string) *Config {
 	}
 
 	if v, ok := params["telemetry_retry_count"]; ok {
-		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 && n <= maxTelemetryRetryCount {
 			cfg.MaxRetries = n
 		}
 	}
 
 	if v, ok := params["telemetry_retry_delay"]; ok {
-		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 && d <= maxTelemetryRetryDelay {
 			cfg.RetryDelay = d
 		}
 	}

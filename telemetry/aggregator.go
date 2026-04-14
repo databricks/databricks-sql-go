@@ -119,7 +119,7 @@ func (agg *metricsAggregator) recordMetric(ctx context.Context, metric *telemetr
 		// Terminal operations (session/statement close) flush immediately so metrics
 		// are not lost if the connection closes before the next batch flush — matching
 		// JDBC behavior where CLOSE_STATEMENT and DELETE_SESSION trigger immediate export.
-		opType, _ := metric.tags["operation_type"].(string)
+		opType, _ := metric.tags[TagOperationType].(string)
 		if isTerminalOperationType(opType) || len(agg.batch) >= agg.batchSize {
 			agg.flushUnlocked(ctx)
 		}
@@ -138,13 +138,13 @@ func (agg *metricsAggregator) recordMetric(ctx context.Context, metric *telemetr
 
 		// Update aggregated values
 		stmt.totalLatency += time.Duration(metric.latencyMs) * time.Millisecond
-		if chunkCount, ok := metric.tags["chunk_count"].(int); ok {
+		if chunkCount, ok := metric.tags[TagResultChunkCount].(int); ok {
 			stmt.chunkCount += chunkCount
 		}
-		if bytes, ok := metric.tags["bytes_downloaded"].(int64); ok {
+		if bytes, ok := metric.tags[TagResultBytesDownloaded].(int64); ok {
 			stmt.bytesDownloaded += bytes
 		}
-		if pollCount, ok := metric.tags["poll_count"].(int); ok {
+		if pollCount, ok := metric.tags[TagPollCount].(int); ok {
 			stmt.pollCount += pollCount
 		}
 
@@ -201,9 +201,9 @@ func (agg *metricsAggregator) completeStatement(ctx context.Context, statementID
 	}
 
 	// Add aggregated counts
-	metric.tags["chunk_count"] = stmt.chunkCount
-	metric.tags["bytes_downloaded"] = stmt.bytesDownloaded
-	metric.tags["poll_count"] = stmt.pollCount
+	metric.tags[TagResultChunkCount] = stmt.chunkCount
+	metric.tags[TagResultBytesDownloaded] = stmt.bytesDownloaded
+	metric.tags[TagPollCount] = stmt.pollCount
 
 	// Add error information if failed
 	if failed && len(stmt.errors) > 0 {
@@ -301,16 +301,7 @@ func (agg *metricsAggregator) close(ctx context.Context) error {
 		// 3. Drain any jobs still sitting in the exportQueue synchronously.
 		// Each job was counted by inFlight.Add(1) in flushUnlocked; call Done()
 		// here to match, since the worker won't process these jobs.
-		for {
-			select {
-			case job := <-agg.exportQueue:
-				agg.exporter.export(job.ctx, job.metrics)
-				agg.inFlight.Done()
-			default:
-				goto drained
-			}
-		}
-	drained:
+		agg.drainExportQueue()
 		// 4. Wait for jobs already picked up by workers before the drain above.
 		// Workers call inFlight.Done() after their HTTP export completes.
 		// Use a goroutine + select so we respect the caller's context deadline;
@@ -326,6 +317,20 @@ func (agg *metricsAggregator) close(ctx context.Context) error {
 		agg.cancel() // 5. Stop export workers (all in-flight exports complete)
 	})
 	return nil
+}
+
+// drainExportQueue synchronously processes any jobs remaining in the export
+// queue, matching inFlight.Done() for each one since workers won't handle them.
+func (agg *metricsAggregator) drainExportQueue() {
+	for {
+		select {
+		case job := <-agg.exportQueue:
+			agg.exporter.export(job.ctx, job.metrics)
+			agg.inFlight.Done()
+		default:
+			return
+		}
+	}
 }
 
 // simpleError is a simple error implementation for testing.

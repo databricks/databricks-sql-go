@@ -81,17 +81,16 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 	log := logger.WithContext(conn.id, driverctx.CorrelationIdFromContext(ctx), "")
 
 	// Initialize telemetry: client config overlay decides; if unset, feature flags decide
-	conn.telemetry = telemetry.InitializeForConnection(
-		ctx,
-		c.cfg.Host,
-		c.cfg.DriverVersion,
-		c.client,
-		c.cfg.EnableTelemetry,
-		c.cfg.TelemetryBatchSize,
-		c.cfg.TelemetryFlushInterval,
-		c.cfg.TelemetryRetryCount,
-		c.cfg.TelemetryRetryDelay,
-	)
+	conn.telemetry = telemetry.InitializeForConnection(ctx, telemetry.TelemetryInitOptions{
+		Host:            c.cfg.Host,
+		DriverVersion:   c.cfg.DriverVersion,
+		HTTPClient:      c.client,
+		EnableTelemetry: c.cfg.EnableTelemetry,
+		BatchSize:       c.cfg.TelemetryBatchSize,
+		FlushInterval:   c.cfg.TelemetryFlushInterval,
+		RetryCount:      c.cfg.TelemetryRetryCount,
+		RetryDelay:      c.cfg.TelemetryRetryDelay,
+	})
 	if conn.telemetry != nil {
 		log.Debug().Msg("telemetry initialized for connection")
 		conn.telemetry.RecordOperation(ctx, conn.id, "", telemetry.OperationTypeCreateSession, sessionLatencyMs, nil)

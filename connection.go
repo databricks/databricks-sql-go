@@ -138,7 +138,7 @@ func (c *conn) ExecContext(ctx context.Context, query string, args []driver.Name
 	if c.telemetry != nil && exStmtResp != nil && exStmtResp.OperationHandle != nil && exStmtResp.OperationHandle.OperationId != nil {
 		statementID = client.SprintGuid(exStmtResp.OperationHandle.OperationId.GUID)
 		ctx = c.telemetry.BeforeExecuteWithTime(ctx, c.id, statementID, executeStart)
-		c.telemetry.AddTag(ctx, "operation_type", telemetry.OperationTypeExecuteStatement)
+		c.telemetry.AddTag(ctx, telemetry.TagOperationType, telemetry.OperationTypeExecuteStatement)
 	}
 
 	stagingErr := c.execStagingOperation(exStmtResp, ctx)
@@ -192,6 +192,47 @@ func (c *conn) ExecContext(ctx context.Context, query string, args []driver.Name
 	return &res, nil
 }
 
+// chunkTimingAccumulator aggregates per-chunk fetch latencies for telemetry.
+// It tracks the initial, slowest, and cumulative latencies, plus the number
+// of CloudFetch file downloads. All fields should be accessed under the
+// serialization provided by database/sql's closemu (see QueryContext).
+type chunkTimingAccumulator struct {
+	initialMs  int64
+	slowestMs  int64
+	sumMs      int64
+	initialSet bool
+	// cloudFetchFileCount counts individual S3 files downloaded via CloudFetch.
+	// Used to set chunk_total_present correctly for both bulk and paginated CloudFetch:
+	//   - paginated CF (1 link/FetchResults): file count == page count == correct total
+	//   - bulk CF (all links in DirectResults): file count == actual S3 downloads
+	// For inline ArrowBatch results this stays 0 and chunk_total_present falls back to chunkCount.
+	cloudFetchFileCount int
+}
+
+// record accumulates a single chunk or download latency. Returns true if
+// the latency was positive and tags should be updated; false otherwise.
+func (a *chunkTimingAccumulator) record(latencyMs int64) bool {
+	if latencyMs <= 0 {
+		return false
+	}
+	if !a.initialSet {
+		a.initialMs = latencyMs
+		a.initialSet = true
+	}
+	if latencyMs > a.slowestMs {
+		a.slowestMs = latencyMs
+	}
+	a.sumMs += latencyMs
+	return true
+}
+
+// applyTags writes the current timing state to the telemetry context.
+func (a *chunkTimingAccumulator) applyTags(interceptor *telemetry.Interceptor, ctx context.Context) {
+	interceptor.AddTag(ctx, telemetry.TagChunkInitialLatencyMs, a.initialMs)
+	interceptor.AddTag(ctx, telemetry.TagChunkSlowestLatencyMs, a.slowestMs)
+	interceptor.AddTag(ctx, telemetry.TagChunkSumLatencyMs, a.sumMs)
+}
+
 // QueryContext executes a query that may return rows, such as a
 // SELECT.
 //
@@ -217,7 +258,7 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 	if c.telemetry != nil && exStmtResp != nil && exStmtResp.OperationHandle != nil && exStmtResp.OperationHandle.OperationId != nil {
 		statementID = client.SprintGuid(exStmtResp.OperationHandle.OperationId.GUID)
 		ctx = c.telemetry.BeforeExecuteWithTime(ctx, c.id, statementID, executeStart)
-		c.telemetry.AddTag(ctx, "operation_type", telemetry.OperationTypeExecuteStatement)
+		c.telemetry.AddTag(ctx, telemetry.TagOperationType, telemetry.OperationTypeExecuteStatement)
 	}
 
 	if err != nil {
@@ -238,47 +279,26 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 		c.telemetry.FinalizeLatency(ctx)
 	}
 
-	// Per-chunk timing state accumulated across all fetchResultPage calls.
-	// These variables are safe without a mutex because they are only mutated
-	// from callbacks serialized by database/sql's closemu lock:
+	// chunkTimingAccumulator aggregates per-chunk fetch latencies across all
+	// fetchResultPage calls. These fields are safe without a mutex because they
+	// are only mutated from callbacks serialized by database/sql's closemu lock:
 	// telemetryUpdate and cloudFetchCallback run inside rows.Next() (which
 	// holds closemu.RLock), and closeCallback runs inside rows.Close() (which
 	// holds closemu.Lock). This ensures mutual exclusion even when Close() is
 	// called from database/sql's awaitDone goroutine on context cancellation.
-	var (
-		chunkTimingInitialMs  int64
-		chunkTimingSlowestMs  int64
-		chunkTimingSumMs      int64
-		chunkTimingInitialSet bool
-		// cloudFetchFileCount counts individual S3 files downloaded via CloudFetch.
-		// Used to set chunk_total_present correctly for both bulk and paginated CloudFetch:
-		//   - paginated CF (1 link/FetchResults): file count == page count == correct total
-		//   - bulk CF (all links in DirectResults): file count == actual S3 downloads
-		// For inline ArrowBatch results this stays 0 and chunk_total_present falls back to chunkCount.
-		cloudFetchFileCount int
-	)
+	var timing chunkTimingAccumulator
 
 	// Telemetry callback invoked after each result page is fetched.
 	telemetryUpdate := func(chunkCount int, bytesDownloaded int64, chunkIndex int, chunkLatencyMs int64, _ int32) {
 		if c.telemetry == nil {
 			return
 		}
-		c.telemetry.AddTag(ctx, "chunk_count", chunkCount)
-		c.telemetry.AddTag(ctx, "bytes_downloaded", bytesDownloaded)
+		c.telemetry.AddTag(ctx, telemetry.TagResultChunkCount, chunkCount)
+		c.telemetry.AddTag(ctx, telemetry.TagResultBytesDownloaded, bytesDownloaded)
 
 		// Aggregate per-chunk fetch latencies (skip direct results where latency is 0).
-		if chunkLatencyMs > 0 {
-			if !chunkTimingInitialSet {
-				chunkTimingInitialMs = chunkLatencyMs
-				chunkTimingInitialSet = true
-			}
-			if chunkLatencyMs > chunkTimingSlowestMs {
-				chunkTimingSlowestMs = chunkLatencyMs
-			}
-			chunkTimingSumMs += chunkLatencyMs
-			c.telemetry.AddTag(ctx, "chunk_initial_latency_ms", chunkTimingInitialMs)
-			c.telemetry.AddTag(ctx, "chunk_slowest_latency_ms", chunkTimingSlowestMs)
-			c.telemetry.AddTag(ctx, "chunk_sum_latency_ms", chunkTimingSumMs)
+		if timing.record(chunkLatencyMs) {
+			timing.applyTags(c.telemetry, ctx)
 		}
 		// chunk_total_present is set definitively in closeCallback once all pages are known.
 	}
@@ -290,55 +310,51 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 	var cloudFetchCallback func(downloadMs int64)
 	if c.telemetry != nil {
 		cloudFetchCallback = func(downloadMs int64) {
-			cloudFetchFileCount++ // always count files for chunk_total_present, even sub-ms downloads
-			if downloadMs <= 0 {
-				return // skip timing aggregation for sub-millisecond downloads
+			timing.cloudFetchFileCount++ // always count files for chunk_total_present, even sub-ms downloads
+			if timing.record(downloadMs) {
+				timing.applyTags(c.telemetry, ctx)
 			}
-			if !chunkTimingInitialSet {
-				chunkTimingInitialMs = downloadMs
-				chunkTimingInitialSet = true
-			}
-			if downloadMs > chunkTimingSlowestMs {
-				chunkTimingSlowestMs = downloadMs
-			}
-			chunkTimingSumMs += downloadMs
-			c.telemetry.AddTag(ctx, "chunk_initial_latency_ms", chunkTimingInitialMs)
-			c.telemetry.AddTag(ctx, "chunk_slowest_latency_ms", chunkTimingSlowestMs)
-			c.telemetry.AddTag(ctx, "chunk_sum_latency_ms", chunkTimingSumMs)
 		}
 	}
 
 	// closeCallback is invoked from rows.Close() after all rows have been consumed.
 	// At that point chunk timing is fully accumulated in ctx tags, so we finalize
 	// EXECUTE_STATEMENT here rather than at QueryContext return time.
+	//
+	// We capture a detached context (background with telemetry values) so that
+	// telemetry is still recorded even if the caller's ctx has been cancelled
+	// (e.g. query timeout or context.WithCancel from database/sql's awaitDone).
 	var closeCallback func(latencyMs int64, chunkCount int, iterErr error, closeErr error)
 	if c.telemetry != nil && statementID != "" {
 		interceptor := c.telemetry
 		connID := c.id
 		stmtID := statementID
+		// Detach from caller's context so cancellation doesn't lose telemetry.
+		telemetryCtx := context.WithoutCancel(ctx)
 		closeCallback = func(latencyMs int64, chunkCount int, iterErr error, closeErr error) {
 			// Set chunk_total_present to the definitive total now that all iteration is done.
 			// For CloudFetch, use cloudFetchFileCount (actual S3 downloads) — this handles
 			// both paginated CF (1 link/page, so file count == page count) and bulk CF
 			// (all links in DirectResults, so file count == total S3 files).
 			// For inline ArrowBatch, cloudFetchFileCount is 0; fall back to chunkCount.
-			if cloudFetchFileCount > 0 {
-				interceptor.AddTag(ctx, "chunk_total_present", cloudFetchFileCount)
+			if timing.cloudFetchFileCount > 0 {
+				interceptor.AddTag(telemetryCtx, telemetry.TagChunkTotalPresent, timing.cloudFetchFileCount)
 			} else if chunkCount > 0 {
-				interceptor.AddTag(ctx, "chunk_total_present", chunkCount)
+				interceptor.AddTag(telemetryCtx, telemetry.TagChunkTotalPresent, chunkCount)
 			}
 			// EXECUTE_STATEMENT uses the iteration error (row consumption failure)
 			// to correctly report whether the statement succeeded or failed.
-			interceptor.AfterExecute(ctx, iterErr)
-			interceptor.CompleteStatement(ctx, stmtID, iterErr != nil)
+			interceptor.AfterExecute(telemetryCtx, iterErr)
+			interceptor.CompleteStatement(telemetryCtx, stmtID, iterErr != nil)
 			// CLOSE_STATEMENT uses the actual CloseOperation RPC error.
-			interceptor.RecordOperation(ctx, connID, stmtID, telemetry.OperationTypeCloseStatement, latencyMs, closeErr)
+			interceptor.RecordOperation(telemetryCtx, connID, stmtID, telemetry.OperationTypeCloseStatement, latencyMs, closeErr)
 		}
 	} else if c.telemetry != nil {
 		interceptor := c.telemetry
 		connID := c.id
+		telemetryCtx := context.WithoutCancel(ctx)
 		closeCallback = func(latencyMs int64, _ int, _ error, closeErr error) {
-			interceptor.RecordOperation(ctx, connID, "", telemetry.OperationTypeCloseStatement, latencyMs, closeErr)
+			interceptor.RecordOperation(telemetryCtx, connID, "", telemetry.OperationTypeCloseStatement, latencyMs, closeErr)
 		}
 	}
 
@@ -779,8 +795,8 @@ func (c *conn) execStagingOperation(
 		// Telemetry callback for staging operation row fetching (chunk timing not tracked for staging ops).
 		telemetryUpdate := func(chunkCount int, bytesDownloaded int64, chunkIndex int, chunkLatencyMs int64, totalChunksPresent int32) {
 			if c.telemetry != nil {
-				c.telemetry.AddTag(ctx, "chunk_count", chunkCount)
-				c.telemetry.AddTag(ctx, "bytes_downloaded", bytesDownloaded)
+				c.telemetry.AddTag(ctx, telemetry.TagResultChunkCount, chunkCount)
+				c.telemetry.AddTag(ctx, telemetry.TagResultBytesDownloaded, bytesDownloaded)
 			}
 		}
 		row, err = rows.NewRows(ctx, exStmtResp.OperationHandle, c.client, c.cfg, exStmtResp.DirectResults, &rows.TelemetryCallbacks{

@@ -10,14 +10,17 @@ const (
 	TagServerAddress = "server.address" // Not exported to Databricks
 )
 
-// Tag names for statement metrics
+// Tag names for statement metrics.
+// Values must match the keys used in metricContext.tags and read by
+// createTelemetryRequest / aggregator — keep them in sync.
 const (
 	TagStatementID           = "statement.id"
 	TagResultFormat          = "result.format"
-	TagResultChunkCount      = "result.chunk_count"
-	TagResultBytesDownloaded = "result.bytes_downloaded"
+	TagResultChunkCount      = "chunk_count"
+	TagResultBytesDownloaded = "bytes_downloaded"
 	TagCompressionEnabled    = "result.compression_enabled"
-	TagPollCount             = "poll.count"
+	TagOperationType         = "operation_type"
+	TagPollCount             = "poll_count"
 	TagPollLatency           = "poll.latency_ms"
 )
 

@@ -51,7 +51,7 @@ func TestAggregatorClose_WaitsForInFlightWorkerExports(t *testing.T) {
 			metricType: "operation",
 			timestamp:  time.Now(),
 			tags: map[string]interface{}{
-				"operation_type": OperationTypeCloseStatement, // terminal → immediate flush
+				TagOperationType: OperationTypeCloseStatement, // terminal → immediate flush
 			},
 		})
 	}
@@ -160,7 +160,7 @@ func TestAggregatorFlushUnlocked_InFlightAddBeforeSend(t *testing.T) {
 			metricType: "operation",
 			timestamp:  time.Now(),
 			tags: map[string]interface{}{
-				"operation_type": OperationTypeCloseStatement,
+				TagOperationType: OperationTypeCloseStatement,
 			},
 		})
 	}
