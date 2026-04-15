@@ -48,7 +48,7 @@ type TelemetryEvent struct {
 	VolumeOperation            *VolumeOperationEvent       `json:"vol_operation,omitempty"`
 	SQLOperation               *SQLExecutionEvent          `json:"sql_operation,omitempty"`
 	ErrorInfo                  *DriverErrorInfo            `json:"error_info,omitempty"`
-	OperationLatencyMs         int64                       `json:"operation_latency_ms,omitempty"`
+	OperationLatencyMs         int64                       `json:"operation_latency_ms"`
 }
 
 // DriverSystemConfiguration maps to DriverSystemConfiguration in the proto schema.
@@ -177,20 +177,32 @@ func createTelemetryRequest(metrics []*telemetryMetric, driverVersion string) (*
 		if tags := metric.tags; tags != nil {
 			sqlOp := &SQLExecutionEvent{}
 
-			if v, ok := tags["result.format"].(string); ok {
+			if v, ok := tags[TagResultFormat].(string); ok {
 				sqlOp.ExecutionResult = v
 			}
-			if chunkCount, ok := tags["chunk_count"].(int); ok && chunkCount > 0 {
+			if chunkCount, ok := tags[TagChunkCount].(int); ok && chunkCount > 0 {
 				sqlOp.ChunkDetails = &ChunkDetails{
 					TotalChunksIterated: int32(chunkCount), //nolint:gosec // chunk count is always small
 				}
+				if v, ok := tags[TagChunkInitialLatencyMs].(int64); ok && v > 0 {
+					sqlOp.ChunkDetails.InitialChunkLatencyMs = v
+				}
+				if v, ok := tags[TagChunkSlowestLatencyMs].(int64); ok && v > 0 {
+					sqlOp.ChunkDetails.SlowestChunkLatencyMs = v
+				}
+				if v, ok := tags[TagChunkSumLatencyMs].(int64); ok && v > 0 {
+					sqlOp.ChunkDetails.SumChunksDownloadTimeMs = v
+				}
+				if v, ok := tags[TagChunkTotalPresent].(int); ok && v > 0 {
+					sqlOp.ChunkDetails.TotalChunksPresent = int32(v) //nolint:gosec // chunk count is always small
+				}
 			}
 
-			if opType, ok := tags["operation_type"].(string); ok {
+			if opType, ok := tags[TagOperationType].(string); ok {
 				detail := &OperationDetail{
 					OperationType: opType,
 				}
-				if pollCount, ok := tags["poll_count"].(int); ok {
+				if pollCount, ok := tags[TagPollCount].(int); ok {
 					detail.NOperationStatusCalls = int32(pollCount) //nolint:gosec // poll count is always small
 				}
 				sqlOp.OperationDetail = detail

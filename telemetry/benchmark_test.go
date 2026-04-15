@@ -77,7 +77,7 @@ func BenchmarkAggregator_RecordMetric(b *testing.B) {
 		sessionID:   "bench-session",
 		statementID: "bench-stmt",
 		latencyMs:   10,
-		tags:        map[string]interface{}{"operation_type": OperationTypeExecuteStatement},
+		tags:        map[string]interface{}{TagOperationType: OperationTypeExecuteStatement},
 	}
 
 	b.ResetTimer()
@@ -300,7 +300,7 @@ func TestGracefulShutdown_FinalFlush(t *testing.T) {
 			timestamp:  time.Now(),
 			sessionID:  "test-session",
 			latencyMs:  int64(i),
-			tags:       map[string]interface{}{"operation_type": OperationTypeExecuteStatement},
+			tags:       map[string]interface{}{TagOperationType: OperationTypeExecuteStatement},
 		})
 	}
 

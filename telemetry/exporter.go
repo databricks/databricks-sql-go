@@ -41,18 +41,6 @@ type telemetryMetric struct {
 	tags        map[string]interface{}
 }
 
-// exportedMetric is a single metric in the payload.
-type exportedMetric struct {
-	MetricType  string                 `json:"metric_type"`
-	Timestamp   string                 `json:"timestamp"` // RFC3339
-	WorkspaceID string                 `json:"workspace_id,omitempty"`
-	SessionID   string                 `json:"session_id,omitempty"`
-	StatementID string                 `json:"statement_id,omitempty"`
-	LatencyMs   int64                  `json:"latency_ms,omitempty"`
-	ErrorType   string                 `json:"error_type,omitempty"`
-	Tags        map[string]interface{} `json:"tags,omitempty"`
-}
-
 // ensureHTTPScheme adds https:// prefix to host if no scheme is present.
 func ensureHTTPScheme(host string) string {
 	if strings.HasPrefix(host, httpPrefix) || strings.HasPrefix(host, httpsPrefix) {
@@ -165,28 +153,6 @@ func (e *telemetryExporter) doExport(ctx context.Context, metrics []*telemetryMe
 	}
 
 	return nil
-}
-
-// toExportedMetric converts internal metric to exported format with tag filtering.
-func (m *telemetryMetric) toExportedMetric() *exportedMetric {
-	// Filter tags based on export scope
-	filteredTags := make(map[string]interface{})
-	for k, v := range m.tags {
-		if shouldExportToDatabricks(m.metricType, k) {
-			filteredTags[k] = v
-		}
-	}
-
-	return &exportedMetric{
-		MetricType:  m.metricType,
-		Timestamp:   m.timestamp.Format(time.RFC3339),
-		WorkspaceID: m.workspaceID,
-		SessionID:   m.sessionID,
-		StatementID: m.statementID,
-		LatencyMs:   m.latencyMs,
-		ErrorType:   m.errorType,
-		Tags:        filteredTags,
-	}
 }
 
 // isRetryableStatus returns true if HTTP status is retryable.

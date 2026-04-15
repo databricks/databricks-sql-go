@@ -104,6 +104,8 @@ type UserConfig struct {
 	EnableTelemetry          ConfigValue[bool]
 	TelemetryBatchSize       int           // 0 = use default (100)
 	TelemetryFlushInterval   time.Duration // 0 = use default (5s)
+	TelemetryRetryCount      int           // -1 = use default (3); 0 = disable retries; set via telemetry_retry_count
+	TelemetryRetryDelay      time.Duration // 0 = use default (100ms); set via telemetry_retry_delay
 	Transport                http.RoundTripper
 	UseLz4Compression        bool
 	EnableMetricViewMetadata bool
@@ -153,6 +155,8 @@ func (ucfg UserConfig) DeepCopy() UserConfig {
 		EnableTelemetry:          ucfg.EnableTelemetry,
 		TelemetryBatchSize:       ucfg.TelemetryBatchSize,
 		TelemetryFlushInterval:   ucfg.TelemetryFlushInterval,
+		TelemetryRetryCount:      ucfg.TelemetryRetryCount,
+		TelemetryRetryDelay:      ucfg.TelemetryRetryDelay,
 	}
 }
 
@@ -190,6 +194,10 @@ func (ucfg UserConfig) WithDefaults() UserConfig {
 
 	// EnableTelemetry defaults to unset (ConfigValue zero value),
 	// meaning telemetry is controlled by server feature flags.
+
+	// TelemetryRetryCount uses -1 as "not set" so that an explicit 0 from the
+	// DSN (meaning "disable retries") is distinguishable from the default.
+	ucfg.TelemetryRetryCount = -1
 
 	return ucfg
 }
@@ -312,6 +320,19 @@ func ParseDSN(dsn string) (UserConfig, error) {
 	if flushInterval, ok := params.extract("telemetry_flush_interval"); ok {
 		if d, err := time.ParseDuration(flushInterval); err == nil && d > 0 {
 			ucfg.TelemetryFlushInterval = d
+		}
+	}
+	if retryCount, ok, err := params.extractAsInt("telemetry_retry_count"); ok {
+		if err != nil {
+			return UserConfig{}, err
+		}
+		if retryCount >= 0 {
+			ucfg.TelemetryRetryCount = retryCount
+		}
+	}
+	if retryDelay, ok := params.extract("telemetry_retry_delay"); ok {
+		if d, err := time.ParseDuration(retryDelay); err == nil && d > 0 {
+			ucfg.TelemetryRetryDelay = d
 		}
 	}
 

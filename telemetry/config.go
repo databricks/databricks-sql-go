@@ -5,6 +5,18 @@ import (
 	"net/http"
 	"strconv"
 	"time"
+
+	"github.com/databricks/databricks-sql-go/logger"
+)
+
+const (
+	// maxTelemetryRetryCount caps DSN-provided retry count to prevent
+	// excessive retries from misconfiguration.
+	maxTelemetryRetryCount = 10
+
+	// maxTelemetryRetryDelay caps DSN-provided retry delay to prevent
+	// excessively long backoff from misconfiguration.
+	maxTelemetryRetryDelay = 30 * time.Second
 )
 
 // Config holds telemetry configuration.
@@ -12,9 +24,11 @@ type Config struct {
 	// Enabled controls whether telemetry is active
 	Enabled bool
 
-	// EnableTelemetry indicates user wants telemetry enabled.
-	// Follows client > server > default priority.
-	EnableTelemetry bool
+	// EnableTelemetry is a tristate for the client DSN setting:
+	//   nil   — not set by the client; server feature flag controls enablement
+	//   &true — client explicitly opted in (overrides server flag)
+	//   &false— client explicitly opted out (overrides server flag)
+	EnableTelemetry *bool
 
 	// BatchSize is the number of metrics to batch before flushing
 	BatchSize int
@@ -39,12 +53,18 @@ type Config struct {
 }
 
 // DefaultConfig returns default telemetry configuration.
-// Note: Telemetry is disabled by default. The default will remain false until
-// server-side feature flags are wired in to control the rollout.
+//
+// BEHAVIORAL NOTE (SDR-approved): When EnableTelemetry is nil (the default),
+// telemetry enablement is controlled by the server-side feature flag
+// (databricks.partnerplatform.clientConfigsFeatureFlags.enableTelemetryForGoDriver).
+// This means telemetry may be active without the user explicitly opting in.
+// The user can always override by setting enableTelemetry=true or enableTelemetry=false
+// in the DSN or via WithEnableTelemetry(). No PII is collected; only aggregate
+// driver performance metrics are sent to the Databricks telemetry endpoint.
 func DefaultConfig() *Config {
 	return &Config{
 		Enabled:                 false,
-		EnableTelemetry:         false,
+		EnableTelemetry:         nil, // unset — server feature flag decides
 		BatchSize:               100,
 		FlushInterval:           5 * time.Second,
 		MaxRetries:              3,
@@ -61,7 +81,7 @@ func ParseTelemetryConfig(params map[string]string) *Config {
 
 	if v, ok := params["enableTelemetry"]; ok {
 		if b, err := strconv.ParseBool(v); err == nil {
-			cfg.EnableTelemetry = b
+			cfg.EnableTelemetry = &b // non-nil: client explicitly set via DSN
 		}
 	}
 
@@ -72,50 +92,48 @@ func ParseTelemetryConfig(params map[string]string) *Config {
 	}
 
 	if v, ok := params["telemetry_flush_interval"]; ok {
-		if duration, err := time.ParseDuration(v); err == nil {
+		if duration, err := time.ParseDuration(v); err == nil && duration > 0 {
 			cfg.FlushInterval = duration
+		}
+	}
+
+	if v, ok := params["telemetry_retry_count"]; ok {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			if n > maxTelemetryRetryCount {
+				logger.Debug().Msgf("telemetry: retry_count %d exceeds max %d, clamping", n, maxTelemetryRetryCount)
+				n = maxTelemetryRetryCount
+			}
+			cfg.MaxRetries = n
+		}
+	}
+
+	if v, ok := params["telemetry_retry_delay"]; ok {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			if d > maxTelemetryRetryDelay {
+				logger.Debug().Msgf("telemetry: retry_delay %v exceeds max %v, clamping", d, maxTelemetryRetryDelay)
+				d = maxTelemetryRetryDelay
+			}
+			cfg.RetryDelay = d
 		}
 	}
 
 	return cfg
 }
 
-// isTelemetryEnabled checks if telemetry should be enabled for this connection.
-// Implements the priority-based decision tree for telemetry enablement.
+// isTelemetryEnabled returns true in exactly two cases:
+//  1. The client explicitly set enableTelemetry=true in the DSN.
+//  2. The client did not set enableTelemetry and the server feature flag is enabled
+//     (databricks.partnerplatform.clientConfigsFeatureFlags.enableTelemetryForGoDriver).
 //
-// Priority (highest to lowest):
-// 1. enableTelemetry=true - Client opt-in (server feature flag still consulted)
-// 2. enableTelemetry=false - Explicit opt-out (always disabled)
-// 3. Server Feature Flag Only - Default behavior (Databricks-controlled)
-// 4. Default - Disabled (false)
-//
-// Parameters:
-//   - ctx: Context for the request
-//   - cfg: Telemetry configuration
-//   - host: Databricks host to check feature flags against
-//   - httpClient: HTTP client for making feature flag requests
-//
-// Returns:
-//   - bool: true if telemetry should be enabled, false otherwise
+// In all other cases — explicit opt-out or server flag absent/unreachable — returns false.
 func isTelemetryEnabled(ctx context.Context, cfg *Config, host string, driverVersion string, httpClient *http.Client) bool {
-	// Priority 1 & 2: Respect client preference when explicitly set
-	// enableTelemetry=false → always disabled; enableTelemetry=true → check server flag
-	// When enableTelemetry is explicitly set to false, respect that
-	if !cfg.EnableTelemetry {
-		return false
+	if cfg.EnableTelemetry != nil {
+		return *cfg.EnableTelemetry
 	}
 
-	// Priority 3 & 4: Check server-side feature flag
-	// This handles both:
-	// - User explicitly opted in (enableTelemetry=true) - respect server decision
-	// - Default behavior (no explicit setting) - server controls enablement
-	flagCache := getFeatureFlagCache()
-	serverEnabled, err := flagCache.isTelemetryEnabled(ctx, host, driverVersion, httpClient)
+	serverEnabled, err := getFeatureFlagCache().isTelemetryEnabled(ctx, host, driverVersion, httpClient)
 	if err != nil {
-		// On error, respect default (disabled)
-		// This ensures telemetry failures don't impact driver operation
 		return false
 	}
-
 	return serverEnabled
 }
