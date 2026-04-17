@@ -38,7 +38,7 @@ func main() {
 	handleErr(err)
 
 	db := sql.OpenDB(connector)
-	defer db.Close()
+	defer db.Close() //nolint:errcheck
 
 	// test the connection
 	err = db.Ping()
@@ -95,7 +95,7 @@ func main() {
 	}
 
 	// At this point the query completed successfully
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 
 	fmt.Printf("conn Id: %s, query Id: %s\n", connId, queryId)
 

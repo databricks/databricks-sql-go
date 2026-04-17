@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -78,6 +79,7 @@ func TestCloudFetchIterator(t *testing.T) {
 			startRowOffset,
 			nil,
 			cfg,
+			nil,
 		)
 		if err != nil {
 			panic(err)
@@ -153,6 +155,7 @@ func TestCloudFetchIterator(t *testing.T) {
 			startRowOffset,
 			nil,
 			cfg,
+			nil,
 		)
 		if err != nil {
 			panic(err)
@@ -212,6 +215,7 @@ func TestCloudFetchIterator(t *testing.T) {
 			startRowOffset,
 			nil,
 			cfg,
+			nil,
 		)
 		if err != nil {
 			panic(err)
@@ -274,7 +278,7 @@ func TestCloudFetchIterator(t *testing.T) {
 		cfg := config.WithDefaults()
 		cfg.UseLz4Compression = false
 		cfg.MaxDownloadThreads = 1
-		cfg.UserConfig.CloudFetchConfig.HTTPClient = customHTTPClient
+		cfg.HTTPClient = customHTTPClient
 
 		bi, err := NewCloudBatchIterator(
 			context.Background(),
@@ -287,6 +291,7 @@ func TestCloudFetchIterator(t *testing.T) {
 			startRowOffset,
 			nil,
 			cfg,
+			nil,
 		)
 		assert.Nil(t, err)
 
@@ -313,7 +318,7 @@ func TestCloudFetchIterator(t *testing.T) {
 		cfg.UseLz4Compression = false
 		cfg.MaxDownloadThreads = 1
 		// Explicitly set HTTPClient to nil to verify fallback behavior
-		cfg.UserConfig.CloudFetchConfig.HTTPClient = nil
+		cfg.HTTPClient = nil
 
 		bi, err := NewCloudBatchIterator(
 			context.Background(),
@@ -326,6 +331,7 @@ func TestCloudFetchIterator(t *testing.T) {
 			startRowOffset,
 			nil,
 			cfg,
+			nil,
 		)
 		assert.Nil(t, err)
 
@@ -391,6 +397,7 @@ func TestCloudFetchSchemaOverride(t *testing.T) {
 			0,
 			correctSchemaBytes,
 			cfg,
+			nil,
 		)
 		assert.Nil(t, err)
 
@@ -433,6 +440,7 @@ func TestCloudFetchSchemaOverride(t *testing.T) {
 			0,
 			nil,
 			cfg,
+			nil,
 		)
 		assert.Nil(t, err)
 
@@ -448,6 +456,115 @@ func TestCloudFetchSchemaOverride(t *testing.T) {
 
 		rec.Release()
 	})
+}
+
+// TestCloudFetchIterator_OnFileDownloaded_CallbackInvokedWithPositiveDuration verifies
+// that the onFileDownloaded telemetry callback is called once per downloaded S3 file with
+// a positive downloadMs value.
+//
+// This covers the CloudFetch timing fix where per-S3-file download durations are measured
+// and reported as initial_chunk_latency_ms / slowest_chunk_latency_ms / sum_chunks_download_time_ms
+// in the telemetry payload.
+func TestCloudFetchIterator_OnFileDownloaded_CallbackInvokedWithPositiveDuration(t *testing.T) {
+	// Serve real arrow bytes so the iterator can parse them successfully.
+	arrowBytes := generateMockArrowBytes(generateArrowRecord())
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Add a tiny sleep so the measured download time is reliably > 0ms.
+		time.Sleep(2 * time.Millisecond)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(arrowBytes)
+	}))
+	defer server.Close()
+
+	startRowOffset := int64(0)
+	links := []*cli_service.TSparkArrowResultLink{
+		{
+			FileLink:       server.URL,
+			ExpiryTime:     time.Now().Add(10 * time.Minute).Unix(),
+			StartRowOffset: startRowOffset,
+			RowCount:       1,
+		},
+		{
+			FileLink:       server.URL,
+			ExpiryTime:     time.Now().Add(10 * time.Minute).Unix(),
+			StartRowOffset: startRowOffset + 1,
+			RowCount:       1,
+		},
+	}
+
+	cfg := config.WithDefaults()
+	cfg.UseLz4Compression = false
+	cfg.MaxDownloadThreads = 1
+
+	var callbackMu sync.Mutex
+	var downloadDurations []int64
+
+	onFileDownloaded := func(downloadMs int64) {
+		callbackMu.Lock()
+		downloadDurations = append(downloadDurations, downloadMs)
+		callbackMu.Unlock()
+	}
+
+	bi, err := NewCloudBatchIterator(context.Background(), links, startRowOffset, nil, cfg, onFileDownloaded)
+	assert.Nil(t, err)
+
+	// Consume all batches to trigger the downloads.
+	for bi.HasNext() {
+		_, nextErr := bi.Next()
+		assert.Nil(t, nextErr)
+	}
+
+	callbackMu.Lock()
+	durations := make([]int64, len(downloadDurations))
+	copy(durations, downloadDurations)
+	callbackMu.Unlock()
+
+	// Callback must be invoked once per link.
+	assert.Equal(t, len(links), len(durations),
+		"onFileDownloaded must be called once per downloaded file")
+
+	// Each reported duration must be positive (the server adds a 2ms delay).
+	for i, d := range durations {
+		assert.Greater(t, d, int64(0),
+			"onFileDownloaded must report positive downloadMs for file %d, got %d", i, d)
+	}
+}
+
+// TestCloudFetchIterator_OnFileDownloaded_NilCallbackDoesNotPanic verifies that passing
+// nil for onFileDownloaded (non-telemetry paths) does not cause a panic during iteration.
+func TestCloudFetchIterator_OnFileDownloaded_NilCallbackDoesNotPanic(t *testing.T) {
+	arrowBytes := generateMockArrowBytes(generateArrowRecord())
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(arrowBytes)
+	}))
+	defer server.Close()
+
+	startRowOffset := int64(0)
+	links := []*cli_service.TSparkArrowResultLink{
+		{
+			FileLink:       server.URL,
+			ExpiryTime:     time.Now().Add(10 * time.Minute).Unix(),
+			StartRowOffset: startRowOffset,
+			RowCount:       1,
+		},
+	}
+
+	cfg := config.WithDefaults()
+	cfg.UseLz4Compression = false
+	cfg.MaxDownloadThreads = 1
+
+	// nil callback — must not panic
+	bi, err := NewCloudBatchIterator(context.Background(), links, startRowOffset, nil, cfg, nil)
+	assert.Nil(t, err)
+
+	assert.NotPanics(t, func() {
+		for bi.HasNext() {
+			_, _ = bi.Next()
+		}
+	}, "nil onFileDownloaded must not cause a panic")
 }
 
 func generateArrowRecord() arrow.Record {

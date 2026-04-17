@@ -44,7 +44,7 @@ func main() {
 	}
 
 	db := sql.OpenDB(connector)
-	defer db.Close()
+	defer db.Close() //nolint:errcheck
 
 	loopWithHasNext(db)
 	loopWithNext(db)
@@ -55,7 +55,7 @@ func loopWithHasNext(db *sql.DB) {
 	defer cancel()
 
 	conn, _ := db.Conn(ctx)
-	defer conn.Close()
+	defer conn.Close() //nolint:errcheck
 
 	query := `select * from main.default.diamonds`
 
@@ -69,7 +69,7 @@ func loopWithHasNext(db *sql.DB) {
 	if err != nil {
 		log.Fatalf("unable to run the query. err: %v", err)
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 
 	ctx2, cancel2 := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel2()
@@ -99,7 +99,7 @@ func loopWithNext(db *sql.DB) {
 	defer cancel()
 
 	conn, _ := db.Conn(ctx)
-	defer conn.Close()
+	defer conn.Close() //nolint:errcheck
 
 	query := `select * from main.default.diamonds`
 
@@ -113,7 +113,7 @@ func loopWithNext(db *sql.DB) {
 	if err != nil {
 		log.Fatalf("unable to run the query. err: %v", err)
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 
 	ctx2, cancel2 := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel2()

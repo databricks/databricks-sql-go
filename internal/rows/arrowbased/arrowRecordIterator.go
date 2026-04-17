@@ -82,7 +82,7 @@ func (ri *arrowRecordIterator) Close() {
 		}
 
 		if ri.resultPageIterator != nil {
-			ri.resultPageIterator.Close()
+			ri.resultPageIterator.Close() //nolint:errcheck,gosec // G104: close in cleanup
 		}
 	}
 }
@@ -169,7 +169,7 @@ func (ri *arrowRecordIterator) getBatchIterator() error {
 func (ri *arrowRecordIterator) newBatchIterator(fr *cli_service.TFetchResultsResp) (BatchIterator, error) {
 	rowSet := fr.Results
 	if len(rowSet.ResultLinks) > 0 {
-		return NewCloudBatchIterator(ri.ctx, rowSet.ResultLinks, rowSet.StartRowOffset, ri.arrowSchemaBytes, &ri.cfg)
+		return NewCloudBatchIterator(ri.ctx, rowSet.ResultLinks, rowSet.StartRowOffset, ri.arrowSchemaBytes, &ri.cfg, nil)
 	} else {
 		return NewLocalBatchIterator(ri.ctx, rowSet.ArrowBatches, rowSet.StartRowOffset, ri.arrowSchemaBytes, &ri.cfg)
 	}

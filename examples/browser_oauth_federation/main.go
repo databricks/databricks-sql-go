@@ -56,7 +56,7 @@ func main() {
 	}
 
 	db := sql.OpenDB(connector)
-	defer db.Close()
+	defer db.Close() //nolint:errcheck
 
 	// Test connection - this triggers browser OAuth flow
 	fmt.Println("Connecting (browser will open for login)...")

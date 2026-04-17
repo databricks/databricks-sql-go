@@ -55,6 +55,8 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 	}
 
 	protocolVersion := int64(c.cfg.ThriftProtocolVersion)
+
+	sessionStart := time.Now()
 	session, err := tclient.OpenSession(ctx, &cli_service.TOpenSessionReq{
 		ClientProtocolI64: &protocolVersion,
 		Configuration:     sessionParams,
@@ -64,6 +66,8 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 		},
 		CanUseMultipleCatalogs: &c.cfg.CanUseMultipleCatalogs,
 	})
+	sessionLatencyMs := time.Since(sessionStart).Milliseconds()
+
 	if err != nil {
 		return nil, dbsqlerrint.NewRequestError(ctx, fmt.Sprintf("error connecting: host=%s port=%d, httpPath=%s", c.cfg.Host, c.cfg.Port, c.cfg.HTTPPath), err)
 	}
@@ -77,14 +81,19 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 	log := logger.WithContext(conn.id, driverctx.CorrelationIdFromContext(ctx), "")
 
 	// Initialize telemetry: client config overlay decides; if unset, feature flags decide
-	conn.telemetry = telemetry.InitializeForConnection(
-		ctx,
-		c.cfg.Host,
-		c.client,
-		c.cfg.EnableTelemetry,
-	)
+	conn.telemetry = telemetry.InitializeForConnection(ctx, telemetry.TelemetryInitOptions{
+		Host:            c.cfg.Host,
+		DriverVersion:   c.cfg.DriverVersion,
+		HTTPClient:      c.client,
+		EnableTelemetry: c.cfg.EnableTelemetry,
+		BatchSize:       c.cfg.TelemetryBatchSize,
+		FlushInterval:   c.cfg.TelemetryFlushInterval,
+		RetryCount:      c.cfg.TelemetryRetryCount,
+		RetryDelay:      c.cfg.TelemetryRetryDelay,
+	})
 	if conn.telemetry != nil {
 		log.Debug().Msg("telemetry initialized for connection")
+		conn.telemetry.RecordOperation(ctx, conn.id, "", telemetry.OperationTypeCreateSession, sessionLatencyMs, nil)
 	}
 
 	log.Info().Msgf("connect: host=%s port=%d httpPath=%s serverProtocolVersion=0x%X", c.cfg.Host, c.cfg.Port, c.cfg.HTTPPath, session.ServerProtocolVersion)
@@ -290,8 +299,8 @@ func WithTransport(t http.RoundTripper) ConnOption {
 	return func(c *config.Config) {
 		c.Transport = t
 
-		if c.CloudFetchConfig.HTTPClient == nil {
-			c.CloudFetchConfig.HTTPClient = &http.Client{
+		if c.HTTPClient == nil {
+			c.HTTPClient = &http.Client{
 				Transport: t,
 			}
 		}

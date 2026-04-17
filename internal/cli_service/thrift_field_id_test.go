@@ -53,11 +53,11 @@ func TestThriftFieldIdsAreWithinAllowedRange(t *testing.T) {
 // validateThriftFieldIDs parses the cli_service.go file and extracts all thrift field IDs
 // to validate they are within the allowed range.
 func validateThriftFieldIDs(filePath string, maxAllowedFieldID int) ([]string, error) {
-	file, err := os.Open(filePath)
+	file, err := os.Open(filePath) //nolint:gosec // G304: path is a test fixture, not user-controlled
 	if err != nil {
 		return nil, fmt.Errorf("failed to open file %s: %w", filePath, err)
 	}
-	defer file.Close()
+	defer file.Close() //nolint:errcheck
 
 	var violations []string
 	scanner := bufio.NewScanner(file)

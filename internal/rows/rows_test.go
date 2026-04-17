@@ -421,11 +421,11 @@ func TestColumnsWithDirectResults(t *testing.T) {
 	ctx := driverctx.NewContextWithConnId(context.Background(), "connId")
 	ctx = driverctx.NewContextWithCorrelationId(ctx, "corrId")
 
-	d, err := NewRows(ctx, nil, client, nil, nil)
+	d, err := NewRows(ctx, nil, client, nil, nil, nil)
 	assert.Nil(t, err)
 
 	rowSet := d.(*rows)
-	defer rowSet.Close()
+	defer rowSet.Close() //nolint:errcheck
 
 	req2 := &cli_service.TGetResultSetMetadataReq{}
 	metadata, _ := client.GetResultSetMetadata(context.Background(), req2)
@@ -720,7 +720,7 @@ func TestRowsCloseOptimization(t *testing.T) {
 	ctx := driverctx.NewContextWithConnId(context.Background(), "connId")
 	ctx = driverctx.NewContextWithCorrelationId(ctx, "corrId")
 	opHandle := &cli_service.TOperationHandle{OperationId: &cli_service.THandleIdentifier{GUID: []byte{'f', 'o'}}}
-	rowSet, _ := NewRows(ctx, opHandle, client, nil, nil)
+	rowSet, _ := NewRows(ctx, opHandle, client, nil, nil, nil)
 
 	// rowSet has no direct results calling Close should result in call to client to close operation
 	err := rowSet.Close()
@@ -733,7 +733,7 @@ func TestRowsCloseOptimization(t *testing.T) {
 		ResultSet:         &cli_service.TFetchResultsResp{Results: &cli_service.TRowSet{Columns: []*cli_service.TColumn{}}},
 	}
 	closeCount = 0
-	rowSet, _ = NewRows(ctx, opHandle, client, nil, directResults)
+	rowSet, _ = NewRows(ctx, opHandle, client, nil, directResults, nil)
 	err = rowSet.Close()
 	assert.Nil(t, err, "rows.Close should not throw an error")
 	assert.Equal(t, 1, closeCount)
@@ -746,7 +746,7 @@ func TestRowsCloseOptimization(t *testing.T) {
 		ResultSetMetadata: &cli_service.TGetResultSetMetadataResp{Schema: &cli_service.TTableSchema{}},
 		ResultSet:         &cli_service.TFetchResultsResp{Results: &cli_service.TRowSet{Columns: []*cli_service.TColumn{}}},
 	}
-	rowSet, _ = NewRows(ctx, opHandle, client, nil, directResults)
+	rowSet, _ = NewRows(ctx, opHandle, client, nil, directResults, nil)
 	err = rowSet.Close()
 	assert.Nil(t, err, "rows.Close should not throw an error")
 	assert.Equal(t, 0, closeCount)
@@ -816,7 +816,7 @@ func TestGetArrowBatches(t *testing.T) {
 
 		client := getSimpleClient([]cli_service.TFetchResultsResp{fetchResp1, fetchResp2})
 		cfg := config.WithDefaults()
-		rows, err := NewRows(ctx, nil, client, cfg, executeStatementResp.DirectResults)
+		rows, err := NewRows(ctx, nil, client, cfg, executeStatementResp.DirectResults, nil)
 		assert.Nil(t, err)
 
 		rows2, ok := rows.(dbsqlrows.Rows)
@@ -889,7 +889,7 @@ func TestGetArrowBatches(t *testing.T) {
 
 		client := getSimpleClient([]cli_service.TFetchResultsResp{fetchResp1, fetchResp2, fetchResp3})
 		cfg := config.WithDefaults()
-		rows, err := NewRows(ctx, nil, client, cfg, nil)
+		rows, err := NewRows(ctx, nil, client, cfg, nil, nil)
 		assert.Nil(t, err)
 
 		rows2, ok := rows.(dbsqlrows.Rows)
@@ -950,7 +950,7 @@ func TestGetArrowBatches(t *testing.T) {
 
 		client := getSimpleClient([]cli_service.TFetchResultsResp{fetchResp1})
 		cfg := config.WithDefaults()
-		rows, err := NewRows(ctx, nil, client, cfg, nil)
+		rows, err := NewRows(ctx, nil, client, cfg, nil, nil)
 		assert.Nil(t, err)
 
 		rows2, ok := rows.(dbsqlrows.Rows)
@@ -977,7 +977,7 @@ func TestGetArrowBatches(t *testing.T) {
 
 		client := getSimpleClient([]cli_service.TFetchResultsResp{})
 		cfg := config.WithDefaults()
-		rows, err := NewRows(ctx, nil, client, cfg, executeStatementResp.DirectResults)
+		rows, err := NewRows(ctx, nil, client, cfg, executeStatementResp.DirectResults, nil)
 		assert.Nil(t, err)
 
 		rows2, ok := rows.(dbsqlrows.Rows)
@@ -1381,17 +1381,18 @@ func getRowsTestSimpleClient(getMetadataCount, fetchResultsCount *int) cli_servi
 
 	fetchResults := func(ctx context.Context, req *cli_service.TFetchResultsReq) (_r *cli_service.TFetchResultsResp, _err error) {
 		*fetchResultsCount++
-		if req.Orientation == cli_service.TFetchOrientation_FETCH_NEXT {
+		switch req.Orientation {
+		case cli_service.TFetchOrientation_FETCH_NEXT:
 			if pageIndex+1 >= len(pages) {
 				return nil, errors.New("can't fetch past end of result set")
 			}
 			pageIndex++
-		} else if req.Orientation == cli_service.TFetchOrientation_FETCH_PRIOR {
+		case cli_service.TFetchOrientation_FETCH_PRIOR:
 			if pageIndex-1 < 0 {
 				return nil, errors.New("can't fetch prior to start of result set")
 			}
 			pageIndex--
-		} else {
+		default:
 			return nil, errors.New("invalid fetch results orientation")
 		}
 
@@ -1556,9 +1557,127 @@ func TestFetchResultPage_PropagatesGetNextPageError(t *testing.T) {
 
 	executeStatementResp := cli_service.TExecuteStatementResp{}
 	cfg := config.WithDefaults()
-	rows, _ := NewRows(ctx, nil, client, cfg, executeStatementResp.DirectResults)
+	rows, _ := NewRows(ctx, nil, client, cfg, executeStatementResp.DirectResults, nil)
 	// Call Next and ensure it propagates the error from getNextPage
 	actualErr := rows.Next(nil)
 
 	assert.ErrorContains(t, actualErr, errorMsg)
+}
+
+// TestRows_CloseCallback_ReceivesChunkCount verifies that when rows.Close() is called,
+// the closeCallback receives the correct chunkCount reflecting the number of result pages
+// that were fetched during iteration.
+//
+// This covers the fix where total_chunks_present in the telemetry payload was always null
+// for paginated CloudFetch queries: the driver now derives it from r.chunkCount and passes
+// it through closeCallback so connection.go can set the "chunk_total_present" tag.
+func TestRows_CloseCallback_ReceivesChunkCount(t *testing.T) {
+	t.Parallel()
+
+	noMoreRows := false
+	moreRows := true
+
+	// Two pages: page 0 (5 rows, has more), page 1 (3 rows, no more).
+	colVals := []*cli_service.TColumn{
+		{BoolVal: &cli_service.TBoolColumn{Values: []bool{true, false, true, false, true}}},
+	}
+	colVals2 := []*cli_service.TColumn{
+		{BoolVal: &cli_service.TBoolColumn{Values: []bool{true, false, true}}},
+	}
+
+	pages := []cli_service.TFetchResultsResp{
+		{
+			Status:      &cli_service.TStatus{StatusCode: cli_service.TStatusCode_SUCCESS_STATUS},
+			HasMoreRows: &moreRows,
+			Results:     &cli_service.TRowSet{StartRowOffset: 0, Columns: colVals},
+		},
+		{
+			Status:      &cli_service.TStatus{StatusCode: cli_service.TStatusCode_SUCCESS_STATUS},
+			HasMoreRows: &noMoreRows,
+			Results:     &cli_service.TRowSet{StartRowOffset: 5, Columns: colVals2},
+		},
+	}
+
+	pageIndex := -1
+	fetchFn := func(ctx context.Context, req *cli_service.TFetchResultsReq) (*cli_service.TFetchResultsResp, error) {
+		pageIndex++
+		p := pages[pageIndex]
+		return &p, nil
+	}
+	metaFn := func(ctx context.Context, req *cli_service.TGetResultSetMetadataReq) (*cli_service.TGetResultSetMetadataResp, error) {
+		return &cli_service.TGetResultSetMetadataResp{
+			Status: &cli_service.TStatus{StatusCode: cli_service.TStatusCode_SUCCESS_STATUS},
+			Schema: &cli_service.TTableSchema{
+				Columns: []*cli_service.TColumnDesc{
+					{ColumnName: "flag", Position: 0, TypeDesc: &cli_service.TTypeDesc{
+						Types: []*cli_service.TTypeEntry{{
+							PrimitiveEntry: &cli_service.TPrimitiveTypeEntry{Type: cli_service.TTypeId_BOOLEAN_TYPE},
+						}},
+					}},
+				},
+			},
+		}, nil
+	}
+
+	testClient := &client.TestClient{
+		FnFetchResults:         fetchFn,
+		FnGetResultSetMetadata: metaFn,
+	}
+
+	var callbackChunkCount int
+	closeCallback := func(latencyMs int64, chunkCount int, iterErr error, closeErr error) {
+		callbackChunkCount = chunkCount
+	}
+
+	ctx := driverctx.NewContextWithConnId(context.Background(), "connId")
+	cfg := config.WithDefaults()
+	cfg.MaxRows = 5 // force paging
+
+	dr, dbErr := NewRows(ctx, nil, testClient, cfg, nil, &TelemetryCallbacks{OnClose: closeCallback})
+	assert.Nil(t, dbErr)
+
+	// Drain all rows to force two FetchResults calls.
+	dest := make([]driver.Value, 1)
+	for dr.Next(dest) == nil {
+	}
+
+	// Close should invoke the callback with the total chunk count (2 pages fetched).
+	assert.Nil(t, dr.Close())
+
+	// direct results count as chunk 0; two FetchResults calls give chunkCount=2.
+	// (No directResults here so chunkCount starts at 0, then +1 per FetchResults call.)
+	assert.Equal(t, 2, callbackChunkCount,
+		"closeCallback must receive the total number of result pages fetched")
+}
+
+// TestRows_CloseCallback_NilDoesNotPanic verifies that passing nil for closeCallback
+// does not cause a panic when rows.Close() is called.
+func TestRows_CloseCallback_NilDoesNotPanic(t *testing.T) {
+	t.Parallel()
+
+	noMoreRows := false
+	pages := []cli_service.TFetchResultsResp{
+		{
+			Status:      &cli_service.TStatus{StatusCode: cli_service.TStatusCode_SUCCESS_STATUS},
+			HasMoreRows: &noMoreRows,
+			Results:     &cli_service.TRowSet{StartRowOffset: 0, Columns: []*cli_service.TColumn{}},
+		},
+	}
+	pageIndex := -1
+	fetchFn := func(ctx context.Context, req *cli_service.TFetchResultsReq) (*cli_service.TFetchResultsResp, error) {
+		pageIndex++
+		p := pages[pageIndex]
+		return &p, nil
+	}
+	testClient := &client.TestClient{FnFetchResults: fetchFn}
+
+	ctx := driverctx.NewContextWithConnId(context.Background(), "connId")
+	cfg := config.WithDefaults()
+
+	dr, dbErr := NewRows(ctx, nil, testClient, cfg, nil, nil)
+	assert.Nil(t, dbErr)
+
+	assert.NotPanics(t, func() {
+		_ = dr.Close()
+	}, "nil closeCallback must not cause a panic on rows.Close()")
 }
