@@ -11796,7 +11796,7 @@ type TExecuteStatementReq struct {
   // unused fields # 1290 to 1295
   StatementConf *TStatementConf `thrift:"statementConf,1296" db:"statementConf" json:"statementConf,omitempty"`
   // unused fields # 1297 to 3352
-  EnforceEmbeddedSchemaCorrectness *bool `thrift:"enforceEmbeddedSchemaCorrectness,3353" db:"enforceEmbeddedSchemaCorrectness" json:"enforceEmbeddedSchemaCorrectness,omitempty"`
+  EnforceEmbeddedSchemaCorrectness bool `thrift:"enforceEmbeddedSchemaCorrectness,3353" db:"enforceEmbeddedSchemaCorrectness" json:"enforceEmbeddedSchemaCorrectness"`
 }
 
 func NewTExecuteStatementReq() *TExecuteStatementReq {
@@ -11897,12 +11897,10 @@ func (p *TExecuteStatementReq) GetStatementConf() *TStatementConf {
   }
 return p.StatementConf
 }
-var TExecuteStatementReq_EnforceEmbeddedSchemaCorrectness_DEFAULT bool
+var TExecuteStatementReq_EnforceEmbeddedSchemaCorrectness_DEFAULT bool = false
+
 func (p *TExecuteStatementReq) GetEnforceEmbeddedSchemaCorrectness() bool {
-  if !p.IsSetEnforceEmbeddedSchemaCorrectness() {
-    return TExecuteStatementReq_EnforceEmbeddedSchemaCorrectness_DEFAULT
-  }
-return *p.EnforceEmbeddedSchemaCorrectness
+  return p.EnforceEmbeddedSchemaCorrectness
 }
 func (p *TExecuteStatementReq) IsSetSessionHandle() bool {
   return p.SessionHandle != nil
@@ -11961,7 +11959,7 @@ func (p *TExecuteStatementReq) IsSetStatementConf() bool {
 }
 
 func (p *TExecuteStatementReq) IsSetEnforceEmbeddedSchemaCorrectness() bool {
-  return p.EnforceEmbeddedSchemaCorrectness != nil
+  return p.EnforceEmbeddedSchemaCorrectness != TExecuteStatementReq_EnforceEmbeddedSchemaCorrectness_DEFAULT
 }
 
 func (p *TExecuteStatementReq) Read(ctx context.Context, iprot thrift.TProtocol) error {
@@ -12327,7 +12325,7 @@ func (p *TExecuteStatementReq)  ReadField3353(ctx context.Context, iprot thrift.
   if v, err := iprot.ReadBool(ctx); err != nil {
   return thrift.PrependError("error reading field 3353: ", err)
 } else {
-  p.EnforceEmbeddedSchemaCorrectness = &v
+  p.EnforceEmbeddedSchemaCorrectness = v
 }
   return nil
 }
@@ -12563,7 +12561,7 @@ func (p *TExecuteStatementReq) writeField3353(ctx context.Context, oprot thrift.
   if p.IsSetEnforceEmbeddedSchemaCorrectness() {
     if err := oprot.WriteFieldBegin(ctx, "enforceEmbeddedSchemaCorrectness", thrift.BOOL, 3353); err != nil {
       return thrift.PrependError(fmt.Sprintf("%T write field begin error 3353:enforceEmbeddedSchemaCorrectness: ", p), err) }
-    if err := oprot.WriteBool(ctx, bool(*p.EnforceEmbeddedSchemaCorrectness)); err != nil {
+    if err := oprot.WriteBool(ctx, bool(p.EnforceEmbeddedSchemaCorrectness)); err != nil {
     return thrift.PrependError(fmt.Sprintf("%T.enforceEmbeddedSchemaCorrectness (3353) field write error: ", p), err) }
     if err := oprot.WriteFieldEnd(ctx); err != nil {
       return thrift.PrependError(fmt.Sprintf("%T write field end error 3353:enforceEmbeddedSchemaCorrectness: ", p), err) }
@@ -12630,12 +12628,7 @@ func (p *TExecuteStatementReq) Equals(other *TExecuteStatementReq) bool {
     if (*p.MaxBytesPerBatch) != (*other.MaxBytesPerBatch) { return false }
   }
   if !p.StatementConf.Equals(other.StatementConf) { return false }
-  if p.EnforceEmbeddedSchemaCorrectness != other.EnforceEmbeddedSchemaCorrectness {
-    if p.EnforceEmbeddedSchemaCorrectness == nil || other.EnforceEmbeddedSchemaCorrectness == nil {
-      return false
-    }
-    if (*p.EnforceEmbeddedSchemaCorrectness) != (*other.EnforceEmbeddedSchemaCorrectness) { return false }
-  }
+  if p.EnforceEmbeddedSchemaCorrectness != other.EnforceEmbeddedSchemaCorrectness { return false }
   return true
 }
 
