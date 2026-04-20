@@ -80,8 +80,10 @@ type arrowRowScanner struct {
 // Make sure arrowRowScanner fulfills the RowScanner interface
 var _ rowscanner.RowScanner = (*arrowRowScanner)(nil)
 
-// NewArrowRowScanner returns an instance of RowScanner which handles arrow format results
-func NewArrowRowScanner(resultSetMetadata *cli_service.TGetResultSetMetadataResp, rowSet *cli_service.TRowSet, cfg *config.Config, logger *dbsqllog.DBSQLLogger, ctx context.Context) (rowscanner.RowScanner, dbsqlerr.DBError) {
+// NewArrowRowScanner returns an instance of RowScanner which handles arrow format results.
+// onCloudFetchDownload is an optional callback invoked for each CloudFetch S3 file download
+// with the download duration in milliseconds. Pass nil for non-telemetry paths.
+func NewArrowRowScanner(resultSetMetadata *cli_service.TGetResultSetMetadataResp, rowSet *cli_service.TRowSet, cfg *config.Config, logger *dbsqllog.DBSQLLogger, ctx context.Context, onCloudFetchDownload func(downloadMs int64)) (rowscanner.RowScanner, dbsqlerr.DBError) {
 
 	// we take a passed in logger, rather than just using the global from dbsqllog, so that the containing rows
 	// instance can pass in a logger with context such as correlation ID and operation ID
@@ -119,7 +121,7 @@ func NewArrowRowScanner(resultSetMetadata *cli_service.TGetResultSetMetadataResp
 		for _, resultLink := range rowSet.ResultLinks {
 			logger.Debug().Msgf("- start row offset: %d, row count: %d", resultLink.StartRowOffset, resultLink.RowCount)
 		}
-		bi, err2 = NewCloudBatchIterator(context.Background(), rowSet.ResultLinks, rowSet.StartRowOffset, cfg)
+		bi, err2 = NewCloudBatchIterator(context.Background(), rowSet.ResultLinks, rowSet.StartRowOffset, cfg, onCloudFetchDownload)
 	} else {
 		bi, err2 = NewLocalBatchIterator(context.Background(), rowSet.ArrowBatches, rowSet.StartRowOffset, schemaBytes, cfg)
 	}
@@ -127,7 +129,7 @@ func NewArrowRowScanner(resultSetMetadata *cli_service.TGetResultSetMetadataResp
 		return nil, err2
 	}
 
-	var location *time.Location = time.UTC
+	location := time.UTC
 	if cfg != nil {
 		if cfg.Location != nil {
 			location = cfg.Location

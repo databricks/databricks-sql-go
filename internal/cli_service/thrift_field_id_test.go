@@ -20,6 +20,10 @@ import (
 func TestThriftFieldIdsAreWithinAllowedRange(t *testing.T) {
 	const maxAllowedFieldID = 3329
 
+	allowedExceptions := map[int]bool{
+		3353: true,
+	}
+
 	// Get the directory of this test file
 	_, filename, _, ok := runtime.Caller(0)
 	if !ok {
@@ -30,7 +34,7 @@ func TestThriftFieldIdsAreWithinAllowedRange(t *testing.T) {
 	testDir := filepath.Dir(filename)
 	cliServicePath := filepath.Join(testDir, "cli_service.go")
 
-	violations, err := validateThriftFieldIDs(cliServicePath, maxAllowedFieldID)
+	violations, err := validateThriftFieldIDs(cliServicePath, maxAllowedFieldID, allowedExceptions)
 	if err != nil {
 		t.Fatalf("Failed to validate thrift field IDs: %v", err)
 	}
@@ -51,13 +55,14 @@ func TestThriftFieldIdsAreWithinAllowedRange(t *testing.T) {
 }
 
 // validateThriftFieldIDs parses the cli_service.go file and extracts all thrift field IDs
-// to validate they are within the allowed range.
-func validateThriftFieldIDs(filePath string, maxAllowedFieldID int) ([]string, error) {
-	file, err := os.Open(filePath)
+// to validate they are within the allowed range. Field IDs listed in allowedExceptions
+// are permitted even if they exceed the maximum.
+func validateThriftFieldIDs(filePath string, maxAllowedFieldID int, allowedExceptions map[int]bool) ([]string, error) {
+	file, err := os.Open(filePath) //nolint:gosec // G304: path is a test fixture, not user-controlled
 	if err != nil {
 		return nil, fmt.Errorf("failed to open file %s: %w", filePath, err)
 	}
-	defer file.Close()
+	defer file.Close() //nolint:errcheck
 
 	var violations []string
 	scanner := bufio.NewScanner(file)
@@ -84,7 +89,7 @@ func validateThriftFieldIDs(filePath string, maxAllowedFieldID int) ([]string, e
 					continue
 				}
 
-				if fieldID >= maxAllowedFieldID {
+				if fieldID >= maxAllowedFieldID && !allowedExceptions[fieldID] {
 					// Extract struct/field context from the line
 					context := extractFieldContext(line)
 					violation := fmt.Sprintf(

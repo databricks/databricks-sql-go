@@ -51,23 +51,24 @@ func TestNewConnector(t *testing.T) {
 			HTTPClient:                   &http.Client{Transport: roundTripper},
 		}
 		expectedUserConfig := config.UserConfig{
-			Host:             host,
-			Port:             port,
-			Protocol:         "https",
-			AccessToken:      accessToken,
-			Authenticator:    &pat.PATAuth{AccessToken: accessToken},
-			HTTPPath:         "/" + httpPath,
-			MaxRows:          maxRows,
-			QueryTimeout:     timeout,
-			Catalog:          catalog,
-			Schema:           schema,
-			UserAgentEntry:   userAgentEntry,
-			SessionParams:    sessionParams,
-			RetryMax:         10,
-			RetryWaitMin:     3 * time.Second,
-			RetryWaitMax:     60 * time.Second,
-			Transport:        roundTripper,
-			CloudFetchConfig: expectedCloudFetchConfig,
+			Host:                host,
+			Port:                port,
+			Protocol:            "https",
+			AccessToken:         accessToken,
+			Authenticator:       &pat.PATAuth{AccessToken: accessToken},
+			HTTPPath:            "/" + httpPath,
+			MaxRows:             maxRows,
+			QueryTimeout:        timeout,
+			Catalog:             catalog,
+			Schema:              schema,
+			UserAgentEntry:      userAgentEntry,
+			SessionParams:       sessionParams,
+			RetryMax:            10,
+			RetryWaitMin:        3 * time.Second,
+			RetryWaitMax:        60 * time.Second,
+			Transport:           roundTripper,
+			TelemetryRetryCount: -1,
+			CloudFetchConfig:    expectedCloudFetchConfig,
 		}
 		expectedCfg := config.WithDefaults()
 		expectedCfg.DriverVersion = DriverVersion
@@ -98,18 +99,19 @@ func TestNewConnector(t *testing.T) {
 			CloudFetchSpeedThresholdMbps: 0.1,
 		}
 		expectedUserConfig := config.UserConfig{
-			Host:             host,
-			Port:             port,
-			Protocol:         "https",
-			AccessToken:      accessToken,
-			Authenticator:    &pat.PATAuth{AccessToken: accessToken},
-			HTTPPath:         "/" + httpPath,
-			MaxRows:          maxRows,
-			SessionParams:    sessionParams,
-			RetryMax:         4,
-			RetryWaitMin:     1 * time.Second,
-			RetryWaitMax:     30 * time.Second,
-			CloudFetchConfig: expectedCloudFetchConfig,
+			Host:                host,
+			Port:                port,
+			Protocol:            "https",
+			AccessToken:         accessToken,
+			Authenticator:       &pat.PATAuth{AccessToken: accessToken},
+			HTTPPath:            "/" + httpPath,
+			MaxRows:             maxRows,
+			SessionParams:       sessionParams,
+			RetryMax:            4,
+			RetryWaitMin:        1 * time.Second,
+			RetryWaitMax:        30 * time.Second,
+			TelemetryRetryCount: -1,
+			CloudFetchConfig:    expectedCloudFetchConfig,
 		}
 		expectedCfg := config.WithDefaults()
 		expectedCfg.UserConfig = expectedUserConfig
@@ -140,18 +142,19 @@ func TestNewConnector(t *testing.T) {
 			CloudFetchSpeedThresholdMbps: 0.1,
 		}
 		expectedUserConfig := config.UserConfig{
-			Host:             host,
-			Port:             port,
-			Protocol:         "https",
-			AccessToken:      accessToken,
-			Authenticator:    &pat.PATAuth{AccessToken: accessToken},
-			HTTPPath:         "/" + httpPath,
-			MaxRows:          maxRows,
-			SessionParams:    sessionParams,
-			RetryMax:         -1,
-			RetryWaitMin:     0,
-			RetryWaitMax:     0,
-			CloudFetchConfig: expectedCloudFetchConfig,
+			Host:                host,
+			Port:                port,
+			Protocol:            "https",
+			AccessToken:         accessToken,
+			Authenticator:       &pat.PATAuth{AccessToken: accessToken},
+			HTTPPath:            "/" + httpPath,
+			MaxRows:             maxRows,
+			SessionParams:       sessionParams,
+			RetryMax:            -1,
+			RetryWaitMin:        0,
+			RetryWaitMax:        0,
+			TelemetryRetryCount: -1,
+			CloudFetchConfig:    expectedCloudFetchConfig,
 		}
 		expectedCfg := config.WithDefaults()
 		expectedCfg.DriverVersion = DriverVersion
@@ -263,8 +266,67 @@ func TestNewConnector(t *testing.T) {
 
 		coni, ok := con.(*connector)
 		require.True(t, ok)
-		assert.NotNil(t, coni.cfg.CloudFetchConfig.HTTPClient)
-		assert.Equal(t, customTransport, coni.cfg.CloudFetchConfig.HTTPClient.Transport)
+		assert.NotNil(t, coni.cfg.HTTPClient)
+		assert.Equal(t, customTransport, coni.cfg.HTTPClient.Transport)
+	})
+}
+
+func TestWithQueryTags(t *testing.T) {
+	t.Run("WithQueryTags serializes map into SessionParams QUERY_TAGS", func(t *testing.T) {
+		con, err := NewConnector(
+			WithQueryTags(map[string]string{
+				"team": "data-eng",
+			}),
+		)
+		require.NoError(t, err)
+		coni, ok := con.(*connector)
+		require.True(t, ok)
+		assert.Equal(t, "team:data-eng", coni.cfg.SessionParams["QUERY_TAGS"])
+	})
+
+	t.Run("WithQueryTags with multiple tags", func(t *testing.T) {
+		con, err := NewConnector(
+			WithQueryTags(map[string]string{
+				"team": "eng",
+				"app":  "etl",
+			}),
+		)
+		require.NoError(t, err)
+		coni, ok := con.(*connector)
+		require.True(t, ok)
+		// Map iteration is non-deterministic
+		qt := coni.cfg.SessionParams["QUERY_TAGS"]
+		assert.True(t, qt == "team:eng,app:etl" || qt == "app:etl,team:eng", "got: %s", qt)
+	})
+
+	t.Run("WithQueryTags with empty map does not set QUERY_TAGS", func(t *testing.T) {
+		con, err := NewConnector(
+			WithQueryTags(map[string]string{}),
+		)
+		require.NoError(t, err)
+		coni, ok := con.(*connector)
+		require.True(t, ok)
+		_, exists := coni.cfg.SessionParams["QUERY_TAGS"]
+		assert.False(t, exists)
+	})
+
+	t.Run("WithQueryTags overrides WithSessionParams QUERY_TAGS", func(t *testing.T) {
+		con, err := NewConnector(
+			WithSessionParams(map[string]string{
+				"QUERY_TAGS": "old:value",
+				"ansi_mode":  "false",
+			}),
+			WithQueryTags(map[string]string{
+				"team": "new-team",
+			}),
+		)
+		require.NoError(t, err)
+		coni, ok := con.(*connector)
+		require.True(t, ok)
+		// WithQueryTags should override the QUERY_TAGS from WithSessionParams
+		assert.Equal(t, "team:new-team", coni.cfg.SessionParams["QUERY_TAGS"])
+		// Other session params should be preserved
+		assert.Equal(t, "false", coni.cfg.SessionParams["ansi_mode"])
 	})
 }
 

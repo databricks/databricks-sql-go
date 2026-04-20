@@ -56,7 +56,7 @@ func main() {
 	// Opening a driver typically will not attempt to connect to the database.
 	db := sql.OpenDB(connector)
 	// make sure to close it later
-	defer db.Close()
+	defer db.Close() //nolint:errcheck
 
 	ogCtx := dbsqlctx.NewContextWithCorrelationId(context.Background(), "createdrop-example")
 

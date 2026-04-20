@@ -58,7 +58,7 @@ func TestWorkflowExample(t *testing.T) {
 	)
 	require.NoError(t, err)
 	db := sql.OpenDB(connector)
-	defer db.Close()
+	defer db.Close() //nolint:errcheck
 
 	ogCtx := driverctx.NewContextWithCorrelationId(context.Background(), "workflow-example")
 
@@ -271,7 +271,7 @@ func TestContextTimeoutExample(t *testing.T) {
 
 	db, err := sql.Open("databricks", ts.URL+"/path")
 	require.NoError(t, err)
-	defer db.Close()
+	defer db.Close() //nolint:errcheck
 
 	ogCtx := driverctx.NewContextWithCorrelationId(context.Background(), "context-timeout-example")
 
@@ -321,7 +321,7 @@ func TestRetries(t *testing.T) {
 
 		db, err := sql.Open("databricks", fmt.Sprintf("%s/503-2-retries", ts.URL))
 		require.NoError(t, err)
-		defer db.Close()
+		defer db.Close() //nolint:errcheck
 
 		state.executeStatementResp = cli_service.TExecuteStatementResp{}
 		loadTestData(t, "ExecuteStatement1.json", &state.executeStatementResp)
@@ -347,7 +347,7 @@ func TestRetries(t *testing.T) {
 
 		db, err := sql.Open("databricks", fmt.Sprintf("%s/429-2-retries", ts.URL))
 		require.NoError(t, err)
-		defer db.Close()
+		defer db.Close() //nolint:errcheck
 
 		state.executeStatementResp = cli_service.TExecuteStatementResp{}
 		loadTestData(t, "ExecuteStatement1.json", &state.executeStatementResp)
@@ -383,7 +383,7 @@ func TestRetries(t *testing.T) {
 		)
 		require.NoError(t, err)
 		db := sql.OpenDB(connector)
-		defer db.Close()
+		defer db.Close() //nolint:errcheck
 
 		state.executeStatementResp = cli_service.TExecuteStatementResp{}
 		loadTestData(t, "ExecuteStatement1.json", &state.executeStatementResp)
@@ -418,7 +418,7 @@ func TestRetries(t *testing.T) {
 		)
 		require.NoError(t, err)
 		db := sql.OpenDB(connector)
-		defer db.Close()
+		defer db.Close() //nolint:errcheck
 
 		state.executeStatementResp = cli_service.TExecuteStatementResp{}
 		loadTestData(t, "ExecuteStatement1.json", &state.executeStatementResp)
@@ -453,7 +453,7 @@ func TestRetries(t *testing.T) {
 		)
 		require.NoError(t, err)
 		db := sql.OpenDB(connector)
-		defer db.Close()
+		defer db.Close() //nolint:errcheck
 
 		state.executeStatementResp = cli_service.TExecuteStatementResp{}
 		loadTestData(t, "ExecuteStatement1.json", &state.executeStatementResp)
@@ -479,7 +479,7 @@ func TestRetries(t *testing.T) {
 		)
 		require.NoError(t, err)
 		db2 := sql.OpenDB(connector2)
-		defer db.Close()
+		defer db.Close() //nolint:errcheck
 
 		state.executeStatementResp = cli_service.TExecuteStatementResp{}
 		loadTestData(t, "ExecuteStatement1.json", &state.executeStatementResp)

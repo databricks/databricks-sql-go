@@ -108,7 +108,8 @@ func TestFederationProvider_TokenExchangeSuccess(t *testing.T) {
 		assert.Equal(t, "application/x-www-form-urlencoded", r.Header.Get("Content-Type"))
 		assert.Equal(t, "*/*", r.Header.Get("Accept"))
 
-		// Parse form data
+		// Parse form data - limit body size to prevent G120
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 		err := r.ParseForm()
 		require.NoError(t, err)
 
@@ -155,13 +156,14 @@ func TestFederationProvider_TokenExchangeWithClientID(t *testing.T) {
 
 	// Create mock server that checks for client_id
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 		err := r.ParseForm()
 		require.NoError(t, err)
 
 		// Verify client_id is present
 		assert.Equal(t, clientID, r.FormValue("client_id"))
 
-		response := map[string]interface{}{
+		response := map[string]interface{}{ //nolint:gosec // G101: test token, not a real credential
 			"access_token": "sp-wide-federation-token",
 			"token_type":   "Bearer",
 			"expires_in":   3600,

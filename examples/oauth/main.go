@@ -29,7 +29,7 @@ func testU2M() {
 	authenticator, err := u2m.NewAuthenticator(os.Getenv("DATABRICKS_HOST"), 1*time.Minute)
 
 	if err != nil {
-		log.Fatal(err.Error())
+		log.Fatal(err.Error()) //nolint:gosec // G706: error tainted by env var, log injection not a concern here
 	}
 
 	connector, err := dbsql.NewConnector(
@@ -42,7 +42,7 @@ func testU2M() {
 	}
 
 	db := sql.OpenDB(connector)
-	defer db.Close()
+	defer db.Close() //nolint:errcheck
 
 	// Pinging should require logging in
 	if err := db.Ping(); err != nil {
@@ -91,7 +91,7 @@ func testM2M() {
 	}
 
 	db := sql.OpenDB(connector)
-	defer db.Close()
+	defer db.Close() //nolint:errcheck
 
 	// Pinging should require logging in
 	if err := db.Ping(); err != nil {

@@ -20,6 +20,7 @@ import (
 	"github.com/databricks/databricks-sql-go/internal/config"
 	dbsqlerrint "github.com/databricks/databricks-sql-go/internal/errors"
 	"github.com/databricks/databricks-sql-go/logger"
+	"github.com/databricks/databricks-sql-go/telemetry"
 )
 
 type connector struct {
@@ -54,6 +55,8 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 	}
 
 	protocolVersion := int64(c.cfg.ThriftProtocolVersion)
+
+	sessionStart := time.Now()
 	session, err := tclient.OpenSession(ctx, &cli_service.TOpenSessionReq{
 		ClientProtocolI64: &protocolVersion,
 		Configuration:     sessionParams,
@@ -63,6 +66,8 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 		},
 		CanUseMultipleCatalogs: &c.cfg.CanUseMultipleCatalogs,
 	})
+	sessionLatencyMs := time.Since(sessionStart).Milliseconds()
+
 	if err != nil {
 		return nil, dbsqlerrint.NewRequestError(ctx, fmt.Sprintf("error connecting: host=%s port=%d, httpPath=%s", c.cfg.Host, c.cfg.Port, c.cfg.HTTPPath), err)
 	}
@@ -74,6 +79,22 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 		session: session,
 	}
 	log := logger.WithContext(conn.id, driverctx.CorrelationIdFromContext(ctx), "")
+
+	// Initialize telemetry: client config overlay decides; if unset, feature flags decide
+	conn.telemetry = telemetry.InitializeForConnection(ctx, telemetry.TelemetryInitOptions{
+		Host:            c.cfg.Host,
+		DriverVersion:   c.cfg.DriverVersion,
+		HTTPClient:      c.client,
+		EnableTelemetry: c.cfg.EnableTelemetry,
+		BatchSize:       c.cfg.TelemetryBatchSize,
+		FlushInterval:   c.cfg.TelemetryFlushInterval,
+		RetryCount:      c.cfg.TelemetryRetryCount,
+		RetryDelay:      c.cfg.TelemetryRetryDelay,
+	})
+	if conn.telemetry != nil {
+		log.Debug().Msg("telemetry initialized for connection")
+		conn.telemetry.RecordOperation(ctx, conn.id, "", telemetry.OperationTypeCreateSession, sessionLatencyMs, nil)
+	}
 
 	log.Info().Msgf("connect: host=%s port=%d httpPath=%s serverProtocolVersion=0x%X", c.cfg.Host, c.cfg.Port, c.cfg.HTTPPath, session.ServerProtocolVersion)
 
@@ -235,6 +256,23 @@ func WithSessionParams(params map[string]string) ConnOption {
 	}
 }
 
+// WithQueryTags sets session-level query tags from a map.
+// Tags are serialized and passed as QUERY_TAGS in the session configuration.
+// All queries in the session will carry these tags unless overridden at the statement level.
+// This is the preferred way to set session-level query tags, as it handles serialization
+// and escaping automatically (consistent with the statement-level API).
+func WithQueryTags(tags map[string]string) ConnOption {
+	return func(c *config.Config) {
+		serialized := SerializeQueryTags(tags)
+		if serialized != "" {
+			if c.SessionParams == nil {
+				c.SessionParams = make(map[string]string)
+			}
+			c.SessionParams["QUERY_TAGS"] = serialized
+		}
+	}
+}
+
 // WithSkipTLSHostVerify disables the verification of the hostname in the TLS certificate.
 // WARNING:
 // When this option is used, TLS is susceptible to machine-in-the-middle attacks.
@@ -261,8 +299,8 @@ func WithTransport(t http.RoundTripper) ConnOption {
 	return func(c *config.Config) {
 		c.Transport = t
 
-		if c.CloudFetchConfig.HTTPClient == nil {
-			c.CloudFetchConfig.HTTPClient = &http.Client{
+		if c.HTTPClient == nil {
+			c.HTTPClient = &http.Client{
 				Transport: t,
 			}
 		}
