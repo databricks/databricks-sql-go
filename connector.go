@@ -6,6 +6,7 @@ import (
 	"database/sql/driver"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -80,11 +81,21 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 	}
 	log := logger.WithContext(conn.id, driverctx.CorrelationIdFromContext(ctx), "")
 
+	// Extract SPOG routing headers from ?o= in HTTPPath. When ?o=<workspaceId>
+	// is present (Custom URL / SPOG hosts), wrap the HTTP client used for
+	// telemetry + feature-flag calls with a transport that injects
+	// x-databricks-org-id. Thrift routes via the URL so its own c.client
+	// doesn't need wrapping.
+	telemetryClient := c.client
+	if spogHeaders := extractSpogHeaders(c.cfg.HTTPPath); len(spogHeaders) > 0 {
+		telemetryClient = withSpogHeaders(c.client, spogHeaders)
+	}
+
 	// Initialize telemetry: client config overlay decides; if unset, feature flags decide
 	conn.telemetry = telemetry.InitializeForConnection(ctx, telemetry.TelemetryInitOptions{
 		Host:            c.cfg.Host,
 		DriverVersion:   c.cfg.DriverVersion,
-		HTTPClient:      c.client,
+		HTTPClient:      telemetryClient,
 		EnableTelemetry: c.cfg.EnableTelemetry,
 		BatchSize:       c.cfg.TelemetryBatchSize,
 		FlushInterval:   c.cfg.TelemetryFlushInterval,
@@ -124,6 +135,91 @@ func NewConnector(options ...ConnOption) (driver.Connector, error) {
 	client := client.RetryableClient(cfg)
 
 	return &connector{cfg: cfg, client: client}, nil
+}
+
+// extractSpogHeaders extracts ?o=<workspaceId> from httpPath and returns
+// an x-databricks-org-id header for SPOG routing.
+//
+// On SPOG (Custom URL) workspaces, httpPath is of the form
+// /sql/1.0/warehouses/<id>?o=<workspaceId>. The ?o= parameter keeps Thrift
+// requests routed to the correct workspace via the URL itself, but other
+// endpoints (telemetry, feature flags) run on separate hosts and need the
+// x-databricks-org-id header. This function extracts ?o= from httpPath once
+// and returns it so those paths can inject it as an HTTP header.
+//
+// Returns nil if:
+//   - httpPath has no query string ("?"), or
+//   - the query string is malformed and can't be parsed, or
+//   - the ?o= parameter is missing or empty.
+func extractSpogHeaders(httpPath string) map[string]string {
+	if !strings.Contains(httpPath, "?") {
+		return nil
+	}
+	// Parse query string from httpPath
+	parts := strings.SplitN(httpPath, "?", 2)
+	params, err := url.ParseQuery(parts[1])
+	if err != nil {
+		logger.Debug().Msgf(
+			"SPOG header extraction: malformed query string in httpPath, skipping org-id extraction: %s",
+			err)
+		return nil
+	}
+	orgID := params.Get("o")
+	if orgID == "" {
+		logger.Debug().Msg(
+			"SPOG header extraction: httpPath has query string but no ?o= param, " +
+				"skipping x-databricks-org-id injection")
+		return nil
+	}
+	logger.Debug().Msgf(
+		"SPOG header extraction: injecting x-databricks-org-id=%s (extracted from ?o= in httpPath)",
+		orgID)
+	return map[string]string{"x-databricks-org-id": orgID}
+}
+
+// withSpogHeaders returns a new *http.Client that reuses the transport of the
+// provided client, wrapped to inject the given SPOG headers on every outbound
+// request. The original client is left unchanged. If a request already has a
+// given header set (e.g., the caller set it explicitly), the wrapper does not
+// override it.
+//
+// This is how the driver gets x-databricks-org-id onto both the feature-flag
+// check and the telemetry push without touching the telemetry package's
+// signatures.
+func withSpogHeaders(base *http.Client, headers map[string]string) *http.Client {
+	baseTransport := base.Transport
+	if baseTransport == nil {
+		baseTransport = http.DefaultTransport
+	}
+	return &http.Client{
+		Transport: &headerInjectingTransport{
+			base:    baseTransport,
+			headers: headers,
+		},
+		CheckRedirect: base.CheckRedirect,
+		Jar:           base.Jar,
+		Timeout:       base.Timeout,
+	}
+}
+
+// headerInjectingTransport wraps an http.RoundTripper and sets a fixed set of
+// headers on every outbound request. Caller-supplied headers with the same
+// name are not overridden.
+type headerInjectingTransport struct {
+	base    http.RoundTripper
+	headers map[string]string
+}
+
+// RoundTrip implements http.RoundTripper.
+func (t *headerInjectingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	// Clone per RoundTripper contract — must not mutate the caller's request.
+	req2 := req.Clone(req.Context())
+	for k, v := range t.headers {
+		if req2.Header.Get(k) == "" {
+			req2.Header.Set(k, v)
+		}
+	}
+	return t.base.RoundTrip(req2)
 }
 
 func withUserConfig(ucfg config.UserConfig) ConnOption {
