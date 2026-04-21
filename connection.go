@@ -515,8 +515,6 @@ func (c *conn) executeStatement(ctx context.Context, query string, args []driver
 		req.Parameters = parameters
 	}
 
-	req.EnforceEmbeddedSchemaCorrectness = c.cfg.EnforceEmbeddedSchemaCorrectness
-
 	// Add per-statement query tags if provided via context
 	if queryTags := driverctx.QueryTagsFromContext(ctx); len(queryTags) > 0 {
 		serialized := SerializeQueryTags(queryTags)
