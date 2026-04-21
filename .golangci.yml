@@ -63,6 +63,8 @@ linters-settings:
     exclude-generated: true
     severity: "low"
     confidence: "low"
+  nolintlint:
+    allow-unused: true
 
 run:
   timeout: 5m

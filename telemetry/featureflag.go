@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 )
@@ -16,21 +15,11 @@ const (
 	featureFlagCacheDuration = 15 * time.Minute
 	// featureFlagHTTPTimeout is the default timeout for feature flag HTTP requests
 	featureFlagHTTPTimeout = 10 * time.Second
-
-	// Feature flag names
-	// flagEnableTelemetry controls whether telemetry is enabled for the Go driver
-	flagEnableTelemetry = "databricks.partnerplatform.clientConfigsFeatureFlags.enableTelemetryForGoDriver"
-	// Add more feature flags here as needed:
-	// flagEnableNewFeature = "databricks.partnerplatform.clientConfigsFeatureFlags.enableNewFeatureForGoDriver"
+	// featureFlagEndpointPath is the path for feature flag endpoint
+	featureFlagEndpointPath = "/api/2.0/connector-service/feature-flags/GOLANG/"
+	// featureFlagName is the name of the Go driver telemetry feature flag
+	featureFlagName = "databricks.partnerplatform.clientConfigsFeatureFlags.enableTelemetryForGoDriver"
 )
-
-// driverVersion is set during initialization from the connector package.
-var driverVersion = "unknown"
-
-// SetDriverVersion sets the driver version used in feature flag endpoint paths.
-func SetDriverVersion(version string) {
-	driverVersion = version
-}
 
 // featureFlagCache manages feature flag state per host with reference counting.
 // This prevents rate limiting by caching feature flag responses.
@@ -41,12 +30,12 @@ type featureFlagCache struct {
 
 // featureFlagContext holds feature flag state and reference count for a host.
 type featureFlagContext struct {
-	mu            sync.RWMutex    // protects flags, lastFetched, fetching
-	flags         map[string]bool // cached feature flags by name
-	lastFetched   time.Time       // when flags were last fetched
-	refCount      int             // protected by featureFlagCache.mu
-	cacheDuration time.Duration   // how long to cache flags
-	fetching      bool            // true if a fetch is in progress
+	mu            sync.RWMutex // protects enabled, lastFetched, fetching
+	enabled       *bool
+	lastFetched   time.Time
+	refCount      int // protected by featureFlagCache.mu
+	cacheDuration time.Duration
+	fetching      bool // true if a fetch is in progress
 }
 
 var (
@@ -95,138 +84,89 @@ func (c *featureFlagCache) releaseContext(host string) {
 	}
 }
 
-// getFeatureFlag retrieves a specific feature flag value for the host.
-// This is the generic method that handles caching and fetching for any flag.
+// isTelemetryEnabled checks if telemetry is enabled for the host.
 // Uses cached value if available and not expired.
-func (c *featureFlagCache) getFeatureFlag(ctx context.Context, host string, httpClient *http.Client, flagName string, extraHeaders map[string]string) (bool, error) {
+func (c *featureFlagCache) isTelemetryEnabled(ctx context.Context, host string, driverVersion string, httpClient *http.Client, extraHeaders map[string]string) (bool, error) {
 	c.mu.RLock()
 	flagCtx, exists := c.contexts[host]
 	c.mu.RUnlock()
 
-	// If context doesn't exist, create it and make initial blocking fetch
 	if !exists {
-		c.mu.Lock()
-		// Double-check after acquiring write lock
-		flagCtx, exists = c.contexts[host]
-		if !exists {
-			flagCtx = &featureFlagContext{
-				cacheDuration: featureFlagCacheDuration,
-				fetching:      true, // Mark as fetching
-			}
-			c.contexts[host] = flagCtx
-		}
-		c.mu.Unlock()
-
-		// If we just created the context, make the initial blocking fetch
-		if !exists {
-			flags, err := fetchFeatureFlags(ctx, host, httpClient, extraHeaders)
-
-			flagCtx.mu.Lock()
-			flagCtx.fetching = false
-			if err == nil {
-				flagCtx.flags = flags
-				flagCtx.lastFetched = time.Now()
-				result := flags[flagName]
-				flagCtx.mu.Unlock()
-				return result, nil
-			}
-			// On error for first fetch, fail-safe: return false (telemetry disabled)
-			flagCtx.mu.Unlock()
-			return false, nil
-		}
+		return false, nil
 	}
 
-	// Check if cache is valid (with proper locking)
+	// Fast path: check cache under read lock.
 	flagCtx.mu.RLock()
-	if flagCtx.flags != nil && time.Since(flagCtx.lastFetched) < flagCtx.cacheDuration {
-		// Cache is valid, return the cached flag value
-		enabled := flagCtx.flags[flagName] // returns false if flag not found
+	if flagCtx.enabled != nil && time.Since(flagCtx.lastFetched) < flagCtx.cacheDuration {
+		enabled := *flagCtx.enabled
 		flagCtx.mu.RUnlock()
 		return enabled, nil
 	}
-
-	// Check if another goroutine is already fetching
 	if flagCtx.fetching {
-		// Return cached value if available, otherwise wait
-		if flagCtx.flags != nil {
-			enabled := flagCtx.flags[flagName]
+		if flagCtx.enabled != nil {
+			enabled := *flagCtx.enabled
 			flagCtx.mu.RUnlock()
 			return enabled, nil
 		}
 		flagCtx.mu.RUnlock()
-		// No cached value and fetch in progress, return false
 		return false, nil
 	}
-
-	// Mark as fetching
-	flagCtx.fetching = true
 	flagCtx.mu.RUnlock()
 
-	// Fetch fresh values for all flags
-	flags, err := fetchFeatureFlags(ctx, host, httpClient, extraHeaders)
+	// Slow path: need a write lock to set fetching=true.
+	// Re-check all conditions under write lock (double-checked locking) to avoid
+	// a data race and to prevent duplicate fetches from concurrent goroutines.
+	flagCtx.mu.Lock()
+	if flagCtx.enabled != nil && time.Since(flagCtx.lastFetched) < flagCtx.cacheDuration {
+		enabled := *flagCtx.enabled
+		flagCtx.mu.Unlock()
+		return enabled, nil
+	}
+	if flagCtx.fetching {
+		if flagCtx.enabled != nil {
+			enabled := *flagCtx.enabled
+			flagCtx.mu.Unlock()
+			return enabled, nil
+		}
+		flagCtx.mu.Unlock()
+		return false, nil
+	}
+	flagCtx.fetching = true
+	flagCtx.mu.Unlock()
 
-	// Update cache (with proper locking)
+	// Fetch fresh value (outside lock so other readers are not blocked).
+	enabled, err := fetchFeatureFlag(ctx, host, driverVersion, httpClient, extraHeaders)
+
+	// Update cache.
 	flagCtx.mu.Lock()
 	flagCtx.fetching = false
 	if err == nil {
-		flagCtx.flags = flags
+		flagCtx.enabled = &enabled
 		flagCtx.lastFetched = time.Now()
 	}
-	// On error, keep the old cached values if they exist
 	result := false
 	var returnErr error
 	if err != nil {
-		if flagCtx.flags != nil {
-			result = flagCtx.flags[flagName]
-			returnErr = nil // Return cached value without error
+		if flagCtx.enabled != nil {
+			result = *flagCtx.enabled // Return stale cached value on error
 		} else {
 			returnErr = err
 		}
 	} else {
-		result = flags[flagName]
+		result = enabled
 	}
 	flagCtx.mu.Unlock()
 
 	return result, returnErr
 }
 
-// isTelemetryEnabled checks if telemetry is enabled for the host.
-// Uses cached value if available and not expired.
-func (c *featureFlagCache) isTelemetryEnabled(ctx context.Context, host string, httpClient *http.Client, extraHeaders map[string]string) (bool, error) {
-	return c.getFeatureFlag(ctx, host, httpClient, flagEnableTelemetry, extraHeaders)
-}
-
 // isExpired returns true if the cache has expired.
 func (c *featureFlagContext) isExpired() bool {
-	return c.flags == nil || time.Since(c.lastFetched) > c.cacheDuration
+	return c.enabled == nil || time.Since(c.lastFetched) > c.cacheDuration
 }
 
-// getAllFeatureFlags returns a list of all feature flags to fetch.
-// Add new flags here when adding new features.
-func getAllFeatureFlags() []string {
-	return []string{
-		flagEnableTelemetry,
-		// Add more flags here as needed:
-		// flagEnableNewFeature,
-	}
-}
-
-// featureFlagEntry represents a single flag from the connector-service response.
-type featureFlagEntry struct {
-	Name  string `json:"name"`
-	Value string `json:"value"`
-}
-
-// featureFlagResponse represents the response from the connector-service endpoint.
-type featureFlagResponse struct {
-	Flags      []featureFlagEntry `json:"flags"`
-	TTLSeconds int                `json:"ttl_seconds,omitempty"`
-}
-
-// fetchFeatureFlags fetches feature flag values from the connector-service endpoint.
-// Endpoint: GET /api/2.0/connector-service/feature-flags/{CLIENT_TYPE}/{VERSION}
-// Returns a map of flag names to their boolean values.
-func fetchFeatureFlags(ctx context.Context, host string, httpClient *http.Client, extraHeaders map[string]string) (map[string]bool, error) {
+// fetchFeatureFlag fetches the feature flag value from Databricks.
+func fetchFeatureFlag(ctx context.Context, host string, driverVersion string, httpClient *http.Client, extraHeaders map[string]string) (bool, error) {
 	// Add timeout to context if it doesn't have a deadline
 	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
 		var cancel context.CancelFunc
@@ -234,46 +174,55 @@ func fetchFeatureFlags(ctx context.Context, host string, httpClient *http.Client
 		defer cancel()
 	}
 
-	// Construct endpoint URL using the connector-service path
-	var endpoint string
-	if strings.HasPrefix(host, "http://") || strings.HasPrefix(host, "https://") {
-		endpoint = fmt.Sprintf("%s/api/2.0/connector-service/feature-flags/GOLANG/%s", host, driverVersion)
-	} else {
-		endpoint = fmt.Sprintf("https://%s/api/2.0/connector-service/feature-flags/GOLANG/%s", host, driverVersion)
-	}
+	// Construct endpoint URL using connector-service endpoint like JDBC
+	hostURL := ensureHTTPScheme(host)
+	endpoint := fmt.Sprintf("%s%s%s", hostURL, featureFlagEndpointPath, driverVersion)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", endpoint, nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create feature flag request: %w", err)
+		return false, fmt.Errorf("failed to create feature flag request: %w", err)
 	}
 
-	// Add extra headers (e.g. x-databricks-org-id for SPOG routing)
+	// Attach extra headers (e.g. x-databricks-org-id for SPOG routing).
 	for k, v := range extraHeaders {
 		req.Header.Set(k, v)
 	}
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch feature flags: %w", err)
+		return false, fmt.Errorf("failed to fetch feature flag: %w", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	if resp.StatusCode != http.StatusOK {
 		// Read and discard body to allow HTTP connection reuse
 		_, _ = io.Copy(io.Discard, resp.Body)
-		return nil, fmt.Errorf("feature flag check failed: %d", resp.StatusCode)
+		return false, fmt.Errorf("feature flag check failed: %d", resp.StatusCode)
 	}
 
-	var result featureFlagResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode feature flag response: %w", err)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return false, fmt.Errorf("failed to read feature flag response: %w", err)
 	}
 
-	// Convert array of {name, value} entries to a map of name -> bool
-	flags := make(map[string]bool, len(result.Flags))
-	for _, f := range result.Flags {
-		flags[f.Name] = strings.EqualFold(f.Value, "true")
+	var result struct {
+		Flags []struct {
+			Name  string `json:"name"`
+			Value string `json:"value"`
+		} `json:"flags"`
+		TTLSeconds int `json:"ttl_seconds"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return false, fmt.Errorf("failed to decode feature flag response: %w", err)
 	}
 
-	return flags, nil
+	// Look for Go driver telemetry feature flag
+	for _, flag := range result.Flags {
+		if flag.Name == featureFlagName {
+			enabled := flag.Value == "true"
+			return enabled, nil
+		}
+	}
+
+	return false, nil
 }

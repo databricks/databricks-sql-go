@@ -1,0 +1,35 @@
+name: Setup JFrog OIDC
+description: Obtain a JFrog access token via GitHub OIDC and configure Go to use JFrog as a module proxy
+
+runs:
+  using: composite
+  steps:
+    - name: Get JFrog OIDC token
+      shell: bash
+      run: |
+        set -euo pipefail
+        ID_TOKEN=$(curl -sLS \
+          -H "User-Agent: actions/oidc-client" \
+          -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+          "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=jfrog-github" | jq .value | tr -d '"')
+        echo "::add-mask::${ID_TOKEN}"
+        ACCESS_TOKEN=$(curl -sLS -XPOST -H "Content-Type: application/json" \
+          "https://databricks.jfrog.io/access/api/v1/oidc/token" \
+          -d "{\"grant_type\": \"urn:ietf:params:oauth:grant-type:token-exchange\", \"subject_token_type\":\"urn:ietf:params:oauth:token-type:id_token\", \"subject_token\": \"${ID_TOKEN}\", \"provider_name\": \"github-actions\"}" | jq .access_token | tr -d '"')
+        echo "::add-mask::${ACCESS_TOKEN}"
+        if [ -z "$ACCESS_TOKEN" ] || [ "$ACCESS_TOKEN" = "null" ]; then
+          echo "FAIL: Could not extract JFrog access token"
+          exit 1
+        fi
+        echo "JFROG_ACCESS_TOKEN=${ACCESS_TOKEN}" >> "$GITHUB_ENV"
+        echo "JFrog OIDC token obtained successfully"
+
+    - name: Configure Go
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo "GOPROXY=https://databricks.jfrog.io/artifactory/api/go/db-golang,direct" >> "$GITHUB_ENV"
+        echo "GONOSUMDB=*" >> "$GITHUB_ENV"
+        printf "machine databricks.jfrog.io\nlogin gha-service-account\npassword %s\n" "${JFROG_ACCESS_TOKEN}" > ~/.netrc
+        chmod 600 ~/.netrc
+        echo "Go configured to use JFrog registry"
