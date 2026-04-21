@@ -101,15 +101,14 @@ type UserConfig struct {
 	// Telemetry configuration
 	// Uses config overlay pattern: client > server > default.
 	// Unset = check server feature flag; explicitly true/false overrides the server.
-	EnableTelemetry                  ConfigValue[bool]
-	TelemetryBatchSize               int           // 0 = use default (100)
-	TelemetryFlushInterval           time.Duration // 0 = use default (5s)
-	TelemetryRetryCount              int           // -1 = use default (3); 0 = disable retries; set via telemetry_retry_count
-	TelemetryRetryDelay              time.Duration // 0 = use default (100ms); set via telemetry_retry_delay
-	Transport                        http.RoundTripper
-	UseLz4Compression                bool
-	EnableMetricViewMetadata         bool
-	EnforceEmbeddedSchemaCorrectness bool
+	EnableTelemetry          ConfigValue[bool]
+	TelemetryBatchSize       int           // 0 = use default (100)
+	TelemetryFlushInterval   time.Duration // 0 = use default (5s)
+	TelemetryRetryCount      int           // -1 = use default (3); 0 = disable retries; set via telemetry_retry_count
+	TelemetryRetryDelay      time.Duration // 0 = use default (100ms); set via telemetry_retry_delay
+	Transport                http.RoundTripper
+	UseLz4Compression        bool
+	EnableMetricViewMetadata bool
 	CloudFetchConfig
 }
 
@@ -301,13 +300,6 @@ func ParseDSN(dsn string) (UserConfig, error) {
 			return UserConfig{}, err
 		}
 		ucfg.EnableMetricViewMetadata = enableMetricViewMetadata
-	}
-
-	if enforceEmbeddedSchemaCorrectness, ok, err := params.extractAsBool("enforceEmbeddedSchemaCorrectness"); ok {
-		if err != nil {
-			return UserConfig{}, err
-		}
-		ucfg.EnforceEmbeddedSchemaCorrectness = enforceEmbeddedSchemaCorrectness
 	}
 
 	// Telemetry parameters

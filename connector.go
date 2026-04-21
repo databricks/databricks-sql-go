@@ -425,15 +425,6 @@ func WithEnableMetricViewMetadata(enable bool) ConnOption {
 	}
 }
 
-// WithEnforceEmbeddedSchemaCorrectness enables enforcement of embedded schema correctness
-// in query execution. When set to true, the server will enforce embedded schema correctness.
-// Default is false.
-func WithEnforceEmbeddedSchemaCorrectness(enforce bool) ConnOption {
-	return func(c *config.Config) {
-		c.EnforceEmbeddedSchemaCorrectness = enforce
-	}
-}
-
 // Setup of Oauth M2m authentication
 func WithClientCredentials(clientID, clientSecret string) ConnOption {
 	return func(c *config.Config) {
