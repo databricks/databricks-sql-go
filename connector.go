@@ -81,20 +81,26 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 	}
 	log := logger.WithContext(conn.id, driverctx.CorrelationIdFromContext(ctx), "")
 
-	// Extract SPOG routing headers from ?o= in HTTPPath
-	spogHeaders := extractSpogHeaders(c.cfg.HTTPPath)
+	// Extract SPOG routing headers from ?o= in HTTPPath. When ?o=<workspaceId>
+	// is present (Custom URL / SPOG hosts), wrap the HTTP client used for
+	// telemetry + feature-flag calls with a transport that injects
+	// x-databricks-org-id. Thrift routes via the URL so its own c.client
+	// doesn't need wrapping.
+	telemetryClient := c.client
+	if spogHeaders := extractSpogHeaders(c.cfg.HTTPPath); len(spogHeaders) > 0 {
+		telemetryClient = withSpogHeaders(c.client, spogHeaders)
+	}
 
 	// Initialize telemetry: client config overlay decides; if unset, feature flags decide
 	conn.telemetry = telemetry.InitializeForConnection(ctx, telemetry.TelemetryInitOptions{
 		Host:            c.cfg.Host,
 		DriverVersion:   c.cfg.DriverVersion,
-		HTTPClient:      c.client,
+		HTTPClient:      telemetryClient,
 		EnableTelemetry: c.cfg.EnableTelemetry,
 		BatchSize:       c.cfg.TelemetryBatchSize,
 		FlushInterval:   c.cfg.TelemetryFlushInterval,
 		RetryCount:      c.cfg.TelemetryRetryCount,
 		RetryDelay:      c.cfg.TelemetryRetryDelay,
-		ExtraHeaders:    spogHeaders,
 	})
 	if conn.telemetry != nil {
 		log.Debug().Msg("telemetry initialized for connection")
@@ -169,6 +175,51 @@ func extractSpogHeaders(httpPath string) map[string]string {
 		"SPOG header extraction: injecting x-databricks-org-id=%s (extracted from ?o= in httpPath)",
 		orgID)
 	return map[string]string{"x-databricks-org-id": orgID}
+}
+
+// withSpogHeaders returns a new *http.Client that reuses the transport of the
+// provided client, wrapped to inject the given SPOG headers on every outbound
+// request. The original client is left unchanged. If a request already has a
+// given header set (e.g., the caller set it explicitly), the wrapper does not
+// override it.
+//
+// This is how the driver gets x-databricks-org-id onto both the feature-flag
+// check and the telemetry push without touching the telemetry package's
+// signatures.
+func withSpogHeaders(base *http.Client, headers map[string]string) *http.Client {
+	baseTransport := base.Transport
+	if baseTransport == nil {
+		baseTransport = http.DefaultTransport
+	}
+	return &http.Client{
+		Transport: &headerInjectingTransport{
+			base:    baseTransport,
+			headers: headers,
+		},
+		CheckRedirect: base.CheckRedirect,
+		Jar:           base.Jar,
+		Timeout:       base.Timeout,
+	}
+}
+
+// headerInjectingTransport wraps an http.RoundTripper and sets a fixed set of
+// headers on every outbound request. Caller-supplied headers with the same
+// name are not overridden.
+type headerInjectingTransport struct {
+	base    http.RoundTripper
+	headers map[string]string
+}
+
+// RoundTrip implements http.RoundTripper.
+func (t *headerInjectingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	// Clone per RoundTripper contract — must not mutate the caller's request.
+	req2 := req.Clone(req.Context())
+	for k, v := range t.headers {
+		if req2.Header.Get(k) == "" {
+			req2.Header.Set(k, v)
+		}
+	}
+	return t.base.RoundTrip(req2)
 }
 
 func withUserConfig(ucfg config.UserConfig) ConnOption {

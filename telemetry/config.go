@@ -126,12 +126,12 @@ func ParseTelemetryConfig(params map[string]string) *Config {
 //     (databricks.partnerplatform.clientConfigsFeatureFlags.enableTelemetryForGoDriver).
 //
 // In all other cases — explicit opt-out or server flag absent/unreachable — returns false.
-func isTelemetryEnabled(ctx context.Context, cfg *Config, host string, driverVersion string, httpClient *http.Client, extraHeaders map[string]string) bool {
+func isTelemetryEnabled(ctx context.Context, cfg *Config, host string, driverVersion string, httpClient *http.Client) bool {
 	if cfg.EnableTelemetry != nil {
 		return *cfg.EnableTelemetry
 	}
 
-	serverEnabled, err := getFeatureFlagCache().isTelemetryEnabled(ctx, host, driverVersion, httpClient, extraHeaders)
+	serverEnabled, err := getFeatureFlagCache().isTelemetryEnabled(ctx, host, driverVersion, httpClient)
 	if err != nil {
 		return false
 	}

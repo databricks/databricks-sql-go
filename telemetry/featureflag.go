@@ -86,7 +86,7 @@ func (c *featureFlagCache) releaseContext(host string) {
 
 // isTelemetryEnabled checks if telemetry is enabled for the host.
 // Uses cached value if available and not expired.
-func (c *featureFlagCache) isTelemetryEnabled(ctx context.Context, host string, driverVersion string, httpClient *http.Client, extraHeaders map[string]string) (bool, error) {
+func (c *featureFlagCache) isTelemetryEnabled(ctx context.Context, host string, driverVersion string, httpClient *http.Client) (bool, error) {
 	c.mu.RLock()
 	flagCtx, exists := c.contexts[host]
 	c.mu.RUnlock()
@@ -135,7 +135,7 @@ func (c *featureFlagCache) isTelemetryEnabled(ctx context.Context, host string, 
 	flagCtx.mu.Unlock()
 
 	// Fetch fresh value (outside lock so other readers are not blocked).
-	enabled, err := fetchFeatureFlag(ctx, host, driverVersion, httpClient, extraHeaders)
+	enabled, err := fetchFeatureFlag(ctx, host, driverVersion, httpClient)
 
 	// Update cache.
 	flagCtx.mu.Lock()
@@ -166,7 +166,7 @@ func (c *featureFlagContext) isExpired() bool {
 }
 
 // fetchFeatureFlag fetches the feature flag value from Databricks.
-func fetchFeatureFlag(ctx context.Context, host string, driverVersion string, httpClient *http.Client, extraHeaders map[string]string) (bool, error) {
+func fetchFeatureFlag(ctx context.Context, host string, driverVersion string, httpClient *http.Client) (bool, error) {
 	// Add timeout to context if it doesn't have a deadline
 	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
 		var cancel context.CancelFunc
@@ -181,11 +181,6 @@ func fetchFeatureFlag(ctx context.Context, host string, driverVersion string, ht
 	req, err := http.NewRequestWithContext(ctx, "GET", endpoint, nil)
 	if err != nil {
 		return false, fmt.Errorf("failed to create feature flag request: %w", err)
-	}
-
-	// Attach extra headers (e.g. x-databricks-org-id for SPOG routing).
-	for k, v := range extraHeaders {
-		req.Header.Set(k, v)
 	}
 
 	resp, err := httpClient.Do(req)

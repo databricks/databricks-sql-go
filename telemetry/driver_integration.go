@@ -41,14 +41,6 @@ type TelemetryInitOptions struct {
 
 	// RetryDelay is the base delay between retries (0 = use default 100ms).
 	RetryDelay time.Duration
-
-	// ExtraHeaders are additional HTTP headers to attach to feature-flag
-	// check requests and telemetry-push requests. Primarily used to carry
-	// x-databricks-org-id for SPOG (Custom URL) workspace routing — see
-	// extractSpogHeaders in the top-level dbsql package.
-	//
-	// May be nil.
-	ExtraHeaders map[string]string
 }
 
 // InitializeForConnection initializes telemetry for a database connection.
@@ -86,7 +78,7 @@ func InitializeForConnection(ctx context.Context, opts TelemetryInitOptions) *In
 	flagCache.getOrCreateContext(opts.Host)
 
 	// Check if telemetry should be enabled
-	enabled := isTelemetryEnabled(ctx, cfg, opts.Host, opts.DriverVersion, opts.HTTPClient, opts.ExtraHeaders)
+	enabled := isTelemetryEnabled(ctx, cfg, opts.Host, opts.DriverVersion, opts.HTTPClient)
 	if !enabled {
 		flagCache.releaseContext(opts.Host)
 		return nil
