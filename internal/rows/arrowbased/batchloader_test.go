@@ -77,6 +77,7 @@ func TestCloudFetchIterator(t *testing.T) {
 			context.Background(),
 			links,
 			startRowOffset,
+			nil,
 			cfg,
 			nil,
 		)
@@ -152,6 +153,7 @@ func TestCloudFetchIterator(t *testing.T) {
 			context.Background(),
 			links,
 			startRowOffset,
+			nil,
 			cfg,
 			nil,
 		)
@@ -211,6 +213,7 @@ func TestCloudFetchIterator(t *testing.T) {
 			context.Background(),
 			links,
 			startRowOffset,
+			nil,
 			cfg,
 			nil,
 		)
@@ -286,6 +289,7 @@ func TestCloudFetchIterator(t *testing.T) {
 				RowCount:       1,
 			}},
 			startRowOffset,
+			nil,
 			cfg,
 			nil,
 		)
@@ -325,6 +329,7 @@ func TestCloudFetchIterator(t *testing.T) {
 				RowCount:       1,
 			}},
 			startRowOffset,
+			nil,
 			cfg,
 			nil,
 		)
@@ -337,6 +342,119 @@ func TestCloudFetchIterator(t *testing.T) {
 		sab, nextErr := bi.Next()
 		assert.Nil(t, nextErr)
 		assert.NotNil(t, sab)
+	})
+}
+
+func TestCloudFetchSchemaOverride(t *testing.T) {
+	// Reproduces ES-1804970: When the server result cache serves Arrow IPC files
+	// from a prior query, the embedded schema has stale column names. The
+	// authoritative schema from GetResultSetMetadata must override them.
+
+	// IPC data has columns ["id", "name"] (stale, from cached query)
+	staleRecord := generateArrowRecord()
+	staleIPCBytes := generateMockArrowBytes(staleRecord)
+
+	// Authoritative schema has columns ["x", "y"] (correct, from GetResultSetMetadata)
+	correctFields := []arrow.Field{
+		{Name: "x", Type: arrow.PrimitiveTypes.Int32},
+		{Name: "y", Type: arrow.BinaryTypes.String},
+	}
+	correctSchema := arrow.NewSchema(correctFields, nil)
+	var schemaBuf bytes.Buffer
+	schemaWriter := ipc.NewWriter(&schemaBuf, ipc.WithSchema(correctSchema))
+	if err := schemaWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	correctSchemaBytes := schemaBuf.Bytes()
+
+	// Serve stale IPC data via mock HTTP
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, err := w.Write(staleIPCBytes)
+		if err != nil {
+			panic(err)
+		}
+	}))
+	defer server.Close()
+
+	t.Run("should override stale column names with authoritative schema", func(t *testing.T) {
+		links := []*cli_service.TSparkArrowResultLink{
+			{
+				FileLink:       server.URL,
+				ExpiryTime:     time.Now().Add(10 * time.Minute).Unix(),
+				StartRowOffset: 0,
+				RowCount:       3,
+			},
+		}
+
+		cfg := config.WithDefaults()
+		cfg.UseLz4Compression = false
+		cfg.MaxDownloadThreads = 1
+
+		bi, err := NewCloudBatchIterator(
+			context.Background(),
+			links,
+			0,
+			correctSchemaBytes,
+			cfg,
+			nil,
+		)
+		assert.Nil(t, err)
+
+		batch, batchErr := bi.Next()
+		assert.Nil(t, batchErr)
+		assert.NotNil(t, batch)
+
+		rec, recErr := batch.Next()
+		assert.Nil(t, recErr)
+		assert.NotNil(t, rec)
+
+		// The record schema must use the authoritative names, not the stale ones
+		assert.Equal(t, "x", rec.Schema().Field(0).Name)
+		assert.Equal(t, "y", rec.Schema().Field(1).Name)
+
+		// Data must be preserved
+		assert.Equal(t, int64(3), rec.NumRows())
+		assert.Equal(t, 2, len(rec.Schema().Fields()))
+
+		rec.Release()
+	})
+
+	t.Run("should pass through unchanged when no override schema provided", func(t *testing.T) {
+		links := []*cli_service.TSparkArrowResultLink{
+			{
+				FileLink:       server.URL,
+				ExpiryTime:     time.Now().Add(10 * time.Minute).Unix(),
+				StartRowOffset: 0,
+				RowCount:       3,
+			},
+		}
+
+		cfg := config.WithDefaults()
+		cfg.UseLz4Compression = false
+		cfg.MaxDownloadThreads = 1
+
+		bi, err := NewCloudBatchIterator(
+			context.Background(),
+			links,
+			0,
+			nil,
+			cfg,
+			nil,
+		)
+		assert.Nil(t, err)
+
+		batch, batchErr := bi.Next()
+		assert.Nil(t, batchErr)
+
+		rec, recErr := batch.Next()
+		assert.Nil(t, recErr)
+
+		// Without override, the original (stale) column names are preserved
+		assert.Equal(t, "id", rec.Schema().Field(0).Name)
+		assert.Equal(t, "name", rec.Schema().Field(1).Name)
+
+		rec.Release()
 	})
 }
 
@@ -388,7 +506,7 @@ func TestCloudFetchIterator_OnFileDownloaded_CallbackInvokedWithPositiveDuration
 		callbackMu.Unlock()
 	}
 
-	bi, err := NewCloudBatchIterator(context.Background(), links, startRowOffset, cfg, onFileDownloaded)
+	bi, err := NewCloudBatchIterator(context.Background(), links, startRowOffset, nil, cfg, onFileDownloaded)
 	assert.Nil(t, err)
 
 	// Consume all batches to trigger the downloads.
@@ -439,7 +557,7 @@ func TestCloudFetchIterator_OnFileDownloaded_NilCallbackDoesNotPanic(t *testing.
 	cfg.MaxDownloadThreads = 1
 
 	// nil callback — must not panic
-	bi, err := NewCloudBatchIterator(context.Background(), links, startRowOffset, cfg, nil)
+	bi, err := NewCloudBatchIterator(context.Background(), links, startRowOffset, nil, cfg, nil)
 	assert.Nil(t, err)
 
 	assert.NotPanics(t, func() {
