@@ -125,6 +125,18 @@ func NewConnector(options ...ConnOption) (driver.Connector, error) {
 
 // extractSpogHeaders extracts ?o=<workspaceId> from httpPath and returns
 // an x-databricks-org-id header for SPOG routing.
+//
+// On SPOG (Custom URL) workspaces, httpPath is of the form
+// /sql/1.0/warehouses/<id>?o=<workspaceId>. The ?o= parameter keeps Thrift
+// requests routed to the correct workspace via the URL itself, but other
+// endpoints (telemetry, feature flags) run on separate hosts and need the
+// x-databricks-org-id header. This function extracts ?o= from httpPath once
+// and returns it so those paths can inject it as an HTTP header.
+//
+// Returns nil if:
+//   - httpPath has no query string ("?"), or
+//   - the query string is malformed and can't be parsed, or
+//   - the ?o= parameter is missing or empty.
 func extractSpogHeaders(httpPath string) map[string]string {
 	if !strings.Contains(httpPath, "?") {
 		return nil
@@ -133,12 +145,21 @@ func extractSpogHeaders(httpPath string) map[string]string {
 	parts := strings.SplitN(httpPath, "?", 2)
 	params, err := url.ParseQuery(parts[1])
 	if err != nil {
+		logger.Debug().Msgf(
+			"SPOG header extraction: malformed query string in httpPath, skipping org-id extraction: %s",
+			err)
 		return nil
 	}
 	orgID := params.Get("o")
 	if orgID == "" {
+		logger.Debug().Msg(
+			"SPOG header extraction: httpPath has query string but no ?o= param, " +
+				"skipping x-databricks-org-id injection")
 		return nil
 	}
+	logger.Debug().Msgf(
+		"SPOG header extraction: injecting x-databricks-org-id=%s (extracted from ?o= in httpPath)",
+		orgID)
 	return map[string]string{"x-databricks-org-id": orgID}
 }
 
