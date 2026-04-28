@@ -46,7 +46,7 @@ func runTest(withCloudFetch bool, query string) ([]row, error) {
 		return nil, err
 	}
 	db := sql.OpenDB(connector)
-	defer db.Close()
+	defer db.Close() //nolint:errcheck
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -54,8 +54,6 @@ func runTest(withCloudFetch bool, query string) ([]row, error) {
 		return nil, err
 	}
 	rows, err1 := db.QueryContext(context.Background(), query)
-	defer rows.Close()
-
 	if err1 != nil {
 		if err1 == sql.ErrNoRows {
 			fmt.Println("not found")
@@ -64,6 +62,7 @@ func runTest(withCloudFetch bool, query string) ([]row, error) {
 			return nil, err
 		}
 	}
+	defer rows.Close() //nolint:errcheck
 	var res []row
 	for rows.Next() {
 		r := row{}
@@ -94,7 +93,7 @@ func main() {
 
 	for i := 0; i < len(abRes); i++ {
 		if abRes[i] != cfRes[i] {
-			log.Fatal(fmt.Sprintf("not equal for row: %d", i))
+			log.Fatalf("not equal for row: %d", i)
 		}
 	}
 }
