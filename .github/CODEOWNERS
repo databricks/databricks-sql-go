@@ -1,0 +1,2 @@
+# Require review from eng-oss-sql-driver for CI/CD workflow changes
+.github/ @databricks/eng-oss-sql-driver
