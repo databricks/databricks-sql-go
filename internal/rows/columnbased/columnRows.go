@@ -37,7 +37,7 @@ func NewColumnRowScanner(schema *cli_service.TTableSchema, rowSet *cli_service.T
 		logger = dbsqllog.Logger
 	}
 
-	var location *time.Location = time.UTC
+	location := time.UTC
 	if cfg != nil {
 		if cfg.Location != nil {
 			location = cfg.Location

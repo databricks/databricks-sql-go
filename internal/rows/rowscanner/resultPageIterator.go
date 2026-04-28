@@ -125,7 +125,7 @@ func (rpf *resultPageIterator) HasNext() bool {
 	if rpf.nextResultPage == nil {
 		nrp, err := rpf.getNextPage()
 		if err != nil {
-			rpf.Close()
+			rpf.Close() //nolint:errcheck,gosec // G104: close in error path
 			rpf.isFinished = true
 			rpf.err = err
 			return false
@@ -134,7 +134,7 @@ func (rpf *resultPageIterator) HasNext() bool {
 		rpf.err = nil
 		rpf.nextResultPage = nrp
 		if !nrp.GetHasMoreRows() {
-			rpf.Close()
+			rpf.Close() //nolint:errcheck,gosec // G104: close in error path
 		}
 	}
 
@@ -285,17 +285,18 @@ func CountRows(rowSet *cli_service.TRowSet) int64 {
 
 // Check if trying to fetch in the specified direction creates an error condition.
 func (rpf *resultPageIterator) checkDirectionValid(direction Direction) error {
-	if direction == DirBack {
+	switch direction {
+	case DirBack:
 		// can't fetch rows previous to the start
 		if rpf.Start() == 0 {
 			return dbsqlerrint.NewDriverError(rpf.ctx, ErrRowsFetchPriorToStart, nil)
 		}
-	} else if direction == DirForward {
+	case DirForward:
 		// can't fetch past the end of the query results
 		if rpf.isFinished {
 			return io.EOF
 		}
-	} else {
+	default:
 		rpf.logger.Error().Msgf(errRowsUnandledFetchDirection(direction.String()))
 		return dbsqlerrint.NewDriverError(rpf.ctx, errRowsUnandledFetchDirection(direction.String()), nil)
 	}

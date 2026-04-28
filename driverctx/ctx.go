@@ -15,6 +15,7 @@ const (
 	QueryIdCallbackKey
 	ConnIdCallbackKey
 	StagingAllowedLocalPathKey
+	QueryTagsContextKey
 )
 
 type IdCallbackFunc func(string)
@@ -107,16 +108,40 @@ func NewContextWithStagingInfo(ctx context.Context, stagingAllowedLocalPath []st
 	return context.WithValue(ctx, StagingAllowedLocalPathKey, stagingAllowedLocalPath)
 }
 
+// NewContextWithQueryTags creates a new context with per-statement query tags.
+// These tags are serialized and passed via confOverlay as "query_tags" in TExecuteStatementReq.
+// They apply only to the statement executed with this context and do not persist across queries.
+func NewContextWithQueryTags(ctx context.Context, queryTags map[string]string) context.Context {
+	return context.WithValue(ctx, QueryTagsContextKey, queryTags)
+}
+
+// QueryTagsFromContext retrieves the per-statement query tags stored in context.
+func QueryTagsFromContext(ctx context.Context) map[string]string {
+	if ctx == nil {
+		return nil
+	}
+
+	queryTags, ok := ctx.Value(QueryTagsContextKey).(map[string]string)
+	if !ok {
+		return nil
+	}
+	return queryTags
+}
+
 func NewContextFromBackground(ctx context.Context) context.Context {
 	connId := ConnIdFromContext(ctx)
 	corrId := CorrelationIdFromContext(ctx)
 	queryId := QueryIdFromContext(ctx)
 	stagingPaths := StagingPathsFromContext(ctx)
+	queryTags := QueryTagsFromContext(ctx)
 
 	newCtx := NewContextWithConnId(context.Background(), connId)
 	newCtx = NewContextWithCorrelationId(newCtx, corrId)
 	newCtx = NewContextWithQueryId(newCtx, queryId)
 	newCtx = NewContextWithStagingInfo(newCtx, stagingPaths)
+	if queryTags != nil {
+		newCtx = NewContextWithQueryTags(newCtx, queryTags)
+	}
 
 	return newCtx
 }

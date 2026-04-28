@@ -102,7 +102,7 @@ func main() {
 		log.Fatal(err)
 	}
 	db := sql.OpenDB(connector)
-	defer db.Close()
+	defer db.Close() //nolint:errcheck
 
 	queryWithNamedParameters(db)
 	queryWithPositionalParameters(db)

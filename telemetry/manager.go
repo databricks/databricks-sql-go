@@ -45,13 +45,13 @@ func getClientManager() *clientManager {
 
 // getOrCreateClient gets or creates a telemetry client for the host.
 // Increments reference count.
-func (m *clientManager) getOrCreateClient(host string, httpClient *http.Client, cfg *Config) *telemetryClient {
+func (m *clientManager) getOrCreateClient(host string, driverVersion string, httpClient *http.Client, cfg *Config) *telemetryClient {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	holder, exists := m.clients[host]
 	if !exists {
-		client := newTelemetryClient(host, httpClient, cfg)
+		client := newTelemetryClient(host, driverVersion, httpClient, cfg)
 		if err := client.start(); err != nil {
 			// Failed to start client, don't add to map
 			logger.Logger.Debug().Str("host", host).Err(err).Msg("failed to start telemetry client")

@@ -9,6 +9,7 @@ import (
 	"strconv"
 
 	dbsql "github.com/databricks/databricks-sql-go"
+	"github.com/databricks/databricks-sql-go/driverctx"
 	"github.com/joho/godotenv"
 )
 
@@ -21,14 +22,17 @@ func main() {
 		log.Fatal(err.Error())
 	}
 
+	// Connection-level query tags: applied to all queries in this session.
+	// WithQueryTags accepts a map and handles serialization automatically.
 	connector, err := dbsql.NewConnector(
 		dbsql.WithServerHostname(os.Getenv("DATABRICKS_HOST")),
 		dbsql.WithPort(port),
 		dbsql.WithHTTPPath(os.Getenv("DATABRICKS_HTTPPATH")),
 		dbsql.WithAccessToken(os.Getenv("DATABRICKS_ACCESSTOKEN")),
-		dbsql.WithSessionParams(map[string]string{
-			"QUERY_TAGS": "team:engineering,test:query-tags,driver:go",
-			"ansi_mode":  "false",
+		dbsql.WithQueryTags(map[string]string{
+			"team":   "engineering",
+			"test":   "query-tags",
+			"driver": "go",
 		}),
 	)
 	if err != nil {
@@ -36,18 +40,43 @@ func main() {
 	}
 
 	db := sql.OpenDB(connector)
-	defer db.Close()
+	defer db.Close() //nolint:errcheck
 
+	// Example 1: Connection-level query tags (set during connection)
+	fmt.Println("=== Connection-level query tags ===")
 	ctx := context.Background()
 	var result int
 	err = db.QueryRowContext(ctx, "SELECT 1").Scan(&result)
 	if err != nil {
-		if err == sql.ErrNoRows {
-			fmt.Println("not found")
-			return
-		} else {
-			fmt.Printf("err: %v\n", err)
-		}
+		log.Printf("err: %v\n", err)
+	} else {
+		fmt.Println(result)
 	}
-	fmt.Println(result)
+
+	// Example 2: Statement-level query tags (per-query override via context)
+	fmt.Println("=== Statement-level query tags ===")
+	ctx = driverctx.NewContextWithQueryTags(context.Background(), map[string]string{
+		"team":        "data-eng",
+		"application": "etl-pipeline",
+		"env":         "production",
+	})
+	err = db.QueryRowContext(ctx, "SELECT 2").Scan(&result)
+	if err != nil {
+		log.Printf("err: %v\n", err)
+	} else {
+		fmt.Println(result)
+	}
+
+	// Example 3: Different query tags for a different statement
+	fmt.Println("=== Different statement-level query tags ===")
+	ctx = driverctx.NewContextWithQueryTags(context.Background(), map[string]string{
+		"team": "analytics",
+		"job":  "daily-report",
+	})
+	err = db.QueryRowContext(ctx, "SELECT 3").Scan(&result)
+	if err != nil {
+		log.Printf("err: %v\n", err)
+	} else {
+		fmt.Println(result)
+	}
 }
