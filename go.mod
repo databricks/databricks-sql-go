@@ -1,6 +1,6 @@
 module github.com/databricks/databricks-sql-go
 
-go 1.20
+go 1.24.0
 
 require (
 	github.com/apache/arrow/go/v12 v12.0.1
@@ -12,15 +12,16 @@ require (
 	github.com/pierrec/lz4/v4 v4.1.15
 	github.com/stretchr/testify v1.8.1
 	golang.org/x/oauth2 v0.7.0
-	gotest.tools/gotestsum v1.8.2
+	gotest.tools/gotestsum v1.13.0
 )
 
 require (
 	github.com/andybalholm/brotli v1.0.4 // indirect
+	github.com/bitfield/gotestdox v0.2.2 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/dnephin/pflag v1.0.7 // indirect
-	github.com/fatih/color v1.16.0 // indirect
-	github.com/fsnotify/fsnotify v1.5.4 // indirect
+	github.com/fatih/color v1.18.0 // indirect
+	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/go-jose/go-jose/v3 v3.0.4 // indirect
 	github.com/goccy/go-json v0.9.11 // indirect
 	github.com/golang/protobuf v1.5.2 // indirect
@@ -37,12 +38,13 @@ require (
 	github.com/minio/c2goasm v0.0.0-20190812172519-36a3d3bbc4f3 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/zeebo/xxh3 v1.0.2 // indirect
-	golang.org/x/crypto v0.31.0 // indirect
-	golang.org/x/mod v0.8.0 // indirect
-	golang.org/x/net v0.21.0 // indirect
-	golang.org/x/sync v0.1.0 // indirect
-	golang.org/x/term v0.29.0 // indirect
-	golang.org/x/tools v0.6.0 // indirect
+	golang.org/x/crypto v0.41.0 // indirect
+	golang.org/x/mod v0.27.0 // indirect
+	golang.org/x/net v0.43.0 // indirect
+	golang.org/x/sync v0.17.0 // indirect
+	golang.org/x/term v0.35.0 // indirect
+	golang.org/x/text v0.28.0 // indirect
+	golang.org/x/tools v0.36.0 // indirect
 	golang.org/x/xerrors v0.0.0-20220609144429-65e65417b02f // indirect
 	google.golang.org/appengine v1.6.7 // indirect
 	google.golang.org/protobuf v1.28.1 // indirect
@@ -54,5 +56,5 @@ require (
 	github.com/pkg/browser v0.0.0-20210911075715-681adbf594b8
 	github.com/pkg/errors v0.9.1
 	github.com/rs/zerolog v1.28.0
-	golang.org/x/sys v0.30.0 // indirect
+	golang.org/x/sys v0.36.0 // indirect
 )
