@@ -37,7 +37,7 @@ func main() {
 		log.Fatal(err)
 	}
 	db := sql.OpenDB(connector)
-	defer db.Close()
+	defer db.Close() //nolint:errcheck
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -61,7 +61,7 @@ func main() {
 		err := rows.Scan(&res)
 		if err != nil {
 			fmt.Println(err)
-			rows.Close()
+			rows.Close() //nolint:errcheck,gosec // G104: close in error path
 			return
 		}
 		fmt.Println(res)

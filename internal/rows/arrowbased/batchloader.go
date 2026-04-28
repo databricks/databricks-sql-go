@@ -15,6 +15,8 @@ import (
 
 	"net/http"
 
+	"github.com/apache/arrow/go/v12/arrow"
+	"github.com/apache/arrow/go/v12/arrow/array"
 	"github.com/apache/arrow/go/v12/arrow/ipc"
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
@@ -33,19 +35,21 @@ func NewCloudIPCStreamIterator(
 	files []*cli_service.TSparkArrowResultLink,
 	startRowOffset int64,
 	cfg *config.Config,
+	onFileDownloaded func(downloadMs int64),
 ) (IPCStreamIterator, dbsqlerr.DBError) {
 	httpClient := http.DefaultClient
-	if cfg.UserConfig.CloudFetchConfig.HTTPClient != nil {
-		httpClient = cfg.UserConfig.CloudFetchConfig.HTTPClient
+	if cfg.HTTPClient != nil {
+		httpClient = cfg.HTTPClient
 	}
 
 	bi := &cloudIPCStreamIterator{
-		ctx:            ctx,
-		cfg:            cfg,
-		startRowOffset: startRowOffset,
-		pendingLinks:   NewQueue[cli_service.TSparkArrowResultLink](),
-		downloadTasks:  NewQueue[cloudFetchDownloadTask](),
-		httpClient:     httpClient,
+		ctx:              ctx,
+		cfg:              cfg,
+		startRowOffset:   startRowOffset,
+		pendingLinks:     NewQueue[cli_service.TSparkArrowResultLink](),
+		downloadTasks:    NewQueue[cloudFetchDownloadTask](),
+		httpClient:       httpClient,
+		onFileDownloaded: onFileDownloaded,
 	}
 
 	for _, link := range files {
@@ -55,18 +59,36 @@ func NewCloudIPCStreamIterator(
 	return bi, nil
 }
 
-// NewCloudBatchIterator creates a cloud-based BatchIterator for backward compatibility
+// NewCloudBatchIterator creates a cloud-based BatchIterator for backward compatibility.
+// arrowSchemaBytes is the authoritative schema from GetResultSetMetadata, used to
+// override stale column names in cached Arrow IPC files.
 func NewCloudBatchIterator(
 	ctx context.Context,
 	files []*cli_service.TSparkArrowResultLink,
 	startRowOffset int64,
+	arrowSchemaBytes []byte,
 	cfg *config.Config,
+	onFileDownloaded func(downloadMs int64),
 ) (BatchIterator, dbsqlerr.DBError) {
-	ipcIterator, err := NewCloudIPCStreamIterator(ctx, files, startRowOffset, cfg)
+	ipcIterator, err := NewCloudIPCStreamIterator(ctx, files, startRowOffset, cfg, onFileDownloaded)
 	if err != nil {
 		return nil, err
 	}
-	return NewBatchIterator(ipcIterator, startRowOffset), nil
+
+	var overrideSchema *arrow.Schema
+	if len(arrowSchemaBytes) > 0 {
+		var schemaErr error
+		overrideSchema, schemaErr = schemaFromIPCBytes(arrowSchemaBytes)
+		if schemaErr != nil {
+			logger.Warn().Msgf("CloudFetch: failed to parse override schema: %v", schemaErr)
+		}
+	}
+
+	return &batchIterator{
+		ipcIterator:    ipcIterator,
+		startRowOffset: startRowOffset,
+		overrideSchema: overrideSchema,
+	}, nil
 }
 
 func NewLocalIPCStreamIterator(
@@ -141,12 +163,13 @@ func (bi *localIPCStreamIterator) Close() {
 }
 
 type cloudIPCStreamIterator struct {
-	ctx            context.Context
-	cfg            *config.Config
-	startRowOffset int64
-	pendingLinks   Queue[cli_service.TSparkArrowResultLink]
-	downloadTasks  Queue[cloudFetchDownloadTask]
-	httpClient     *http.Client
+	ctx              context.Context
+	cfg              *config.Config
+	startRowOffset   int64
+	pendingLinks     Queue[cli_service.TSparkArrowResultLink]
+	downloadTasks    Queue[cloudFetchDownloadTask]
+	httpClient       *http.Client
+	onFileDownloaded func(downloadMs int64) // nil for non-telemetry paths
 }
 
 var _ IPCStreamIterator = (*cloudIPCStreamIterator)(nil)
@@ -160,7 +183,7 @@ func (bi *cloudIPCStreamIterator) Next() (io.Reader, error) {
 			link.RowCount,
 		)
 
-		cancelCtx, cancelFn := context.WithCancel(bi.ctx)
+		cancelCtx, cancelFn := context.WithCancel(bi.ctx) //nolint:gosec // cancelFn stored in task and called on completion
 		task := &cloudFetchDownloadTask{
 			ctx:                cancelCtx,
 			cancel:             cancelFn,
@@ -180,7 +203,7 @@ func (bi *cloudIPCStreamIterator) Next() (io.Reader, error) {
 		return nil, io.EOF
 	}
 
-	data, err := task.GetResult()
+	data, downloadMs, err := task.GetResult()
 
 	// once we've got an errored out task - cancel the remaining ones
 	if err != nil {
@@ -190,6 +213,15 @@ func (bi *cloudIPCStreamIterator) Next() (io.Reader, error) {
 
 	// explicitly call cancel function on successfully completed task to avoid context leak
 	task.cancel()
+
+	// Notify telemetry with per-file download time (matches JDBC's per-chunk HTTP GET timing).
+	// Always invoke for successfully completed downloads so the caller can count files;
+	// sub-millisecond downloads report downloadMs=0 and the caller decides whether to
+	// include them in timing aggregation.
+	if bi.onFileDownloaded != nil {
+		bi.onFileDownloaded(downloadMs)
+	}
+
 	return data, nil
 }
 
@@ -206,8 +238,9 @@ func (bi *cloudIPCStreamIterator) Close() {
 }
 
 type cloudFetchDownloadTaskResult struct {
-	data io.Reader
-	err  error
+	data       io.Reader
+	err        error
+	downloadMs int64 // wall-clock time for HTTP GET + decompression
 }
 
 type cloudFetchDownloadTask struct {
@@ -221,7 +254,7 @@ type cloudFetchDownloadTask struct {
 	httpClient         *http.Client
 }
 
-func (cft *cloudFetchDownloadTask) GetResult() (io.Reader, error) {
+func (cft *cloudFetchDownloadTask) GetResult() (io.Reader, int64, error) {
 	link := cft.link
 
 	result, ok := <-cft.resultChan
@@ -233,14 +266,14 @@ func (cft *cloudFetchDownloadTask) GetResult() (io.Reader, error) {
 				link.RowCount,
 				result.err.Error(),
 			)
-			return nil, result.err
+			return nil, 0, result.err
 		}
 		logger.Debug().Msgf(
 			"CloudFetch: received data for link at offset %d row count %d",
 			link.StartRowOffset,
 			link.RowCount,
 		)
-		return result.data, nil
+		return result.data, result.downloadMs, nil
 	}
 
 	// This branch should never be reached. If you see this message - something got really wrong
@@ -249,7 +282,7 @@ func (cft *cloudFetchDownloadTask) GetResult() (io.Reader, error) {
 		link.StartRowOffset,
 		link.RowCount,
 	)
-	return nil, nil
+	return nil, 0, nil
 }
 
 func (cft *cloudFetchDownloadTask) Run() {
@@ -261,6 +294,7 @@ func (cft *cloudFetchDownloadTask) Run() {
 			cft.link.StartRowOffset,
 			cft.link.RowCount,
 		)
+		downloadStart := time.Now()
 		data, err := fetchBatchBytes(cft.ctx, cft.link, cft.minTimeToExpiry, cft.speedThresholdMbps, cft.httpClient)
 		if err != nil {
 			cft.resultChan <- cloudFetchDownloadTaskResult{data: nil, err: err}
@@ -269,7 +303,8 @@ func (cft *cloudFetchDownloadTask) Run() {
 
 		// Read all data into memory before closing
 		buf, err := io.ReadAll(getReader(data, cft.useLz4Compression))
-		data.Close()
+		data.Close() //nolint:errcheck,gosec // G104: close after reading data
+		downloadMs := time.Since(downloadStart).Milliseconds()
 		if err != nil {
 			cft.resultChan <- cloudFetchDownloadTaskResult{data: nil, err: err}
 			return
@@ -281,7 +316,7 @@ func (cft *cloudFetchDownloadTask) Run() {
 			cft.link.RowCount,
 		)
 
-		cft.resultChan <- cloudFetchDownloadTaskResult{data: bytes.NewReader(buf), err: nil}
+		cft.resultChan <- cloudFetchDownloadTaskResult{data: bytes.NewReader(buf), err: nil, downloadMs: downloadMs}
 	}()
 }
 
@@ -400,6 +435,7 @@ type BatchIterator interface {
 type batchIterator struct {
 	ipcIterator    IPCStreamIterator
 	startRowOffset int64
+	overrideSchema *arrow.Schema // authoritative schema to fix stale CloudFetch column names
 }
 
 // NewBatchIterator creates a BatchIterator from an IPCStreamIterator
@@ -419,6 +455,24 @@ func (bi *batchIterator) Next() (SparkArrowBatch, error) {
 	records, err := getArrowRecords(reader, bi.startRowOffset)
 	if err != nil {
 		return nil, err
+	}
+
+	// When using CloudFetch, cached Arrow IPC files may contain stale column
+	// names from a previous query. Replace the embedded schema with the
+	// authoritative schema from GetResultSetMetadata.
+	if bi.overrideSchema != nil && len(records) > 0 && len(bi.overrideSchema.Fields()) == len(records[0].Columns()) {
+		for i, rec := range records {
+			sar, ok := rec.(*sparkArrowRecord)
+			if !ok {
+				continue
+			}
+			corrected := array.NewRecord(bi.overrideSchema, sar.Columns(), sar.NumRows())
+			sar.Release()
+			records[i] = &sparkArrowRecord{
+				Delimiter: sar.Delimiter,
+				Record:    corrected,
+			}
+		}
 	}
 
 	// Calculate total rows in this batch
@@ -442,4 +496,14 @@ func (bi *batchIterator) HasNext() bool {
 
 func (bi *batchIterator) Close() {
 	bi.ipcIterator.Close()
+}
+
+// schemaFromIPCBytes parses Arrow schema bytes (IPC format) into an *arrow.Schema.
+func schemaFromIPCBytes(schemaBytes []byte) (*arrow.Schema, error) {
+	reader, err := ipc.NewReader(bytes.NewReader(schemaBytes))
+	if err != nil {
+		return nil, err
+	}
+	defer reader.Release()
+	return reader.Schema(), nil
 }

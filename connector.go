@@ -6,6 +6,7 @@ import (
 	"database/sql/driver"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -20,6 +21,7 @@ import (
 	"github.com/databricks/databricks-sql-go/internal/config"
 	dbsqlerrint "github.com/databricks/databricks-sql-go/internal/errors"
 	"github.com/databricks/databricks-sql-go/logger"
+	"github.com/databricks/databricks-sql-go/telemetry"
 )
 
 type connector struct {
@@ -54,6 +56,8 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 	}
 
 	protocolVersion := int64(c.cfg.ThriftProtocolVersion)
+
+	sessionStart := time.Now()
 	session, err := tclient.OpenSession(ctx, &cli_service.TOpenSessionReq{
 		ClientProtocolI64: &protocolVersion,
 		Configuration:     sessionParams,
@@ -63,6 +67,8 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 		},
 		CanUseMultipleCatalogs: &c.cfg.CanUseMultipleCatalogs,
 	})
+	sessionLatencyMs := time.Since(sessionStart).Milliseconds()
+
 	if err != nil {
 		return nil, dbsqlerrint.NewRequestError(ctx, fmt.Sprintf("error connecting: host=%s port=%d, httpPath=%s", c.cfg.Host, c.cfg.Port, c.cfg.HTTPPath), err)
 	}
@@ -74,6 +80,32 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 		session: session,
 	}
 	log := logger.WithContext(conn.id, driverctx.CorrelationIdFromContext(ctx), "")
+
+	// Extract SPOG routing headers from ?o= in HTTPPath. When ?o=<workspaceId>
+	// is present (Custom URL / SPOG hosts), wrap the HTTP client used for
+	// telemetry + feature-flag calls with a transport that injects
+	// x-databricks-org-id. Thrift routes via the URL so its own c.client
+	// doesn't need wrapping.
+	telemetryClient := c.client
+	if spogHeaders := extractSpogHeaders(c.cfg.HTTPPath); len(spogHeaders) > 0 {
+		telemetryClient = withSpogHeaders(c.client, spogHeaders)
+	}
+
+	// Initialize telemetry: client config overlay decides; if unset, feature flags decide
+	conn.telemetry = telemetry.InitializeForConnection(ctx, telemetry.TelemetryInitOptions{
+		Host:            c.cfg.Host,
+		DriverVersion:   c.cfg.DriverVersion,
+		HTTPClient:      telemetryClient,
+		EnableTelemetry: c.cfg.EnableTelemetry,
+		BatchSize:       c.cfg.TelemetryBatchSize,
+		FlushInterval:   c.cfg.TelemetryFlushInterval,
+		RetryCount:      c.cfg.TelemetryRetryCount,
+		RetryDelay:      c.cfg.TelemetryRetryDelay,
+	})
+	if conn.telemetry != nil {
+		log.Debug().Msg("telemetry initialized for connection")
+		conn.telemetry.RecordOperation(ctx, conn.id, "", telemetry.OperationTypeCreateSession, sessionLatencyMs, nil)
+	}
 
 	log.Info().Msgf("connect: host=%s port=%d httpPath=%s serverProtocolVersion=0x%X", c.cfg.Host, c.cfg.Port, c.cfg.HTTPPath, session.ServerProtocolVersion)
 
@@ -103,6 +135,91 @@ func NewConnector(options ...ConnOption) (driver.Connector, error) {
 	client := client.RetryableClient(cfg)
 
 	return &connector{cfg: cfg, client: client}, nil
+}
+
+// extractSpogHeaders extracts ?o=<workspaceId> from httpPath and returns
+// an x-databricks-org-id header for SPOG routing.
+//
+// On SPOG (Custom URL) workspaces, httpPath is of the form
+// /sql/1.0/warehouses/<id>?o=<workspaceId>. The ?o= parameter keeps Thrift
+// requests routed to the correct workspace via the URL itself, but other
+// endpoints (telemetry, feature flags) run on separate hosts and need the
+// x-databricks-org-id header. This function extracts ?o= from httpPath once
+// and returns it so those paths can inject it as an HTTP header.
+//
+// Returns nil if:
+//   - httpPath has no query string ("?"), or
+//   - the query string is malformed and can't be parsed, or
+//   - the ?o= parameter is missing or empty.
+func extractSpogHeaders(httpPath string) map[string]string {
+	if !strings.Contains(httpPath, "?") {
+		return nil
+	}
+	// Parse query string from httpPath
+	parts := strings.SplitN(httpPath, "?", 2)
+	params, err := url.ParseQuery(parts[1])
+	if err != nil {
+		logger.Debug().Msgf(
+			"SPOG header extraction: malformed query string in httpPath, skipping org-id extraction: %s",
+			err)
+		return nil
+	}
+	orgID := params.Get("o")
+	if orgID == "" {
+		logger.Debug().Msg(
+			"SPOG header extraction: httpPath has query string but no ?o= param, " +
+				"skipping x-databricks-org-id injection")
+		return nil
+	}
+	logger.Debug().Msgf(
+		"SPOG header extraction: injecting x-databricks-org-id=%s (extracted from ?o= in httpPath)",
+		orgID)
+	return map[string]string{"x-databricks-org-id": orgID}
+}
+
+// withSpogHeaders returns a new *http.Client that reuses the transport of the
+// provided client, wrapped to inject the given SPOG headers on every outbound
+// request. The original client is left unchanged. If a request already has a
+// given header set (e.g., the caller set it explicitly), the wrapper does not
+// override it.
+//
+// This is how the driver gets x-databricks-org-id onto both the feature-flag
+// check and the telemetry push without touching the telemetry package's
+// signatures.
+func withSpogHeaders(base *http.Client, headers map[string]string) *http.Client {
+	baseTransport := base.Transport
+	if baseTransport == nil {
+		baseTransport = http.DefaultTransport
+	}
+	return &http.Client{
+		Transport: &headerInjectingTransport{
+			base:    baseTransport,
+			headers: headers,
+		},
+		CheckRedirect: base.CheckRedirect,
+		Jar:           base.Jar,
+		Timeout:       base.Timeout,
+	}
+}
+
+// headerInjectingTransport wraps an http.RoundTripper and sets a fixed set of
+// headers on every outbound request. Caller-supplied headers with the same
+// name are not overridden.
+type headerInjectingTransport struct {
+	base    http.RoundTripper
+	headers map[string]string
+}
+
+// RoundTrip implements http.RoundTripper.
+func (t *headerInjectingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	// Clone per RoundTripper contract — must not mutate the caller's request.
+	req2 := req.Clone(req.Context())
+	for k, v := range t.headers {
+		if req2.Header.Get(k) == "" {
+			req2.Header.Set(k, v)
+		}
+	}
+	return t.base.RoundTrip(req2)
 }
 
 func withUserConfig(ucfg config.UserConfig) ConnOption {
@@ -235,6 +352,23 @@ func WithSessionParams(params map[string]string) ConnOption {
 	}
 }
 
+// WithQueryTags sets session-level query tags from a map.
+// Tags are serialized and passed as QUERY_TAGS in the session configuration.
+// All queries in the session will carry these tags unless overridden at the statement level.
+// This is the preferred way to set session-level query tags, as it handles serialization
+// and escaping automatically (consistent with the statement-level API).
+func WithQueryTags(tags map[string]string) ConnOption {
+	return func(c *config.Config) {
+		serialized := SerializeQueryTags(tags)
+		if serialized != "" {
+			if c.SessionParams == nil {
+				c.SessionParams = make(map[string]string)
+			}
+			c.SessionParams["QUERY_TAGS"] = serialized
+		}
+	}
+}
+
 // WithSkipTLSHostVerify disables the verification of the hostname in the TLS certificate.
 // WARNING:
 // When this option is used, TLS is susceptible to machine-in-the-middle attacks.
@@ -261,8 +395,8 @@ func WithTransport(t http.RoundTripper) ConnOption {
 	return func(c *config.Config) {
 		c.Transport = t
 
-		if c.CloudFetchConfig.HTTPClient == nil {
-			c.CloudFetchConfig.HTTPClient = &http.Client{
+		if c.HTTPClient == nil {
+			c.HTTPClient = &http.Client{
 				Transport: t,
 			}
 		}
