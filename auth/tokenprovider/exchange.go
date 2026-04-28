@@ -138,7 +138,7 @@ func (p *FederationProvider) tryTokenExchange(ctx context.Context, subjectToken 
 	}
 
 	// Create request
-	req, err := http.NewRequestWithContext(ctx, "POST", exchangeURL, strings.NewReader(data.Encode()))
+	req, err := http.NewRequestWithContext(ctx, "POST", exchangeURL, strings.NewReader(data.Encode())) //nolint:gosec // URL is from trusted config
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -147,11 +147,11 @@ func (p *FederationProvider) tryTokenExchange(ctx context.Context, subjectToken 
 	req.Header.Set("Accept", "*/*")
 
 	// Make request
-	resp, err := p.httpClient.Do(req)
+	resp, err := p.httpClient.Do(req) //nolint:gosec // G704: URL is from trusted configuration
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {

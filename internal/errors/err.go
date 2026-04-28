@@ -50,7 +50,7 @@ func newDatabricksError(ctx context.Context, msg string, err error) databricksEr
 
 	// If the error chain contains an instance of retryableError
 	// set the flag and retryAfter value.
-	var retryable bool = false
+	retryable := false
 	var retryAfter time.Duration
 	if errors.Is(err, RetryableError) {
 		retryable = true
