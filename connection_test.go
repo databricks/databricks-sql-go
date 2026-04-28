@@ -10,6 +10,7 @@ import (
 	"github.com/apache/thrift/lib/go/thrift"
 	"github.com/pkg/errors"
 
+	"github.com/databricks/databricks-sql-go/driverctx"
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/client"
@@ -164,8 +165,8 @@ func TestConn_executeStatement(t *testing.T) {
 		for _, opTest := range operationStateTests {
 			closeOperationCount = 0
 			executeStatementCount = 0
-			executeStatementResp.DirectResults.OperationStatus.OperationState = &opTest.state
-			executeStatementResp.DirectResults.OperationStatus.DisplayMessage = &opTest.err
+			executeStatementResp.DirectResults.OperationStatus.OperationState = &opTest.state //nolint:gosec // G601: pointer is used only within this loop iteration
+			executeStatementResp.DirectResults.OperationStatus.DisplayMessage = &opTest.err   //nolint:gosec // G601: pointer is used only within this loop iteration
 			_, err := testConn.ExecContext(context.Background(), "select 1", []driver.NamedValue{})
 			if opTest.err == "" {
 				assert.NoError(t, err)
@@ -491,6 +492,209 @@ func TestConn_executeStatement_ProtocolFeatures(t *testing.T) {
 			})
 		}
 	}
+}
+
+func TestConn_executeStatement_QueryTags(t *testing.T) {
+	t.Parallel()
+
+	makeTestConn := func(captureReq *(*cli_service.TExecuteStatementReq)) *conn {
+		executeStatement := func(ctx context.Context, req *cli_service.TExecuteStatementReq) (r *cli_service.TExecuteStatementResp, err error) {
+			*captureReq = req
+			return &cli_service.TExecuteStatementResp{
+				Status: &cli_service.TStatus{
+					StatusCode: cli_service.TStatusCode_SUCCESS_STATUS,
+				},
+				OperationHandle: &cli_service.TOperationHandle{
+					OperationId: &cli_service.THandleIdentifier{
+						GUID:   []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16},
+						Secret: []byte("secret"),
+					},
+				},
+				DirectResults: &cli_service.TSparkDirectResults{
+					OperationStatus: &cli_service.TGetOperationStatusResp{
+						Status: &cli_service.TStatus{
+							StatusCode: cli_service.TStatusCode_SUCCESS_STATUS,
+						},
+						OperationState: cli_service.TOperationStatePtr(cli_service.TOperationState_FINISHED_STATE),
+					},
+				},
+			}, nil
+		}
+
+		return &conn{
+			session: getTestSession(),
+			client: &client.TestClient{
+				FnExecuteStatement: executeStatement,
+			},
+			cfg: config.WithDefaults(),
+		}
+	}
+
+	t.Run("query tags from context are set in ConfOverlay", func(t *testing.T) {
+		var capturedReq *cli_service.TExecuteStatementReq
+		testConn := makeTestConn(&capturedReq)
+
+		ctx := driverctx.NewContextWithQueryTags(context.Background(), map[string]string{
+			"team": "engineering",
+			"app":  "etl",
+		})
+
+		_, err := testConn.executeStatement(ctx, "SELECT 1", nil)
+		assert.NoError(t, err)
+		assert.NotNil(t, capturedReq.ConfOverlay)
+		// Map iteration is non-deterministic, so check both possible orderings
+		queryTags := capturedReq.ConfOverlay["query_tags"]
+		assert.True(t,
+			queryTags == "team:engineering,app:etl" || queryTags == "app:etl,team:engineering",
+			"unexpected query_tags value: %s", queryTags)
+	})
+
+	t.Run("no query tags in context means no ConfOverlay", func(t *testing.T) {
+		var capturedReq *cli_service.TExecuteStatementReq
+		testConn := makeTestConn(&capturedReq)
+
+		_, err := testConn.executeStatement(context.Background(), "SELECT 1", nil)
+		assert.NoError(t, err)
+		assert.Nil(t, capturedReq.ConfOverlay)
+	})
+
+	t.Run("empty query tags map means no ConfOverlay", func(t *testing.T) {
+		var capturedReq *cli_service.TExecuteStatementReq
+		testConn := makeTestConn(&capturedReq)
+
+		ctx := driverctx.NewContextWithQueryTags(context.Background(), map[string]string{})
+
+		_, err := testConn.executeStatement(ctx, "SELECT 1", nil)
+		assert.NoError(t, err)
+		assert.Nil(t, capturedReq.ConfOverlay)
+	})
+
+	t.Run("single query tag", func(t *testing.T) {
+		var capturedReq *cli_service.TExecuteStatementReq
+		testConn := makeTestConn(&capturedReq)
+
+		ctx := driverctx.NewContextWithQueryTags(context.Background(), map[string]string{
+			"team": "data-eng",
+		})
+
+		_, err := testConn.executeStatement(ctx, "SELECT 1", nil)
+		assert.NoError(t, err)
+		assert.Equal(t, "team:data-eng", capturedReq.ConfOverlay["query_tags"])
+	})
+
+	t.Run("query tags with special characters in values", func(t *testing.T) {
+		var capturedReq *cli_service.TExecuteStatementReq
+		testConn := makeTestConn(&capturedReq)
+
+		ctx := driverctx.NewContextWithQueryTags(context.Background(), map[string]string{
+			"url": "http://host:8080",
+		})
+
+		_, err := testConn.executeStatement(ctx, "SELECT 1", nil)
+		assert.NoError(t, err)
+		assert.Equal(t, `url:http\://host\:8080`, capturedReq.ConfOverlay["query_tags"])
+	})
+
+	t.Run("query tags with empty value", func(t *testing.T) {
+		var capturedReq *cli_service.TExecuteStatementReq
+		testConn := makeTestConn(&capturedReq)
+
+		ctx := driverctx.NewContextWithQueryTags(context.Background(), map[string]string{
+			"flag": "",
+		})
+
+		_, err := testConn.executeStatement(ctx, "SELECT 1", nil)
+		assert.NoError(t, err)
+		assert.Equal(t, "flag", capturedReq.ConfOverlay["query_tags"])
+	})
+
+	t.Run("session-level and statement-level query tags coexist", func(t *testing.T) {
+		// Session-level tags are sent via TOpenSessionReq.Configuration at connect time.
+		// Statement-level tags are sent via TExecuteStatementReq.ConfOverlay at query time.
+		// They are independent fields on different requests, so both should work together.
+
+		var capturedOpenReq *cli_service.TOpenSessionReq
+		var capturedExecReq *cli_service.TExecuteStatementReq
+
+		testClient := &client.TestClient{
+			FnOpenSession: func(ctx context.Context, req *cli_service.TOpenSessionReq) (*cli_service.TOpenSessionResp, error) {
+				capturedOpenReq = req
+				return &cli_service.TOpenSessionResp{
+					Status: &cli_service.TStatus{
+						StatusCode: cli_service.TStatusCode_SUCCESS_STATUS,
+					},
+					SessionHandle: &cli_service.TSessionHandle{
+						SessionId: &cli_service.THandleIdentifier{
+							GUID: []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16},
+						},
+					},
+				}, nil
+			},
+			FnExecuteStatement: func(ctx context.Context, req *cli_service.TExecuteStatementReq) (*cli_service.TExecuteStatementResp, error) {
+				capturedExecReq = req
+				return &cli_service.TExecuteStatementResp{
+					Status: &cli_service.TStatus{
+						StatusCode: cli_service.TStatusCode_SUCCESS_STATUS,
+					},
+					OperationHandle: &cli_service.TOperationHandle{
+						OperationId: &cli_service.THandleIdentifier{
+							GUID:   []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16},
+							Secret: []byte("secret"),
+						},
+					},
+					DirectResults: &cli_service.TSparkDirectResults{
+						OperationStatus: &cli_service.TGetOperationStatusResp{
+							Status: &cli_service.TStatus{
+								StatusCode: cli_service.TStatusCode_SUCCESS_STATUS,
+							},
+							OperationState: cli_service.TOperationStatePtr(cli_service.TOperationState_FINISHED_STATE),
+						},
+					},
+				}, nil
+			},
+		}
+
+		// Simulate what connector.Connect() does: pass session params to OpenSession
+		sessionParams := map[string]string{
+			"QUERY_TAGS": "team:platform,env:prod",
+			"ansi_mode":  "false",
+		}
+		protocolVersion := int64(cli_service.TProtocolVersion_SPARK_CLI_SERVICE_PROTOCOL_V8)
+		session, err := testClient.OpenSession(context.Background(), &cli_service.TOpenSessionReq{
+			ClientProtocolI64: &protocolVersion,
+			Configuration:     sessionParams,
+		})
+		assert.NoError(t, err)
+
+		// Verify session-level tags were sent in OpenSession
+		assert.Equal(t, "team:platform,env:prod", capturedOpenReq.Configuration["QUERY_TAGS"])
+		assert.Equal(t, "false", capturedOpenReq.Configuration["ansi_mode"])
+
+		// Create conn with session that has session-level tags
+		cfg := config.WithDefaults()
+		cfg.SessionParams = sessionParams
+		testConn := &conn{
+			session: session,
+			client:  testClient,
+			cfg:     cfg,
+		}
+
+		// Execute with statement-level tags
+		ctx := driverctx.NewContextWithQueryTags(context.Background(), map[string]string{
+			"job": "nightly-etl",
+		})
+		_, err = testConn.executeStatement(ctx, "SELECT 1", nil)
+		assert.NoError(t, err)
+
+		// Statement-level tags should be in ConfOverlay
+		assert.Equal(t, "job:nightly-etl", capturedExecReq.ConfOverlay["query_tags"])
+
+		// ConfOverlay should ONLY have query_tags, not session params
+		_, hasAnsiMode := capturedExecReq.ConfOverlay["ansi_mode"]
+		assert.False(t, hasAnsiMode, "session params should not leak into ConfOverlay")
+		_, hasSessionQueryTags := capturedExecReq.ConfOverlay["QUERY_TAGS"]
+		assert.False(t, hasSessionQueryTags, "session-level QUERY_TAGS should not be in ConfOverlay")
+	})
 }
 
 func TestConn_pollOperation(t *testing.T) {
@@ -1769,6 +1973,59 @@ func TestConn_execStagingOperation(t *testing.T) {
 		assert.Nil(t, err)
 		assert.Equal(t, 1, getResultSetMetadataCount) // should be called since DirectResults.ResultSetMetadata is nil
 	})
+}
+
+func TestChunkTimingAccumulator_Record(t *testing.T) {
+	tests := []struct {
+		name       string
+		latencies  []int64
+		wantInit   int64
+		wantSlow   int64
+		wantSum    int64
+		wantReturn []bool
+	}{
+		{"zero latency skipped", []int64{0}, 0, 0, 0, []bool{false}},
+		{"negative skipped", []int64{-5}, 0, 0, 0, []bool{false}},
+		{"single positive", []int64{10}, 10, 10, 10, []bool{true}},
+		{"initial preserved across calls", []int64{10, 20}, 10, 20, 30, []bool{true, true}},
+		{"slowest tracks max not last", []int64{30, 10, 50}, 30, 50, 90, []bool{true, true, true}},
+		{"zero interleaved skipped", []int64{10, 0, 20}, 10, 20, 30, []bool{true, false, true}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var a chunkTimingAccumulator
+			for i, lat := range tt.latencies {
+				got := a.record(lat)
+				if got != tt.wantReturn[i] {
+					t.Errorf("record(%d) = %v, want %v", lat, got, tt.wantReturn[i])
+				}
+			}
+			if a.initialMs != tt.wantInit {
+				t.Errorf("initialMs = %d, want %d", a.initialMs, tt.wantInit)
+			}
+			if a.slowestMs != tt.wantSlow {
+				t.Errorf("slowestMs = %d, want %d", a.slowestMs, tt.wantSlow)
+			}
+			if a.sumMs != tt.wantSum {
+				t.Errorf("sumMs = %d, want %d", a.sumMs, tt.wantSum)
+			}
+		})
+	}
+}
+
+func TestChunkTimingAccumulator_CloudFetchFileCount(t *testing.T) {
+	var a chunkTimingAccumulator
+	a.cloudFetchFileCount++
+	a.record(0) // sub-ms download — still counted but not timed
+	a.cloudFetchFileCount++
+	a.record(5)
+
+	if a.cloudFetchFileCount != 2 {
+		t.Errorf("cloudFetchFileCount = %d, want 2", a.cloudFetchFileCount)
+	}
+	if a.initialMs != 5 {
+		t.Errorf("initialMs = %d, want 5 (zero-latency file should not set initial)", a.initialMs)
+	}
 }
 
 func getTestSession() *cli_service.TOpenSessionResp {

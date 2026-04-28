@@ -40,16 +40,17 @@ func NewAuthenticator(hostName string, timeout time.Duration) (auth.Authenticato
 	cloud := oauth.InferCloudFromHost(hostName)
 
 	var clientID, redirectURL string
-	if cloud == oauth.AWS {
+	switch cloud {
+	case oauth.AWS:
 		clientID = awsClientId
 		redirectURL = awsRedirectURL
-	} else if cloud == oauth.Azure {
+	case oauth.Azure:
 		clientID = azureClientId
 		redirectURL = azureRedirectURL
-	} else if cloud == oauth.GCP {
+	case oauth.GCP:
 		clientID = gcpClientId
 		redirectURL = gcpRedirectURL
-	} else {
+	default:
 		return nil, errors.New("unhandled cloud type: " + cloud.String())
 	}
 
@@ -147,14 +148,14 @@ func (tsp *tokenSourceProvider) GetTokenSource() (oauth2.TokenSource, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer listener.Close()
+	defer listener.Close() //nolint:errcheck
 
 	srv := &http.Server{
 		ReadHeaderTimeout: 3 * time.Second,
 		WriteTimeout:      30 * time.Second,
 	}
 
-	defer srv.Close()
+	defer srv.Close() //nolint:errcheck
 
 	// Start local server to wait for callback
 	go func() {
@@ -209,7 +210,7 @@ func (tsp *tokenSourceProvider) ServeHTTP(w http.ResponseWriter, r *http.Request
 	if resp.err != "" {
 		log.Error().Msg(resp.err)
 		w.WriteHeader(http.StatusBadRequest)
-		_, err := w.Write([]byte(errorHTML("Identity Provider returned an error: " + resp.err)))
+		_, err := w.Write([]byte(errorHTML("Identity Provider returned an error: " + resp.err))) //nolint:gosec // XSS not a concern for local OAuth callback
 		if err != nil {
 			log.Error().Err(err).Msg("unable to write error response")
 		}
