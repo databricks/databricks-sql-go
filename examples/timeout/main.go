@@ -31,7 +31,7 @@ func main() {
 		// another initialization error.
 		log.Fatal(err)
 	}
-	defer db.Close()
+	defer db.Close() //nolint:errcheck
 
 	ogCtx := driverctx.NewContextWithCorrelationId(context.Background(), "context-timeout-example")
 	ctx1, cancel1 := context.WithTimeout(ogCtx, 10*time.Second)

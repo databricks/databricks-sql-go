@@ -40,7 +40,7 @@ func main() {
 	}
 
 	db := sql.OpenDB(connector)
-	defer db.Close()
+	defer db.Close() //nolint:errcheck
 
 	// Example 1: Connection-level query tags (set during connection)
 	fmt.Println("=== Connection-level query tags ===")

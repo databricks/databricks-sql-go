@@ -16,7 +16,7 @@ func TestNewTelemetryExporter(t *testing.T) {
 	httpClient := &http.Client{Timeout: 5 * time.Second}
 	host := "test-host"
 
-	exporter := newTelemetryExporter(host, httpClient, cfg)
+	exporter := newTelemetryExporter(host, "test-version", httpClient, cfg)
 
 	if exporter.host != host {
 		t.Errorf("Expected host %s, got %s", host, exporter.host)
@@ -54,15 +54,15 @@ func TestExport_Success(t *testing.T) {
 			t.Errorf("Expected Content-Type application/json, got %s", r.Header.Get("Content-Type"))
 		}
 
-		// Verify payload structure
+		// Verify payload structure (new TelemetryRequest format)
 		body, _ := io.ReadAll(r.Body)
-		var payload telemetryPayload
+		var payload TelemetryRequest
 		if err := json.Unmarshal(body, &payload); err != nil {
 			t.Errorf("Failed to unmarshal payload: %v", err)
 		}
 
-		if len(payload.Metrics) != 1 {
-			t.Errorf("Expected 1 metric, got %d", len(payload.Metrics))
+		if len(payload.ProtoLogs) != 1 {
+			t.Errorf("Expected 1 proto log, got %d", len(payload.ProtoLogs))
 		}
 
 		w.WriteHeader(http.StatusOK)
@@ -73,7 +73,7 @@ func TestExport_Success(t *testing.T) {
 	httpClient := &http.Client{Timeout: 5 * time.Second}
 
 	// Use full server URL for testing
-	exporter := newTelemetryExporter(server.URL, httpClient, cfg)
+	exporter := newTelemetryExporter(server.URL, "test-version", httpClient, cfg)
 
 	metrics := []*telemetryMetric{
 		{
@@ -113,7 +113,7 @@ func TestExport_RetryOn5xx(t *testing.T) {
 	httpClient := &http.Client{Timeout: 5 * time.Second}
 
 	// Use full server URL for testing
-	exporter := newTelemetryExporter(server.URL, httpClient, cfg)
+	exporter := newTelemetryExporter(server.URL, "test-version", httpClient, cfg)
 
 	metrics := []*telemetryMetric{
 		{
@@ -145,7 +145,7 @@ func TestExport_NonRetryable4xx(t *testing.T) {
 	httpClient := &http.Client{Timeout: 5 * time.Second}
 
 	// Use full server URL for testing
-	exporter := newTelemetryExporter(server.URL, httpClient, cfg)
+	exporter := newTelemetryExporter(server.URL, "test-version", httpClient, cfg)
 
 	metrics := []*telemetryMetric{
 		{
@@ -181,7 +181,7 @@ func TestExport_Retry429(t *testing.T) {
 	httpClient := &http.Client{Timeout: 5 * time.Second}
 
 	// Use full server URL for testing
-	exporter := newTelemetryExporter(server.URL, httpClient, cfg)
+	exporter := newTelemetryExporter(server.URL, "test-version", httpClient, cfg)
 
 	metrics := []*telemetryMetric{
 		{
@@ -211,7 +211,7 @@ func TestExport_CircuitBreakerOpen(t *testing.T) {
 	httpClient := &http.Client{Timeout: 5 * time.Second}
 
 	// Use full server URL for testing
-	exporter := newTelemetryExporter(server.URL, httpClient, cfg)
+	exporter := newTelemetryExporter(server.URL, "test-version", httpClient, cfg)
 
 	// Open the circuit breaker by recording failures
 	cb := exporter.circuitBreaker
@@ -240,57 +240,6 @@ func TestExport_CircuitBreakerOpen(t *testing.T) {
 	// No request should have been made
 	if atomic.LoadInt32(&attemptCount) != 0 {
 		t.Errorf("Expected 0 attempts with open circuit, got %d", attemptCount)
-	}
-}
-
-func TestToExportedMetric_TagFiltering(t *testing.T) {
-	metric := &telemetryMetric{
-		metricType:  "connection",
-		timestamp:   time.Date(2026, 1, 30, 10, 0, 0, 0, time.UTC),
-		workspaceID: "test-workspace",
-		sessionID:   "test-session",
-		statementID: "test-statement",
-		latencyMs:   100,
-		errorType:   "test-error",
-		tags: map[string]interface{}{
-			"workspace.id":   "ws-123",         // Should be exported
-			"driver.version": "1.0.0",          // Should be exported
-			"server.address": "localhost:8080", // Should NOT be exported (local only)
-			"unknown.tag":    "value",          // Should NOT be exported
-		},
-	}
-
-	exported := metric.toExportedMetric()
-
-	// Verify basic fields
-	if exported.MetricType != "connection" {
-		t.Errorf("Expected MetricType 'connection', got %s", exported.MetricType)
-	}
-
-	if exported.WorkspaceID != "test-workspace" {
-		t.Errorf("Expected WorkspaceID 'test-workspace', got %s", exported.WorkspaceID)
-	}
-
-	// Verify timestamp format
-	if exported.Timestamp != "2026-01-30T10:00:00Z" {
-		t.Errorf("Expected timestamp '2026-01-30T10:00:00Z', got %s", exported.Timestamp)
-	}
-
-	// Verify tag filtering
-	if _, ok := exported.Tags["workspace.id"]; !ok {
-		t.Error("Expected 'workspace.id' tag to be exported")
-	}
-
-	if _, ok := exported.Tags["driver.version"]; !ok {
-		t.Error("Expected 'driver.version' tag to be exported")
-	}
-
-	if _, ok := exported.Tags["server.address"]; ok {
-		t.Error("Expected 'server.address' tag to NOT be exported (local only)")
-	}
-
-	if _, ok := exported.Tags["unknown.tag"]; ok {
-		t.Error("Expected 'unknown.tag' to NOT be exported")
 	}
 }
 
@@ -334,7 +283,7 @@ func TestExport_ErrorSwallowing(t *testing.T) {
 	httpClient := &http.Client{Timeout: 5 * time.Second}
 
 	// Use full server URL for testing
-	exporter := newTelemetryExporter(server.URL, httpClient, cfg)
+	exporter := newTelemetryExporter(server.URL, "test-version", httpClient, cfg)
 
 	metrics := []*telemetryMetric{
 		{
@@ -370,7 +319,7 @@ func TestExport_ContextCancellation(t *testing.T) {
 	httpClient := &http.Client{Timeout: 5 * time.Second}
 
 	// Use full server URL for testing
-	exporter := newTelemetryExporter(server.URL, httpClient, cfg)
+	exporter := newTelemetryExporter(server.URL, "test-version", httpClient, cfg)
 
 	metrics := []*telemetryMetric{
 		{
@@ -403,7 +352,7 @@ func TestExport_ExponentialBackoff(t *testing.T) {
 	httpClient := &http.Client{Timeout: 5 * time.Second}
 
 	// Use full server URL for testing
-	exporter := newTelemetryExporter(server.URL, httpClient, cfg)
+	exporter := newTelemetryExporter(server.URL, "test-version", httpClient, cfg)
 
 	metrics := []*telemetryMetric{
 		{
