@@ -195,13 +195,14 @@ var _ columnValues = (*listValueContainer)(nil)
 
 func (lvc *listValueContainer) Value(i int) (any, error) {
 	if i < lvc.listArray.Len() {
-		r := "["
+		var sb strings.Builder
+		sb.WriteByte('[')
 		s, e := lvc.listArray.ValueOffsets(i)
 		len := int(e - s)
 
 		for i := 0; i < len; i++ {
 			if lvc.values.IsNull(i + int(s)) {
-				r = r + "null"
+				sb.WriteString("null")
 			} else {
 
 				val, err := lvc.values.Value(i + int(s))
@@ -214,19 +215,19 @@ func (lvc *listValueContainer) Value(i int) (any, error) {
 					if err != nil {
 						return nil, err
 					}
-					r = r + string(vb)
+					sb.Write(vb)
 				} else {
-					r = r + val.(string)
+					sb.WriteString(val.(string))
 				}
 			}
 
 			if i < len-1 {
-				r = r + ","
+				sb.WriteByte(',')
 			}
 		}
 
-		r = r + "]"
-		return r, nil
+		sb.WriteByte(']')
+		return sb.String(), nil
 	}
 	return nil, nil
 }
