@@ -359,38 +359,38 @@ var _ columnValues = (*structValueContainer)(nil)
 
 func (svc *structValueContainer) Value(i int) (any, error) {
 	if i < svc.structArray.Len() {
-		r := "{"
+		var sb strings.Builder
+		sb.WriteByte('{')
 		for j := range svc.fieldValues {
-			r = r + "\"" + svc.fieldNames[j] + "\":"
+			sb.WriteByte('"')
+			sb.WriteString(svc.fieldNames[j])
+			sb.WriteString("\":")
 
 			if svc.fieldValues[j].IsNull(int(i)) {
-				r = r + "null"
+				sb.WriteString("null")
 			} else {
 				v, err := svc.fieldValues[j].Value(int(i))
 				if err != nil {
 					return nil, err
 				}
 
-				var b string
 				if svc.complexValue[j] {
-					b = v.(string)
+					sb.WriteString(v.(string))
 				} else {
 					vb, err := marshal(v)
 					if err != nil {
 						return nil, err
 					}
-					b = string(vb)
+					sb.Write(vb)
 				}
-
-				r = r + b
 			}
 			if j < len(svc.fieldValues)-1 {
-				r = r + ","
+				sb.WriteByte(',')
 			}
 		}
-		r = r + "}"
+		sb.WriteByte('}')
 
-		return r, nil
+		return sb.String(), nil
 	}
 	return nil, nil
 }
