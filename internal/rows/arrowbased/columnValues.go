@@ -268,7 +268,8 @@ func (mvc *mapValueContainer) Value(i int) (any, error) {
 	if i < mvc.mapArray.Len() {
 		s, e := mvc.mapArray.ValueOffsets(i)
 		len := e - s
-		r := "{"
+		var sb strings.Builder
+		sb.WriteByte('{')
 		for i := int64(0); i < len; i++ {
 			k, err := mvc.keys.Value(int(i + s))
 			if err != nil {
@@ -285,33 +286,34 @@ func (mvc *mapValueContainer) Value(i int) (any, error) {
 				return nil, err
 			}
 
-			var b string
+			if !strings.HasPrefix(string(key), "\"") {
+				sb.WriteByte('"')
+				sb.Write(key)
+				sb.WriteString("\":")
+			} else {
+				sb.Write(key)
+				sb.WriteByte(':')
+			}
+
 			if mvc.values.IsNull(int(i + s)) {
-				b = "null"
+				sb.WriteString("null")
 			} else if mvc.complexValue {
-				b = v.(string)
+				sb.WriteString(v.(string))
 			} else {
 				vb, err := marshal(v)
 				if err != nil {
 					return nil, err
 				}
-				b = string(vb)
+				sb.Write(vb)
 			}
 
-			if !strings.HasPrefix(string(key), "\"") {
-				r = r + "\"" + string(key) + "\":"
-			} else {
-				r = r + string(key) + ":"
-			}
-
-			r = r + b
 			if i < len-1 {
-				r = r + ","
+				sb.WriteByte(',')
 			}
 		}
-		r = r + "}"
+		sb.WriteByte('}')
 
-		return r, nil
+		return sb.String(), nil
 	}
 	return nil, nil
 }
