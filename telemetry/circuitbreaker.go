@@ -62,14 +62,21 @@ type circuitBreakerConfig struct {
 	permittedCallsInHalfOpen int           // Number of test calls in half-open state
 }
 
-// defaultCircuitBreakerConfig returns default configuration matching JDBC.
+// defaultCircuitBreakerConfig returns default configuration.
+//
+// Each export call is now a single logical request to /telemetry-ext (the
+// retryablehttp layer handles transient retries internally), so each breaker
+// call corresponds to one observed outcome. minimumNumberOfCalls is set low
+// enough that low-traffic clients can still trip the breaker on a sustained
+// outage; waitDurationInOpenState is long enough to respect typical
+// Retry-After windows from the server.
 func defaultCircuitBreakerConfig() circuitBreakerConfig {
 	return circuitBreakerConfig{
-		failureRateThreshold:     50, // 50% failure rate
-		minimumNumberOfCalls:     20, // Minimum sample size
-		slidingWindowSize:        30, // Keep recent 30 calls
-		waitDurationInOpenState:  30 * time.Second,
-		permittedCallsInHalfOpen: 3, // Test with 3 calls
+		failureRateThreshold:     50,
+		minimumNumberOfCalls:     10,
+		slidingWindowSize:        30,
+		waitDurationInOpenState:  60 * time.Second,
+		permittedCallsInHalfOpen: 3,
 	}
 }
 

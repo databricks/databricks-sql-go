@@ -24,6 +24,7 @@ const (
 type telemetryExporter struct {
 	host           string
 	driverVersion  string
+	userAgent      string
 	httpClient     *http.Client
 	circuitBreaker *circuitBreaker
 	cfg            *Config
@@ -50,10 +51,11 @@ func ensureHTTPScheme(host string) string {
 }
 
 // newTelemetryExporter creates a new exporter.
-func newTelemetryExporter(host string, driverVersion string, httpClient *http.Client, cfg *Config) *telemetryExporter {
+func newTelemetryExporter(host string, driverVersion string, userAgent string, httpClient *http.Client, cfg *Config) *telemetryExporter {
 	return &telemetryExporter{
 		host:           host,
 		driverVersion:  driverVersion,
+		userAgent:      userAgent,
 		httpClient:     httpClient,
 		circuitBreaker: getCircuitBreakerManager().getCircuitBreaker(host),
 		cfg:            cfg,
@@ -85,78 +87,43 @@ func (e *telemetryExporter) export(ctx context.Context, metrics []*telemetryMetr
 	}
 }
 
-// doExport performs the actual export with retries and exponential backoff.
+// doExport sends one telemetry request. It does NOT retry — retries are
+// handled by the underlying retryablehttp-wrapped HTTP client (see
+// internal/client.RetryableClient), which already retries 429/5xx with the
+// server-provided Retry-After header. Any non-2xx outcome here is therefore
+// the *post-retry* result, and is returned to the caller so the circuit
+// breaker counts it as one failure per export.
 func (e *telemetryExporter) doExport(ctx context.Context, metrics []*telemetryMetric) error {
-	// Create telemetry request with base64-encoded logs
 	request, err := createTelemetryRequest(metrics, e.driverVersion)
 	if err != nil {
 		return fmt.Errorf("failed to create telemetry request: %w", err)
 	}
 
-	// Serialize request
 	data, err := json.Marshal(request)
 	if err != nil {
 		return fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	// Determine endpoint
-	hostURL := ensureHTTPScheme(e.host)
-	endpoint := hostURL + telemetryEndpointPath
+	endpoint := ensureHTTPScheme(e.host) + telemetryEndpointPath
 
-	// Retry logic with exponential backoff
-	maxRetries := e.cfg.MaxRetries
-	for attempt := 0; attempt <= maxRetries; attempt++ {
-		// Exponential backoff (except for first attempt)
-		if attempt > 0 {
-			backoff := time.Duration(1<<uint(attempt-1)) * e.cfg.RetryDelay
-			select {
-			case <-time.After(backoff):
-			case <-ctx.Done():
-				return ctx.Err()
-			}
-		}
-
-		// Create request
-		req, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewReader(data))
-		if err != nil {
-			return fmt.Errorf("failed to create request: %w", err)
-		}
-
-		req.Header.Set("Content-Type", "application/json")
-
-		// Execute request
-		resp, err := e.httpClient.Do(req)
-		if err != nil {
-			if attempt == maxRetries {
-				return fmt.Errorf("failed after %d retries: %w", maxRetries, err)
-			}
-			continue
-		}
-
-		// Read response body
-		_, _ = io.ReadAll(resp.Body)
-		resp.Body.Close() //nolint:errcheck,gosec // G104: close after response is read
-
-		// Check status code
-		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-			return nil // Success
-		}
-
-		// Check if retryable
-		if !isRetryableStatus(resp.StatusCode) {
-			return fmt.Errorf("non-retryable status: %d", resp.StatusCode)
-		}
-
-		if attempt == maxRetries {
-			return fmt.Errorf("failed after %d retries: status %d", maxRetries, resp.StatusCode)
-		}
+	req, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewReader(data))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if e.userAgent != "" {
+		req.Header.Set("User-Agent", e.userAgent)
 	}
 
-	return nil
-}
+	resp, err := e.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("telemetry export failed: %w", err)
+	}
+	_, _ = io.ReadAll(resp.Body)
+	resp.Body.Close() //nolint:errcheck,gosec // G104: close after response is read
 
-// isRetryableStatus returns true if HTTP status is retryable.
-// Retryable statuses: 429 (Too Many Requests), 503 (Service Unavailable), 5xx (Server Errors)
-func isRetryableStatus(status int) bool {
-	return status == 429 || status == 503 || status >= 500
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return nil
+	}
+	return fmt.Errorf("telemetry export failed: status %d", resp.StatusCode)
 }

@@ -5,18 +5,6 @@ import (
 	"net/http"
 	"strconv"
 	"time"
-
-	"github.com/databricks/databricks-sql-go/logger"
-)
-
-const (
-	// maxTelemetryRetryCount caps DSN-provided retry count to prevent
-	// excessive retries from misconfiguration.
-	maxTelemetryRetryCount = 10
-
-	// maxTelemetryRetryDelay caps DSN-provided retry delay to prevent
-	// excessively long backoff from misconfiguration.
-	maxTelemetryRetryDelay = 30 * time.Second
 )
 
 // Config holds telemetry configuration.
@@ -35,12 +23,6 @@ type Config struct {
 
 	// FlushInterval is how often to flush metrics
 	FlushInterval time.Duration
-
-	// MaxRetries is the maximum number of retry attempts
-	MaxRetries int
-
-	// RetryDelay is the base delay between retries
-	RetryDelay time.Duration
 
 	// CircuitBreakerEnabled enables circuit breaker protection
 	CircuitBreakerEnabled bool
@@ -65,10 +47,8 @@ func DefaultConfig() *Config {
 	return &Config{
 		Enabled:                 false,
 		EnableTelemetry:         nil, // unset — server feature flag decides
-		BatchSize:               100,
-		FlushInterval:           5 * time.Second,
-		MaxRetries:              3,
-		RetryDelay:              100 * time.Millisecond,
+		BatchSize:               200,
+		FlushInterval:           30 * time.Second,
 		CircuitBreakerEnabled:   true,
 		CircuitBreakerThreshold: 5,
 		CircuitBreakerTimeout:   1 * time.Minute,
@@ -97,26 +77,10 @@ func ParseTelemetryConfig(params map[string]string) *Config {
 		}
 	}
 
-	if v, ok := params["telemetry_retry_count"]; ok {
-		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
-			if n > maxTelemetryRetryCount {
-				logger.Debug().Msgf("telemetry: retry_count %d exceeds max %d, clamping", n, maxTelemetryRetryCount)
-				n = maxTelemetryRetryCount
-			}
-			cfg.MaxRetries = n
-		}
-	}
-
-	if v, ok := params["telemetry_retry_delay"]; ok {
-		if d, err := time.ParseDuration(v); err == nil && d > 0 {
-			if d > maxTelemetryRetryDelay {
-				logger.Debug().Msgf("telemetry: retry_delay %v exceeds max %v, clamping", d, maxTelemetryRetryDelay)
-				d = maxTelemetryRetryDelay
-			}
-			cfg.RetryDelay = d
-		}
-	}
-
+	// Note: telemetry_retry_count and telemetry_retry_delay DSN parameters
+	// are accepted for backwards compatibility but are no longer applied
+	// here. Retries are owned by the underlying retryablehttp-wrapped client
+	// (see internal/client.RetryableClient), which honors Retry-After.
 	return cfg
 }
 
@@ -126,12 +90,12 @@ func ParseTelemetryConfig(params map[string]string) *Config {
 //     (databricks.partnerplatform.clientConfigsFeatureFlags.enableTelemetryForGoDriver).
 //
 // In all other cases — explicit opt-out or server flag absent/unreachable — returns false.
-func isTelemetryEnabled(ctx context.Context, cfg *Config, host string, driverVersion string, httpClient *http.Client) bool {
+func isTelemetryEnabled(ctx context.Context, cfg *Config, host string, driverVersion string, userAgent string, httpClient *http.Client) bool {
 	if cfg.EnableTelemetry != nil {
 		return *cfg.EnableTelemetry
 	}
 
-	serverEnabled, err := getFeatureFlagCache().isTelemetryEnabled(ctx, host, driverVersion, httpClient)
+	serverEnabled, err := getFeatureFlagCache().isTelemetryEnabled(ctx, host, driverVersion, userAgent, httpClient)
 	if err != nil {
 		return false
 	}

@@ -16,6 +16,11 @@ type TelemetryInitOptions struct {
 	// DriverVersion is the driver version string.
 	DriverVersion string
 
+	// UserAgent is the User-Agent header sent on telemetry export and
+	// feature-flag requests. Should match the value the Thrift client uses so
+	// telemetry traffic is attributable to the driver in access logs.
+	UserAgent string
+
 	// HTTPClient is the HTTP client used for both feature-flag checks and
 	// telemetry export. The /telemetry-ext endpoint requires authentication,
 	// so this should be the authenticated driver client.
@@ -27,20 +32,11 @@ type TelemetryInitOptions struct {
 	//   false  — client explicitly opted out
 	EnableTelemetry config.ConfigValue[bool]
 
-	// BatchSize is the number of metrics per batch (0 = use default 100).
+	// BatchSize is the number of metrics per batch (0 = use default).
 	BatchSize int
 
-	// FlushInterval is the flush interval (0 = use default 5s).
+	// FlushInterval is the flush interval (0 = use default).
 	FlushInterval time.Duration
-
-	// RetryCount is max retry attempts (-1 = use default 3; 0 = disable retries).
-	// IMPORTANT: Go's zero-value for int is 0, which disables retries. Callers
-	// constructing TelemetryInitOptions must set RetryCount = -1 explicitly to
-	// get the default retry behavior.
-	RetryCount int
-
-	// RetryDelay is the base delay between retries (0 = use default 100ms).
-	RetryDelay time.Duration
 }
 
 // InitializeForConnection initializes telemetry for a database connection.
@@ -60,25 +56,13 @@ func InitializeForConnection(ctx context.Context, opts TelemetryInitOptions) *In
 	if opts.FlushInterval > 0 {
 		cfg.FlushInterval = opts.FlushInterval
 	}
-	if opts.RetryCount >= 0 {
-		cfg.MaxRetries = opts.RetryCount
-		if cfg.MaxRetries > maxTelemetryRetryCount {
-			cfg.MaxRetries = maxTelemetryRetryCount
-		}
-	}
-	if opts.RetryDelay > 0 {
-		cfg.RetryDelay = opts.RetryDelay
-		if cfg.RetryDelay > maxTelemetryRetryDelay {
-			cfg.RetryDelay = maxTelemetryRetryDelay
-		}
-	}
 
 	// Get feature flag cache context FIRST (for reference counting)
 	flagCache := getFeatureFlagCache()
 	flagCache.getOrCreateContext(opts.Host)
 
 	// Check if telemetry should be enabled
-	enabled := isTelemetryEnabled(ctx, cfg, opts.Host, opts.DriverVersion, opts.HTTPClient)
+	enabled := isTelemetryEnabled(ctx, cfg, opts.Host, opts.DriverVersion, opts.UserAgent, opts.HTTPClient)
 	if !enabled {
 		flagCache.releaseContext(opts.Host)
 		return nil
@@ -86,7 +70,7 @@ func InitializeForConnection(ctx context.Context, opts TelemetryInitOptions) *In
 
 	// Get or create telemetry client for this host
 	clientMgr := getClientManager()
-	telemetryClient := clientMgr.getOrCreateClient(opts.Host, opts.DriverVersion, opts.HTTPClient, cfg)
+	telemetryClient := clientMgr.getOrCreateClient(opts.Host, opts.DriverVersion, opts.UserAgent, opts.HTTPClient, cfg)
 	if telemetryClient == nil {
 		// Client failed to start; release the flag cache ref we incremented above
 		flagCache.releaseContext(opts.Host)

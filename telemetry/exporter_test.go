@@ -16,7 +16,7 @@ func TestNewTelemetryExporter(t *testing.T) {
 	httpClient := &http.Client{Timeout: 5 * time.Second}
 	host := "test-host"
 
-	exporter := newTelemetryExporter(host, "test-version", httpClient, cfg)
+	exporter := newTelemetryExporter(host, "test-version", "test-ua", httpClient, cfg)
 
 	if exporter.host != host {
 		t.Errorf("Expected host %s, got %s", host, exporter.host)
@@ -73,7 +73,7 @@ func TestExport_Success(t *testing.T) {
 	httpClient := &http.Client{Timeout: 5 * time.Second}
 
 	// Use full server URL for testing
-	exporter := newTelemetryExporter(server.URL, "test-version", httpClient, cfg)
+	exporter := newTelemetryExporter(server.URL, "test-version", "test-ua", httpClient, cfg)
 
 	metrics := []*telemetryMetric{
 		{
@@ -93,109 +93,64 @@ func TestExport_Success(t *testing.T) {
 	}
 }
 
-func TestExport_RetryOn5xx(t *testing.T) {
-	attemptCount := int32(0)
+// TestExport_SetsUserAgent verifies the configured User-Agent is sent on the
+// telemetry POST so traffic is attributable in access logs.
+func TestExport_SetsUserAgent(t *testing.T) {
+	const wantUA = "godatabrickssqlconnector/9.9.9"
+	gotUA := ""
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		count := atomic.AddInt32(&attemptCount, 1)
-		if count < 3 {
-			// Fail first 2 attempts
-			w.WriteHeader(http.StatusInternalServerError)
-		} else {
-			// Succeed on 3rd attempt
-			w.WriteHeader(http.StatusOK)
-		}
+		gotUA = r.Header.Get("User-Agent")
+		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
 
 	cfg := DefaultConfig()
-	cfg.MaxRetries = 3
-	cfg.RetryDelay = 10 * time.Millisecond
 	httpClient := &http.Client{Timeout: 5 * time.Second}
+	exporter := newTelemetryExporter(server.URL, "9.9.9", wantUA, httpClient, cfg)
 
-	// Use full server URL for testing
-	exporter := newTelemetryExporter(server.URL, "test-version", httpClient, cfg)
+	exporter.export(context.Background(), []*telemetryMetric{{
+		metricType: "connection", timestamp: time.Now(),
+	}})
 
-	metrics := []*telemetryMetric{
-		{
-			metricType: "connection",
-			timestamp:  time.Now(),
-		},
-	}
-
-	ctx := context.Background()
-	exporter.export(ctx, metrics)
-
-	// Should have retried and succeeded
-	if atomic.LoadInt32(&attemptCount) != 3 {
-		t.Errorf("Expected 3 attempts, got %d", attemptCount)
+	if gotUA != wantUA {
+		t.Errorf("User-Agent: got %q, want %q", gotUA, wantUA)
 	}
 }
 
-func TestExport_NonRetryable4xx(t *testing.T) {
-	attemptCount := int32(0)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&attemptCount, 1)
-		w.WriteHeader(http.StatusBadRequest) // 400 is not retryable
-	}))
-	defer server.Close()
-
-	cfg := DefaultConfig()
-	cfg.MaxRetries = 3
-	cfg.RetryDelay = 10 * time.Millisecond
-	httpClient := &http.Client{Timeout: 5 * time.Second}
-
-	// Use full server URL for testing
-	exporter := newTelemetryExporter(server.URL, "test-version", httpClient, cfg)
-
-	metrics := []*telemetryMetric{
-		{
-			metricType: "connection",
-			timestamp:  time.Now(),
-		},
+// TestExport_SingleAttemptPerExport asserts that doExport itself never
+// retries — a single export is exactly one HTTP transaction. Retries are
+// owned by the underlying retryablehttp-wrapped client (not exercised here
+// because the test uses a plain *http.Client). Each export → one breaker
+// outcome.
+func TestExport_SingleAttemptPerExport(t *testing.T) {
+	cases := []struct {
+		name   string
+		status int
+	}{
+		{"400", http.StatusBadRequest},
+		{"429", http.StatusTooManyRequests},
+		{"500", http.StatusInternalServerError},
+		{"503", http.StatusServiceUnavailable},
 	}
 
-	ctx := context.Background()
-	exporter.export(ctx, metrics)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			attemptCount := int32(0)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				atomic.AddInt32(&attemptCount, 1)
+				w.WriteHeader(tc.status)
+			}))
+			defer server.Close()
 
-	// Should only try once (no retries for 4xx)
-	if atomic.LoadInt32(&attemptCount) != 1 {
-		t.Errorf("Expected 1 attempt, got %d", attemptCount)
-	}
-}
+			exporter := newTelemetryExporter(server.URL, "test-version", "test-ua", &http.Client{Timeout: 5 * time.Second}, DefaultConfig())
+			exporter.export(context.Background(), []*telemetryMetric{{
+				metricType: "connection", timestamp: time.Now(),
+			}})
 
-func TestExport_Retry429(t *testing.T) {
-	attemptCount := int32(0)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		count := atomic.AddInt32(&attemptCount, 1)
-		if count < 2 {
-			w.WriteHeader(http.StatusTooManyRequests) // 429 is retryable
-		} else {
-			w.WriteHeader(http.StatusOK)
-		}
-	}))
-	defer server.Close()
-
-	cfg := DefaultConfig()
-	cfg.MaxRetries = 3
-	cfg.RetryDelay = 10 * time.Millisecond
-	httpClient := &http.Client{Timeout: 5 * time.Second}
-
-	// Use full server URL for testing
-	exporter := newTelemetryExporter(server.URL, "test-version", httpClient, cfg)
-
-	metrics := []*telemetryMetric{
-		{
-			metricType: "connection",
-			timestamp:  time.Now(),
-		},
-	}
-
-	ctx := context.Background()
-	exporter.export(ctx, metrics)
-
-	// Should have retried and succeeded
-	if atomic.LoadInt32(&attemptCount) != 2 {
-		t.Errorf("Expected 2 attempts, got %d", attemptCount)
+			if got := atomic.LoadInt32(&attemptCount); got != 1 {
+				t.Errorf("status %d: expected 1 attempt at exporter layer, got %d", tc.status, got)
+			}
+		})
 	}
 }
 
@@ -211,7 +166,7 @@ func TestExport_CircuitBreakerOpen(t *testing.T) {
 	httpClient := &http.Client{Timeout: 5 * time.Second}
 
 	// Use full server URL for testing
-	exporter := newTelemetryExporter(server.URL, "test-version", httpClient, cfg)
+	exporter := newTelemetryExporter(server.URL, "test-version", "test-ua", httpClient, cfg)
 
 	// Open the circuit breaker by recording failures
 	cb := exporter.circuitBreaker
@@ -243,33 +198,6 @@ func TestExport_CircuitBreakerOpen(t *testing.T) {
 	}
 }
 
-func TestIsRetryableStatus(t *testing.T) {
-	tests := []struct {
-		status      int
-		retryable   bool
-		description string
-	}{
-		{200, false, "200 OK is not retryable"},
-		{201, false, "201 Created is not retryable"},
-		{400, false, "400 Bad Request is not retryable"},
-		{401, false, "401 Unauthorized is not retryable"},
-		{403, false, "403 Forbidden is not retryable"},
-		{404, false, "404 Not Found is not retryable"},
-		{429, true, "429 Too Many Requests is retryable"},
-		{500, true, "500 Internal Server Error is retryable"},
-		{502, true, "502 Bad Gateway is retryable"},
-		{503, true, "503 Service Unavailable is retryable"},
-		{504, true, "504 Gateway Timeout is retryable"},
-	}
-
-	for _, tt := range tests {
-		result := isRetryableStatus(tt.status)
-		if result != tt.retryable {
-			t.Errorf("%s: expected %v, got %v", tt.description, tt.retryable, result)
-		}
-	}
-}
-
 func TestExport_ErrorSwallowing(t *testing.T) {
 	// Server that always fails
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -278,12 +206,10 @@ func TestExport_ErrorSwallowing(t *testing.T) {
 	defer server.Close()
 
 	cfg := DefaultConfig()
-	cfg.MaxRetries = 1
-	cfg.RetryDelay = 10 * time.Millisecond
 	httpClient := &http.Client{Timeout: 5 * time.Second}
 
 	// Use full server URL for testing
-	exporter := newTelemetryExporter(server.URL, "test-version", httpClient, cfg)
+	exporter := newTelemetryExporter(server.URL, "test-version", "test-ua", httpClient, cfg)
 
 	metrics := []*telemetryMetric{
 		{
@@ -314,12 +240,10 @@ func TestExport_ContextCancellation(t *testing.T) {
 	defer server.Close()
 
 	cfg := DefaultConfig()
-	cfg.MaxRetries = 3
-	cfg.RetryDelay = 50 * time.Millisecond
 	httpClient := &http.Client{Timeout: 5 * time.Second}
 
 	// Use full server URL for testing
-	exporter := newTelemetryExporter(server.URL, "test-version", httpClient, cfg)
+	exporter := newTelemetryExporter(server.URL, "test-version", "test-ua", httpClient, cfg)
 
 	metrics := []*telemetryMetric{
 		{
@@ -335,63 +259,4 @@ func TestExport_ContextCancellation(t *testing.T) {
 	// Export with cancelled context (should not panic)
 	exporter.export(ctx, metrics)
 	// If we get here, context cancellation is handled properly
-}
-
-func TestExport_ExponentialBackoff(t *testing.T) {
-	attemptTimes := make([]time.Time, 0)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		attemptTimes = append(attemptTimes, time.Now())
-		// Always fail to test all retries
-		w.WriteHeader(http.StatusInternalServerError)
-	}))
-	defer server.Close()
-
-	cfg := DefaultConfig()
-	cfg.MaxRetries = 3
-	cfg.RetryDelay = 50 * time.Millisecond
-	httpClient := &http.Client{Timeout: 5 * time.Second}
-
-	// Use full server URL for testing
-	exporter := newTelemetryExporter(server.URL, "test-version", httpClient, cfg)
-
-	metrics := []*telemetryMetric{
-		{
-			metricType: "connection",
-			timestamp:  time.Now(),
-		},
-	}
-
-	ctx := context.Background()
-	exporter.export(ctx, metrics)
-
-	// Should have 4 attempts (1 initial + 3 retries)
-	if len(attemptTimes) != 4 {
-		t.Errorf("Expected 4 attempts, got %d", len(attemptTimes))
-		return
-	}
-
-	// Verify exponential backoff delays
-	// Attempt 0: immediate
-	// Attempt 1: +50ms (2^0 * 50ms)
-	// Attempt 2: +100ms (2^1 * 50ms)
-	// Attempt 3: +200ms (2^2 * 50ms)
-
-	delay1 := attemptTimes[1].Sub(attemptTimes[0])
-	delay2 := attemptTimes[2].Sub(attemptTimes[1])
-	delay3 := attemptTimes[3].Sub(attemptTimes[2])
-
-	// Allow 30ms tolerance for timing variations
-	tolerance := 30 * time.Millisecond
-
-	if delay1 < (50*time.Millisecond-tolerance) || delay1 > (50*time.Millisecond+tolerance) {
-		t.Errorf("Expected delay1 ~50ms, got %v", delay1)
-	}
-
-	if delay2 < (100*time.Millisecond-tolerance) || delay2 > (100*time.Millisecond+tolerance) {
-		t.Errorf("Expected delay2 ~100ms, got %v", delay2)
-	}
-
-	if delay3 < (200*time.Millisecond-tolerance) || delay3 > (200*time.Millisecond+tolerance) {
-		t.Errorf("Expected delay3 ~200ms, got %v", delay3)
-	}
 }
