@@ -304,6 +304,9 @@ func (cft *cloudFetchDownloadTask) Run() {
 			cft.link.RowCount,
 		)
 		downloadStart := time.Now()
+		// fetchBatchBytes now buffers the body in memory and retries on
+		// mid-stream failures, so the returned reader is always a
+		// *bytes.Reader and needs no Close.
 		data, err := fetchBatchBytes(
 			cft.ctx,
 			cft.link,
@@ -319,9 +322,10 @@ func (cft *cloudFetchDownloadTask) Run() {
 			return
 		}
 
-		// Read all data into memory before closing
+		// Decompression sits outside the retry loop on purpose: a malformed
+		// LZ4 frame is data corruption, not a transient network condition,
+		// and won't recover on retry.
 		buf, err := io.ReadAll(getReader(data, cft.useLz4Compression))
-		data.Close() //nolint:errcheck,gosec // G104: close after reading data
 		downloadMs := time.Since(downloadStart).Milliseconds()
 		if err != nil {
 			cft.sendResult(cloudFetchDownloadTaskResult{data: nil, err: err})
@@ -369,11 +373,18 @@ func logCloudFetchSpeed(fullURL string, contentLength int64, duration time.Durat
 }
 
 // fetchBatchBytes downloads a single Cloud Fetch result link from object
-// storage. Transient failures — connection errors and HTTP 408/429/500/502/503/504
-// from S3-style endpoints — are retried up to retryMax times with exponential
-// backoff and equal jitter. Link expiry is rechecked before every attempt: a
-// long retry chain can outlive a presigned URL, and continuing past expiry is
-// guaranteed to fail.
+// storage and returns the raw (still-compressed, if any) response body
+// buffered in memory. Both connection-time failures and mid-stream body-read
+// failures are retried up to retryMax times with exponential backoff and
+// equal jitter, alongside HTTP 408/429/500/502/503/504. The body read
+// happens inside the retry loop on purpose: with multi-MB S3 objects, a TCP
+// RST or truncated response surfaces as an io.ReadAll error *after* the
+// 200 OK headers have already arrived, and that's exactly the failure mode
+// the customer hits at scale. Decompression and IPC parsing are left to the
+// caller — those errors aren't transient, so retrying them is wasted work.
+//
+// Link expiry is rechecked after each backoff: a long retry chain may outlive
+// a presigned URL, and continuing past expiry is guaranteed to fail.
 func fetchBatchBytes(
 	ctx context.Context,
 	link *cli_service.TSparkArrowResultLink,
@@ -383,7 +394,7 @@ func fetchBatchBytes(
 	retryMax int,
 	retryWaitMin time.Duration,
 	retryWaitMax time.Duration,
-) (io.ReadCloser, error) {
+) (io.Reader, error) {
 	if retryMax < 0 {
 		retryMax = 0
 	}
@@ -440,8 +451,23 @@ func fetchBatchBytes(
 		}
 
 		if res.StatusCode == http.StatusOK {
-			logCloudFetchSpeed(link.FileLink, res.ContentLength, time.Since(startTime), speedThresholdMbps)
-			return res.Body, nil
+			// Drain the full body inside the retry loop so a mid-stream
+			// failure (TCP RST, S3 cutting the connection partway through a
+			// multi-MB object, server-claimed Content-Length not delivered)
+			// is retried just like a header-time error.
+			buf, readErr := io.ReadAll(res.Body)
+			res.Body.Close() //nolint:errcheck,gosec // G104: close after drain
+			if readErr != nil {
+				if ctx.Err() != nil {
+					return nil, ctx.Err()
+				}
+				lastErr = readErr
+				lastStatus = 0
+				lastRetryAfter = ""
+				continue
+			}
+			logCloudFetchSpeed(link.FileLink, int64(len(buf)), time.Since(startTime), speedThresholdMbps)
+			return bytes.NewReader(buf), nil
 		}
 
 		// Drain and close so the underlying connection can be reused.

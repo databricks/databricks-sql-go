@@ -396,6 +396,121 @@ func TestCloudFetchIterator(t *testing.T) {
 		assert.Equal(t, int32(3), atomic.LoadInt32(&attempts), "expected 2 retries before success")
 	})
 
+	t.Run("should retry mid-stream body read failures (200 OK then connection drop)", func(t *testing.T) {
+		// Reproduces the gap closed by ES-1892645 review feedback: a 200 OK
+		// response whose body is truncated mid-stream must be retried, not
+		// surfaced as a hard failure. With multi-MB S3 objects this is the
+		// dominant transient mode (TCP RST during streaming, S3 cutting the
+		// connection partway), and is invisible to the status-code check.
+		var attempts int32
+		realBody := generateMockArrowBytes(generateArrowRecord())
+		handler = func(w http.ResponseWriter, r *http.Request) {
+			n := atomic.AddInt32(&attempts, 1)
+			if n == 1 {
+				// Hijack so we can write a 200 OK with a Content-Length we
+				// will deliberately under-fulfill, then close the TCP
+				// connection. The client's io.ReadAll surfaces this as
+				// ErrUnexpectedEOF.
+				hj, ok := w.(http.Hijacker)
+				if !ok {
+					t.Fatal("ResponseWriter does not support Hijacker")
+					return
+				}
+				conn, bufrw, err := hj.Hijack()
+				if err != nil {
+					t.Fatal(err)
+					return
+				}
+				_, _ = fmt.Fprintf(bufrw, "HTTP/1.1 200 OK\r\nContent-Length: 1000000\r\nConnection: close\r\n\r\n")
+				_, _ = bufrw.Write([]byte("partial"))
+				_ = bufrw.Flush()
+				_ = conn.Close()
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+			if _, err := w.Write(realBody); err != nil {
+				panic(err)
+			}
+		}
+
+		startRowOffset := int64(100)
+		cfg := config.WithDefaults()
+		cfg.UseLz4Compression = false
+		cfg.MaxDownloadThreads = 1
+		cfg.RetryMax = 4
+		cfg.RetryWaitMin = 1 * time.Millisecond
+		cfg.RetryWaitMax = 5 * time.Millisecond
+
+		bi, err := NewCloudBatchIterator(
+			context.Background(),
+			[]*cli_service.TSparkArrowResultLink{{
+				FileLink:       server.URL,
+				ExpiryTime:     time.Now().Add(10 * time.Minute).Unix(),
+				StartRowOffset: startRowOffset,
+				RowCount:       1,
+			}},
+			startRowOffset,
+			nil,
+			cfg,
+			nil,
+		)
+		assert.Nil(t, err)
+
+		sab, nextErr := bi.Next()
+		assert.Nil(t, nextErr)
+		assert.NotNil(t, sab)
+		assert.Equal(t, int32(2), atomic.LoadInt32(&attempts), "expected first attempt to fail mid-stream, second to succeed")
+	})
+
+	t.Run("should fail after exhausting retries on persistent body-read failures", func(t *testing.T) {
+		var attempts int32
+		handler = func(w http.ResponseWriter, r *http.Request) {
+			atomic.AddInt32(&attempts, 1)
+			hj, ok := w.(http.Hijacker)
+			if !ok {
+				t.Fatal("ResponseWriter does not support Hijacker")
+				return
+			}
+			conn, bufrw, err := hj.Hijack()
+			if err != nil {
+				t.Fatal(err)
+				return
+			}
+			_, _ = fmt.Fprintf(bufrw, "HTTP/1.1 200 OK\r\nContent-Length: 1000000\r\nConnection: close\r\n\r\n")
+			_ = bufrw.Flush()
+			_ = conn.Close()
+		}
+
+		startRowOffset := int64(100)
+		cfg := config.WithDefaults()
+		cfg.UseLz4Compression = false
+		cfg.MaxDownloadThreads = 1
+		cfg.RetryMax = 2
+		cfg.RetryWaitMin = 1 * time.Millisecond
+		cfg.RetryWaitMax = 5 * time.Millisecond
+
+		bi, err := NewCloudBatchIterator(
+			context.Background(),
+			[]*cli_service.TSparkArrowResultLink{{
+				FileLink:       server.URL,
+				ExpiryTime:     time.Now().Add(10 * time.Minute).Unix(),
+				StartRowOffset: startRowOffset,
+				RowCount:       1,
+			}},
+			startRowOffset,
+			nil,
+			cfg,
+			nil,
+		)
+		assert.Nil(t, err)
+
+		_, nextErr := bi.Next()
+		assert.NotNil(t, nextErr)
+		assert.ErrorContains(t, nextErr, "after 2 retries")
+		// initial attempt + RetryMax retries
+		assert.Equal(t, int32(3), atomic.LoadInt32(&attempts))
+	})
+
 	t.Run("should retry transient HTTP 500 and eventually succeed", func(t *testing.T) {
 		var attempts int32
 		handler = func(w http.ResponseWriter, r *http.Request) {
@@ -516,11 +631,14 @@ func TestCloudFetchIterator(t *testing.T) {
 	})
 
 	t.Run("should detect link expiry between retries", func(t *testing.T) {
-		// First attempt sees a not-yet-expired link, gets 503, sleeps. The
-		// retry sleep (≥ retryWaitMin/2 = 1s with equal jitter) crosses a
-		// Unix-second boundary, so the second iteration finds the link
-		// expired and short-circuits. We expect exactly one HTTP attempt
-		// followed by ErrLinkExpired — not all retries exhausted.
+		// Time math: ExpiryTime = floor(now)+1 (via .Add(time.Second).Unix())
+		// gives ~1s of guaranteed headroom on attempt 0, so even with
+		// realistic CI scheduling delay the first expiry check passes and
+		// the first HTTP attempt fires. waitMin=4s → equal jitter sleeps
+		// in [2s, 4s); 2s is enough to push floor(now) strictly past the
+		// expiry on attempt 1 regardless of where t0 sat in its second.
+		// Trades ~2-4s of wall clock for determinism — see ES-1892645
+		// review feedback.
 		var attempts int32
 		handler = func(w http.ResponseWriter, r *http.Request) {
 			atomic.AddInt32(&attempts, 1)
@@ -532,16 +650,14 @@ func TestCloudFetchIterator(t *testing.T) {
 		cfg.UseLz4Compression = false
 		cfg.MaxDownloadThreads = 1
 		cfg.RetryMax = 5
-		// waitMin=2s → equal jitter gives sleep ∈ [1s, 2s), guaranteed to
-		// cross at least one Unix-second tick.
-		cfg.RetryWaitMin = 2 * time.Second
-		cfg.RetryWaitMax = 4 * time.Second
+		cfg.RetryWaitMin = 4 * time.Second
+		cfg.RetryWaitMax = 8 * time.Second
 
 		bi, err := NewCloudBatchIterator(
 			context.Background(),
 			[]*cli_service.TSparkArrowResultLink{{
 				FileLink:       server.URL,
-				ExpiryTime:     time.Now().Unix(), // floor(now); expires within the next second
+				ExpiryTime:     time.Now().Add(time.Second).Unix(),
 				StartRowOffset: startRowOffset,
 				RowCount:       1,
 			}},
@@ -555,7 +671,8 @@ func TestCloudFetchIterator(t *testing.T) {
 		_, nextErr := bi.Next()
 		assert.NotNil(t, nextErr)
 		assert.ErrorContains(t, nextErr, dbsqlerr.ErrLinkExpired)
-		// Only the first attempt should have hit the server.
+		// Only the first attempt should have hit the server — the second
+		// iteration short-circuits on the post-backoff expiry check.
 		assert.Equal(t, int32(1), atomic.LoadInt32(&attempts))
 	})
 
