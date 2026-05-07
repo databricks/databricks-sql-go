@@ -33,6 +33,26 @@ func TestCloudFetchIterator(t *testing.T) {
 	}))
 	defer server.Close()
 
+	writeTruncatedOK := func(t *testing.T, w http.ResponseWriter, body []byte) {
+		t.Helper()
+		hj, ok := w.(http.Hijacker)
+		if !ok {
+			t.Errorf("ResponseWriter does not support Hijacker")
+			return
+		}
+		conn, bufrw, err := hj.Hijack()
+		if err != nil {
+			t.Errorf("hijack failed: %v", err)
+			return
+		}
+		_, _ = fmt.Fprintf(bufrw, "HTTP/1.1 200 OK\r\nContent-Length: 1000000\r\nConnection: close\r\n\r\n")
+		if len(body) > 0 {
+			_, _ = bufrw.Write(body)
+		}
+		_ = bufrw.Flush()
+		_ = conn.Close()
+	}
+
 	t.Run("should fetch all the links", func(t *testing.T) {
 		cloudFetchHeaders := map[string]string{
 			"foo": "bar",
@@ -347,11 +367,6 @@ func TestCloudFetchIterator(t *testing.T) {
 		assert.NotNil(t, sab)
 	})
 
-	// ES-1892645: Cloud Fetch must retry transient S3 errors. Without retry,
-	// a single 503 SlowDown (which AWS guarantees will occur with non-trivial
-	// frequency on large result sets) aborts the entire query. The downstream
-	// customer hit this on queries with 3,800-6,000 result files.
-
 	t.Run("should retry transient HTTP 503 and eventually succeed", func(t *testing.T) {
 		var attempts int32
 		handler = func(w http.ResponseWriter, r *http.Request) {
@@ -397,34 +412,12 @@ func TestCloudFetchIterator(t *testing.T) {
 	})
 
 	t.Run("should retry mid-stream body read failures (200 OK then connection drop)", func(t *testing.T) {
-		// Reproduces the gap closed by ES-1892645 review feedback: a 200 OK
-		// response whose body is truncated mid-stream must be retried, not
-		// surfaced as a hard failure. With multi-MB S3 objects this is the
-		// dominant transient mode (TCP RST during streaming, S3 cutting the
-		// connection partway), and is invisible to the status-code check.
 		var attempts int32
 		realBody := generateMockArrowBytes(generateArrowRecord())
 		handler = func(w http.ResponseWriter, r *http.Request) {
 			n := atomic.AddInt32(&attempts, 1)
 			if n == 1 {
-				// Hijack so we can write a 200 OK with a Content-Length we
-				// will deliberately under-fulfill, then close the TCP
-				// connection. The client's io.ReadAll surfaces this as
-				// ErrUnexpectedEOF.
-				hj, ok := w.(http.Hijacker)
-				if !ok {
-					t.Fatal("ResponseWriter does not support Hijacker")
-					return
-				}
-				conn, bufrw, err := hj.Hijack()
-				if err != nil {
-					t.Fatal(err)
-					return
-				}
-				_, _ = fmt.Fprintf(bufrw, "HTTP/1.1 200 OK\r\nContent-Length: 1000000\r\nConnection: close\r\n\r\n")
-				_, _ = bufrw.Write([]byte("partial"))
-				_ = bufrw.Flush()
-				_ = conn.Close()
+				writeTruncatedOK(t, w, []byte("partial"))
 				return
 			}
 			w.WriteHeader(http.StatusOK)
@@ -466,19 +459,7 @@ func TestCloudFetchIterator(t *testing.T) {
 		var attempts int32
 		handler = func(w http.ResponseWriter, r *http.Request) {
 			atomic.AddInt32(&attempts, 1)
-			hj, ok := w.(http.Hijacker)
-			if !ok {
-				t.Fatal("ResponseWriter does not support Hijacker")
-				return
-			}
-			conn, bufrw, err := hj.Hijack()
-			if err != nil {
-				t.Fatal(err)
-				return
-			}
-			_, _ = fmt.Fprintf(bufrw, "HTTP/1.1 200 OK\r\nContent-Length: 1000000\r\nConnection: close\r\n\r\n")
-			_ = bufrw.Flush()
-			_ = conn.Close()
+			writeTruncatedOK(t, w, nil)
 		}
 
 		startRowOffset := int64(100)
@@ -631,17 +612,10 @@ func TestCloudFetchIterator(t *testing.T) {
 	})
 
 	t.Run("should detect link expiry between retries", func(t *testing.T) {
-		// Time math: ExpiryTime = floor(now)+1 (via .Add(time.Second).Unix())
-		// gives ~1s of guaranteed headroom on attempt 0, so even with
-		// realistic CI scheduling delay the first expiry check passes and
-		// the first HTTP attempt fires. waitMin=4s → equal jitter sleeps
-		// in [2s, 4s); 2s is enough to push floor(now) strictly past the
-		// expiry on attempt 1 regardless of where t0 sat in its second.
-		// Trades ~2-4s of wall clock for determinism — see ES-1892645
-		// review feedback.
 		var attempts int32
 		handler = func(w http.ResponseWriter, r *http.Request) {
 			atomic.AddInt32(&attempts, 1)
+			w.Header().Set("Retry-After", "3")
 			w.WriteHeader(http.StatusServiceUnavailable)
 		}
 
@@ -650,14 +624,15 @@ func TestCloudFetchIterator(t *testing.T) {
 		cfg.UseLz4Compression = false
 		cfg.MaxDownloadThreads = 1
 		cfg.RetryMax = 5
-		cfg.RetryWaitMin = 4 * time.Second
-		cfg.RetryWaitMax = 8 * time.Second
+		cfg.RetryWaitMin = 1 * time.Millisecond
+		cfg.RetryWaitMax = 3 * time.Second
+		expiryTime := time.Now().Unix() + 2
 
 		bi, err := NewCloudBatchIterator(
 			context.Background(),
 			[]*cli_service.TSparkArrowResultLink{{
 				FileLink:       server.URL,
-				ExpiryTime:     time.Now().Add(time.Second).Unix(),
+				ExpiryTime:     expiryTime,
 				StartRowOffset: startRowOffset,
 				RowCount:       1,
 			}},
@@ -671,8 +646,7 @@ func TestCloudFetchIterator(t *testing.T) {
 		_, nextErr := bi.Next()
 		assert.NotNil(t, nextErr)
 		assert.ErrorContains(t, nextErr, dbsqlerr.ErrLinkExpired)
-		// Only the first attempt should have hit the server — the second
-		// iteration short-circuits on the post-backoff expiry check.
+		// The retry sleeps past expiry, then short-circuits before another GET.
 		assert.Equal(t, int32(1), atomic.LoadInt32(&attempts))
 	})
 
@@ -1119,6 +1093,116 @@ func TestCloudFetchIterator_CloseReleasesInFlightDownloads(t *testing.T) {
 		return countDownloadTaskGoroutines() == 0
 	}, 5*time.Second, 50*time.Millisecond,
 		"cloudFetchDownloadTask goroutines leaked after Close: have %d",
+		countDownloadTaskGoroutines())
+}
+
+// TestCloudFetchIterator_CloseReleasesAfterRetry is the retry-path counterpart
+// to TestCloudFetchIterator_CloseReleasesInFlightDownloads. PR #355 added
+// HTTP retry to fetchBatchBytes, materially lengthening the window during
+// which a download task can produce a result after the iterator has been
+// closed. The result-send must therefore go through cft.sendResult so the
+// ctx.Done arm fires and the goroutine exits; a regression that routes the
+// final result back through `cft.resultChan <-` (e.g. a sloppy merge of
+// #355 onto pre-#357 main) blocks forever and pins the buffered Arrow body
+// in the heap.
+//
+// The server flaps once (503 then 200) to force the retry path so the task
+// produces its result after at least one backoff. The first task's result
+// is consumed by the foreground Next(); the remaining MaxDownloadThreads-1
+// tasks have queued results that nobody is reading. bi.Close() must release
+// them.
+func TestCloudFetchIterator_CloseReleasesAfterRetry(t *testing.T) {
+	arrowBytes := generateMockArrowBytes(generateArrowRecord())
+
+	// Each link is requested at most twice: first attempt returns 503,
+	// second returns the body. Tracked per-link via a map keyed on the
+	// link's StartRowOffset so MaxDownloadThreads parallel requests stay
+	// independent.
+	var mu sync.Mutex
+	attempts := map[string]int{}
+	var inFlightSecond atomic.Int64
+	release := make(chan struct{})
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Use the query string injected per-link below as the key.
+		key := r.URL.RawQuery
+		mu.Lock()
+		attempts[key]++
+		n := attempts[key]
+		mu.Unlock()
+
+		if n == 1 {
+			// First attempt: serve a retryable 503 so the task enters the
+			// retry/backoff path.
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		// Second attempt: block until the test releases, then return
+		// success. The block lets us observe all MaxDownloadThreads tasks
+		// having made it past the retry and parked on the channel send.
+		inFlightSecond.Add(1)
+		<-release
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(arrowBytes)
+	}))
+	defer server.Close()
+
+	const nLinks = 20
+	links := make([]*cli_service.TSparkArrowResultLink, nLinks)
+	for i := range links {
+		links[i] = &cli_service.TSparkArrowResultLink{
+			// Unique query string per link so the server's per-link
+			// attempt counter doesn't conflate parallel requests.
+			FileLink:       fmt.Sprintf("%s/?id=%d", server.URL, i),
+			ExpiryTime:     time.Now().Add(10 * time.Minute).Unix(),
+			StartRowOffset: int64(i),
+			RowCount:       1,
+		}
+	}
+
+	cfg := config.WithDefaults()
+	cfg.UseLz4Compression = false
+	cfg.MaxDownloadThreads = 10
+	// Backoff is observable but short — the test should still complete in
+	// well under a second.
+	cfg.RetryMax = 3
+	cfg.RetryWaitMin = 10 * time.Millisecond
+	cfg.RetryWaitMax = 50 * time.Millisecond
+
+	bi, err := NewCloudBatchIterator(context.Background(), links, 0, nil, cfg, nil)
+	assert.Nil(t, err)
+
+	// One foreground reader. It drains exactly one batch and then exits;
+	// the remaining MaxDownloadThreads-1 in-flight tasks have nobody reading.
+	go func() { _, _ = bi.Next() }()
+
+	// Wait for every concurrent task to have completed its 503 retry, slept
+	// the backoff, and reached its second-attempt handler (where it's
+	// parked waiting for the release channel).
+	assert.Eventually(t, func() bool {
+		return inFlightSecond.Load() == int64(cfg.MaxDownloadThreads)
+	}, 5*time.Second, 10*time.Millisecond,
+		"expected %d second-attempt requests, got %d",
+		cfg.MaxDownloadThreads, inFlightSecond.Load())
+
+	// Release: every task now finishes its successful HTTP read and
+	// attempts to send its result. The foreground Next() consumes one;
+	// the rest are queued in cloudIPCStreamIterator.downloadTasks and the
+	// goroutines park on resultChan (via sendResult).
+	close(release)
+
+	// Give the goroutines time to reach the channel send.
+	time.Sleep(200 * time.Millisecond)
+
+	// Close without draining. cft.ctx is cancelled for every queued task,
+	// so each parked sendResult must unblock via its ctx.Done arm.
+	bi.Close()
+
+	// All cloudFetchDownloadTask.Run goroutines must exit.
+	assert.Eventually(t, func() bool {
+		return countDownloadTaskGoroutines() == 0
+	}, 5*time.Second, 50*time.Millisecond,
+		"cloudFetchDownloadTask goroutines leaked after Close on retry path: have %d",
 		countDownloadTaskGoroutines())
 }
 
