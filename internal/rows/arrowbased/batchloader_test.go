@@ -346,6 +346,325 @@ func TestCloudFetchIterator(t *testing.T) {
 		assert.Nil(t, nextErr)
 		assert.NotNil(t, sab)
 	})
+
+	// ES-1892645: Cloud Fetch must retry transient S3 errors. Without retry,
+	// a single 503 SlowDown (which AWS guarantees will occur with non-trivial
+	// frequency on large result sets) aborts the entire query. The downstream
+	// customer hit this on queries with 3,800-6,000 result files.
+
+	t.Run("should retry transient HTTP 503 and eventually succeed", func(t *testing.T) {
+		var attempts int32
+		handler = func(w http.ResponseWriter, r *http.Request) {
+			n := atomic.AddInt32(&attempts, 1)
+			if n < 3 {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+			_, err := w.Write(generateMockArrowBytes(generateArrowRecord()))
+			if err != nil {
+				panic(err)
+			}
+		}
+
+		startRowOffset := int64(100)
+		cfg := config.WithDefaults()
+		cfg.UseLz4Compression = false
+		cfg.MaxDownloadThreads = 1
+		cfg.RetryMax = 4
+		cfg.RetryWaitMin = 1 * time.Millisecond
+		cfg.RetryWaitMax = 5 * time.Millisecond
+
+		bi, err := NewCloudBatchIterator(
+			context.Background(),
+			[]*cli_service.TSparkArrowResultLink{{
+				FileLink:       server.URL,
+				ExpiryTime:     time.Now().Add(10 * time.Minute).Unix(),
+				StartRowOffset: startRowOffset,
+				RowCount:       1,
+			}},
+			startRowOffset,
+			nil,
+			cfg,
+			nil,
+		)
+		assert.Nil(t, err)
+
+		sab, nextErr := bi.Next()
+		assert.Nil(t, nextErr)
+		assert.NotNil(t, sab)
+		assert.Equal(t, int32(3), atomic.LoadInt32(&attempts), "expected 2 retries before success")
+	})
+
+	t.Run("should retry transient HTTP 500 and eventually succeed", func(t *testing.T) {
+		var attempts int32
+		handler = func(w http.ResponseWriter, r *http.Request) {
+			n := atomic.AddInt32(&attempts, 1)
+			if n < 2 {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+			_, err := w.Write(generateMockArrowBytes(generateArrowRecord()))
+			if err != nil {
+				panic(err)
+			}
+		}
+
+		startRowOffset := int64(100)
+		cfg := config.WithDefaults()
+		cfg.UseLz4Compression = false
+		cfg.MaxDownloadThreads = 1
+		cfg.RetryMax = 4
+		cfg.RetryWaitMin = 1 * time.Millisecond
+		cfg.RetryWaitMax = 5 * time.Millisecond
+
+		bi, err := NewCloudBatchIterator(
+			context.Background(),
+			[]*cli_service.TSparkArrowResultLink{{
+				FileLink:       server.URL,
+				ExpiryTime:     time.Now().Add(10 * time.Minute).Unix(),
+				StartRowOffset: startRowOffset,
+				RowCount:       1,
+			}},
+			startRowOffset,
+			nil,
+			cfg,
+			nil,
+		)
+		assert.Nil(t, err)
+
+		sab, nextErr := bi.Next()
+		assert.Nil(t, nextErr)
+		assert.NotNil(t, sab)
+		assert.Equal(t, int32(2), atomic.LoadInt32(&attempts))
+	})
+
+	t.Run("should fail after exhausting retries on persistent 503", func(t *testing.T) {
+		var attempts int32
+		handler = func(w http.ResponseWriter, r *http.Request) {
+			atomic.AddInt32(&attempts, 1)
+			w.WriteHeader(http.StatusServiceUnavailable)
+		}
+
+		startRowOffset := int64(100)
+		cfg := config.WithDefaults()
+		cfg.UseLz4Compression = false
+		cfg.MaxDownloadThreads = 1
+		cfg.RetryMax = 2
+		cfg.RetryWaitMin = 1 * time.Millisecond
+		cfg.RetryWaitMax = 5 * time.Millisecond
+
+		bi, err := NewCloudBatchIterator(
+			context.Background(),
+			[]*cli_service.TSparkArrowResultLink{{
+				FileLink:       server.URL,
+				ExpiryTime:     time.Now().Add(10 * time.Minute).Unix(),
+				StartRowOffset: startRowOffset,
+				RowCount:       1,
+			}},
+			startRowOffset,
+			nil,
+			cfg,
+			nil,
+		)
+		assert.Nil(t, err)
+
+		_, nextErr := bi.Next()
+		assert.NotNil(t, nextErr)
+		assert.ErrorContains(t, nextErr, fmt.Sprintf("HTTP error %d", http.StatusServiceUnavailable))
+		assert.ErrorContains(t, nextErr, "after 2 retries")
+		// initial attempt + RetryMax retries
+		assert.Equal(t, int32(3), atomic.LoadInt32(&attempts))
+	})
+
+	t.Run("should not retry on non-retryable status (403)", func(t *testing.T) {
+		var attempts int32
+		handler = func(w http.ResponseWriter, r *http.Request) {
+			atomic.AddInt32(&attempts, 1)
+			w.WriteHeader(http.StatusForbidden)
+		}
+
+		startRowOffset := int64(100)
+		cfg := config.WithDefaults()
+		cfg.UseLz4Compression = false
+		cfg.MaxDownloadThreads = 1
+		cfg.RetryMax = 5
+		cfg.RetryWaitMin = 1 * time.Millisecond
+		cfg.RetryWaitMax = 5 * time.Millisecond
+
+		bi, err := NewCloudBatchIterator(
+			context.Background(),
+			[]*cli_service.TSparkArrowResultLink{{
+				FileLink:       server.URL,
+				ExpiryTime:     time.Now().Add(10 * time.Minute).Unix(),
+				StartRowOffset: startRowOffset,
+				RowCount:       1,
+			}},
+			startRowOffset,
+			nil,
+			cfg,
+			nil,
+		)
+		assert.Nil(t, err)
+
+		_, nextErr := bi.Next()
+		assert.NotNil(t, nextErr)
+		assert.ErrorContains(t, nextErr, fmt.Sprintf("HTTP error %d", http.StatusForbidden))
+		assert.NotContains(t, nextErr.Error(), "after")
+		assert.Equal(t, int32(1), atomic.LoadInt32(&attempts), "non-retryable status must fail on first attempt")
+	})
+
+	t.Run("should detect link expiry between retries", func(t *testing.T) {
+		// First attempt sees a not-yet-expired link, gets 503, sleeps. The
+		// retry sleep (≥ retryWaitMin/2 = 1s with equal jitter) crosses a
+		// Unix-second boundary, so the second iteration finds the link
+		// expired and short-circuits. We expect exactly one HTTP attempt
+		// followed by ErrLinkExpired — not all retries exhausted.
+		var attempts int32
+		handler = func(w http.ResponseWriter, r *http.Request) {
+			atomic.AddInt32(&attempts, 1)
+			w.WriteHeader(http.StatusServiceUnavailable)
+		}
+
+		startRowOffset := int64(100)
+		cfg := config.WithDefaults()
+		cfg.UseLz4Compression = false
+		cfg.MaxDownloadThreads = 1
+		cfg.RetryMax = 5
+		// waitMin=2s → equal jitter gives sleep ∈ [1s, 2s), guaranteed to
+		// cross at least one Unix-second tick.
+		cfg.RetryWaitMin = 2 * time.Second
+		cfg.RetryWaitMax = 4 * time.Second
+
+		bi, err := NewCloudBatchIterator(
+			context.Background(),
+			[]*cli_service.TSparkArrowResultLink{{
+				FileLink:       server.URL,
+				ExpiryTime:     time.Now().Unix(), // floor(now); expires within the next second
+				StartRowOffset: startRowOffset,
+				RowCount:       1,
+			}},
+			startRowOffset,
+			nil,
+			cfg,
+			nil,
+		)
+		assert.Nil(t, err)
+
+		_, nextErr := bi.Next()
+		assert.NotNil(t, nextErr)
+		assert.ErrorContains(t, nextErr, dbsqlerr.ErrLinkExpired)
+		// Only the first attempt should have hit the server.
+		assert.Equal(t, int32(1), atomic.LoadInt32(&attempts))
+	})
+
+	t.Run("should respect context cancellation during backoff", func(t *testing.T) {
+		var attempts int32
+		handler = func(w http.ResponseWriter, r *http.Request) {
+			atomic.AddInt32(&attempts, 1)
+			w.WriteHeader(http.StatusServiceUnavailable)
+		}
+
+		startRowOffset := int64(100)
+		cfg := config.WithDefaults()
+		cfg.UseLz4Compression = false
+		cfg.MaxDownloadThreads = 1
+		cfg.RetryMax = 5
+		cfg.RetryWaitMin = 500 * time.Millisecond
+		cfg.RetryWaitMax = 1 * time.Second
+
+		ctx, cancel := context.WithCancel(context.Background())
+		go func() {
+			time.Sleep(50 * time.Millisecond)
+			cancel()
+		}()
+
+		bi, err := NewCloudBatchIterator(
+			ctx,
+			[]*cli_service.TSparkArrowResultLink{{
+				FileLink:       server.URL,
+				ExpiryTime:     time.Now().Add(10 * time.Minute).Unix(),
+				StartRowOffset: startRowOffset,
+				RowCount:       1,
+			}},
+			startRowOffset,
+			nil,
+			cfg,
+			nil,
+		)
+		assert.Nil(t, err)
+
+		started := time.Now()
+		_, nextErr := bi.Next()
+		elapsed := time.Since(started)
+
+		assert.NotNil(t, nextErr)
+		// Cancellation should land well before all retries would otherwise complete
+		// (5 * 500ms+ = 2.5s+ minimum without cancel).
+		assert.Less(t, elapsed, 1*time.Second, "context cancel should abort retry backoff promptly")
+	})
+}
+
+func TestCloudFetchBackoff(t *testing.T) {
+	t.Run("retry-after integer seconds is honored", func(t *testing.T) {
+		got := cloudFetchBackoff(1, 100*time.Millisecond, 60*time.Second, "2")
+		assert.Equal(t, 2*time.Second, got)
+	})
+
+	t.Run("retry-after is capped at waitMax", func(t *testing.T) {
+		got := cloudFetchBackoff(1, 100*time.Millisecond, 1*time.Second, "100")
+		assert.Equal(t, 1*time.Second, got)
+	})
+
+	t.Run("retry-after http-date is ignored, falls back to exponential", func(t *testing.T) {
+		minWait := 100 * time.Millisecond
+		got := cloudFetchBackoff(1, minWait, 10*time.Second, "Tue, 15 Nov 1994 08:12:31 GMT")
+		// attempt=1 base = minWait; equal jitter in [minWait/2, minWait]
+		assert.GreaterOrEqual(t, got, minWait/2)
+		assert.LessOrEqual(t, got, minWait)
+	})
+
+	t.Run("exponential is capped at waitMax", func(t *testing.T) {
+		maxWait := 200 * time.Millisecond
+		// 100ms * 2^9 = 51200ms, capped at 200ms; equal jitter -> [100ms, 200ms]
+		for i := 0; i < 50; i++ {
+			got := cloudFetchBackoff(10, 100*time.Millisecond, maxWait, "")
+			assert.GreaterOrEqual(t, got, maxWait/2)
+			assert.LessOrEqual(t, got, maxWait)
+		}
+	})
+
+	t.Run("base grows exponentially with attempt", func(t *testing.T) {
+		minWait, maxWait := 100*time.Millisecond, 10*time.Second
+		// attempt=1 -> base 100ms,  jitter [50ms,100ms]
+		// attempt=3 -> base 400ms,  jitter [200ms,400ms]
+		for i := 0; i < 50; i++ {
+			got1 := cloudFetchBackoff(1, minWait, maxWait, "")
+			got3 := cloudFetchBackoff(3, minWait, maxWait, "")
+			assert.GreaterOrEqual(t, got1, 50*time.Millisecond)
+			assert.LessOrEqual(t, got1, 100*time.Millisecond)
+			assert.GreaterOrEqual(t, got3, 200*time.Millisecond)
+			assert.LessOrEqual(t, got3, 400*time.Millisecond)
+		}
+	})
+
+	t.Run("zero waitMin returns zero", func(t *testing.T) {
+		got := cloudFetchBackoff(1, 0, 0, "")
+		assert.Equal(t, time.Duration(0), got)
+	})
+}
+
+func TestCloudFetchRetryableStatus(t *testing.T) {
+	retryable := []int{408, 429, 500, 502, 503, 504}
+	notRetryable := []int{200, 201, 301, 302, 400, 401, 403, 404, 409, 410, 501}
+
+	for _, s := range retryable {
+		assert.True(t, isCloudFetchRetryableStatus(s), "%d should be retryable", s)
+	}
+	for _, s := range notRetryable {
+		assert.False(t, isCloudFetchRetryableStatus(s), "%d should not be retryable", s)
+	}
 }
 
 func TestCloudFetchSchemaOverride(t *testing.T) {
