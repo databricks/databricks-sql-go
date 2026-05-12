@@ -297,7 +297,7 @@ func (cft *cloudFetchDownloadTask) Run() {
 		downloadStart := time.Now()
 		data, err := fetchBatchBytes(cft.ctx, cft.link, cft.minTimeToExpiry, cft.speedThresholdMbps, cft.httpClient)
 		if err != nil {
-			cft.resultChan <- cloudFetchDownloadTaskResult{data: nil, err: err}
+			cft.sendResult(cloudFetchDownloadTaskResult{data: nil, err: err})
 			return
 		}
 
@@ -306,7 +306,7 @@ func (cft *cloudFetchDownloadTask) Run() {
 		data.Close() //nolint:errcheck,gosec // G104: close after reading data
 		downloadMs := time.Since(downloadStart).Milliseconds()
 		if err != nil {
-			cft.resultChan <- cloudFetchDownloadTaskResult{data: nil, err: err}
+			cft.sendResult(cloudFetchDownloadTaskResult{data: nil, err: err})
 			return
 		}
 
@@ -316,8 +316,19 @@ func (cft *cloudFetchDownloadTask) Run() {
 			cft.link.RowCount,
 		)
 
-		cft.resultChan <- cloudFetchDownloadTaskResult{data: bytes.NewReader(buf), err: nil, downloadMs: downloadMs}
+		cft.sendResult(cloudFetchDownloadTaskResult{data: bytes.NewReader(buf), err: nil, downloadMs: downloadMs})
 	}()
+}
+
+// sendResult delivers the download result to the consumer, but drops it if the
+// task's context has already been cancelled. Without this guard, a goroutine
+// that finishes its work after the iterator is closed blocks forever on the
+// unbuffered resultChan and pins the downloaded buffer in the heap (issue #356).
+func (cft *cloudFetchDownloadTask) sendResult(result cloudFetchDownloadTaskResult) {
+	select {
+	case cft.resultChan <- result:
+	case <-cft.ctx.Done():
+	}
 }
 
 // logCloudFetchSpeed calculates and logs download speed metrics
