@@ -51,9 +51,10 @@ type circuitBreaker struct {
 	halfOpenSuccesses int
 
 	// retryAfterHint, if non-zero, overrides waitDurationInOpenState for
-	// the next open-state interval. Populated from server-provided
+	// the current open-state interval. Populated from server-provided
 	// Retry-After headers on 429 responses; cleared when the breaker
-	// transitions to half-open or closed.
+	// transitions out of Open (to half-open after the wait elapses, or
+	// to closed via half-open success).
 	retryAfterHint time.Duration
 
 	config circuitBreakerConfig
@@ -110,17 +111,22 @@ func (cb *circuitBreaker) execute(ctx context.Context, fn func() error) error {
 		// Check if wait duration has passed. If the server hinted a
 		// Retry-After on the failure that opened the breaker, honor the
 		// larger of (configured wait, server hint).
-		cb.mu.RLock()
+		cb.mu.Lock()
 		wait := cb.config.waitDurationInOpenState
 		if cb.retryAfterHint > wait {
 			wait = cb.retryAfterHint
 		}
 		shouldRetry := time.Since(cb.lastStateTime) > wait
-		cb.mu.RUnlock()
+		if shouldRetry {
+			// The wait window the hint asked for has elapsed — clear it
+			// so a later reopen (e.g. half-open failure with no new hint)
+			// doesn't extend itself by a stale duration.
+			cb.retryAfterHint = 0
+			cb.setStateUnlocked(stateHalfOpen)
+		}
+		cb.mu.Unlock()
 
 		if shouldRetry {
-			// Transition to half-open
-			cb.setState(stateHalfOpen)
 			return cb.tryExecute(ctx, fn)
 		}
 		return ErrCircuitOpen
@@ -233,10 +239,10 @@ func (cb *circuitBreaker) resetWindowUnlocked() {
 	cb.halfOpenSuccesses = 0
 }
 
-// extendOpenStateAtLeast records a server-provided Retry-After hint. The
-// next time the breaker is open, it will stay open for at least the given
-// duration (and at least waitDurationInOpenState). The hint is cleared on
-// the next half-open/closed transition.
+// extendOpenStateAtLeast records a server-provided Retry-After hint. While
+// the breaker is open, it will stay open for at least the given duration
+// (and at least waitDurationInOpenState). The hint is cleared when the
+// breaker transitions out of Open.
 //
 // Safe to call concurrently from any caller (the exporter parses
 // Retry-After on 429 responses and forwards it here).

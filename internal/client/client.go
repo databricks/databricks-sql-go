@@ -47,8 +47,11 @@ const (
 	ClientMethod contextKey = iota
 	// SkipRateLimitRetry, when set to true on the request context, makes
 	// RetryPolicy treat 429 Too Many Requests as a non-retryable response —
-	// the request returns the 429 error after a single attempt. 5xx and
-	// transport errors are unaffected and still retried.
+	// the request returns the 429 error after a single attempt. The flag
+	// is narrowly scoped to 429: 503 still retries via the
+	// isRetryableServerResponse path (which is not method-gated), and any
+	// other retry decision (generic 5xx / transport error) is governed by
+	// the request's ClientMethod as usual.
 	//
 	// Set by callers that own their own backoff for rate-limited endpoints
 	// (e.g. the telemetry exporter, whose circuit breaker requires one HTTP
@@ -59,7 +62,14 @@ const (
 // WithSkipRateLimitRetry returns a context that disables retryablehttp's
 // retry-on-429 behavior for any request issued with it. The caller takes
 // responsibility for handling rate-limit responses (e.g. via a circuit
-// breaker). 5xx responses and transport errors are still retried.
+// breaker).
+//
+// Note: this flag only affects 429. Whether 5xx generic responses
+// (500/502/504) and transport errors are retried depends on the
+// ClientMethod set on the context (see nonRetryableClientMethods).
+// Callers that do not set a ClientMethod (e.g. the telemetry exporter)
+// effectively get one-shot semantics on those failure modes; their
+// circuit breaker is expected to absorb them.
 func WithSkipRateLimitRetry(ctx context.Context) context.Context {
 	return context.WithValue(ctx, SkipRateLimitRetry, true)
 }

@@ -89,12 +89,19 @@ func (e *telemetryExporter) export(ctx context.Context, metrics []*telemetryMetr
 	}
 }
 
-// doExport sends one telemetry request. It does NOT retry — retries are
-// handled by the underlying retryablehttp-wrapped HTTP client (see
-// internal/client.RetryableClient), which already retries 429/5xx with the
-// server-provided Retry-After header. Any non-2xx outcome here is therefore
-// the *post-retry* result, and is returned to the caller so the circuit
-// breaker counts it as one failure per export.
+// doExport sends one telemetry request. It does NOT loop on retries —
+// transient-retry policy is delegated to the underlying retryablehttp-wrapped
+// HTTP client (see internal/client.RetryableClient). Telemetry contexts do
+// not set a ClientMethod, so per internal/client.RetryPolicy:
+//   - 429 → suppressed by WithSkipRateLimitRetry below; the circuit breaker
+//     handles backoff using the server's Retry-After hint.
+//   - 503 → retried by retryablehttp (isRetryableServerResponse is not gated
+//     on ClientMethod) using its configured wait policy and Retry-After.
+//   - generic 5xx (500/502/504) and transport errors → one attempt; the
+//     circuit breaker counts them as a failure per export.
+// Any non-2xx outcome reaching this function is therefore the *post-retry*
+// (or single-attempt) result, returned so the breaker observes exactly one
+// signal per export call.
 func (e *telemetryExporter) doExport(ctx context.Context, metrics []*telemetryMetric) error {
 	request, err := createTelemetryRequest(metrics, e.driverVersion)
 	if err != nil {

@@ -227,7 +227,10 @@ func (agg *metricsAggregator) completeStatement(ctx context.Context, statementID
 // from the same scheduler) does not align all their flushes on the same
 // wall-clock phase and produce synchronized request bursts.
 func (agg *metricsAggregator) flushLoop() {
-	jitter := time.Duration(rand.Int63n(int64(agg.flushInterval))) //nolint:gosec // G404: not used for security
+	var jitter time.Duration
+	if agg.flushInterval > 0 {
+		jitter = time.Duration(rand.Int63n(int64(agg.flushInterval))) //nolint:gosec // G404: not used for security
+	}
 	jitterTimer := time.NewTimer(jitter)
 	defer jitterTimer.Stop()
 	select {

@@ -104,8 +104,6 @@ type UserConfig struct {
 	EnableTelemetry          ConfigValue[bool]
 	TelemetryBatchSize       int           // 0 = use default (100)
 	TelemetryFlushInterval   time.Duration // 0 = use default (5s)
-	TelemetryRetryCount      int           // -1 = use default (3); 0 = disable retries; set via telemetry_retry_count
-	TelemetryRetryDelay      time.Duration // 0 = use default (100ms); set via telemetry_retry_delay
 	Transport                http.RoundTripper
 	UseLz4Compression        bool
 	EnableMetricViewMetadata bool
@@ -155,8 +153,6 @@ func (ucfg UserConfig) DeepCopy() UserConfig {
 		EnableTelemetry:          ucfg.EnableTelemetry,
 		TelemetryBatchSize:       ucfg.TelemetryBatchSize,
 		TelemetryFlushInterval:   ucfg.TelemetryFlushInterval,
-		TelemetryRetryCount:      ucfg.TelemetryRetryCount,
-		TelemetryRetryDelay:      ucfg.TelemetryRetryDelay,
 	}
 }
 
@@ -194,10 +190,6 @@ func (ucfg UserConfig) WithDefaults() UserConfig {
 
 	// EnableTelemetry defaults to unset (ConfigValue zero value),
 	// meaning telemetry is controlled by server feature flags.
-
-	// TelemetryRetryCount uses -1 as "not set" so that an explicit 0 from the
-	// DSN (meaning "disable retries") is distinguishable from the default.
-	ucfg.TelemetryRetryCount = -1
 
 	return ucfg
 }
@@ -322,19 +314,13 @@ func ParseDSN(dsn string) (UserConfig, error) {
 			ucfg.TelemetryFlushInterval = d
 		}
 	}
-	if retryCount, ok, err := params.extractAsInt("telemetry_retry_count"); ok {
-		if err != nil {
-			return UserConfig{}, err
-		}
-		if retryCount >= 0 {
-			ucfg.TelemetryRetryCount = retryCount
-		}
-	}
-	if retryDelay, ok := params.extract("telemetry_retry_delay"); ok {
-		if d, err := time.ParseDuration(retryDelay); err == nil && d > 0 {
-			ucfg.TelemetryRetryDelay = d
-		}
-	}
+	// telemetry_retry_count and telemetry_retry_delay are accepted for
+	// backwards compatibility but no longer applied — retries for
+	// telemetry traffic are owned by the underlying retryable HTTP
+	// client. Extract and discard the values so they don't fall through
+	// into session params below.
+	_, _, _ = params.extractAsInt("telemetry_retry_count")
+	_, _ = params.extract("telemetry_retry_delay")
 
 	// for timezone we do a case insensitive key match.
 	// We use getNoCase because we want to leave timezone in the params so that it will also
