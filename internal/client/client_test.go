@@ -217,6 +217,41 @@ func TestRetryPolicy(t *testing.T) {
 
 	})
 
+	// SkipRateLimitRetry on the context turns 429 into a non-retryable
+	// response so the caller can own its own backoff. 5xx and transport
+	// errors are unaffected — the flag is narrowly scoped to rate-limit
+	// responses.
+	//
+	// We use clientMethodOpenSession (which is a retryable method) so the
+	// generic 5xx branch fires; the default clientMethodUnknown is itself
+	// in nonRetryableClientMethods and would suppress 500 retries for an
+	// unrelated reason.
+	t.Run("SkipRateLimitRetry only affects 429", func(t *testing.T) {
+		base := context.WithValue(context.Background(), ClientMethod, clientMethodOpenSession)
+		ctx := WithSkipRateLimitRetry(base)
+
+		resp429 := &http.Response{StatusCode: http.StatusTooManyRequests}
+		retry, err := RetryPolicy(ctx, resp429, nil)
+		require.False(t, retry, "429 with SkipRateLimitRetry should not be retried")
+		require.Error(t, err, "429 should still surface an error")
+
+		// 503 is the other code isRetryableServerResponse recognizes; the
+		// flag should NOT suppress its retry.
+		resp503 := &http.Response{StatusCode: http.StatusServiceUnavailable}
+		retry, _ = RetryPolicy(ctx, resp503, nil)
+		require.True(t, retry, "503 must still retry even with SkipRateLimitRetry")
+
+		// 500 takes the generic 5xx branch — also unaffected for a
+		// retryable client method.
+		resp500 := &http.Response{StatusCode: http.StatusInternalServerError}
+		retry, _ = RetryPolicy(ctx, resp500, nil)
+		require.True(t, retry, "500 must still retry even with SkipRateLimitRetry")
+
+		// Without the flag, 429 retries as before.
+		retry, _ = RetryPolicy(base, resp429, nil)
+		require.True(t, retry, "default behavior: 429 retries")
+	})
+
 	t.Run("test handling client method errors", func(t *testing.T) {
 		cases := []struct {
 			base      string

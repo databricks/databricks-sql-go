@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/databricks/databricks-sql-go/internal/client"
 	"github.com/databricks/databricks-sql-go/logger"
 )
 
@@ -106,6 +108,11 @@ func (e *telemetryExporter) doExport(ctx context.Context, metrics []*telemetryMe
 
 	endpoint := ensureHTTPScheme(e.host) + telemetryEndpointPath
 
+	// Opt out of retryablehttp's 429 retries — the circuit breaker owns
+	// the rate-limit backoff and needs one HTTP transaction per call to
+	// trip on persistent throttling. 5xx/transport retries are unaffected.
+	ctx = client.WithSkipRateLimitRetry(ctx)
+
 	req, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewReader(data))
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
@@ -115,15 +122,44 @@ func (e *telemetryExporter) doExport(ctx context.Context, metrics []*telemetryMe
 		req.Header.Set("User-Agent", e.userAgent)
 	}
 
-	resp, err := e.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("telemetry export failed: %w", err)
-	}
-	_, _ = io.ReadAll(resp.Body)
-	resp.Body.Close() //nolint:errcheck,gosec // G104: close after response is read
+	// With SkipRateLimitRetry set, retryablehttp returns (resp, err) for a
+	// 429: a wrapped error AND the actual response. Inspect the response
+	// before short-circuiting on err so we can read Retry-After.
+	resp, doErr := e.httpClient.Do(req)
+	if resp != nil {
+		_, _ = io.ReadAll(resp.Body)
+		resp.Body.Close() //nolint:errcheck,gosec // G104: close after response is read
 
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		return nil
+		if resp.StatusCode == http.StatusTooManyRequests {
+			if hint := parseRetryAfter(resp.Header.Get("Retry-After")); hint > 0 {
+				e.circuitBreaker.extendOpenStateAtLeast(hint)
+			}
+			return fmt.Errorf("telemetry export failed: status %d", resp.StatusCode)
+		}
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			return nil
+		}
+		if doErr == nil {
+			return fmt.Errorf("telemetry export failed: status %d", resp.StatusCode)
+		}
 	}
-	return fmt.Errorf("telemetry export failed: status %d", resp.StatusCode)
+	if doErr != nil {
+		return fmt.Errorf("telemetry export failed: %w", doErr)
+	}
+	return nil
+}
+
+// parseRetryAfter parses the Retry-After header per RFC 7231. Only the
+// delta-seconds form is honored; HTTP-date is rare in practice for rate
+// limiting and we'd rather under-back-off than mis-parse. Returns 0 on
+// any failure.
+func parseRetryAfter(s string) time.Duration {
+	if s == "" {
+		return 0
+	}
+	sec, err := strconv.ParseInt(strings.TrimSpace(s), 10, 64)
+	if err != nil || sec <= 0 {
+		return 0
+	}
+	return time.Duration(sec) * time.Second
 }

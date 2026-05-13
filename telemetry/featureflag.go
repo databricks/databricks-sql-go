@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/databricks/databricks-sql-go/internal/client"
 )
 
 const (
@@ -177,6 +179,11 @@ func fetchFeatureFlag(ctx context.Context, host string, driverVersion string, us
 	// Construct endpoint URL using connector-service endpoint like JDBC
 	hostURL := ensureHTTPScheme(host)
 	endpoint := fmt.Sprintf("%s%s%s", hostURL, featureFlagEndpointPath, driverVersion)
+
+	// Feature-flag GET shares the same rate-limit group as /telemetry-ext on
+	// the server side, so a 429 here should also fail fast rather than being
+	// retried 5× by retryablehttp.
+	ctx = client.WithSkipRateLimitRetry(ctx)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", endpoint, nil)
 	if err != nil {

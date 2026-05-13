@@ -50,6 +50,12 @@ type circuitBreaker struct {
 	// Half-open state tracking
 	halfOpenSuccesses int
 
+	// retryAfterHint, if non-zero, overrides waitDurationInOpenState for
+	// the next open-state interval. Populated from server-provided
+	// Retry-After headers on 429 responses; cleared when the breaker
+	// transitions to half-open or closed.
+	retryAfterHint time.Duration
+
 	config circuitBreakerConfig
 }
 
@@ -101,9 +107,15 @@ func (cb *circuitBreaker) execute(ctx context.Context, fn func() error) error {
 
 	switch state {
 	case stateOpen:
-		// Check if wait duration has passed
+		// Check if wait duration has passed. If the server hinted a
+		// Retry-After on the failure that opened the breaker, honor the
+		// larger of (configured wait, server hint).
 		cb.mu.RLock()
-		shouldRetry := time.Since(cb.lastStateTime) > cb.config.waitDurationInOpenState
+		wait := cb.config.waitDurationInOpenState
+		if cb.retryAfterHint > wait {
+			wait = cb.retryAfterHint
+		}
+		shouldRetry := time.Since(cb.lastStateTime) > wait
 		cb.mu.RUnlock()
 
 		if shouldRetry {
@@ -154,8 +166,11 @@ func (cb *circuitBreaker) recordCall(result callResult) {
 
 		cb.halfOpenSuccesses++
 		if cb.halfOpenSuccesses >= cb.config.permittedCallsInHalfOpen {
-			// Enough successes to close circuit
+			// Enough successes to close circuit. Drop any stale Retry-After
+			// hint so it doesn't extend a future open interval after the
+			// server has recovered.
 			cb.resetWindowUnlocked()
+			cb.retryAfterHint = 0
 			cb.setStateUnlocked(stateClosed)
 		}
 		return
@@ -216,6 +231,24 @@ func (cb *circuitBreaker) resetWindowUnlocked() {
 	cb.totalCalls = 0
 	cb.failureCount = 0
 	cb.halfOpenSuccesses = 0
+}
+
+// extendOpenStateAtLeast records a server-provided Retry-After hint. The
+// next time the breaker is open, it will stay open for at least the given
+// duration (and at least waitDurationInOpenState). The hint is cleared on
+// the next half-open/closed transition.
+//
+// Safe to call concurrently from any caller (the exporter parses
+// Retry-After on 429 responses and forwards it here).
+func (cb *circuitBreaker) extendOpenStateAtLeast(d time.Duration) {
+	if d <= 0 {
+		return
+	}
+	cb.mu.Lock()
+	if d > cb.retryAfterHint {
+		cb.retryAfterHint = d
+	}
+	cb.mu.Unlock()
 }
 
 // setState transitions to a new state.

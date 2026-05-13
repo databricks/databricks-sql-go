@@ -231,6 +231,42 @@ func TestExport_ErrorSwallowing(t *testing.T) {
 	// If we get here without panic, error swallowing works
 }
 
+// TestExport_429RecordsRetryAfter verifies that a 429 with a Retry-After
+// header pushes its delta into the per-host circuit breaker so subsequent
+// open-state checks respect the server hint instead of the default
+// waitDurationInOpenState.
+func TestExport_429RecordsRetryAfter(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "42")
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer server.Close()
+
+	exporter := newTelemetryExporter(server.URL, "test-version", "test-ua",
+		&http.Client{Timeout: 5 * time.Second}, DefaultConfig())
+
+	// Sanity: a fresh breaker has no hint.
+	exporter.circuitBreaker.mu.RLock()
+	if hint := exporter.circuitBreaker.retryAfterHint; hint != 0 {
+		exporter.circuitBreaker.mu.RUnlock()
+		t.Fatalf("expected fresh breaker to have no hint, got %v", hint)
+	}
+	exporter.circuitBreaker.mu.RUnlock()
+
+	exporter.export(context.Background(), []*telemetryMetric{{
+		metricType: "connection", timestamp: time.Now(),
+	}})
+
+	exporter.circuitBreaker.mu.RLock()
+	hint := exporter.circuitBreaker.retryAfterHint
+	exporter.circuitBreaker.mu.RUnlock()
+
+	if hint != 42*time.Second {
+		t.Errorf("breaker retryAfterHint after 429 with Retry-After:42: got %v, want %v",
+			hint, 42*time.Second)
+	}
+}
+
 func TestExport_ContextCancellation(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Slow server

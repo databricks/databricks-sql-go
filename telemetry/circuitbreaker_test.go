@@ -479,3 +479,121 @@ func TestCircuitBreaker_ContextCancellation(t *testing.T) {
 		t.Errorf("Expected no error, got %v", err)
 	}
 }
+
+// TestCircuitBreaker_RetryAfterHintExtendsOpen verifies that a server
+// Retry-After hint, recorded while the breaker is open, keeps the breaker
+// open at least that long even if waitDurationInOpenState would expire
+// sooner.
+func TestCircuitBreaker_RetryAfterHintExtendsOpen(t *testing.T) {
+	cfg := circuitBreakerConfig{
+		failureRateThreshold:     50,
+		minimumNumberOfCalls:     10,
+		slidingWindowSize:        20,
+		waitDurationInOpenState:  50 * time.Millisecond,
+		permittedCallsInHalfOpen: 2,
+	}
+	cb := newCircuitBreaker(cfg)
+	ctx := context.Background()
+
+	failFunc := func() error { return errors.New("test error") }
+
+	for i := 0; i < 10; i++ {
+		_ = cb.execute(ctx, failFunc)
+	}
+	if cb.getState() != stateOpen {
+		t.Fatalf("expected Open after 10 failures, got %v", cb.getState())
+	}
+
+	// Server hinted a much longer cool-down than the configured 50ms.
+	cb.extendOpenStateAtLeast(300 * time.Millisecond)
+
+	// After 100ms, normally the breaker would already permit a half-open
+	// probe — but the hint should keep it open.
+	time.Sleep(100 * time.Millisecond)
+	err := cb.execute(ctx, func() error { return nil })
+	if err != ErrCircuitOpen {
+		t.Fatalf("expected ErrCircuitOpen while hint window still active, got %v", err)
+	}
+
+	// After the full hint window elapses, the breaker should permit a
+	// half-open probe.
+	time.Sleep(250 * time.Millisecond)
+	if err := cb.execute(ctx, func() error { return nil }); err != nil {
+		t.Errorf("expected probe to succeed after hint window, got %v", err)
+	}
+	if cb.getState() != stateHalfOpen {
+		t.Errorf("expected HalfOpen after hint window, got %v", cb.getState())
+	}
+}
+
+// TestCircuitBreaker_RetryAfterHintClearedOnClose verifies that a stale
+// hint does not extend a future open interval once the breaker has
+// recovered.
+func TestCircuitBreaker_RetryAfterHintClearedOnClose(t *testing.T) {
+	cfg := circuitBreakerConfig{
+		failureRateThreshold:     50,
+		minimumNumberOfCalls:     4,
+		slidingWindowSize:        10,
+		waitDurationInOpenState:  20 * time.Millisecond,
+		permittedCallsInHalfOpen: 2,
+	}
+	cb := newCircuitBreaker(cfg)
+	ctx := context.Background()
+
+	// Open, record a long hint, then recover via half-open → closed.
+	failFunc := func() error { return errors.New("test error") }
+	for i := 0; i < 4; i++ {
+		_ = cb.execute(ctx, failFunc)
+	}
+	cb.extendOpenStateAtLeast(10 * time.Second) // long stale hint
+
+	time.Sleep(cfg.waitDurationInOpenState + 5*time.Millisecond)
+	// We expect the hint to keep us open here — sanity check.
+	if err := cb.execute(ctx, func() error { return nil }); err != ErrCircuitOpen {
+		t.Fatalf("hint should keep breaker open, got %v", err)
+	}
+
+	// Force close by reaching directly into internal state — simulates a
+	// successful recovery path where the hint should be dropped.
+	cb.mu.Lock()
+	cb.resetWindowUnlocked()
+	cb.setStateUnlocked(stateHalfOpen)
+	cb.mu.Unlock()
+	for i := 0; i < cfg.permittedCallsInHalfOpen; i++ {
+		_ = cb.execute(ctx, func() error { return nil })
+	}
+	if cb.getState() != stateClosed {
+		t.Fatalf("expected Closed after enough probe successes, got %v", cb.getState())
+	}
+
+	cb.mu.RLock()
+	hint := cb.retryAfterHint
+	cb.mu.RUnlock()
+	if hint != 0 {
+		t.Errorf("retryAfterHint should be cleared on transition to Closed, got %v", hint)
+	}
+}
+
+// TestParseRetryAfter exercises the header parser. We deliberately ignore
+// HTTP-date form (RFC 7231 §7.1.3): in practice rate-limit responses use
+// delta-seconds and under-backing-off is safer than mis-parsing.
+func TestParseRetryAfter(t *testing.T) {
+	cases := []struct {
+		in   string
+		want time.Duration
+	}{
+		{"", 0},
+		{"0", 0},
+		{"-1", 0},
+		{"abc", 0},
+		{"5", 5 * time.Second},
+		{"  120 ", 120 * time.Second},
+		{"Wed, 21 Oct 2015 07:28:00 GMT", 0}, // HTTP-date form — intentionally not parsed
+	}
+	for _, c := range cases {
+		got := parseRetryAfter(c.in)
+		if got != c.want {
+			t.Errorf("parseRetryAfter(%q) = %v, want %v", c.in, got, c.want)
+		}
+	}
+}

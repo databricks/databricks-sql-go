@@ -45,7 +45,24 @@ type contextKey int
 
 const (
 	ClientMethod contextKey = iota
+	// SkipRateLimitRetry, when set to true on the request context, makes
+	// RetryPolicy treat 429 Too Many Requests as a non-retryable response —
+	// the request returns the 429 error after a single attempt. 5xx and
+	// transport errors are unaffected and still retried.
+	//
+	// Set by callers that own their own backoff for rate-limited endpoints
+	// (e.g. the telemetry exporter, whose circuit breaker requires one HTTP
+	// transaction per call so it can see the 429 directly).
+	SkipRateLimitRetry
 )
+
+// WithSkipRateLimitRetry returns a context that disables retryablehttp's
+// retry-on-429 behavior for any request issued with it. The caller takes
+// responsibility for handling rate-limit responses (e.g. via a circuit
+// breaker). 5xx responses and transport errors are still retried.
+func WithSkipRateLimitRetry(ctx context.Context) context.Context {
+	return context.WithValue(ctx, SkipRateLimitRetry, true)
+}
 
 type clientMethod int
 
@@ -710,6 +727,16 @@ func RetryPolicy(ctx context.Context, resp *http.Response, err error) (bool, err
 		var retryAfter string
 		if resp.Header != nil {
 			retryAfter = resp.Header.Get("Retry-After")
+		}
+
+		// Callers that own their own rate-limit backoff (e.g. the telemetry
+		// circuit breaker) opt out of 429 retries via SkipRateLimitRetry so
+		// each HTTP attempt is a distinct signal to them. 503s still retry
+		// normally even when this flag is set.
+		if resp.StatusCode == http.StatusTooManyRequests {
+			if skip, _ := ctx.Value(SkipRateLimitRetry).(bool); skip {
+				return false, dbsqlerrint.NewRetryableError(checkErr, retryAfter)
+			}
 		}
 
 		return true, dbsqlerrint.NewRetryableError(checkErr, retryAfter)
