@@ -99,6 +99,7 @@ func (e *telemetryExporter) export(ctx context.Context, metrics []*telemetryMetr
 //     on ClientMethod) using its configured wait policy and Retry-After.
 //   - generic 5xx (500/502/504) and transport errors → one attempt; the
 //     circuit breaker counts them as a failure per export.
+//
 // Any non-2xx outcome reaching this function is therefore the *post-retry*
 // (or single-attempt) result, returned so the breaker observes exactly one
 // signal per export call.

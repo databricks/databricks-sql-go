@@ -51,12 +51,12 @@ func TestNewConnector(t *testing.T) {
 			HTTPClient:                   &http.Client{Transport: roundTripper},
 		}
 		expectedUserConfig := config.UserConfig{
-			Host:                host,
-			Port:                port,
-			Protocol:            "https",
-			AccessToken:         accessToken,
-			Authenticator:       &pat.PATAuth{AccessToken: accessToken},
-			HTTPPath:            "/" + httpPath,
+			Host:             host,
+			Port:             port,
+			Protocol:         "https",
+			AccessToken:      accessToken,
+			Authenticator:    &pat.PATAuth{AccessToken: accessToken},
+			HTTPPath:         "/" + httpPath,
 			MaxRows:          maxRows,
 			QueryTimeout:     timeout,
 			Catalog:          catalog,

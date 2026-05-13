@@ -319,7 +319,7 @@ func ParseDSN(dsn string) (UserConfig, error) {
 	// telemetry traffic are owned by the underlying retryable HTTP
 	// client. Extract and discard the values so they don't fall through
 	// into session params below.
-	_, _, _ = params.extractAsInt("telemetry_retry_count")
+	_, _ = params.extract("telemetry_retry_count")
 	_, _ = params.extract("telemetry_retry_delay")
 
 	// for timezone we do a case insensitive key match.

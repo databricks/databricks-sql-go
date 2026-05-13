@@ -257,13 +257,6 @@ func (cb *circuitBreaker) extendOpenStateAtLeast(d time.Duration) {
 	cb.mu.Unlock()
 }
 
-// setState transitions to a new state.
-func (cb *circuitBreaker) setState(newState circuitState) {
-	cb.mu.Lock()
-	defer cb.mu.Unlock()
-	cb.setStateUnlocked(newState)
-}
-
 // setStateUnlocked transitions to a new state without locking.
 // Caller must hold cb.mu lock.
 func (cb *circuitBreaker) setStateUnlocked(newState circuitState) {
