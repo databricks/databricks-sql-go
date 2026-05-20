@@ -134,6 +134,7 @@ func (rpf *resultPageIterator) HasNext() bool {
 		rpf.err = nil
 		rpf.nextResultPage = nrp
 		if !nrp.GetHasMoreRows() {
+			rpf.isFinished = true
 			rpf.Close() //nolint:errcheck,gosec // G104: close in error path
 		}
 	}
