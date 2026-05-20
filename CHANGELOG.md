@@ -1,5 +1,8 @@
 # Release History
 
+## v1.11.1 (2026-05-20)
+- Fix CloudFetch goroutine leak that retained Arrow buffers after Close (databricks/databricks-sql-go#357)
+
 ## v1.11.0 (2026-04-16)
 - Enable telemetry by default with DSN-controlled priority (databricks/databricks-sql-go#320, #321, #322, #349)
 - Add SPOG (Custom URL) routing support via `x-databricks-org-id` header (databricks/databricks-sql-go#347)
