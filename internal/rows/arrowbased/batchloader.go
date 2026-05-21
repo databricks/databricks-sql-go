@@ -5,13 +5,11 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"math"
-	"math/rand"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/databricks/databricks-sql-go/internal/config"
+	"github.com/databricks/databricks-sql-go/internal/retry"
 	"github.com/databricks/databricks-sql-go/internal/rows/rowscanner"
 	"github.com/pierrec/lz4/v4"
 	"github.com/pkg/errors"
@@ -402,7 +400,7 @@ func fetchBatchBytes(
 
 	for attempt := 0; attempt <= retryMax; attempt++ {
 		if attempt > 0 {
-			wait := cloudFetchBackoff(attempt, retryWaitMin, retryWaitMax, lastRetryAfter)
+			wait := retry.Backoff(attempt, retryWaitMin, retryWaitMax, lastRetryAfter)
 			logger.Debug().Msgf(
 				"CloudFetch: retrying download of link at offset %d (attempt %d/%d) in %v; lastStatus=%d lastErr=%v",
 				link.StartRowOffset, attempt, retryMax, wait, lastStatus, lastErr,
@@ -475,7 +473,7 @@ func fetchBatchBytes(
 		lastErr = nil
 		lastRetryAfter = res.Header.Get("Retry-After")
 
-		if !isCloudFetchRetryableStatus(res.StatusCode) {
+		if !retry.IsRetryableStatus(res.StatusCode) {
 			msg := fmt.Sprintf("%s: %s %d", errArrowRowsCloudFetchDownloadFailure, "HTTP error", res.StatusCode)
 			return nil, dbsqlerrint.NewDriverError(ctx, msg, nil)
 		}
@@ -489,59 +487,6 @@ func fetchBatchBytes(
 	}
 	msg := fmt.Sprintf("%s: %v (after %d retries)", errArrowRowsCloudFetchDownloadFailure, lastErr, retryMax)
 	return nil, dbsqlerrint.NewDriverError(ctx, msg, lastErr)
-}
-
-// cloudFetchRetryableStatuses lists HTTP status codes from object storage that
-// indicate transient conditions and warrant a retry. Mirrors AWS S3 guidance
-// for SlowDown (503) / InternalError (500) plus the general 408/429/502/504.
-var cloudFetchRetryableStatuses = map[int]struct{}{
-	http.StatusRequestTimeout:      {}, // 408
-	http.StatusTooManyRequests:     {}, // 429
-	http.StatusInternalServerError: {}, // 500
-	http.StatusBadGateway:          {}, // 502
-	http.StatusServiceUnavailable:  {}, // 503
-	http.StatusGatewayTimeout:      {}, // 504
-}
-
-func isCloudFetchRetryableStatus(status int) bool {
-	_, ok := cloudFetchRetryableStatuses[status]
-	return ok
-}
-
-// cloudFetchBackoff returns the wait before retry attempt N (1-based). The
-// base delay is exponential — waitMin * 2^(attempt-1) capped at waitMax — with
-// equal jitter applied: the actual sleep is uniformly distributed in
-// [base/2, base]. Equal jitter (rather than no jitter) is used to spread
-// synchronized retries across the up-to-MaxDownloadThreads concurrent
-// downloads, which would otherwise hammer the storage endpoint in lockstep
-// after a region-wide blip. If the server returned a parseable integer
-// Retry-After header, that value (in seconds) is honored instead, capped at
-// waitMax. HTTP-date Retry-After values are ignored — same as the Thrift
-// client's backoff.
-func cloudFetchBackoff(attempt int, waitMin, waitMax time.Duration, retryAfter string) time.Duration {
-	if retryAfter != "" {
-		if secs, err := strconv.ParseInt(retryAfter, 10, 64); err == nil && secs >= 0 {
-			d := time.Duration(secs) * time.Second
-			if d > waitMax {
-				return waitMax
-			}
-			return d
-		}
-	}
-
-	expo := float64(waitMin) * math.Pow(2, float64(attempt-1))
-	if expo > float64(waitMax) || math.IsInf(expo, 0) {
-		expo = float64(waitMax)
-	}
-	base := time.Duration(expo)
-	if base <= 0 {
-		return 0
-	}
-	half := base / 2
-	if half <= 0 {
-		return base
-	}
-	return half + time.Duration(rand.Int63n(int64(half))) //nolint:gosec // G404: jitter only, non-cryptographic
 }
 
 func getReader(r io.Reader, useLz4Compression bool) io.Reader {
