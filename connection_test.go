@@ -4,6 +4,13 @@ import (
 	"context"
 	"database/sql/driver"
 	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -2034,4 +2041,318 @@ func getTestSession() *cli_service.TOpenSessionResp {
 			GUID: []byte{1, 2, 3, 4, 2, 23, 4, 2, 3, 2, 3, 4, 4, 223, 34, 54},
 		},
 	}}
+}
+
+// TestConn_handleStagingRetry verifies that the staging-operation HTTP wrappers
+// (handleStagingPut/Get/Remove) retry transient S3 errors. ES-1911239: FactSet
+// hit intermittent HTTP 503 SlowDown on PUT against a Unity Catalog external
+// volume; pre-fix any single 5xx failed the entire SQL statement.
+//
+// Retry behavior mirrors the CloudFetch fix from ES-1892645 / PR #355:
+//   - Retryable statuses: 408/429/500/502/503/504.
+//   - Exponential backoff with equal jitter, honoring RetryMax/RetryWaitMin/
+//     RetryWaitMax from the connection config.
+//   - Integer Retry-After response header is honored (capped at RetryWaitMax).
+//   - Non-retryable statuses (e.g. 403) fail on the first attempt.
+//   - Context cancellation aborts backoff promptly.
+func TestConn_handleStagingRetry(t *testing.T) {
+	// retryCfg returns a fast-backoff config so tests don't burn wall-clock
+	// on sleeps. RetryMax leaves room for several retries; RetryWaitMin/Max
+	// keep the worst-case test runtime under a second.
+	retryCfg := func() *config.Config {
+		cfg := config.WithDefaults()
+		cfg.RetryMax = 4
+		cfg.RetryWaitMin = 1 * time.Millisecond
+		cfg.RetryWaitMax = 5 * time.Millisecond
+		return cfg
+	}
+
+	t.Run("PUT retries transient 503 and eventually succeeds", func(t *testing.T) {
+		var attempts int32
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			n := atomic.AddInt32(&attempts, 1)
+			if n < 3 {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				_, _ = w.Write([]byte("<Error><Code>SlowDown</Code></Error>"))
+				return
+			}
+			// Drain the body so we exercise the retry-replay path for PUTs.
+			_, _ = io.Copy(io.Discard, r.Body)
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer server.Close()
+
+		tmpDir := t.TempDir()
+		localFile := filepath.Join(tmpDir, "payload.parquet")
+		if err := os.WriteFile(localFile, []byte("parquet bytes"), 0600); err != nil {
+			t.Fatalf("write local file: %v", err)
+		}
+
+		c := &conn{cfg: retryCfg()}
+		err := c.handleStagingPut(context.Background(), server.URL, nil, localFile)
+		assert.Nil(t, err)
+		assert.Equal(t, int32(3), atomic.LoadInt32(&attempts), "expected 2 retries before success")
+	})
+
+	t.Run("GET retries transient 503 and eventually succeeds", func(t *testing.T) {
+		var attempts int32
+		body := []byte("downloaded bytes")
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			n := atomic.AddInt32(&attempts, 1)
+			if n < 2 {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(body)
+		}))
+		defer server.Close()
+
+		tmpDir := t.TempDir()
+		localFile := filepath.Join(tmpDir, "out.bin")
+
+		c := &conn{cfg: retryCfg()}
+		err := c.handleStagingGet(context.Background(), server.URL, nil, localFile)
+		assert.Nil(t, err)
+		assert.Equal(t, int32(2), atomic.LoadInt32(&attempts))
+
+		got, readErr := os.ReadFile(localFile)
+		assert.Nil(t, readErr)
+		assert.Equal(t, body, got, "GET should write the final-attempt body to local file")
+	})
+
+	t.Run("REMOVE retries transient 503 and eventually succeeds", func(t *testing.T) {
+		var attempts int32
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			n := atomic.AddInt32(&attempts, 1)
+			if n < 2 {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer server.Close()
+
+		c := &conn{cfg: retryCfg()}
+		err := c.handleStagingRemove(context.Background(), server.URL, nil)
+		assert.Nil(t, err)
+		assert.Equal(t, int32(2), atomic.LoadInt32(&attempts))
+	})
+
+	t.Run("REMOVE treats 503-then-404 as success (idempotent delete)", func(t *testing.T) {
+		// The first DELETE may have applied server-side even though the
+		// response was 503 (load balancer dies mid-response, etc.). The
+		// retry then sees 404 — the object is already gone. The caller's
+		// post-condition ("object absent") is satisfied, so this is success.
+		var attempts int32
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			n := atomic.AddInt32(&attempts, 1)
+			if n == 1 {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				return
+			}
+			w.WriteHeader(http.StatusNotFound)
+		}))
+		defer server.Close()
+
+		c := &conn{cfg: retryCfg()}
+		err := c.handleStagingRemove(context.Background(), server.URL, nil)
+		assert.Nil(t, err, "503 then 404 on REMOVE should succeed: the object is absent, which is the caller's intent")
+		assert.Equal(t, int32(2), atomic.LoadInt32(&attempts))
+	})
+
+	t.Run("REMOVE treats first-attempt 404 as success (idempotent delete)", func(t *testing.T) {
+		// DELETE on a non-existent object is success: the post-condition
+		// ("object absent") is already true. Documents the behavior change
+		// vs. the pre-retry implementation, which surfaced 404 as failure.
+		var attempts int32
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			atomic.AddInt32(&attempts, 1)
+			w.WriteHeader(http.StatusNotFound)
+		}))
+		defer server.Close()
+
+		c := &conn{cfg: retryCfg()}
+		err := c.handleStagingRemove(context.Background(), server.URL, nil)
+		assert.Nil(t, err, "404 on REMOVE should always be success")
+		assert.Equal(t, int32(1), atomic.LoadInt32(&attempts), "404 must not trigger a retry")
+	})
+
+	t.Run("PUT first-attempt 404 still fails (only REMOVE treats 404 as success)", func(t *testing.T) {
+		// Guard against the 404-as-success behavior leaking into the other
+		// handlers. PUT/GET must still treat 404 as a terminal failure.
+		var attempts int32
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			atomic.AddInt32(&attempts, 1)
+			w.WriteHeader(http.StatusNotFound)
+		}))
+		defer server.Close()
+
+		tmpDir := t.TempDir()
+		localFile := filepath.Join(tmpDir, "payload.parquet")
+		if err := os.WriteFile(localFile, []byte("data"), 0600); err != nil {
+			t.Fatalf("write local file: %v", err)
+		}
+
+		c := &conn{cfg: retryCfg()}
+		err := c.handleStagingPut(context.Background(), server.URL, nil, localFile)
+		assert.NotNil(t, err, "404 on PUT must remain a terminal failure")
+		assert.ErrorContains(t, err, "404")
+		assert.Equal(t, int32(1), atomic.LoadInt32(&attempts))
+	})
+
+	t.Run("PUT retries transient HTTP 500", func(t *testing.T) {
+		var attempts int32
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			n := atomic.AddInt32(&attempts, 1)
+			if n < 2 {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			_, _ = io.Copy(io.Discard, r.Body)
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer server.Close()
+
+		tmpDir := t.TempDir()
+		localFile := filepath.Join(tmpDir, "payload.parquet")
+		if err := os.WriteFile(localFile, []byte("data"), 0600); err != nil {
+			t.Fatalf("write local file: %v", err)
+		}
+
+		c := &conn{cfg: retryCfg()}
+		err := c.handleStagingPut(context.Background(), server.URL, nil, localFile)
+		assert.Nil(t, err)
+		assert.Equal(t, int32(2), atomic.LoadInt32(&attempts))
+	})
+
+	t.Run("PUT fails after exhausting retries on persistent 503", func(t *testing.T) {
+		var attempts int32
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			atomic.AddInt32(&attempts, 1)
+			w.WriteHeader(http.StatusServiceUnavailable)
+		}))
+		defer server.Close()
+
+		tmpDir := t.TempDir()
+		localFile := filepath.Join(tmpDir, "payload.parquet")
+		if err := os.WriteFile(localFile, []byte("data"), 0600); err != nil {
+			t.Fatalf("write local file: %v", err)
+		}
+
+		cfg := retryCfg()
+		cfg.RetryMax = 2
+		c := &conn{cfg: cfg}
+		err := c.handleStagingPut(context.Background(), server.URL, nil, localFile)
+		assert.NotNil(t, err)
+		assert.ErrorContains(t, err, "503")
+		// initial attempt + RetryMax retries
+		assert.Equal(t, int32(3), atomic.LoadInt32(&attempts))
+	})
+
+	t.Run("PUT does not retry non-retryable status (403)", func(t *testing.T) {
+		var attempts int32
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			atomic.AddInt32(&attempts, 1)
+			w.WriteHeader(http.StatusForbidden)
+		}))
+		defer server.Close()
+
+		tmpDir := t.TempDir()
+		localFile := filepath.Join(tmpDir, "payload.parquet")
+		if err := os.WriteFile(localFile, []byte("data"), 0600); err != nil {
+			t.Fatalf("write local file: %v", err)
+		}
+
+		c := &conn{cfg: retryCfg()}
+		started := time.Now()
+		err := c.handleStagingPut(context.Background(), server.URL, nil, localFile)
+		elapsed := time.Since(started)
+		assert.NotNil(t, err)
+		assert.ErrorContains(t, err, "403")
+		assert.Equal(t, int32(1), atomic.LoadInt32(&attempts), "non-retryable status must fail on first attempt")
+		// retryCfg's RetryWaitMin is 1ms; if a backoff fired by mistake we'd
+		// observe at least that. 50ms gives headroom for slow CI without
+		// masking an accidental retry.
+		assert.Less(t, elapsed, 50*time.Millisecond, "non-retryable status must not trigger backoff")
+	})
+
+	t.Run("PUT replays the file body on each retry", func(t *testing.T) {
+		// Verifies that the retry implementation correctly handles the request
+		// body lifecycle: an os.File consumed by attempt N must be rewound or
+		// re-opened before attempt N+1, otherwise the server sees a zero-length
+		// body on retries.
+		var (
+			mu            sync.Mutex
+			receivedSizes []int64
+		)
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			body, _ := io.ReadAll(r.Body)
+			mu.Lock()
+			receivedSizes = append(receivedSizes, int64(len(body)))
+			n := len(receivedSizes)
+			mu.Unlock()
+			if n < 3 {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer server.Close()
+
+		tmpDir := t.TempDir()
+		localFile := filepath.Join(tmpDir, "payload.parquet")
+		payload := []byte("important parquet data that must be re-sent on each retry")
+		if err := os.WriteFile(localFile, payload, 0600); err != nil {
+			t.Fatalf("write local file: %v", err)
+		}
+
+		c := &conn{cfg: retryCfg()}
+		err := c.handleStagingPut(context.Background(), server.URL, nil, localFile)
+		assert.Nil(t, err)
+		mu.Lock()
+		defer mu.Unlock()
+		assert.Equal(t, 3, len(receivedSizes), "expected 3 PUT attempts")
+		for i, sz := range receivedSizes {
+			assert.Equal(t, int64(len(payload)), sz, "attempt %d received %d bytes, expected full payload of %d bytes", i+1, sz, len(payload))
+		}
+	})
+
+	t.Run("PUT respects context cancellation during backoff", func(t *testing.T) {
+		var attempts int32
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			atomic.AddInt32(&attempts, 1)
+			w.WriteHeader(http.StatusServiceUnavailable)
+		}))
+		defer server.Close()
+
+		tmpDir := t.TempDir()
+		localFile := filepath.Join(tmpDir, "payload.parquet")
+		if err := os.WriteFile(localFile, []byte("data"), 0600); err != nil {
+			t.Fatalf("write local file: %v", err)
+		}
+
+		cfg := retryCfg()
+		cfg.RetryMax = 5
+		cfg.RetryWaitMin = 500 * time.Millisecond
+		cfg.RetryWaitMax = 1 * time.Second
+
+		ctx, cancel := context.WithCancel(context.Background())
+		go func() {
+			time.Sleep(50 * time.Millisecond)
+			cancel()
+		}()
+
+		c := &conn{cfg: cfg}
+		started := time.Now()
+		err := c.handleStagingPut(ctx, server.URL, nil, localFile)
+		elapsed := time.Since(started)
+
+		assert.NotNil(t, err)
+		// Cancellation should land well before the full retry budget elapses.
+		// 5 retries * 500ms+ minimum backoff = 2.5s+ without cancellation.
+		// 2s gives generous headroom on slow CI runners without masking a
+		// regression where cancellation is honored only at retry boundaries.
+		assert.Less(t, elapsed, 2*time.Second, "context cancel should abort PUT retry backoff promptly")
+	})
 }

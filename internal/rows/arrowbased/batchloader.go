@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/databricks/databricks-sql-go/internal/config"
+	"github.com/databricks/databricks-sql-go/internal/retry"
 	"github.com/databricks/databricks-sql-go/internal/rows/rowscanner"
 	"github.com/pierrec/lz4/v4"
 	"github.com/pkg/errors"
@@ -193,6 +194,9 @@ func (bi *cloudIPCStreamIterator) Next() (io.Reader, error) {
 			minTimeToExpiry:    bi.cfg.MinTimeToExpiry,
 			speedThresholdMbps: bi.cfg.CloudFetchSpeedThresholdMbps,
 			httpClient:         bi.httpClient,
+			retryMax:           bi.cfg.RetryMax,
+			retryWaitMin:       bi.cfg.RetryWaitMin,
+			retryWaitMax:       bi.cfg.RetryWaitMax,
 		}
 		task.Run()
 		bi.downloadTasks.Enqueue(task)
@@ -252,6 +256,9 @@ type cloudFetchDownloadTask struct {
 	resultChan         chan cloudFetchDownloadTaskResult
 	speedThresholdMbps float64
 	httpClient         *http.Client
+	retryMax           int
+	retryWaitMin       time.Duration
+	retryWaitMax       time.Duration
 }
 
 func (cft *cloudFetchDownloadTask) GetResult() (io.Reader, int64, error) {
@@ -295,20 +302,32 @@ func (cft *cloudFetchDownloadTask) Run() {
 			cft.link.RowCount,
 		)
 		downloadStart := time.Now()
-		data, err := fetchBatchBytes(cft.ctx, cft.link, cft.minTimeToExpiry, cft.speedThresholdMbps, cft.httpClient)
+		rawBody, err := fetchBatchBytes(
+			cft.ctx,
+			cft.link,
+			cft.minTimeToExpiry,
+			cft.speedThresholdMbps,
+			cft.httpClient,
+			cft.retryMax,
+			cft.retryWaitMin,
+			cft.retryWaitMax,
+		)
 		if err != nil {
 			cft.sendResult(cloudFetchDownloadTaskResult{data: nil, err: err})
 			return
 		}
 
-		// Read all data into memory before closing
-		buf, err := io.ReadAll(getReader(data, cft.useLz4Compression))
-		data.Close() //nolint:errcheck,gosec // G104: close after reading data
-		downloadMs := time.Since(downloadStart).Milliseconds()
-		if err != nil {
-			cft.sendResult(cloudFetchDownloadTaskResult{data: nil, err: err})
-			return
+		buf := rawBody
+		if cft.useLz4Compression {
+			// Decompression sits outside the retry loop: malformed LZ4 is data
+			// corruption, not a transient network condition.
+			buf, err = io.ReadAll(lz4.NewReader(bytes.NewReader(rawBody)))
+			if err != nil {
+				cft.sendResult(cloudFetchDownloadTaskResult{data: nil, err: err})
+				return
+			}
 		}
+		downloadMs := time.Since(downloadStart).Milliseconds()
 
 		logger.Debug().Msgf(
 			"CloudFetch: downloaded data for link at offset %d row count %d",
@@ -350,43 +369,124 @@ func logCloudFetchSpeed(fullURL string, contentLength int64, duration time.Durat
 	}
 }
 
+// fetchBatchBytes downloads a single CloudFetch result link and returns the
+// raw response body, still compressed if the server used LZ4. Connection-time
+// failures, retryable HTTP statuses, and mid-stream body read failures are
+// retried up to retryMax times with exponential backoff and equal jitter.
+// Decompression and IPC parsing stay with the caller because those failures are
+// not transient network conditions.
+//
+// Link expiry is rechecked after each backoff: a long retry chain may outlive
+// a presigned URL, and continuing past expiry is guaranteed to fail.
 func fetchBatchBytes(
 	ctx context.Context,
 	link *cli_service.TSparkArrowResultLink,
 	minTimeToExpiry time.Duration,
 	speedThresholdMbps float64,
 	httpClient *http.Client,
-) (io.ReadCloser, error) {
-	if isLinkExpired(link.ExpiryTime, minTimeToExpiry) {
-		return nil, errors.New(dbsqlerr.ErrLinkExpired)
+	retryMax int,
+	retryWaitMin time.Duration,
+	retryWaitMax time.Duration,
+) ([]byte, error) {
+	if retryMax < 0 {
+		retryMax = 0
 	}
 
-	// TODO: Retry on HTTP errors
-	req, err := http.NewRequestWithContext(ctx, "GET", link.FileLink, nil)
-	if err != nil {
-		return nil, err
-	}
+	var (
+		lastErr        error
+		lastStatus     int
+		lastRetryAfter string
+	)
 
-	if link.HttpHeaders != nil {
-		for key, value := range link.HttpHeaders {
-			req.Header.Set(key, value)
+	for attempt := 0; attempt <= retryMax; attempt++ {
+		if attempt > 0 {
+			wait := retry.Backoff(attempt, retryWaitMin, retryWaitMax, lastRetryAfter)
+			logger.Debug().Msgf(
+				"CloudFetch: retrying download of link at offset %d (attempt %d/%d) in %v; lastStatus=%d lastErr=%v",
+				link.StartRowOffset, attempt, retryMax, wait, lastStatus, lastErr,
+			)
+			t := time.NewTimer(wait)
+			select {
+			case <-ctx.Done():
+				if !t.Stop() {
+					<-t.C
+				}
+				return nil, ctx.Err()
+			case <-t.C:
+			}
+		}
+
+		// Check link expiry *after* backoff: a long retry chain may outlive a
+		// presigned URL, and there's no point spending another HTTP attempt
+		// (or another retry) on a link we know will be rejected.
+		if isLinkExpired(link.ExpiryTime, minTimeToExpiry) {
+			return nil, errors.New(dbsqlerr.ErrLinkExpired)
+		}
+
+		req, err := http.NewRequestWithContext(ctx, "GET", link.FileLink, nil)
+		if err != nil {
+			return nil, err
+		}
+		if link.HttpHeaders != nil {
+			for key, value := range link.HttpHeaders {
+				req.Header.Set(key, value)
+			}
+		}
+
+		startTime := time.Now()
+		res, err := httpClient.Do(req)
+		if err != nil {
+			// Caller cancellation is terminal; otherwise treat transport errors
+			// (TCP RST, TLS timeout, etc.) as transient.
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			lastErr = err
+			lastStatus = 0
+			lastRetryAfter = ""
+			continue
+		}
+
+		if res.StatusCode == http.StatusOK {
+			// Read the full body inside the retry loop so truncated 200 OK
+			// responses are retried just like header-time failures.
+			buf, readErr := io.ReadAll(res.Body)
+			res.Body.Close() //nolint:errcheck,gosec // G104: close after drain
+			if readErr != nil {
+				if ctx.Err() != nil {
+					return nil, ctx.Err()
+				}
+				lastErr = readErr
+				lastStatus = 0
+				lastRetryAfter = ""
+				continue
+			}
+			logCloudFetchSpeed(link.FileLink, int64(len(buf)), time.Since(startTime), speedThresholdMbps)
+			return buf, nil
+		}
+
+		// Drain and close so the underlying connection can be reused.
+		_, _ = io.Copy(io.Discard, res.Body)
+		res.Body.Close() //nolint:errcheck,gosec // G104: closing after drain
+
+		lastStatus = res.StatusCode
+		lastErr = nil
+		lastRetryAfter = res.Header.Get("Retry-After")
+
+		if !retry.IsRetryableStatus(res.StatusCode) {
+			msg := fmt.Sprintf("%s: %s %d", errArrowRowsCloudFetchDownloadFailure, "HTTP error", res.StatusCode)
+			return nil, dbsqlerrint.NewDriverError(ctx, msg, nil)
 		}
 	}
 
-	startTime := time.Now()
-	res, err := httpClient.Do(req)
-	if err != nil {
-		return nil, err
+	if lastStatus != 0 {
+		// lastErr is nil here by construction: the HTTP-status branch above
+		// explicitly clears it on every iteration. The status code is captured
+		// in msg, so there's no underlying error to wrap.
+		return nil, dbsqlerrint.NewDriverError(ctx, fmt.Sprintf("%s: %s %d (after %d retries)", errArrowRowsCloudFetchDownloadFailure, "HTTP error", lastStatus, retryMax), nil)
 	}
-	if res.StatusCode != http.StatusOK {
-		msg := fmt.Sprintf("%s: %s %d", errArrowRowsCloudFetchDownloadFailure, "HTTP error", res.StatusCode)
-		return nil, dbsqlerrint.NewDriverError(ctx, msg, err)
-	}
-
-	// Log download speed metrics
-	logCloudFetchSpeed(link.FileLink, res.ContentLength, time.Since(startTime), speedThresholdMbps)
-
-	return res.Body, nil
+	msg := fmt.Sprintf("%s: %v (after %d retries)", errArrowRowsCloudFetchDownloadFailure, lastErr, retryMax)
+	return nil, dbsqlerrint.NewDriverError(ctx, msg, lastErr)
 }
 
 func getReader(r io.Reader, useLz4Compression bool) io.Reader {
