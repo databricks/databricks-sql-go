@@ -9,6 +9,10 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/databricks/databricks-sql-go/auth/noop"
+	"github.com/databricks/databricks-sql-go/internal/client"
+	"github.com/databricks/databricks-sql-go/internal/config"
 )
 
 func TestNewTelemetryExporter(t *testing.T) {
@@ -231,6 +235,77 @@ func TestExport_ErrorSwallowing(t *testing.T) {
 	// If we get here without panic, error swallowing works
 }
 
+// TestExport_SingleAttemptThroughRetryableClient is the integration-flavor
+// counterpart to TestExport_SingleAttemptPerExport: it routes the export
+// through the *real* retryablehttp-wrapped client returned by
+// client.RetryableClient, which is what production uses. The flag set by
+// the exporter (WithSkipTransientRetries) must collapse retries for every
+// status code that would otherwise bounce inside the transport — 429 and
+// 503 most importantly, plus a 500 to pin the generic-5xx path.
+//
+// The reviewer flagged that the previous variant of this test used a bare
+// *http.Client and therefore missed transport-layer retry behaviour on
+// 503; this test catches that regression directly.
+func TestExport_SingleAttemptThroughRetryableClient(t *testing.T) {
+	cases := []struct {
+		name       string
+		status     int
+		retryAfter string
+		wantHint   time.Duration
+		setupHint  bool // expect a non-zero hint on the breaker after export
+	}{
+		{"429", http.StatusTooManyRequests, "7", 7 * time.Second, true},
+		{"503", http.StatusServiceUnavailable, "5", 5 * time.Second, true},
+		{"500", http.StatusInternalServerError, "", 0, false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			attemptCount := int32(0)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				atomic.AddInt32(&attemptCount, 1)
+				if tc.retryAfter != "" {
+					w.Header().Set("Retry-After", tc.retryAfter)
+				}
+				w.WriteHeader(tc.status)
+			}))
+			defer server.Close()
+
+			// Build the real retryable client with a tight retry budget
+			// so the test fails fast if retries leak through.
+			cfg := &config.Config{
+				ClientTimeout: 5 * time.Second,
+				UserConfig: config.UserConfig{
+					Authenticator: &noop.NoopAuth{},
+					RetryWaitMin:  10 * time.Millisecond,
+					RetryWaitMax:  50 * time.Millisecond,
+					RetryMax:      4,
+				},
+			}
+			httpClient := client.RetryableClient(cfg)
+
+			exporter := newTelemetryExporter(server.URL, "test-version", "test-ua", httpClient, DefaultConfig())
+			exporter.export(context.Background(), []*telemetryMetric{{
+				metricType: "connection", timestamp: time.Now(),
+			}})
+
+			if got := atomic.LoadInt32(&attemptCount); got != 1 {
+				t.Errorf("status %d: expected exactly 1 attempt through retryable client, got %d", tc.status, got)
+			}
+
+			exporter.circuitBreaker.mu.RLock()
+			hint := exporter.circuitBreaker.retryAfterHint
+			exporter.circuitBreaker.mu.RUnlock()
+			if tc.setupHint && hint != tc.wantHint {
+				t.Errorf("status %d: breaker retryAfterHint = %v, want %v", tc.status, hint, tc.wantHint)
+			}
+			if !tc.setupHint && hint != 0 {
+				t.Errorf("status %d: expected no hint, got %v", tc.status, hint)
+			}
+		})
+	}
+}
+
 // TestExport_429RecordsRetryAfter verifies that a 429 with a Retry-After
 // header pushes its delta into the per-host circuit breaker so subsequent
 // open-state checks respect the server hint instead of the default
@@ -264,6 +339,34 @@ func TestExport_429RecordsRetryAfter(t *testing.T) {
 	if hint != 42*time.Second {
 		t.Errorf("breaker retryAfterHint after 429 with Retry-After:42: got %v, want %v",
 			hint, 42*time.Second)
+	}
+}
+
+// TestExport_503RecordsRetryAfter mirrors TestExport_429RecordsRetryAfter
+// for 503 Service Unavailable: the exporter must parse Retry-After on 503
+// too (not only on 429) and push it into the breaker. Prior to this PR
+// only 429 was parsed, so a 503 with Retry-After was silently ignored.
+func TestExport_503RecordsRetryAfter(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "23")
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+
+	exporter := newTelemetryExporter(server.URL, "test-version", "test-ua",
+		&http.Client{Timeout: 5 * time.Second}, DefaultConfig())
+
+	exporter.export(context.Background(), []*telemetryMetric{{
+		metricType: "connection", timestamp: time.Now(),
+	}})
+
+	exporter.circuitBreaker.mu.RLock()
+	hint := exporter.circuitBreaker.retryAfterHint
+	exporter.circuitBreaker.mu.RUnlock()
+
+	if hint != 23*time.Second {
+		t.Errorf("breaker retryAfterHint after 503 with Retry-After:23: got %v, want %v",
+			hint, 23*time.Second)
 	}
 }
 

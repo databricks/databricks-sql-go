@@ -574,6 +574,99 @@ func TestCircuitBreaker_RetryAfterHintClearedOnClose(t *testing.T) {
 	}
 }
 
+// TestCircuitBreaker_RetryAfterHintTakesMax verifies that consecutive
+// extendOpenStateAtLeast calls keep the longest hint — a later, smaller
+// hint must not shorten an existing window the server already asked for.
+func TestCircuitBreaker_RetryAfterHintTakesMax(t *testing.T) {
+	cb := newCircuitBreaker(defaultCircuitBreakerConfig())
+
+	cb.extendOpenStateAtLeast(30 * time.Second)
+	cb.extendOpenStateAtLeast(10 * time.Second) // smaller — must be ignored
+	cb.mu.RLock()
+	got := cb.retryAfterHint
+	cb.mu.RUnlock()
+	if got != 30*time.Second {
+		t.Errorf("after smaller second hint: got %v, want %v", got, 30*time.Second)
+	}
+
+	// Larger hint should replace the existing one.
+	cb.extendOpenStateAtLeast(90 * time.Second)
+	cb.mu.RLock()
+	got = cb.retryAfterHint
+	cb.mu.RUnlock()
+	if got != 90*time.Second {
+		t.Errorf("after larger second hint: got %v, want %v", got, 90*time.Second)
+	}
+
+	// Non-positive durations are ignored.
+	cb.extendOpenStateAtLeast(0)
+	cb.extendOpenStateAtLeast(-5 * time.Second)
+	cb.mu.RLock()
+	got = cb.retryAfterHint
+	cb.mu.RUnlock()
+	if got != 90*time.Second {
+		t.Errorf("non-positive hints must not change retryAfterHint: got %v", got)
+	}
+}
+
+// TestCircuitBreaker_HintClearedBeforeHalfOpenFailRecycle verifies that a
+// stale hint does not extend the next Open interval if Half-Open fails.
+// The cycle is: open with hint → wait elapses → Half-Open (hint cleared)
+// → probe fails → Open again. The second Open uses waitDurationInOpenState,
+// not the original hint.
+func TestCircuitBreaker_HintClearedBeforeHalfOpenFailRecycle(t *testing.T) {
+	cfg := circuitBreakerConfig{
+		failureRateThreshold:     50,
+		minimumNumberOfCalls:     4,
+		slidingWindowSize:        10,
+		waitDurationInOpenState:  30 * time.Millisecond,
+		permittedCallsInHalfOpen: 2,
+	}
+	cb := newCircuitBreaker(cfg)
+	ctx := context.Background()
+	failFunc := func() error { return errors.New("fail") }
+
+	// Open the breaker and seed it with a long hint (simulates a 429
+	// with Retry-After: 10).
+	for i := 0; i < 4; i++ {
+		_ = cb.execute(ctx, failFunc)
+	}
+	if cb.getState() != stateOpen {
+		t.Fatalf("expected Open, got %v", cb.getState())
+	}
+	cb.extendOpenStateAtLeast(10 * time.Second)
+
+	// Reach into state to force the Open→HalfOpen transition without
+	// actually sleeping 10s — this mirrors the execute() path after the
+	// hint window has elapsed.
+	cb.mu.Lock()
+	cb.retryAfterHint = 0
+	cb.setStateUnlocked(stateHalfOpen)
+	cb.mu.Unlock()
+
+	// Probe fails: should reopen.
+	_ = cb.execute(ctx, failFunc)
+	if cb.getState() != stateOpen {
+		t.Fatalf("expected Open after half-open probe failure, got %v", cb.getState())
+	}
+
+	// Hint must be 0 (it was cleared on Open→HalfOpen and the probe
+	// failure did not re-introduce one), so the next probe should be
+	// permitted after only waitDurationInOpenState, not 10s.
+	cb.mu.RLock()
+	hint := cb.retryAfterHint
+	cb.mu.RUnlock()
+	if hint != 0 {
+		t.Errorf("retryAfterHint should be 0 after half-open fail with no new hint, got %v", hint)
+	}
+
+	time.Sleep(cfg.waitDurationInOpenState + 10*time.Millisecond)
+	successFunc := func() error { return nil }
+	if err := cb.execute(ctx, successFunc); err == ErrCircuitOpen {
+		t.Errorf("expected probe to be permitted after waitDurationInOpenState (stale hint must not block), got ErrCircuitOpen")
+	}
+}
+
 // TestParseRetryAfter exercises the header parser. We deliberately ignore
 // HTTP-date form (RFC 7231 §7.1.3): in practice rate-limit responses use
 // delta-seconds and under-backing-off is safer than mis-parsing.

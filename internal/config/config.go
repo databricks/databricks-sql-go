@@ -317,10 +317,16 @@ func ParseDSN(dsn string) (UserConfig, error) {
 	// telemetry_retry_count and telemetry_retry_delay are accepted for
 	// backwards compatibility but no longer applied — retries for
 	// telemetry traffic are owned by the underlying retryable HTTP
-	// client. Extract and discard the values so they don't fall through
-	// into session params below.
-	_, _ = params.extract("telemetry_retry_count")
-	_, _ = params.extract("telemetry_retry_delay")
+	// client and the circuit breaker's open-state interval. Extract and
+	// discard the values so they don't fall through into session params
+	// below, and log a one-time warning so operators carrying legacy
+	// DSNs notice the silent change in behaviour.
+	if v, ok := params.extract("telemetry_retry_count"); ok {
+		logger.Warn().Msgf("DSN param telemetry_retry_count=%q is deprecated and ignored; telemetry retries are now managed by the HTTP client and circuit breaker", v)
+	}
+	if v, ok := params.extract("telemetry_retry_delay"); ok {
+		logger.Warn().Msgf("DSN param telemetry_retry_delay=%q is deprecated and ignored; telemetry retries are now managed by the HTTP client and circuit breaker", v)
+	}
 
 	// for timezone we do a case insensitive key match.
 	// We use getNoCase because we want to leave timezone in the params so that it will also

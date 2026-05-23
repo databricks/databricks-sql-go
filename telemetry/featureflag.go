@@ -181,9 +181,9 @@ func fetchFeatureFlag(ctx context.Context, host string, driverVersion string, us
 	endpoint := fmt.Sprintf("%s%s%s", hostURL, featureFlagEndpointPath, driverVersion)
 
 	// Feature-flag GET shares the same rate-limit group as /telemetry-ext on
-	// the server side, so a 429 here should also fail fast rather than being
-	// retried 5× by retryablehttp.
-	ctx = client.WithSkipRateLimitRetry(ctx)
+	// the server side, so a 429/503 here should also fail fast rather than
+	// being retried 5× by retryablehttp.
+	ctx = client.WithSkipTransientRetries(ctx)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", endpoint, nil)
 	if err != nil {

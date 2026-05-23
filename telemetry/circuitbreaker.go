@@ -71,12 +71,26 @@ type circuitBreakerConfig struct {
 
 // defaultCircuitBreakerConfig returns default configuration.
 //
-// Each export call is now a single logical request to /telemetry-ext (the
-// retryablehttp layer handles transient retries internally), so each breaker
-// call corresponds to one observed outcome. minimumNumberOfCalls is set low
-// enough that low-traffic clients can still trip the breaker on a sustained
-// outage; waitDurationInOpenState is long enough to respect typical
-// Retry-After windows from the server.
+// Each export call is exactly one HTTP transaction (the exporter sets
+// WithSkipTransientRetries so the retryablehttp layer does not loop on
+// 429/503), which means each breaker call corresponds to one observed
+// outcome from the server.
+//
+// Detection-time math at default cadence (FlushInterval = 30s in
+// config.go): minimumNumberOfCalls=10 means we need ~10 flush intervals
+// of data before the failure-rate gate fires — i.e. up to ~5 minutes of
+// 100%-failing exports before the breaker opens. That is intentionally
+// slow on the trip side so a transient blip on a low-traffic client
+// doesn't trigger a 60s blackout; once the breaker is open, the longer
+// minimum-evaluation window matters less because the open-state interval
+// (60s, or Retry-After if larger) controls the next probe.
+//
+// slidingWindowSize=30 is deliberately larger than minimumNumberOfCalls:
+// once enough calls accumulate, the failure-rate evaluation runs over up
+// to the last 30 outcomes, giving recent successes time to offset
+// transient failures. The two numbers tune different things —
+// minimumNumberOfCalls gates when we start evaluating; slidingWindowSize
+// caps how many outcomes participate in that evaluation.
 func defaultCircuitBreakerConfig() circuitBreakerConfig {
 	return circuitBreakerConfig{
 		failureRateThreshold:     50,

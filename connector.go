@@ -16,7 +16,6 @@ import (
 	"github.com/databricks/databricks-sql-go/auth/tokenprovider"
 	"github.com/databricks/databricks-sql-go/driverctx"
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
-	"github.com/databricks/databricks-sql-go/internal/agent"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/client"
 	"github.com/databricks/databricks-sql-go/internal/config"
@@ -96,7 +95,7 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 	conn.telemetry = telemetry.InitializeForConnection(ctx, telemetry.TelemetryInitOptions{
 		Host:            c.cfg.Host,
 		DriverVersion:   c.cfg.DriverVersion,
-		UserAgent:       buildUserAgent(c.cfg),
+		UserAgent:       client.BuildUserAgent(c.cfg),
 		HTTPClient:      telemetryClient,
 		EnableTelemetry: c.cfg.EnableTelemetry,
 		BatchSize:       c.cfg.TelemetryBatchSize,
@@ -115,21 +114,6 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 // Driver returns underlying databricksDriver for compatibility with sql.DB Driver method
 func (c *connector) Driver() driver.Driver {
 	return &databricksDriver{}
-}
-
-// buildUserAgent constructs the User-Agent header value used by the driver.
-// Mirrors the format set on the Thrift HTTP client in
-// internal/client/client.go so telemetry, feature-flag, and Thrift requests
-// all carry the same identifier.
-func buildUserAgent(cfg *config.Config) string {
-	userAgent := fmt.Sprintf("%s/%s", cfg.DriverName, cfg.DriverVersion)
-	if cfg.UserAgentEntry != "" {
-		userAgent = fmt.Sprintf("%s/%s (%s)", cfg.DriverName, cfg.DriverVersion, cfg.UserAgentEntry)
-	}
-	if agentProduct := agent.Detect(); agentProduct != "" {
-		userAgent = fmt.Sprintf("%s agent/%s", userAgent, agentProduct)
-	}
-	return userAgent
 }
 
 var _ driver.Connector = (*connector)(nil)

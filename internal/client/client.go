@@ -20,7 +20,6 @@ import (
 	"time"
 
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
-	"github.com/databricks/databricks-sql-go/internal/agent"
 	dbsqlerrint "github.com/databricks/databricks-sql-go/internal/errors"
 
 	"github.com/apache/thrift/lib/go/thrift"
@@ -45,33 +44,32 @@ type contextKey int
 
 const (
 	ClientMethod contextKey = iota
-	// SkipRateLimitRetry, when set to true on the request context, makes
-	// RetryPolicy treat 429 Too Many Requests as a non-retryable response —
-	// the request returns the 429 error after a single attempt. The flag
-	// is narrowly scoped to 429: 503 still retries via the
-	// isRetryableServerResponse path (which is not method-gated), and any
-	// other retry decision (generic 5xx / transport error) is governed by
-	// the request's ClientMethod as usual.
+	// SkipTransientRetries, when set to true on the request context, makes
+	// RetryPolicy treat every status code recognized by
+	// isRetryableServerResponse (currently 429 and 503) as a non-retryable
+	// response — the request returns after a single attempt. Generic 5xx
+	// (500/502/504) and transport errors are still gated by ClientMethod
+	// as usual; callers that omit ClientMethod (e.g. the telemetry
+	// exporter) already get one-shot semantics on those, so the net effect
+	// is exactly one HTTP transaction per request.
 	//
-	// Set by callers that own their own backoff for rate-limited endpoints
-	// (e.g. the telemetry exporter, whose circuit breaker requires one HTTP
-	// transaction per call so it can see the 429 directly).
-	SkipRateLimitRetry
+	// Set by callers that own their own backoff and need each HTTP
+	// outcome surfaced individually (e.g. the telemetry exporter, whose
+	// circuit breaker is the sole arbiter of when to back off).
+	SkipTransientRetries
 )
 
-// WithSkipRateLimitRetry returns a context that disables retryablehttp's
-// retry-on-429 behavior for any request issued with it. The caller takes
-// responsibility for handling rate-limit responses (e.g. via a circuit
-// breaker).
+// WithSkipTransientRetries returns a context that disables retryablehttp's
+// retries for the transient-server-response codes (429 + 503). The caller
+// takes responsibility for handling these responses (e.g. via a circuit
+// breaker that parses Retry-After).
 //
-// Note: this flag only affects 429. Whether 5xx generic responses
-// (500/502/504) and transport errors are retried depends on the
-// ClientMethod set on the context (see nonRetryableClientMethods).
-// Callers that do not set a ClientMethod (e.g. the telemetry exporter)
-// effectively get one-shot semantics on those failure modes; their
-// circuit breaker is expected to absorb them.
-func WithSkipRateLimitRetry(ctx context.Context) context.Context {
-	return context.WithValue(ctx, SkipRateLimitRetry, true)
+// Combined with a ClientMethod that already opts out of generic-5xx retries
+// (the default zero value clientMethodUnknown does), this gives one-shot
+// semantics on every failure mode: each call to httpClient.Do returns
+// exactly one outcome to the caller.
+func WithSkipTransientRetries(ctx context.Context) context.Context {
+	return context.WithValue(ctx, SkipTransientRetries, true)
 }
 
 type clientMethod int
@@ -319,14 +317,7 @@ func InitThriftClient(cfg *config.Config, httpclient *http.Client) (*ThriftServi
 		tTrans, err = thrift.NewTHttpClientWithOptions(endpoint, thrift.THttpClientOptions{Client: httpclient})
 
 		thriftHttpClient := tTrans.(*thrift.THttpClient)
-		userAgent := fmt.Sprintf("%s/%s", cfg.DriverName, cfg.DriverVersion)
-		if cfg.UserAgentEntry != "" {
-			userAgent = fmt.Sprintf("%s/%s (%s)", cfg.DriverName, cfg.DriverVersion, cfg.UserAgentEntry)
-		}
-		if agentProduct := agent.Detect(); agentProduct != "" {
-			userAgent = fmt.Sprintf("%s agent/%s", userAgent, agentProduct)
-		}
-		thriftHttpClient.SetHeader("User-Agent", userAgent)
+		thriftHttpClient.SetHeader("User-Agent", BuildUserAgent(cfg))
 
 	default:
 		return nil, dbsqlerrint.NewDriverError(context.TODO(), fmt.Sprintf("unsupported transport `%s`", cfg.ThriftTransport), nil)
@@ -739,14 +730,16 @@ func RetryPolicy(ctx context.Context, resp *http.Response, err error) (bool, err
 			retryAfter = resp.Header.Get("Retry-After")
 		}
 
-		// Callers that own their own rate-limit backoff (e.g. the telemetry
-		// circuit breaker) opt out of 429 retries via SkipRateLimitRetry so
-		// each HTTP attempt is a distinct signal to them. 503s still retry
-		// normally even when this flag is set.
-		if resp.StatusCode == http.StatusTooManyRequests {
-			if skip, _ := ctx.Value(SkipRateLimitRetry).(bool); skip {
-				return false, dbsqlerrint.NewRetryableError(checkErr, retryAfter)
-			}
+		// Callers that own their own backoff for transient responses
+		// (e.g. the telemetry circuit breaker) opt out via
+		// WithSkipTransientRetries. Return (false, nil) — not a wrapped
+		// error — because retryablehttp's StandardClient adapter is
+		// fronted by net/http, which discards the response whenever the
+		// transport returns both a response and an error. The caller
+		// will see the non-2xx status code on the response and react to
+		// it directly (e.g. parse Retry-After off the headers).
+		if skip, _ := ctx.Value(SkipTransientRetries).(bool); skip {
+			return false, nil
 		}
 
 		return true, dbsqlerrint.NewRetryableError(checkErr, retryAfter)

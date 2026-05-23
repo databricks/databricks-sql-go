@@ -89,20 +89,17 @@ func (e *telemetryExporter) export(ctx context.Context, metrics []*telemetryMetr
 	}
 }
 
-// doExport sends one telemetry request. It does NOT loop on retries —
-// transient-retry policy is delegated to the underlying retryablehttp-wrapped
-// HTTP client (see internal/client.RetryableClient). Telemetry contexts do
-// not set a ClientMethod, so per internal/client.RetryPolicy:
-//   - 429 → suppressed by WithSkipRateLimitRetry below; the circuit breaker
-//     handles backoff using the server's Retry-After hint.
-//   - 503 → retried by retryablehttp (isRetryableServerResponse is not gated
-//     on ClientMethod) using its configured wait policy and Retry-After.
-//   - generic 5xx (500/502/504) and transport errors → one attempt; the
-//     circuit breaker counts them as a failure per export.
+// doExport sends one telemetry request. It is a single HTTP transaction —
+// transport-layer retries are suppressed via WithSkipTransientRetries so
+// the breaker is the sole arbiter of backoff and sees one outcome per
+// export. With no ClientMethod on the context, generic 5xx/transport
+// errors are already one-shot per internal/client.RetryPolicy; combined,
+// every non-2xx (429, 5xx, transport) returns directly to the breaker as a
+// single failure signal.
 //
-// Any non-2xx outcome reaching this function is therefore the *post-retry*
-// (or single-attempt) result, returned so the breaker observes exactly one
-// signal per export call.
+// On 429 or 503 we parse Retry-After and feed it to the breaker via
+// extendOpenStateAtLeast so the open-state interval honours the server's
+// hint.
 func (e *telemetryExporter) doExport(ctx context.Context, metrics []*telemetryMetric) error {
 	request, err := createTelemetryRequest(metrics, e.driverVersion)
 	if err != nil {
@@ -116,10 +113,12 @@ func (e *telemetryExporter) doExport(ctx context.Context, metrics []*telemetryMe
 
 	endpoint := ensureHTTPScheme(e.host) + telemetryEndpointPath
 
-	// Opt out of retryablehttp's 429 retries — the circuit breaker owns
-	// the rate-limit backoff and needs one HTTP transaction per call to
-	// trip on persistent throttling. 5xx/transport retries are unaffected.
-	ctx = client.WithSkipRateLimitRetry(ctx)
+	// Opt out of retryablehttp's transient-response retries — the
+	// circuit breaker owns the backoff and needs one HTTP transaction per
+	// call so it can see each 429/503 directly. Otherwise the transport
+	// layer would honour Retry-After once internally and the breaker
+	// would honour it again, stacking waits.
+	ctx = client.WithSkipTransientRetries(ctx)
 
 	req, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewReader(data))
 	if err != nil {
@@ -130,15 +129,17 @@ func (e *telemetryExporter) doExport(ctx context.Context, metrics []*telemetryMe
 		req.Header.Set("User-Agent", e.userAgent)
 	}
 
-	// With SkipRateLimitRetry set, retryablehttp returns (resp, err) for a
-	// 429: a wrapped error AND the actual response. Inspect the response
-	// before short-circuiting on err so we can read Retry-After.
+	// With SkipTransientRetries set, retryablehttp returns (resp, err)
+	// for a 429/503: a wrapped error AND the actual response. Inspect
+	// the response before short-circuiting on err so we can read
+	// Retry-After.
 	resp, doErr := e.httpClient.Do(req)
 	if resp != nil {
 		_, _ = io.ReadAll(resp.Body)
 		resp.Body.Close() //nolint:errcheck,gosec // G104: close after response is read
 
-		if resp.StatusCode == http.StatusTooManyRequests {
+		if resp.StatusCode == http.StatusTooManyRequests ||
+			resp.StatusCode == http.StatusServiceUnavailable {
 			if hint := parseRetryAfter(resp.Header.Get("Retry-After")); hint > 0 {
 				e.circuitBreaker.extendOpenStateAtLeast(hint)
 			}
