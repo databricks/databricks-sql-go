@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
@@ -21,6 +22,14 @@ import (
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	dbsqlerrint "github.com/databricks/databricks-sql-go/internal/errors"
 	"github.com/databricks/databricks-sql-go/logger"
+)
+
+// Each deprecated DSN telemetry param logs at most one warning per process.
+// Apps that open many connections with the same DSN should not flood the
+// log with the same deprecation notice on every parse.
+var (
+	telemetryRetryCountWarnOnce sync.Once
+	telemetryRetryDelayWarnOnce sync.Once
 )
 
 // Driver Configurations.
@@ -319,13 +328,18 @@ func ParseDSN(dsn string) (UserConfig, error) {
 	// telemetry traffic are owned by the underlying retryable HTTP
 	// client and the circuit breaker's open-state interval. Extract and
 	// discard the values so they don't fall through into session params
-	// below, and log a one-time warning so operators carrying legacy
-	// DSNs notice the silent change in behaviour.
+	// below, and log a one-time-per-process warning so operators
+	// carrying legacy DSNs notice the silent change in behaviour
+	// without flooding the log on connection pools that reparse the DSN.
 	if v, ok := params.extract("telemetry_retry_count"); ok {
-		logger.Warn().Msgf("DSN param telemetry_retry_count=%q is deprecated and ignored; telemetry retries are now managed by the HTTP client and circuit breaker", v)
+		telemetryRetryCountWarnOnce.Do(func() {
+			logger.Warn().Msgf("DSN param telemetry_retry_count=%q is deprecated and ignored; telemetry retries are now managed by the HTTP client and circuit breaker", v)
+		})
 	}
 	if v, ok := params.extract("telemetry_retry_delay"); ok {
-		logger.Warn().Msgf("DSN param telemetry_retry_delay=%q is deprecated and ignored; telemetry retries are now managed by the HTTP client and circuit breaker", v)
+		telemetryRetryDelayWarnOnce.Do(func() {
+			logger.Warn().Msgf("DSN param telemetry_retry_delay=%q is deprecated and ignored; telemetry retries are now managed by the HTTP client and circuit breaker", v)
+		})
 	}
 
 	// for timezone we do a case insensitive key match.

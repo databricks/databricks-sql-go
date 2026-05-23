@@ -725,11 +725,6 @@ func RetryPolicy(ctx context.Context, resp *http.Response, err error) (bool, err
 	// a Retry-After response header to indicate when the server is
 	// available to start processing request from client.
 	if isRetryableServerResponse(resp) {
-		var retryAfter string
-		if resp.Header != nil {
-			retryAfter = resp.Header.Get("Retry-After")
-		}
-
 		// Callers that own their own backoff for transient responses
 		// (e.g. the telemetry circuit breaker) opt out via
 		// WithSkipTransientRetries. Return (false, nil) — not a wrapped
@@ -742,6 +737,10 @@ func RetryPolicy(ctx context.Context, resp *http.Response, err error) (bool, err
 			return false, nil
 		}
 
+		var retryAfter string
+		if resp.Header != nil {
+			retryAfter = resp.Header.Get("Retry-After")
+		}
 		return true, dbsqlerrint.NewRetryableError(checkErr, retryAfter)
 	}
 
