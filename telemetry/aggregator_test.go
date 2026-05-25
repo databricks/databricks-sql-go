@@ -40,7 +40,7 @@ func TestAggregatorClose_WaitsForInFlightWorkerExports(t *testing.T) {
 	cfg.BatchSize = 1                    // one metric per batch → one worker export per metric
 	httpClient := &http.Client{Timeout: 5 * time.Second}
 
-	exporter := newTelemetryExporter(server.URL, "test-version", httpClient, cfg)
+	exporter := newTelemetryExporter(server.URL, "test-version", "test-ua", httpClient, cfg)
 	agg := newMetricsAggregator(exporter, cfg)
 
 	ctx := context.Background()
@@ -98,7 +98,7 @@ func TestAggregatorClose_DrainsPendingQueueJobsBeforeCancel(t *testing.T) {
 	cfg.BatchSize = 100                  // large batch — won't auto-flush on size
 	httpClient := &http.Client{Timeout: 5 * time.Second}
 
-	exporter := newTelemetryExporter(server.URL, "test-version", httpClient, cfg)
+	exporter := newTelemetryExporter(server.URL, "test-version", "test-ua", httpClient, cfg)
 
 	// Use a single-worker aggregator with a tiny queue to make the "pending in queue"
 	// scenario deterministic: we manually call flushUnlocked to enqueue a job.
@@ -150,7 +150,7 @@ func TestAggregatorFlushUnlocked_InFlightAddBeforeSend(t *testing.T) {
 	cfg.BatchSize = 1
 	httpClient := &http.Client{Timeout: 5 * time.Second}
 
-	exporter := newTelemetryExporter(server.URL, "test-version", httpClient, cfg)
+	exporter := newTelemetryExporter(server.URL, "test-version", "test-ua", httpClient, cfg)
 	agg := newMetricsAggregator(exporter, cfg)
 	ctx := context.Background()
 
@@ -183,7 +183,7 @@ func TestAggregatorClose_SafeToCallMultipleTimes(t *testing.T) {
 
 	cfg := DefaultConfig()
 	httpClient := &http.Client{Timeout: 5 * time.Second}
-	exporter := newTelemetryExporter(server.URL, "test-version", httpClient, cfg)
+	exporter := newTelemetryExporter(server.URL, "test-version", "test-ua", httpClient, cfg)
 	agg := newMetricsAggregator(exporter, cfg)
 	ctx := context.Background()
 
@@ -225,7 +225,7 @@ func TestAggregatorFlushUnlocked_DropWhenQueueFull(t *testing.T) {
 	httpClient := &http.Client{Timeout: 1 * time.Second}
 
 	// Use a no-op exporter — we never actually export in this test.
-	exporter := newTelemetryExporter("http://127.0.0.1:0", "test-version", httpClient, cfg)
+	exporter := newTelemetryExporter("http://127.0.0.1:0", "test-version", "test-ua", httpClient, cfg)
 	agg := newMetricsAggregator(exporter, cfg)
 
 	// Cancel the aggregator context immediately so workers stop consuming from the queue.
@@ -303,7 +303,7 @@ func TestAggregatorClose_RespectsContextTimeout(t *testing.T) {
 	cfg.BatchSize = 1
 	httpClient := &http.Client{Timeout: 10 * time.Second}
 
-	exporter := newTelemetryExporter(server.URL, "test-version", httpClient, cfg)
+	exporter := newTelemetryExporter(server.URL, "test-version", "test-ua", httpClient, cfg)
 	agg := newMetricsAggregator(exporter, cfg)
 
 	// Record a metric that triggers an immediate flush (terminal op).

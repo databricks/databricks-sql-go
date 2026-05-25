@@ -49,6 +49,35 @@ func TestSprintByteId(t *testing.T) {
 	}
 }
 
+// TestIsRetryableServerResponse pins the transient-response predicate:
+// 429 and 503 are the only status codes the retry layer treats as
+// recoverable "server says try again" responses. Generic 5xx
+// (500/502/504) takes a different code path (governed by ClientMethod);
+// 2xx/3xx/4xx are not server-side transient failures.
+func TestIsRetryableServerResponse(t *testing.T) {
+	cases := []struct {
+		status int
+		want   bool
+	}{
+		{200, false},
+		{201, false},
+		{400, false},
+		{401, false},
+		{403, false},
+		{404, false},
+		{429, true},
+		{500, false},
+		{502, false},
+		{503, true},
+		{504, false},
+	}
+	for _, c := range cases {
+		got := isRetryableServerResponse(&http.Response{StatusCode: c.status})
+		require.Equal(t, c.want, got, "status %d", c.status)
+	}
+	require.False(t, isRetryableServerResponse(nil), "nil response is not retryable")
+}
+
 func TestRetryPolicy(t *testing.T) {
 
 	t.Run("test handling error", func(t *testing.T) {
@@ -215,6 +244,47 @@ func TestRetryPolicy(t *testing.T) {
 			}
 		}
 
+	})
+
+	// SkipTransientRetries on the context turns 429 AND 503 into
+	// non-retryable responses so the caller can own its own backoff.
+	// Generic 5xx (500/502/504) and transport errors are not affected by
+	// this flag — they remain governed by ClientMethod via
+	// nonRetryableClientMethods.
+	//
+	// We use clientMethodOpenSession (which is a retryable method) so the
+	// generic 5xx branch fires; the default clientMethodUnknown is itself
+	// in nonRetryableClientMethods and would suppress 500 retries for an
+	// unrelated reason.
+	t.Run("SkipTransientRetries affects 429 and 503", func(t *testing.T) {
+		base := context.WithValue(context.Background(), ClientMethod, clientMethodOpenSession)
+		ctx := WithSkipTransientRetries(base)
+
+		// 429/503 with the flag set: not retried AND no error returned,
+		// so retryablehttp's StandardClient adapter (and net/http
+		// underneath) deliver the response to the caller. The caller
+		// inspects the status code directly.
+		resp429 := &http.Response{StatusCode: http.StatusTooManyRequests}
+		retry, err := RetryPolicy(ctx, resp429, nil)
+		require.False(t, retry, "429 with SkipTransientRetries should not be retried")
+		require.NoError(t, err, "no err so the response is preserved through net/http")
+
+		resp503 := &http.Response{StatusCode: http.StatusServiceUnavailable}
+		retry, err = RetryPolicy(ctx, resp503, nil)
+		require.False(t, retry, "503 with SkipTransientRetries should not be retried")
+		require.NoError(t, err, "no err so the response is preserved through net/http")
+
+		// 500 takes the generic 5xx branch — unaffected by the flag for
+		// a retryable client method.
+		resp500 := &http.Response{StatusCode: http.StatusInternalServerError}
+		retry, _ = RetryPolicy(ctx, resp500, nil)
+		require.True(t, retry, "500 must still retry — flag is scoped to transient (429/503) responses")
+
+		// Without the flag, 429 and 503 both retry as before.
+		retry, _ = RetryPolicy(base, resp429, nil)
+		require.True(t, retry, "default behavior: 429 retries")
+		retry, _ = RetryPolicy(base, resp503, nil)
+		require.True(t, retry, "default behavior: 503 retries")
 	})
 
 	t.Run("test handling client method errors", func(t *testing.T) {

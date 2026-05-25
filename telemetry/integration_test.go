@@ -48,7 +48,7 @@ func TestIntegration_EndToEnd_WithCircuitBreaker(t *testing.T) {
 	defer server.Close()
 
 	// Create telemetry client
-	exporter := newTelemetryExporter(server.URL, "test-version", httpClient, cfg)
+	exporter := newTelemetryExporter(server.URL, "test-version", "test-ua", httpClient, cfg)
 	aggregator := newMetricsAggregator(exporter, cfg)
 	defer aggregator.close(context.Background()) //nolint:errcheck
 
@@ -84,7 +84,6 @@ func TestIntegration_CircuitBreakerOpening(t *testing.T) {
 
 	cfg := DefaultConfig()
 	cfg.FlushInterval = 50 * time.Millisecond
-	cfg.MaxRetries = 0 // No retries for faster test
 	httpClient := &http.Client{Timeout: 5 * time.Second}
 
 	requestCount := int32(0)
@@ -95,7 +94,7 @@ func TestIntegration_CircuitBreakerOpening(t *testing.T) {
 	}))
 	defer server.Close()
 
-	exporter := newTelemetryExporter(server.URL, "test-version", httpClient, cfg)
+	exporter := newTelemetryExporter(server.URL, "test-version", "test-ua", httpClient, cfg)
 	aggregator := newMetricsAggregator(exporter, cfg)
 	defer aggregator.close(context.Background()) //nolint:errcheck
 
@@ -166,7 +165,7 @@ func TestIntegration_PrivacyCompliance_NoQueryText(t *testing.T) {
 	}))
 	defer server.Close()
 
-	exporter := newTelemetryExporter(server.URL, "test-version", httpClient, cfg)
+	exporter := newTelemetryExporter(server.URL, "test-version", "test-ua", httpClient, cfg)
 	aggregator := newMetricsAggregator(exporter, cfg)
 	defer aggregator.close(context.Background()) //nolint:errcheck
 
@@ -237,7 +236,7 @@ func TestIntegration_TelemetryEventCorrectnessAllFields(t *testing.T) {
 	}))
 	defer server.Close()
 
-	exporter := newTelemetryExporter(server.URL, testDriverVersion, httpClient, cfg)
+	exporter := newTelemetryExporter(server.URL, testDriverVersion, "test-ua", httpClient, cfg)
 
 	metric := &telemetryMetric{
 		metricType:  "operation",
@@ -404,7 +403,7 @@ func TestIntegration_OperationLatencyMs_ZeroNotOmitted(t *testing.T) {
 	}))
 	defer server.Close()
 
-	exporter := newTelemetryExporter(server.URL, "test-version", httpClient, cfg)
+	exporter := newTelemetryExporter(server.URL, "test-version", "test-ua", httpClient, cfg)
 
 	// latencyMs=0 — simulates a CloseOperation that completed in <1ms.
 	metric := &telemetryMetric{
@@ -476,7 +475,7 @@ func TestIntegration_ChunkTotalPresent_DerivedFromChunkCount(t *testing.T) {
 		totalChunksIterated = 32
 	)
 
-	exporter := newTelemetryExporter(server.URL, "test-version", httpClient, cfg)
+	exporter := newTelemetryExporter(server.URL, "test-version", "test-ua", httpClient, cfg)
 	metric := &telemetryMetric{
 		metricType:  "operation",
 		timestamp:   time.Now(),

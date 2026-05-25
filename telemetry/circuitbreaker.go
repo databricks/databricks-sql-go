@@ -50,6 +50,13 @@ type circuitBreaker struct {
 	// Half-open state tracking
 	halfOpenSuccesses int
 
+	// retryAfterHint, if non-zero, overrides waitDurationInOpenState for
+	// the current open-state interval. Populated from server-provided
+	// Retry-After headers on 429 responses; cleared when the breaker
+	// transitions out of Open (to half-open after the wait elapses, or
+	// to closed via half-open success).
+	retryAfterHint time.Duration
+
 	config circuitBreakerConfig
 }
 
@@ -62,14 +69,35 @@ type circuitBreakerConfig struct {
 	permittedCallsInHalfOpen int           // Number of test calls in half-open state
 }
 
-// defaultCircuitBreakerConfig returns default configuration matching JDBC.
+// defaultCircuitBreakerConfig returns default configuration.
+//
+// Each export call is exactly one HTTP transaction (the exporter sets
+// WithSkipTransientRetries so the retryablehttp layer does not loop on
+// 429/503), which means each breaker call corresponds to one observed
+// outcome from the server.
+//
+// Detection-time math at default cadence (FlushInterval = 30s in
+// config.go): minimumNumberOfCalls=10 means we need ~10 flush intervals
+// of data before the failure-rate gate fires — i.e. up to ~5 minutes of
+// 100%-failing exports before the breaker opens. That is intentionally
+// slow on the trip side so a transient blip on a low-traffic client
+// doesn't trigger a 60s blackout; once the breaker is open, the longer
+// minimum-evaluation window matters less because the open-state interval
+// (60s, or Retry-After if larger) controls the next probe.
+//
+// slidingWindowSize=30 is deliberately larger than minimumNumberOfCalls:
+// once enough calls accumulate, the failure-rate evaluation runs over up
+// to the last 30 outcomes, giving recent successes time to offset
+// transient failures. The two numbers tune different things —
+// minimumNumberOfCalls gates when we start evaluating; slidingWindowSize
+// caps how many outcomes participate in that evaluation.
 func defaultCircuitBreakerConfig() circuitBreakerConfig {
 	return circuitBreakerConfig{
-		failureRateThreshold:     50, // 50% failure rate
-		minimumNumberOfCalls:     20, // Minimum sample size
-		slidingWindowSize:        30, // Keep recent 30 calls
-		waitDurationInOpenState:  30 * time.Second,
-		permittedCallsInHalfOpen: 3, // Test with 3 calls
+		failureRateThreshold:     50,
+		minimumNumberOfCalls:     10,
+		slidingWindowSize:        30,
+		waitDurationInOpenState:  60 * time.Second,
+		permittedCallsInHalfOpen: 3,
 	}
 }
 
@@ -94,14 +122,25 @@ func (cb *circuitBreaker) execute(ctx context.Context, fn func() error) error {
 
 	switch state {
 	case stateOpen:
-		// Check if wait duration has passed
-		cb.mu.RLock()
-		shouldRetry := time.Since(cb.lastStateTime) > cb.config.waitDurationInOpenState
-		cb.mu.RUnlock()
+		// Check if wait duration has passed. If the server hinted a
+		// Retry-After on the failure that opened the breaker, honor the
+		// larger of (configured wait, server hint).
+		cb.mu.Lock()
+		wait := cb.config.waitDurationInOpenState
+		if cb.retryAfterHint > wait {
+			wait = cb.retryAfterHint
+		}
+		shouldRetry := time.Since(cb.lastStateTime) > wait
+		if shouldRetry {
+			// The wait window the hint asked for has elapsed — clear it
+			// so a later reopen (e.g. half-open failure with no new hint)
+			// doesn't extend itself by a stale duration.
+			cb.retryAfterHint = 0
+			cb.setStateUnlocked(stateHalfOpen)
+		}
+		cb.mu.Unlock()
 
 		if shouldRetry {
-			// Transition to half-open
-			cb.setState(stateHalfOpen)
 			return cb.tryExecute(ctx, fn)
 		}
 		return ErrCircuitOpen
@@ -147,8 +186,11 @@ func (cb *circuitBreaker) recordCall(result callResult) {
 
 		cb.halfOpenSuccesses++
 		if cb.halfOpenSuccesses >= cb.config.permittedCallsInHalfOpen {
-			// Enough successes to close circuit
+			// Enough successes to close circuit. Drop any stale Retry-After
+			// hint so it doesn't extend a future open interval after the
+			// server has recovered.
 			cb.resetWindowUnlocked()
+			cb.retryAfterHint = 0
 			cb.setStateUnlocked(stateClosed)
 		}
 		return
@@ -211,11 +253,22 @@ func (cb *circuitBreaker) resetWindowUnlocked() {
 	cb.halfOpenSuccesses = 0
 }
 
-// setState transitions to a new state.
-func (cb *circuitBreaker) setState(newState circuitState) {
+// extendOpenStateAtLeast records a server-provided Retry-After hint. While
+// the breaker is open, it will stay open for at least the given duration
+// (and at least waitDurationInOpenState). The hint is cleared when the
+// breaker transitions out of Open.
+//
+// Safe to call concurrently from any caller (the exporter parses
+// Retry-After on 429 responses and forwards it here).
+func (cb *circuitBreaker) extendOpenStateAtLeast(d time.Duration) {
+	if d <= 0 {
+		return
+	}
 	cb.mu.Lock()
-	defer cb.mu.Unlock()
-	cb.setStateUnlocked(newState)
+	if d > cb.retryAfterHint {
+		cb.retryAfterHint = d
+	}
+	cb.mu.Unlock()
 }
 
 // setStateUnlocked transitions to a new state without locking.

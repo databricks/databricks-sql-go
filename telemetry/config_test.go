@@ -17,17 +17,11 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.EnableTelemetry != nil {
 		t.Error("Expected EnableTelemetry to be nil (unset) by default")
 	}
-	if cfg.BatchSize != 100 {
-		t.Errorf("Expected BatchSize 100, got %d", cfg.BatchSize)
+	if cfg.BatchSize != 200 {
+		t.Errorf("Expected BatchSize 200, got %d", cfg.BatchSize)
 	}
-	if cfg.FlushInterval != 5*time.Second {
-		t.Errorf("Expected FlushInterval 5s, got %v", cfg.FlushInterval)
-	}
-	if cfg.MaxRetries != 3 {
-		t.Errorf("Expected MaxRetries 3, got %d", cfg.MaxRetries)
-	}
-	if cfg.RetryDelay != 100*time.Millisecond {
-		t.Errorf("Expected RetryDelay 100ms, got %v", cfg.RetryDelay)
+	if cfg.FlushInterval != 30*time.Second {
+		t.Errorf("Expected FlushInterval 30s, got %v", cfg.FlushInterval)
 	}
 	if !cfg.CircuitBreakerEnabled {
 		t.Error("Expected CircuitBreakerEnabled true, got false")
@@ -75,24 +69,24 @@ func TestParseTelemetryConfig_BatchSize(t *testing.T) {
 func TestParseTelemetryConfig_BatchSizeInvalid(t *testing.T) {
 	cfg := ParseTelemetryConfig(map[string]string{"telemetry_batch_size": "invalid"})
 
-	if cfg.BatchSize != 100 {
-		t.Errorf("Expected BatchSize to fallback to 100, got %d", cfg.BatchSize)
+	if cfg.BatchSize != 200 {
+		t.Errorf("Expected BatchSize to fallback to 200, got %d", cfg.BatchSize)
 	}
 }
 
 func TestParseTelemetryConfig_BatchSizeZero(t *testing.T) {
 	cfg := ParseTelemetryConfig(map[string]string{"telemetry_batch_size": "0"})
 
-	if cfg.BatchSize != 100 {
-		t.Errorf("Expected BatchSize to fallback to 100 when zero, got %d", cfg.BatchSize)
+	if cfg.BatchSize != 200 {
+		t.Errorf("Expected BatchSize to fallback to 200 when zero, got %d", cfg.BatchSize)
 	}
 }
 
 func TestParseTelemetryConfig_BatchSizeNegative(t *testing.T) {
 	cfg := ParseTelemetryConfig(map[string]string{"telemetry_batch_size": "-10"})
 
-	if cfg.BatchSize != 100 {
-		t.Errorf("Expected BatchSize to fallback to 100 when negative, got %d", cfg.BatchSize)
+	if cfg.BatchSize != 200 {
+		t.Errorf("Expected BatchSize to fallback to 200 when negative, got %d", cfg.BatchSize)
 	}
 }
 
@@ -107,77 +101,22 @@ func TestParseTelemetryConfig_FlushInterval(t *testing.T) {
 func TestParseTelemetryConfig_FlushIntervalInvalid(t *testing.T) {
 	cfg := ParseTelemetryConfig(map[string]string{"telemetry_flush_interval": "invalid"})
 
-	if cfg.FlushInterval != 5*time.Second {
-		t.Errorf("Expected FlushInterval to fallback to 5s, got %v", cfg.FlushInterval)
+	if cfg.FlushInterval != 30*time.Second {
+		t.Errorf("Expected FlushInterval to fallback to 30s, got %v", cfg.FlushInterval)
 	}
 }
 
-func TestParseTelemetryConfig_RetryCount(t *testing.T) {
-	cfg := ParseTelemetryConfig(map[string]string{"telemetry_retry_count": "5"})
-
-	if cfg.MaxRetries != 5 {
-		t.Errorf("Expected MaxRetries 5, got %d", cfg.MaxRetries)
-	}
-}
-
-func TestParseTelemetryConfig_RetryCountZero(t *testing.T) {
-	// Zero is valid — it disables retries entirely (unlike batch_size where zero is rejected)
-	cfg := ParseTelemetryConfig(map[string]string{"telemetry_retry_count": "0"})
-
-	if cfg.MaxRetries != 0 {
-		t.Errorf("Expected MaxRetries 0 (disable retries), got %d", cfg.MaxRetries)
-	}
-}
-
-func TestParseTelemetryConfig_RetryCountInvalid(t *testing.T) {
-	cfg := ParseTelemetryConfig(map[string]string{"telemetry_retry_count": "invalid"})
-
-	if cfg.MaxRetries != 3 {
-		t.Errorf("Expected MaxRetries to fallback to 3, got %d", cfg.MaxRetries)
-	}
-}
-
-func TestParseTelemetryConfig_RetryDelay(t *testing.T) {
-	cfg := ParseTelemetryConfig(map[string]string{"telemetry_retry_delay": "500ms"})
-
-	if cfg.RetryDelay != 500*time.Millisecond {
-		t.Errorf("Expected RetryDelay 500ms, got %v", cfg.RetryDelay)
-	}
-}
-
-func TestParseTelemetryConfig_RetryDelayInvalid(t *testing.T) {
-	cfg := ParseTelemetryConfig(map[string]string{"telemetry_retry_delay": "invalid"})
-
-	if cfg.RetryDelay != 100*time.Millisecond {
-		t.Errorf("Expected RetryDelay to fallback to 100ms, got %v", cfg.RetryDelay)
-	}
-}
-
-func TestParseTelemetryConfig_RetryCountExceedsCap(t *testing.T) {
-	cfg := ParseTelemetryConfig(map[string]string{"telemetry_retry_count": "15"})
-	if cfg.MaxRetries != maxTelemetryRetryCount {
-		t.Errorf("Expected MaxRetries clamped to %d, got %d", maxTelemetryRetryCount, cfg.MaxRetries)
-	}
-}
-
-func TestParseTelemetryConfig_RetryCountAtCap(t *testing.T) {
-	cfg := ParseTelemetryConfig(map[string]string{"telemetry_retry_count": "10"})
-	if cfg.MaxRetries != 10 {
-		t.Errorf("Expected MaxRetries 10, got %d", cfg.MaxRetries)
-	}
-}
-
-func TestParseTelemetryConfig_RetryDelayExceedsCap(t *testing.T) {
-	cfg := ParseTelemetryConfig(map[string]string{"telemetry_retry_delay": "60s"})
-	if cfg.RetryDelay != maxTelemetryRetryDelay {
-		t.Errorf("Expected RetryDelay clamped to %v, got %v", maxTelemetryRetryDelay, cfg.RetryDelay)
-	}
-}
-
-func TestParseTelemetryConfig_RetryDelayAtCap(t *testing.T) {
-	cfg := ParseTelemetryConfig(map[string]string{"telemetry_retry_delay": "30s"})
-	if cfg.RetryDelay != 30*time.Second {
-		t.Errorf("Expected RetryDelay 30s, got %v", cfg.RetryDelay)
+// telemetry_retry_count and telemetry_retry_delay DSN parameters are accepted
+// for backwards compatibility but are no longer applied — retries are owned by
+// the underlying retryablehttp-wrapped HTTP client.
+func TestParseTelemetryConfig_RetryParamsAccepted(t *testing.T) {
+	cfg := ParseTelemetryConfig(map[string]string{
+		"telemetry_retry_count": "5",
+		"telemetry_retry_delay": "500ms",
+	})
+	// Should parse without error and produce a usable config.
+	if cfg == nil {
+		t.Fatal("expected non-nil config")
 	}
 }
 
@@ -186,8 +125,6 @@ func TestParseTelemetryConfig_AllParams(t *testing.T) {
 		"enableTelemetry":          "true",
 		"telemetry_batch_size":     "200",
 		"telemetry_flush_interval": "30s",
-		"telemetry_retry_count":    "5",
-		"telemetry_retry_delay":    "250ms",
 	})
 
 	if cfg.EnableTelemetry == nil || !*cfg.EnableTelemetry {
@@ -198,12 +135,6 @@ func TestParseTelemetryConfig_AllParams(t *testing.T) {
 	}
 	if cfg.FlushInterval != 30*time.Second {
 		t.Errorf("Expected FlushInterval 30s, got %v", cfg.FlushInterval)
-	}
-	if cfg.MaxRetries != 5 {
-		t.Errorf("Expected MaxRetries 5, got %d", cfg.MaxRetries)
-	}
-	if cfg.RetryDelay != 250*time.Millisecond {
-		t.Errorf("Expected RetryDelay 250ms, got %v", cfg.RetryDelay)
 	}
 }
 
@@ -216,7 +147,7 @@ func TestIsTelemetryEnabled_ExplicitOptOut(t *testing.T) {
 	}))
 	defer server.Close()
 
-	result := isTelemetryEnabled(context.Background(), &Config{EnableTelemetry: boolPtr(false)}, server.URL, "test-version", &http.Client{Timeout: 5 * time.Second})
+	result := isTelemetryEnabled(context.Background(), &Config{EnableTelemetry: boolPtr(false)}, server.URL, "test-version", "test-ua", &http.Client{Timeout: 5 * time.Second})
 
 	if result {
 		t.Error("Expected telemetry to be disabled when client sets enableTelemetry=false, got enabled")
@@ -226,7 +157,7 @@ func TestIsTelemetryEnabled_ExplicitOptOut(t *testing.T) {
 // TestIsTelemetryEnabled_ExplicitOptIn: client sets enableTelemetry=true →
 // enabled without any server call (unreachable host proves no network call is made).
 func TestIsTelemetryEnabled_ExplicitOptIn(t *testing.T) {
-	result := isTelemetryEnabled(context.Background(), &Config{EnableTelemetry: boolPtr(true)}, "http://unreachable-host", "test-version", &http.Client{Timeout: 5 * time.Second})
+	result := isTelemetryEnabled(context.Background(), &Config{EnableTelemetry: boolPtr(true)}, "http://unreachable-host", "test-version", "test-ua", &http.Client{Timeout: 5 * time.Second})
 
 	if !result {
 		t.Error("Expected telemetry to be enabled when client sets enableTelemetry=true, got disabled")
@@ -245,7 +176,7 @@ func TestIsTelemetryEnabled_ServerEnabled(t *testing.T) {
 	flagCache.getOrCreateContext(server.URL)
 	defer flagCache.releaseContext(server.URL)
 
-	result := isTelemetryEnabled(context.Background(), &Config{}, server.URL, "test-version", &http.Client{Timeout: 5 * time.Second})
+	result := isTelemetryEnabled(context.Background(), &Config{}, server.URL, "test-version", "test-ua", &http.Client{Timeout: 5 * time.Second})
 
 	if !result {
 		t.Error("Expected telemetry to be enabled when server flag is true and EnableTelemetry is nil, got disabled")
@@ -264,7 +195,7 @@ func TestIsTelemetryEnabled_ServerDisabled(t *testing.T) {
 	flagCache.getOrCreateContext(server.URL)
 	defer flagCache.releaseContext(server.URL)
 
-	result := isTelemetryEnabled(context.Background(), &Config{}, server.URL, "test-version", &http.Client{Timeout: 5 * time.Second})
+	result := isTelemetryEnabled(context.Background(), &Config{}, server.URL, "test-version", "test-ua", &http.Client{Timeout: 5 * time.Second})
 
 	if result {
 		t.Error("Expected telemetry to be disabled when server flag is false and EnableTelemetry is nil, got enabled")
@@ -282,7 +213,7 @@ func TestIsTelemetryEnabled_ServerError(t *testing.T) {
 	flagCache.getOrCreateContext(server.URL)
 	defer flagCache.releaseContext(server.URL)
 
-	result := isTelemetryEnabled(context.Background(), &Config{}, server.URL, "test-version", &http.Client{Timeout: 5 * time.Second})
+	result := isTelemetryEnabled(context.Background(), &Config{}, server.URL, "test-version", "test-ua", &http.Client{Timeout: 5 * time.Second})
 
 	if result {
 		t.Error("Expected telemetry to be disabled when server errors and EnableTelemetry is nil, got enabled")
@@ -295,7 +226,7 @@ func TestIsTelemetryEnabled_ServerUnreachable(t *testing.T) {
 	flagCache.getOrCreateContext("http://localhost:9999")
 	defer flagCache.releaseContext("http://localhost:9999")
 
-	result := isTelemetryEnabled(context.Background(), &Config{}, "http://localhost:9999", "test-version", &http.Client{Timeout: 1 * time.Second})
+	result := isTelemetryEnabled(context.Background(), &Config{}, "http://localhost:9999", "test-version", "test-ua", &http.Client{Timeout: 1 * time.Second})
 
 	if result {
 		t.Error("Expected telemetry to be disabled when server is unreachable and EnableTelemetry is nil, got enabled")

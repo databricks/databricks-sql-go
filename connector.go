@@ -95,12 +95,11 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 	conn.telemetry = telemetry.InitializeForConnection(ctx, telemetry.TelemetryInitOptions{
 		Host:            c.cfg.Host,
 		DriverVersion:   c.cfg.DriverVersion,
+		UserAgent:       client.BuildUserAgent(c.cfg),
 		HTTPClient:      telemetryClient,
 		EnableTelemetry: c.cfg.EnableTelemetry,
 		BatchSize:       c.cfg.TelemetryBatchSize,
 		FlushInterval:   c.cfg.TelemetryFlushInterval,
-		RetryCount:      c.cfg.TelemetryRetryCount,
-		RetryDelay:      c.cfg.TelemetryRetryDelay,
 	})
 	if conn.telemetry != nil {
 		log.Debug().Msg("telemetry initialized for connection")

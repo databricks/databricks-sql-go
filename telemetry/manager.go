@@ -45,13 +45,20 @@ func getClientManager() *clientManager {
 
 // getOrCreateClient gets or creates a telemetry client for the host.
 // Increments reference count.
-func (m *clientManager) getOrCreateClient(host string, driverVersion string, httpClient *http.Client, cfg *Config) *telemetryClient {
+//
+// The first caller for a host fixes the User-Agent for the lifetime of the
+// host's telemetry client. A later connection on the same host with a
+// different WithUserAgentEntry will see its telemetry traffic attributed
+// to the first caller's UA in access logs. This is intentional — the
+// per-host singleton consolidates telemetry across connections to keep
+// the request rate low.
+func (m *clientManager) getOrCreateClient(host string, driverVersion string, userAgent string, httpClient *http.Client, cfg *Config) *telemetryClient {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	holder, exists := m.clients[host]
 	if !exists {
-		client := newTelemetryClient(host, driverVersion, httpClient, cfg)
+		client := newTelemetryClient(host, driverVersion, userAgent, httpClient, cfg)
 		if err := client.start(); err != nil {
 			// Failed to start client, don't add to map
 			logger.Logger.Debug().Str("host", host).Err(err).Msg("failed to start telemetry client")

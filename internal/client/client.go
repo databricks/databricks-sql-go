@@ -20,7 +20,6 @@ import (
 	"time"
 
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
-	"github.com/databricks/databricks-sql-go/internal/agent"
 	dbsqlerrint "github.com/databricks/databricks-sql-go/internal/errors"
 
 	"github.com/apache/thrift/lib/go/thrift"
@@ -45,7 +44,33 @@ type contextKey int
 
 const (
 	ClientMethod contextKey = iota
+	// SkipTransientRetries, when set to true on the request context, makes
+	// RetryPolicy treat every status code recognized by
+	// isRetryableServerResponse (currently 429 and 503) as a non-retryable
+	// response — the request returns after a single attempt. Generic 5xx
+	// (500/502/504) and transport errors are still gated by ClientMethod
+	// as usual; callers that omit ClientMethod (e.g. the telemetry
+	// exporter) already get one-shot semantics on those, so the net effect
+	// is exactly one HTTP transaction per request.
+	//
+	// Set by callers that own their own backoff and need each HTTP
+	// outcome surfaced individually (e.g. the telemetry exporter, whose
+	// circuit breaker is the sole arbiter of when to back off).
+	SkipTransientRetries
 )
+
+// WithSkipTransientRetries returns a context that disables retryablehttp's
+// retries for the transient-server-response codes (429 + 503). The caller
+// takes responsibility for handling these responses (e.g. via a circuit
+// breaker that parses Retry-After).
+//
+// Combined with a ClientMethod that already opts out of generic-5xx retries
+// (the default zero value clientMethodUnknown does), this gives one-shot
+// semantics on every failure mode: each call to httpClient.Do returns
+// exactly one outcome to the caller.
+func WithSkipTransientRetries(ctx context.Context) context.Context {
+	return context.WithValue(ctx, SkipTransientRetries, true)
+}
 
 type clientMethod int
 
@@ -292,14 +317,7 @@ func InitThriftClient(cfg *config.Config, httpclient *http.Client) (*ThriftServi
 		tTrans, err = thrift.NewTHttpClientWithOptions(endpoint, thrift.THttpClientOptions{Client: httpclient})
 
 		thriftHttpClient := tTrans.(*thrift.THttpClient)
-		userAgent := fmt.Sprintf("%s/%s", cfg.DriverName, cfg.DriverVersion)
-		if cfg.UserAgentEntry != "" {
-			userAgent = fmt.Sprintf("%s/%s (%s)", cfg.DriverName, cfg.DriverVersion, cfg.UserAgentEntry)
-		}
-		if agentProduct := agent.Detect(); agentProduct != "" {
-			userAgent = fmt.Sprintf("%s agent/%s", userAgent, agentProduct)
-		}
-		thriftHttpClient.SetHeader("User-Agent", userAgent)
+		thriftHttpClient.SetHeader("User-Agent", BuildUserAgent(cfg))
 
 	default:
 		return nil, dbsqlerrint.NewDriverError(context.TODO(), fmt.Sprintf("unsupported transport `%s`", cfg.ThriftTransport), nil)
@@ -707,11 +725,22 @@ func RetryPolicy(ctx context.Context, resp *http.Response, err error) (bool, err
 	// a Retry-After response header to indicate when the server is
 	// available to start processing request from client.
 	if isRetryableServerResponse(resp) {
+		// Callers that own their own backoff for transient responses
+		// (e.g. the telemetry circuit breaker) opt out via
+		// WithSkipTransientRetries. Return (false, nil) — not a wrapped
+		// error — because retryablehttp's StandardClient adapter is
+		// fronted by net/http, which discards the response whenever the
+		// transport returns both a response and an error. The caller
+		// will see the non-2xx status code on the response and react to
+		// it directly (e.g. parse Retry-After off the headers).
+		if skip, _ := ctx.Value(SkipTransientRetries).(bool); skip {
+			return false, nil
+		}
+
 		var retryAfter string
 		if resp.Header != nil {
 			retryAfter = resp.Header.Get("Retry-After")
 		}
-
 		return true, dbsqlerrint.NewRetryableError(checkErr, retryAfter)
 	}
 

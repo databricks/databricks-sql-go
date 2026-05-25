@@ -25,7 +25,7 @@ func BenchmarkInterceptor_Overhead_Enabled(b *testing.B) {
 	cfg.BatchSize = 1000
 	cfg.FlushInterval = 10 * time.Minute // suppress periodic flush during bench
 
-	exporter := newTelemetryExporter("localhost", "test-version", &http.Client{}, cfg)
+	exporter := newTelemetryExporter("localhost", "test-version", "test-ua", &http.Client{}, cfg)
 	agg := newMetricsAggregator(exporter, cfg)
 	defer agg.close(context.Background()) //nolint:errcheck
 
@@ -44,7 +44,7 @@ func BenchmarkInterceptor_Overhead_Enabled(b *testing.B) {
 // The delta between Enabled and Disabled is the pure telemetry cost.
 func BenchmarkInterceptor_Overhead_Disabled(b *testing.B) {
 	cfg := DefaultConfig()
-	exporter := newTelemetryExporter("localhost", "test-version", &http.Client{}, cfg)
+	exporter := newTelemetryExporter("localhost", "test-version", "test-ua", &http.Client{}, cfg)
 	agg := newMetricsAggregator(exporter, cfg)
 	defer agg.close(context.Background()) //nolint:errcheck
 
@@ -66,7 +66,7 @@ func BenchmarkAggregator_RecordMetric(b *testing.B) {
 	cfg.BatchSize = 10000
 	cfg.FlushInterval = 10 * time.Minute
 
-	exporter := newTelemetryExporter("localhost", "test-version", &http.Client{}, cfg)
+	exporter := newTelemetryExporter("localhost", "test-version", "test-ua", &http.Client{}, cfg)
 	agg := newMetricsAggregator(exporter, cfg)
 	defer agg.close(context.Background()) //nolint:errcheck
 
@@ -95,9 +95,8 @@ func BenchmarkExporter_Export(b *testing.B) {
 	defer server.Close()
 
 	cfg := DefaultConfig()
-	cfg.MaxRetries = 0
 	httpClient := &http.Client{Timeout: 5 * time.Second}
-	exporter := newTelemetryExporter(server.URL, "test-version", httpClient, cfg)
+	exporter := newTelemetryExporter(server.URL, "test-version", "test-ua", httpClient, cfg)
 
 	metrics := make([]*telemetryMetric, 10)
 	for i := range metrics {
@@ -136,7 +135,7 @@ func BenchmarkConcurrentConnections_PerHostSharing(b *testing.B) {
 	b.ReportAllocs()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			client := manager.getOrCreateClient(host, "test-version", httpClient, cfg)
+			client := manager.getOrCreateClient(host, "test-version", "test-ua", httpClient, cfg)
 			if client != nil {
 				_ = manager.releaseClient(host)
 			}
@@ -185,7 +184,7 @@ func TestLoadTesting_ConcurrentConnections(t *testing.T) {
 		go func() {
 			defer wg.Done()
 
-			client := manager.getOrCreateClient(host, "test-version", httpClient, cfg)
+			client := manager.getOrCreateClient(host, "test-version", "test-ua", httpClient, cfg)
 			if client == nil {
 				atomic.AddInt64(&errors, 1)
 				return
@@ -237,7 +236,7 @@ func TestGracefulShutdown_ReferenceCountingCleanup(t *testing.T) {
 	// Open 3 connections per host
 	for _, host := range hosts {
 		for i := 0; i < 3; i++ {
-			if client := manager.getOrCreateClient(host, "test-version", httpClient, cfg); client == nil {
+			if client := manager.getOrCreateClient(host, "test-version", "test-ua", httpClient, cfg); client == nil {
 				t.Fatalf("expected client for host %s", host)
 			}
 		}
@@ -288,7 +287,7 @@ func TestGracefulShutdown_FinalFlush(t *testing.T) {
 	cfg.FlushInterval = 10 * time.Minute // prevent auto-flush
 	httpClient := &http.Client{Timeout: 5 * time.Second}
 
-	exporter := newTelemetryExporter(server.URL, "test-version", httpClient, cfg)
+	exporter := newTelemetryExporter(server.URL, "test-version", "test-ua", httpClient, cfg)
 	agg := newMetricsAggregator(exporter, cfg)
 
 	ctx := context.Background()

@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/databricks/databricks-sql-go/internal/client"
 	"github.com/databricks/databricks-sql-go/logger"
 )
 
@@ -24,6 +26,7 @@ const (
 type telemetryExporter struct {
 	host           string
 	driverVersion  string
+	userAgent      string
 	httpClient     *http.Client
 	circuitBreaker *circuitBreaker
 	cfg            *Config
@@ -50,10 +53,11 @@ func ensureHTTPScheme(host string) string {
 }
 
 // newTelemetryExporter creates a new exporter.
-func newTelemetryExporter(host string, driverVersion string, httpClient *http.Client, cfg *Config) *telemetryExporter {
+func newTelemetryExporter(host string, driverVersion string, userAgent string, httpClient *http.Client, cfg *Config) *telemetryExporter {
 	return &telemetryExporter{
 		host:           host,
 		driverVersion:  driverVersion,
+		userAgent:      userAgent,
 		httpClient:     httpClient,
 		circuitBreaker: getCircuitBreakerManager().getCircuitBreaker(host),
 		cfg:            cfg,
@@ -85,78 +89,86 @@ func (e *telemetryExporter) export(ctx context.Context, metrics []*telemetryMetr
 	}
 }
 
-// doExport performs the actual export with retries and exponential backoff.
+// doExport sends one telemetry request. It is a single HTTP transaction —
+// transport-layer retries are suppressed via WithSkipTransientRetries so
+// the breaker is the sole arbiter of backoff and sees one outcome per
+// export. With no ClientMethod on the context, generic 5xx/transport
+// errors are already one-shot per internal/client.RetryPolicy; combined,
+// every non-2xx (429, 5xx, transport) returns directly to the breaker as a
+// single failure signal.
+//
+// On 429 or 503 we parse Retry-After and feed it to the breaker via
+// extendOpenStateAtLeast so the open-state interval honours the server's
+// hint.
 func (e *telemetryExporter) doExport(ctx context.Context, metrics []*telemetryMetric) error {
-	// Create telemetry request with base64-encoded logs
 	request, err := createTelemetryRequest(metrics, e.driverVersion)
 	if err != nil {
 		return fmt.Errorf("failed to create telemetry request: %w", err)
 	}
 
-	// Serialize request
 	data, err := json.Marshal(request)
 	if err != nil {
 		return fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	// Determine endpoint
-	hostURL := ensureHTTPScheme(e.host)
-	endpoint := hostURL + telemetryEndpointPath
+	endpoint := ensureHTTPScheme(e.host) + telemetryEndpointPath
 
-	// Retry logic with exponential backoff
-	maxRetries := e.cfg.MaxRetries
-	for attempt := 0; attempt <= maxRetries; attempt++ {
-		// Exponential backoff (except for first attempt)
-		if attempt > 0 {
-			backoff := time.Duration(1<<uint(attempt-1)) * e.cfg.RetryDelay
-			select {
-			case <-time.After(backoff):
-			case <-ctx.Done():
-				return ctx.Err()
-			}
-		}
+	// Opt out of retryablehttp's transient-response retries — the
+	// circuit breaker owns the backoff and needs one HTTP transaction per
+	// call so it can see each 429/503 directly. Otherwise the transport
+	// layer would honour Retry-After once internally and the breaker
+	// would honour it again, stacking waits.
+	ctx = client.WithSkipTransientRetries(ctx)
 
-		// Create request
-		req, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewReader(data))
-		if err != nil {
-			return fmt.Errorf("failed to create request: %w", err)
-		}
+	req, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewReader(data))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if e.userAgent != "" {
+		req.Header.Set("User-Agent", e.userAgent)
+	}
 
-		req.Header.Set("Content-Type", "application/json")
-
-		// Execute request
-		resp, err := e.httpClient.Do(req)
-		if err != nil {
-			if attempt == maxRetries {
-				return fmt.Errorf("failed after %d retries: %w", maxRetries, err)
-			}
-			continue
-		}
-
-		// Read response body
+	// With SkipTransientRetries set, retryablehttp returns (resp, err)
+	// for a 429/503: a wrapped error AND the actual response. Inspect
+	// the response before short-circuiting on err so we can read
+	// Retry-After.
+	resp, doErr := e.httpClient.Do(req)
+	if resp != nil {
 		_, _ = io.ReadAll(resp.Body)
 		resp.Body.Close() //nolint:errcheck,gosec // G104: close after response is read
 
-		// Check status code
+		if resp.StatusCode == http.StatusTooManyRequests ||
+			resp.StatusCode == http.StatusServiceUnavailable {
+			if hint := parseRetryAfter(resp.Header.Get("Retry-After")); hint > 0 {
+				e.circuitBreaker.extendOpenStateAtLeast(hint)
+			}
+			return fmt.Errorf("telemetry export failed: status %d", resp.StatusCode)
+		}
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-			return nil // Success
+			return nil
 		}
-
-		// Check if retryable
-		if !isRetryableStatus(resp.StatusCode) {
-			return fmt.Errorf("non-retryable status: %d", resp.StatusCode)
-		}
-
-		if attempt == maxRetries {
-			return fmt.Errorf("failed after %d retries: status %d", maxRetries, resp.StatusCode)
+		if doErr == nil {
+			return fmt.Errorf("telemetry export failed: status %d", resp.StatusCode)
 		}
 	}
-
+	if doErr != nil {
+		return fmt.Errorf("telemetry export failed: %w", doErr)
+	}
 	return nil
 }
 
-// isRetryableStatus returns true if HTTP status is retryable.
-// Retryable statuses: 429 (Too Many Requests), 503 (Service Unavailable), 5xx (Server Errors)
-func isRetryableStatus(status int) bool {
-	return status == 429 || status == 503 || status >= 500
+// parseRetryAfter parses the Retry-After header per RFC 7231. Only the
+// delta-seconds form is honored; HTTP-date is rare in practice for rate
+// limiting and we'd rather under-back-off than mis-parse. Returns 0 on
+// any failure.
+func parseRetryAfter(s string) time.Duration {
+	if s == "" {
+		return 0
+	}
+	sec, err := strconv.ParseInt(strings.TrimSpace(s), 10, 64)
+	if err != nil || sec <= 0 {
+		return 0
+	}
+	return time.Duration(sec) * time.Second
 }
