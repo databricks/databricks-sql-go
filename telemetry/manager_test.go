@@ -401,6 +401,65 @@ func TestClientManager_ShutdownWithActiveRefs(t *testing.T) {
 	}
 }
 
+func TestNormalizeHostKey(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{"example.databricks.com", "example.databricks.com"},
+		{"example.databricks.com/", "example.databricks.com"},
+		{"example.databricks.com//", "example.databricks.com"},
+		{"https://example.databricks.com", "example.databricks.com"},
+		{"http://example.databricks.com", "example.databricks.com"},
+		{"HTTPS://Example.Databricks.com/", "example.databricks.com"},
+		{"  example.databricks.com  ", "example.databricks.com"},
+		{"", ""},
+	}
+	for _, c := range cases {
+		if got := normalizeHostKey(c.in); got != c.want {
+			t.Errorf("normalizeHostKey(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestClientManager_HostVariantsShareClient(t *testing.T) {
+	manager := &clientManager{
+		clients: make(map[string]*clientHolder),
+	}
+	httpClient := &http.Client{}
+	cfg := DefaultConfig()
+
+	variants := []string{
+		"example.databricks.com",
+		"example.databricks.com/",
+		"https://example.databricks.com",
+		"HTTPS://Example.Databricks.com/",
+	}
+
+	first := manager.getOrCreateClient(variants[0], "v", "ua", httpClient, cfg)
+	if first == nil {
+		t.Fatal("expected client")
+	}
+	for _, v := range variants[1:] {
+		got := manager.getOrCreateClient(v, "v", "ua", httpClient, cfg)
+		if got != first {
+			t.Errorf("variant %q got a different client instance — should share with %q", v, variants[0])
+		}
+	}
+	if len(manager.clients) != 1 {
+		t.Errorf("expected 1 holder for all variants, got %d", len(manager.clients))
+	}
+
+	// Release using a different variant still finds the holder.
+	for range variants {
+		if err := manager.releaseClient("https://example.databricks.com/"); err != nil {
+			t.Fatalf("release: %v", err)
+		}
+	}
+	if len(manager.clients) != 0 {
+		t.Errorf("expected holder removed after all releases, got %d", len(manager.clients))
+	}
+}
+
 func TestClientManager_ShutdownEmptyManager(t *testing.T) {
 	manager := &clientManager{
 		clients: make(map[string]*clientHolder),

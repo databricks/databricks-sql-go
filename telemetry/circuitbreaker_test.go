@@ -381,6 +381,30 @@ func TestCircuitBreakerManager_PerHostIsolation(t *testing.T) {
 	}
 }
 
+func TestCircuitBreakerManager_HostVariantsShareBreaker(t *testing.T) {
+	mgr := &circuitBreakerManager{breakers: make(map[string]*circuitBreaker)}
+
+	canonical := "normalize.example.com"
+	variants := []string{
+		canonical,
+		canonical + "/",
+		"https://" + canonical,
+		"HTTPS://Normalize.Example.com/",
+		"http://" + canonical + "/",
+	}
+
+	first := mgr.getCircuitBreaker(variants[0])
+	for _, v := range variants[1:] {
+		if got := mgr.getCircuitBreaker(v); got != first {
+			t.Errorf("variant %q returned a different breaker than %q", v, variants[0])
+		}
+	}
+
+	if len(mgr.breakers) != 1 {
+		t.Errorf("expected 1 breaker for all host variants, got %d", len(mgr.breakers))
+	}
+}
+
 func TestCircuitBreakerManager_ConcurrentAccess(t *testing.T) {
 	mgr := getCircuitBreakerManager()
 	var wg sync.WaitGroup

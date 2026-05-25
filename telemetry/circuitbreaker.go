@@ -332,9 +332,15 @@ func getCircuitBreakerManager() *circuitBreakerManager {
 
 // getCircuitBreaker gets or creates a circuit breaker for the host.
 // Thread-safe for concurrent access.
+//
+// The host is normalized (scheme stripped, lowercased, trailing slash trimmed)
+// so DSN variants ("example.com", "example.com/", "https://example.com")
+// share a single breaker per logical host instead of fragmenting trip state.
 func (m *circuitBreakerManager) getCircuitBreaker(host string) *circuitBreaker {
+	key := normalizeHostKey(host)
+
 	m.mu.RLock()
-	cb, exists := m.breakers[host]
+	cb, exists := m.breakers[key]
 	m.mu.RUnlock()
 
 	if exists {
@@ -345,11 +351,11 @@ func (m *circuitBreakerManager) getCircuitBreaker(host string) *circuitBreaker {
 	defer m.mu.Unlock()
 
 	// Double-check after acquiring write lock
-	if cb, exists = m.breakers[host]; exists {
+	if cb, exists = m.breakers[key]; exists {
 		return cb
 	}
 
 	cb = newCircuitBreaker(defaultCircuitBreakerConfig())
-	m.breakers[host] = cb
+	m.breakers[key] = cb
 	return cb
 }
