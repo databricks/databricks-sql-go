@@ -1,5 +1,10 @@
 # Release History
 
+## v1.12.0 (2026-05-25)
+- Retry transient S3 errors in CloudFetch downloads and staging PUT/GET/REMOVE operations (databricks/databricks-sql-go#355, #361)
+- Telemetry: normalize host key for per-host client + breaker registries; stop retrying into 429s, honour Retry-After, fix userAgent (databricks/databricks-sql-go#354, #364)
+- Bump dependencies to clear Go-1.20-compatible CVEs: golang-jwt, x/net, protobuf, go-jose v3.0.5 (CVE-2026-34986) (databricks/databricks-sql-go#360, #363)
+
 ## v1.11.1 (2026-05-20)
 - Fix CloudFetch goroutine leak that retained Arrow buffers after Close (databricks/databricks-sql-go#357)
 
