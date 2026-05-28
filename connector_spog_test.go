@@ -57,6 +57,31 @@ func TestExtractSpogHeaders(t *testing.T) {
 			httpPath: "/sql/1.0/warehouses/abc?",
 			want:     nil,
 		},
+		{
+			// All-purpose cluster paths embed the workspace ID in /o/<wsid>/<cluster>.
+			// Without ?o=, the driver must still extract it so non-Thrift endpoints
+			// (telemetry, feature flags) get x-databricks-org-id on SPOG hosts.
+			name:     "cluster path without ?o= extracts org id from path segment",
+			httpPath: "sql/protocolv1/o/6051921418418893/0528-220959-uzmcn1qt",
+			want:     map[string]string{"x-databricks-org-id": "6051921418418893"},
+		},
+		{
+			name:     "cluster path with leading slash also extracts",
+			httpPath: "/sql/protocolv1/o/6051921418418893/0528-220959-uzmcn1qt",
+			want:     map[string]string{"x-databricks-org-id": "6051921418418893"},
+		},
+		{
+			name:     "?o= query param wins over cluster path segment",
+			httpPath: "sql/protocolv1/o/111/0528-220959-uzmcn1qt?o=222",
+			want:     map[string]string{"x-databricks-org-id": "222"},
+		},
+		{
+			// Regression guard: the new cluster-path regex must not match
+			// warehouse paths (which never embed the workspace ID).
+			name:     "warehouse path without ?o= still returns nil",
+			httpPath: "/sql/1.0/warehouses/abc123",
+			want:     nil,
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
