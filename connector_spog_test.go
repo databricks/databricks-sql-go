@@ -136,6 +136,29 @@ func TestHeaderInjectingTransport_DoesNotOverrideCallerSet(t *testing.T) {
 	assert.Equal(t, "from-caller", gotHeader, "caller-set header must not be overridden")
 }
 
+func TestHeaderInjectingTransport_DoesNotOverrideCallerSetMixedCase(t *testing.T) {
+	var gotHeader string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotHeader = r.Header.Get("x-databricks-org-id")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	client := withSpogHeaders(&http.Client{}, map[string]string{
+		"x-databricks-org-id": "from-wrapper",
+	})
+
+	req, err := http.NewRequest("GET", srv.URL, nil)
+	require.NoError(t, err)
+	req.Header.Set("X-Databricks-Org-Id", "from-caller")
+	resp, err := client.Do(req)
+	require.NoError(t, err)
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+
+	assert.Equal(t, "from-caller", gotHeader, "caller-set header must not be overridden")
+}
+
 func TestHeaderInjectingTransport_PreservesOtherHeaders(t *testing.T) {
 	var gotAuth, gotSpog, gotCustom string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

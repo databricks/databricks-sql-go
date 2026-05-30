@@ -82,11 +82,11 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 	}
 	log := logger.WithContext(conn.id, driverctx.CorrelationIdFromContext(ctx), "")
 
-	// Extract SPOG routing headers from ?o= in HTTPPath. When ?o=<workspaceId>
-	// is present (Custom URL / SPOG hosts), wrap the HTTP client used for
-	// telemetry + feature-flag calls with a transport that injects
-	// x-databricks-org-id. Thrift routes via the URL so its own c.client
-	// doesn't need wrapping.
+	// Extract SPOG routing headers from HTTPPath. When the workspace ID is
+	// available via ?o=<workspaceId> or a cluster /o/<workspaceId>/ path segment,
+	// wrap the HTTP client used for telemetry + feature-flag calls with a
+	// transport that injects x-databricks-org-id. Thrift routes via the URL so
+	// its own c.client doesn't need wrapping.
 	telemetryClient := c.client
 	if spogHeaders := extractSpogHeaders(c.cfg.HTTPPath); len(spogHeaders) > 0 {
 		telemetryClient = withSpogHeaders(c.client, spogHeaders)
