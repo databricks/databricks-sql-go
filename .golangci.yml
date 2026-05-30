@@ -68,3 +68,8 @@ linters-settings:
 
 run:
   timeout: 5m
+  # The go.mod declares `go 1.25.0` because patched apache/thrift requires
+  # it, but we lint as if targeting 1.23 so we can stay on golangci-lint
+  # v1.x (v1 family is built with go ≤ 1.23 and would otherwise refuse).
+  # Migrating to v2 + the v2 config format is a separate cleanup.
+  go: '1.23'
