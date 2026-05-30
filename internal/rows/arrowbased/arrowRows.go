@@ -221,7 +221,7 @@ func (ars *arrowRowScanner) ScanRow(
 			if (dbType == cli_service.TTypeId_DECIMAL_TYPE && ars.UseArrowNativeDecimal) ||
 				(isIntervalType(dbType) && ars.UseArrowNativeIntervalTypes) {
 				//	not yet fully supported
-				ars.Error().Msgf(errArrowRowsUnsupportedNativeType(dbType.String()))
+				ars.Error().Msg(errArrowRowsUnsupportedNativeType(dbType.String()))
 				return dbsqlerrint.NewDriverError(ars.ctx, errArrowRowsUnsupportedNativeType(dbType.String()), nil)
 			}
 
@@ -694,7 +694,7 @@ func (vcm *arrowValueContainerMaker) makeColumnValueContainer(t arrow.DataType, 
 		return nullContainer, nil
 
 	default:
-		return nil, errors.Errorf(errArrowRowsUnhandledArrowType(t.String()))
+		return nil, errors.New(errArrowRowsUnhandledArrowType(t.String()))
 	}
 }
 
