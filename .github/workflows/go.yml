@@ -31,7 +31,7 @@ jobs:
           cache: false
 
       - name: Lint
-        uses: golangci/golangci-lint-action@d6238b002a20823d52840fda27e2d4891c5952dc # v4
+        uses: golangci/golangci-lint-action@db582008a42febd596419635a5abc9d9815daa9c # v9.2.1
         with:
           # v2.x is built with go 1.25+, which is required so the
           # linter can read Go 1.25 stdlib export data. The v1 family
