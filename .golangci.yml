@@ -2,7 +2,8 @@ linters:
   disable-all: true
   enable:
     - bodyclose
-    - deadcode
+    # deadcode, structcheck, varcheck were removed in golangci-lint v1.49
+    # (replaced by `unused`, which we already enable below).
     - depguard
     - dogsled
     # - dupl
@@ -27,13 +28,11 @@ linters:
     # - noctx
     - nolintlint
     - staticcheck
-    - structcheck
     # - stylecheck
     - typecheck
     # - unconvert
     # - unparam
     - unused
-    - varcheck
     # - whitespace
 
   # don't enable:
