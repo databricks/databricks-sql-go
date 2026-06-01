@@ -1576,11 +1576,20 @@ func TestConn_ExecContext(t *testing.T) {
 		ctx, cancel = context.WithCancel(ctx)
 		defer cancel()
 		res, err := testConn.ExecContext(ctx, "insert 10", []driver.NamedValue{})
-		assert.Error(t, err)
-		assert.Nil(t, res)
+		// GetOperationStatus reports FINISHED in the same call that cancels the
+		// context. Because the operation completed, the sentinel must report
+		// success and must NOT cancel a finished operation, regardless of
+		// scheduler timing — this assertion previously raced on cancelOperationCount.
+		assert.NoError(t, err)
+		assert.NotNil(t, res)
+		rowsAffected, _ := res.RowsAffected()
+		assert.Equal(t, int64(10), rowsAffected)
 		assert.Equal(t, 1, executeStatementCount)
-		assert.Equal(t, 1, cancelOperationCount)
+		assert.Equal(t, 0, cancelOperationCount)
 		assert.Equal(t, 1, getOperationStatusCount)
+		// CloseOperation must still run, on a fresh (non-cancelled) context, even
+		// though the context passed to ExecContext was cancelled mid-poll. Its
+		// FnCloseOperation asserts ctx.Err() == nil.
 		assert.Equal(t, 1, closeOperationCount)
 	})
 }
