@@ -180,7 +180,7 @@ func NewRows(
 			// For CloudFetch direct results, use the number of result links.
 			var totalPresent int32
 			if directResults.CloseOperation != nil {
-				totalPresent = int32(r.chunkCount)
+				totalPresent = int32(r.chunkCount) //nolint:gosec
 			} else if directResults.ResultSet != nil && directResults.ResultSet.Results != nil &&
 				directResults.ResultSet.Results.ResultLinks != nil {
 				totalPresent = int32(len(directResults.ResultSet.Results.ResultLinks)) //nolint:gosec

@@ -24,8 +24,20 @@ linters:
           allow:
             - $gostd
             - github.com/databricks/databricks-sql-go
+            - github.com/apache/arrow/go/v12
+            - github.com/apache/thrift/lib/go/thrift
+            - github.com/coreos/go-oidc/v3/oidc
+            - github.com/golang-jwt/jwt/v5
+            - github.com/hashicorp/go-retryablehttp
+            - github.com/joho/godotenv
+            - github.com/mattn/go-isatty
+            - github.com/pierrec/lz4/v4
+            - github.com/pkg/browser
+            - github.com/pkg/errors
+            - github.com/rs/zerolog
+            - github.com/stretchr/testify
+            - golang.org/x/oauth2
     gosec:
-      exclude-generated: true
       severity: low
       confidence: low
     nolintlint:
