@@ -1,74 +1,35 @@
-linters:
-  disable-all: true
-  enable:
-    - bodyclose
-    # deadcode, structcheck, varcheck were removed in golangci-lint v1.49
-    # (replaced by `unused`, which we already enable below).
-    - depguard
-    - dogsled
-    # - dupl
-    - errcheck
-    # - exportloopref
-    # - funlen
-    # - gochecknoinits
-    # - goconst
-    # - gocritic
-    # - gocyclo
-    - gofmt
-    # - goimports
-    # - gomnd
-    - goprintffuncname
-    - gosec
-    - gosimple
-    - govet
-    - ineffassign
-    # - lll
-    # - misspell
-    - nakedret
-    # - noctx
-    - nolintlint
-    - staticcheck
-    # - stylecheck
-    - typecheck
-    # - unconvert
-    # - unparam
-    - unused
-    # - whitespace
-
-  # don't enable:
-  # - asciicheck
-  # - scopelint
-  # - gochecknoglobals
-  # - gocognit
-  # - godot
-  # - godox
-  # - goerr113
-  # - interfacer
-  # - maligned
-  # - nestif
-  # - prealloc
-  # - testpackage
-  # - revive
-  # - wsl
-
-linters-settings:
-  depguard:
-    rules:
-      main:
-        allow:
-          - $gostd
-          - github.com/databricks/databricks-sql-go
-  gosec:
-    exclude-generated: true
-    severity: "low"
-    confidence: "low"
-  nolintlint:
-    allow-unused: true
+version: "2"
 
 run:
   timeout: 5m
-  # The go.mod declares `go 1.25.0` because patched apache/thrift requires
-  # it, but we lint as if targeting 1.23 so we can stay on golangci-lint
-  # v1.x (v1 family is built with go ≤ 1.23 and would otherwise refuse).
-  # Migrating to v2 + the v2 config format is a separate cleanup.
-  go: '1.23'
+
+linters:
+  default: none
+  enable:
+    - bodyclose
+    - depguard
+    - dogsled
+    - errcheck
+    - gosec
+    - govet
+    - ineffassign
+    - nakedret
+    - nolintlint
+    - staticcheck
+    - unused
+  settings:
+    depguard:
+      rules:
+        main:
+          allow:
+            - $gostd
+            - github.com/databricks/databricks-sql-go
+    gosec:
+      exclude-generated: true
+      severity: low
+      confidence: low
+    nolintlint:
+      allow-unused: true
+formatters:
+  enable:
+    - gofmt

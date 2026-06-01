@@ -33,12 +33,12 @@ jobs:
       - name: Lint
         uses: golangci/golangci-lint-action@d6238b002a20823d52840fda27e2d4891c5952dc # v4
         with:
-          # v1.x family is the last to use the legacy config schema.
-          # v1.61 was built with go 1.23; the `run.go: '1.23'` in
-          # .golangci.yml tells it to treat our code as Go 1.23
-          # despite the go 1.25.0 directive in go.mod. Migrating to
-          # v2 + the v2 config format is a separate cleanup.
-          version: 'v1.61'
+          # v2.x is built with go 1.25+, which is required so the
+          # linter can read Go 1.25 stdlib export data. The v1 family
+          # was built with go ≤1.23 and produces "could not import
+          # sync/atomic" typecheck errors against our `go 1.25.0`
+          # directive.
+          version: 'v2.12'
   build-and-test:
     name: Test and Build
     strategy:
