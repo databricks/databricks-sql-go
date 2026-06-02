@@ -139,7 +139,10 @@ func NewConnector(options ...ConnOption) (driver.Connector, error) {
 
 // clusterPathOrgIDPattern matches the workspace ID inside an all-purpose-compute
 // Thrift path of the form [/]sql/protocolv1/o/<workspace-id>/<cluster-id>[/...].
-var clusterPathOrgIDPattern = regexp.MustCompile(`(?:^|/)sql/protocolv1/o/(\d+)/[^/?]+`)
+var (
+	orgIDPattern            = regexp.MustCompile(`^[0-9]+$`)
+	clusterPathOrgIDPattern = regexp.MustCompile(`^/?sql/protocolv1/o/([0-9]+)/[^/?]+`)
+)
 
 // extractSpogHeaders inspects httpPath for the workspace ID and returns it as an
 // x-databricks-org-id header dict for SPOG routing.
@@ -170,10 +173,15 @@ func extractSpogHeaders(httpPath string) map[string]string {
 				"SPOG header extraction: malformed query string in httpPath, falling back to path inspection: %s",
 				err)
 		} else if orgID := params.Get("o"); orgID != "" {
-			logger.Debug().Msgf(
-				"SPOG header extraction: injecting x-databricks-org-id=%s (extracted from ?o= in httpPath)",
-				orgID)
-			return map[string]string{"x-databricks-org-id": orgID}
+			if !orgIDPattern.MatchString(orgID) {
+				logger.Debug().Msg(
+					"SPOG header extraction: ignoring non-numeric ?o= value in httpPath, falling back to path inspection")
+			} else {
+				logger.Debug().Msgf(
+					"SPOG header extraction: injecting x-databricks-org-id=%s (extracted from ?o= in httpPath)",
+					orgID)
+				return map[string]string{"x-databricks-org-id": orgID}
+			}
 		}
 	}
 

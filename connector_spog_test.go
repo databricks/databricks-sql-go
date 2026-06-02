@@ -48,9 +48,24 @@ func TestExtractSpogHeaders(t *testing.T) {
 			want:     map[string]string{"x-databricks-org-id": "12345"},
 		},
 		{
-			name:     "first o= wins when duplicated",
-			httpPath: "/sql/1.0/warehouses/abc?o=first&o=second",
-			want:     map[string]string{"x-databricks-org-id": "first"},
+			name:     "first numeric o= wins when duplicated",
+			httpPath: "/sql/1.0/warehouses/abc?o=111&o=222",
+			want:     map[string]string{"x-databricks-org-id": "111"},
+		},
+		{
+			name:     "non-numeric o= value returns nil",
+			httpPath: "/sql/1.0/warehouses/abc?o=abc123",
+			want:     nil,
+		},
+		{
+			name:     "control-character o= value returns nil",
+			httpPath: "/sql/1.0/warehouses/abc?o=123%0D%0AX-Injected:%20yes",
+			want:     nil,
+		},
+		{
+			name:     "invalid o= falls back to valid cluster path segment",
+			httpPath: "sql/protocolv1/o/6051921418418893/0528-220959-uzmcn1qt?o=abc123",
+			want:     map[string]string{"x-databricks-org-id": "6051921418418893"},
 		},
 		{
 			name:     "just ? with nothing after returns nil",
@@ -74,6 +89,21 @@ func TestExtractSpogHeaders(t *testing.T) {
 			name:     "?o= query param wins over cluster path segment",
 			httpPath: "sql/protocolv1/o/111/0528-220959-uzmcn1qt?o=222",
 			want:     map[string]string{"x-databricks-org-id": "222"},
+		},
+		{
+			name:     "nested cluster path prefix returns nil",
+			httpPath: "evil/sql/protocolv1/o/999/0528-220959-uzmcn1qt",
+			want:     nil,
+		},
+		{
+			name:     "incomplete cluster path returns nil",
+			httpPath: "sql/protocolv1/o/999/",
+			want:     nil,
+		},
+		{
+			name:     "warehouse path containing cluster-looking suffix returns nil",
+			httpPath: "/sql/1.0/warehouses/sql/protocolv1/o/999/cluster-id",
+			want:     nil,
 		},
 		{
 			// Regression guard: the new cluster-path regex must not match
