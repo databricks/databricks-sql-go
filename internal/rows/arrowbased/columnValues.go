@@ -521,9 +521,17 @@ type decimal128Container struct {
 var _ columnValues = (*decimal128Container)(nil)
 
 func (tvc *decimal128Container) Value(i int) (any, error) {
+	if tvc.decimalArray.IsNull(i) {
+		return nil, nil
+	}
 	dv := tvc.decimalArray.Value(i)
-	fv := dv.ToFloat64(tvc.scale)
-	return fv, nil
+	// Return the decimal as a lossless string. float64 cannot exactly
+	// represent high-precision/high-scale decimals, so converting here would
+	// silently lose precision for the very type users reach for to avoid that.
+	// Returning a string also matches the non-native default path and the
+	// column-based transport, so the Go type is consistent regardless of how
+	// the server chooses to send the result.
+	return dv.ToString(tvc.scale), nil
 }
 
 func (tvc *decimal128Container) IsNull(i int) bool {

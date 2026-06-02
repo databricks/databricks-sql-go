@@ -887,7 +887,10 @@ func TestArrowRowScanner(t *testing.T) {
 
 			err := ars.ScanRow(dest, 0)
 
-			if i < 3 {
+			// Columns are ordered: 0=array, 1=map, 2=struct, 3=decimal,
+			// 4=interval_ym, 5=interval_dt. Complex types (0-2) and decimal (3)
+			// are supported natively; only the interval types (4-5) still error.
+			if i < 4 {
 				assert.Nil(t, err)
 			} else {
 				assert.NotNil(t, err)
@@ -1274,7 +1277,7 @@ func TestArrowRowScanner(t *testing.T) {
 			"[[1,2,3],[4,5,6],null]",
 			"[{\"key1\":1,\"key2\":2},{\"key3\":3,\"key4\":4},null]",
 			"[{\"Field1\":77,\"Field2\":\"2020-12-31 00:00:00 +0000 UTC\"},{\"Field1\":13,\"Field2\":\"-2020-12-31 00:00:00 +0000 UTC\"},{\"Field1\":null,\"Field2\":null}]",
-			"[5.15,123.45,null]",
+			"[\"5.15\",\"123.45\",null]",
 			"[\"2020-12-31 00:00:00 +0000 UTC\",\"-2020-12-31 00:00:00 +0000 UTC\",null]",
 		}
 

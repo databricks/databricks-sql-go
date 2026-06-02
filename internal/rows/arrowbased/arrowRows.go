@@ -218,10 +218,11 @@ func (ars *arrowRowScanner) ScanRow(
 			col := ars.colInfo[i]
 			dbType := col.dbType
 
-			if (dbType == cli_service.TTypeId_DECIMAL_TYPE && ars.UseArrowNativeDecimal) ||
-				(isIntervalType(dbType) && ars.UseArrowNativeIntervalTypes) {
-				//	not yet fully supported
-				ars.Error().Msgf(errArrowRowsUnsupportedNativeType(dbType.String()))
+			// Decimal types are supported natively (returned as a lossless string
+			// via decimal128Container). Only interval types remain unsupported.
+			if isIntervalType(dbType) && ars.UseArrowNativeIntervalTypes {
+				//	interval types are not yet fully supported
+				ars.Error().Msg(errArrowRowsUnsupportedNativeType(dbType.String()))
 				return dbsqlerrint.NewDriverError(ars.ctx, errArrowRowsUnsupportedNativeType(dbType.String()), nil)
 			}
 
