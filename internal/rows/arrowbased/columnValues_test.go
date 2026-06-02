@@ -68,3 +68,49 @@ func TestDecimal128ContainerValue(t *testing.T) {
 		})
 	}
 }
+
+// TestDecimal128NestedInListPreservesPrecision guards the DEFAULT path: complex
+// types are native by default (UseArrowNativeComplexTypes=true), so a decimal
+// nested inside an ARRAY/STRUCT is decoded by decimal128Container even when the
+// top-level UseArrowNativeDecimal flag is off. Before the lossless-string fix
+// this path went through ToFloat64 and silently corrupted high-precision values
+// (and rendered SQL NULL as the number 0). This test pins the lossless behavior.
+func TestDecimal128NestedInListPreservesPrecision(t *testing.T) {
+	const precision, scale int32 = 38, 18
+	const highPrecision = "12345678901234567890.123456789012345678"
+
+	mem := memory.NewGoAllocator()
+	elemType := &arrow.Decimal128Type{Precision: precision, Scale: scale}
+	lb := array.NewListBuilder(mem, elemType)
+	defer lb.Release()
+	vb := lb.ValueBuilder().(*array.Decimal128Builder)
+
+	// One list: [highPrecision, NULL, "3.300000000000000000"]
+	lb.Append(true)
+	for _, s := range []string{highPrecision, "", "3.30"} {
+		if s == "" {
+			vb.AppendNull()
+			continue
+		}
+		num, err := decimal128.FromString(s, precision, scale)
+		require.NoError(t, err)
+		vb.Append(num)
+	}
+
+	listArr := lb.NewListArray()
+	defer listArr.Release()
+
+	lvc := &listValueContainer{
+		listArray:     listArr,
+		listArrayType: arrow.ListOf(elemType),
+		values:        &decimal128Container{scale: scale},
+	}
+	require.NoError(t, lvc.values.SetValueArray(listArr.ListValues().Data()))
+
+	got, err := lvc.Value(0)
+	require.NoError(t, err)
+
+	// Decimals are rendered as lossless JSON strings; NULL stays null (not 0).
+	expected := `["12345678901234567890.123456789012345678",null,"3.300000000000000000"]`
+	assert.Equal(t, expected, got)
+}
