@@ -1,8 +1,5 @@
 # Release History
 
-## Unreleased
-- Add native Arrow decimal support, opt-in via `WithUseArrowNativeDecimal(true)`. DECIMAL columns are decoded from native Arrow decimal128 values as a lossless decimal string, preserving full precision and scale. The default remains unchanged (decimals are still returned as strings), so this is a non-breaking, opt-in change.
-
 ## v1.12.0 (2026-05-25)
 - Retry transient S3 errors in CloudFetch downloads and staging PUT/GET/REMOVE operations (databricks/databricks-sql-go#355, #361)
 - Telemetry: normalize host key for per-host client + breaker registries; stop retrying into 429s, honour Retry-After, fix userAgent (databricks/databricks-sql-go#354, #364)
