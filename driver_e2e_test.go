@@ -3,8 +3,10 @@ package dbsql
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http/httptest"
 	"net/url"
 	"os"
@@ -17,6 +19,7 @@ import (
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/client"
 	"github.com/databricks/databricks-sql-go/logger"
+	dbsqlrows "github.com/databricks/databricks-sql-go/rows"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -253,6 +256,68 @@ func TestWorkflowExample(t *testing.T) {
 			rowIdx++
 		}
 	}
+}
+
+func TestE2EArrowBatchesSurviveQueryContextCancellation(t *testing.T) {
+	host := os.Getenv("DATABRICKS_PECOTESTING_SERVER_HOSTNAME")
+	httpPath := os.Getenv("DATABRICKS_PECOTESTING_HTTP_PATH2")
+	token := os.Getenv("DATABRICKS_PECOTESTING_TOKEN")
+	if token == "" {
+		token = os.Getenv("DATABRICKS_PECOTESTING_TOKEN_PERSONAL")
+	}
+	if host == "" || httpPath == "" || token == "" {
+		t.Skip("set DATABRICKS_PECOTESTING_SERVER_HOSTNAME, DATABRICKS_PECOTESTING_HTTP_PATH2, and DATABRICKS_PECOTESTING_TOKEN to run")
+	}
+
+	connector, err := NewConnector(
+		WithServerHostname(host),
+		WithPort(443),
+		WithHTTPPath(httpPath),
+		WithAccessToken(token),
+		WithMaxRows(1),
+	)
+	require.NoError(t, err)
+
+	db := sql.OpenDB(connector)
+	defer db.Close() //nolint:errcheck
+
+	conn, err := db.Conn(context.Background())
+	require.NoError(t, err)
+	defer conn.Close() //nolint:errcheck
+
+	queryCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var driverRows driver.Rows
+	err = conn.Raw(func(d any) error {
+		var queryErr error
+		driverRows, queryErr = d.(driver.QueryerContext).QueryContext(queryCtx, "SELECT id FROM range(3)", nil)
+		return queryErr
+	})
+	require.NoError(t, err)
+	defer driverRows.Close() //nolint:errcheck
+
+	cancel()
+
+	// Pass the already-cancelled queryCtx (not context.Background()) so the test
+	// exercises the detached-iterator path: result paging AND CloudFetch
+	// downloads must survive cancellation of the ctx handed to GetArrowBatches.
+	batches, err := driverRows.(dbsqlrows.Rows).GetArrowBatches(queryCtx)
+	require.NoError(t, err)
+	defer batches.Close()
+
+	var rowCount int64
+	for {
+		record, nextErr := batches.Next()
+		if nextErr == io.EOF {
+			break
+		}
+		require.NoError(t, nextErr)
+		rowCount += record.NumRows()
+		record.Release()
+	}
+
+	require.Equal(t, int64(3), rowCount)
 }
 
 func TestContextTimeoutExample(t *testing.T) {
