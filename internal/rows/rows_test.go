@@ -1564,6 +1564,143 @@ func TestFetchResultPage_PropagatesGetNextPageError(t *testing.T) {
 	assert.ErrorContains(t, actualErr, errorMsg)
 }
 
+func TestNewRows_DetachesResultRPCContextFromQueryContextCancellation(t *testing.T) {
+	t.Parallel()
+
+	baseCtx := driverctx.NewContextWithConnId(context.Background(), "connId")
+	baseCtx = driverctx.NewContextWithCorrelationId(baseCtx, "corrId")
+	queryCtx, cancel := context.WithCancel(baseCtx)
+	cancel()
+
+	assertResultCtx := func(ctx context.Context) {
+		assert.NoError(t, ctx.Err(), "result RPC context should not inherit query cancellation")
+		assert.Equal(t, "connId", driverctx.ConnIdFromContext(ctx))
+		assert.Equal(t, "corrId", driverctx.CorrelationIdFromContext(ctx))
+	}
+
+	metaCalled := false
+	metaFn := func(ctx context.Context, req *cli_service.TGetResultSetMetadataReq) (*cli_service.TGetResultSetMetadataResp, error) {
+		metaCalled = true
+		assertResultCtx(ctx)
+		return &cli_service.TGetResultSetMetadataResp{
+			Status: &cli_service.TStatus{StatusCode: cli_service.TStatusCode_SUCCESS_STATUS},
+			Schema: &cli_service.TTableSchema{
+				Columns: []*cli_service.TColumnDesc{
+					{ColumnName: "flag", Position: 0, TypeDesc: &cli_service.TTypeDesc{
+						Types: []*cli_service.TTypeEntry{{
+							PrimitiveEntry: &cli_service.TPrimitiveTypeEntry{Type: cli_service.TTypeId_BOOLEAN_TYPE},
+						}},
+					}},
+				},
+			},
+		}, nil
+	}
+
+	noMoreRows := false
+	fetchCalled := false
+	fetchFn := func(ctx context.Context, req *cli_service.TFetchResultsReq) (*cli_service.TFetchResultsResp, error) {
+		fetchCalled = true
+		assertResultCtx(ctx)
+		return &cli_service.TFetchResultsResp{
+			Status:      &cli_service.TStatus{StatusCode: cli_service.TStatusCode_SUCCESS_STATUS},
+			HasMoreRows: &noMoreRows,
+			Results: &cli_service.TRowSet{
+				StartRowOffset: 0,
+				Columns: []*cli_service.TColumn{
+					{BoolVal: &cli_service.TBoolColumn{Values: []bool{true}}},
+				},
+			},
+		}, nil
+	}
+
+	closeCalled := false
+	closeFn := func(ctx context.Context, req *cli_service.TCloseOperationReq) (*cli_service.TCloseOperationResp, error) {
+		closeCalled = true
+		assertResultCtx(ctx)
+		return &cli_service.TCloseOperationResp{
+			Status: &cli_service.TStatus{StatusCode: cli_service.TStatusCode_SUCCESS_STATUS},
+		}, nil
+	}
+
+	testClient := &client.TestClient{
+		FnFetchResults:         fetchFn,
+		FnGetResultSetMetadata: metaFn,
+		FnCloseOperation:       closeFn,
+	}
+	opHandle := &cli_service.TOperationHandle{
+		OperationId: &cli_service.THandleIdentifier{GUID: []byte("operation-id")},
+	}
+	cfg := config.WithDefaults()
+
+	dr, dbErr := NewRows(queryCtx, opHandle, testClient, cfg, nil, nil)
+	assert.Nil(t, dbErr)
+
+	dest := make([]driver.Value, 1)
+	assert.NoError(t, dr.Next(dest))
+	assert.Equal(t, true, dest[0])
+	assert.True(t, fetchCalled, "FetchResults should use the detached result context")
+	assert.True(t, metaCalled, "GetResultSetMetadata should use the detached result context")
+	assert.True(t, closeCalled, "CloseOperation should use the detached result context")
+}
+
+// TestNewRows_CloseAbortsDetachedResultContext verifies the detachment is not
+// total: the result context survives the caller's QueryContext cancellation
+// (so streaming is not truncated) but is still cancelled by Close(), so an
+// in-flight FetchResults/CloudFetch download can never be left uncancellable.
+func TestNewRows_CloseAbortsDetachedResultContext(t *testing.T) {
+	t.Parallel()
+
+	queryCtx, cancel := context.WithCancel(context.Background())
+
+	var capturedCtx context.Context
+	noMoreRows := false
+	fetchFn := func(ctx context.Context, req *cli_service.TFetchResultsReq) (*cli_service.TFetchResultsResp, error) {
+		capturedCtx = ctx
+		return &cli_service.TFetchResultsResp{
+			Status:      &cli_service.TStatus{StatusCode: cli_service.TStatusCode_SUCCESS_STATUS},
+			HasMoreRows: &noMoreRows,
+			Results: &cli_service.TRowSet{
+				StartRowOffset: 0,
+				Columns:        []*cli_service.TColumn{{BoolVal: &cli_service.TBoolColumn{Values: []bool{true}}}},
+			},
+		}, nil
+	}
+	metaFn := func(ctx context.Context, req *cli_service.TGetResultSetMetadataReq) (*cli_service.TGetResultSetMetadataResp, error) {
+		return &cli_service.TGetResultSetMetadataResp{
+			Status: &cli_service.TStatus{StatusCode: cli_service.TStatusCode_SUCCESS_STATUS},
+			Schema: &cli_service.TTableSchema{Columns: []*cli_service.TColumnDesc{
+				{ColumnName: "flag", Position: 0, TypeDesc: &cli_service.TTypeDesc{Types: []*cli_service.TTypeEntry{{
+					PrimitiveEntry: &cli_service.TPrimitiveTypeEntry{Type: cli_service.TTypeId_BOOLEAN_TYPE},
+				}}}},
+			}},
+		}, nil
+	}
+	closeFn := func(ctx context.Context, req *cli_service.TCloseOperationReq) (*cli_service.TCloseOperationResp, error) {
+		// The close RPC itself must still run with a live (un-cancelled) context.
+		assert.NoError(t, ctx.Err(), "CloseOperation must run before the result context is cancelled")
+		return &cli_service.TCloseOperationResp{Status: &cli_service.TStatus{StatusCode: cli_service.TStatusCode_SUCCESS_STATUS}}, nil
+	}
+
+	testClient := &client.TestClient{FnFetchResults: fetchFn, FnGetResultSetMetadata: metaFn, FnCloseOperation: closeFn}
+	opHandle := &cli_service.TOperationHandle{OperationId: &cli_service.THandleIdentifier{GUID: []byte("operation-id")}}
+
+	dr, dbErr := NewRows(queryCtx, opHandle, testClient, config.WithDefaults(), nil, nil)
+	assert.Nil(t, dbErr)
+
+	dest := make([]driver.Value, 1)
+	assert.NoError(t, dr.Next(dest))
+	assert.NotNil(t, capturedCtx)
+
+	// Caller cancels the QueryContext: result context must remain alive.
+	cancel()
+	assert.NoError(t, capturedCtx.Err(), "result context must survive QueryContext cancellation")
+	assert.NotNil(t, capturedCtx.Done(), "result context must be abortable (non-nil Done)")
+
+	// Close() must cancel the detached result context so nothing is left uncancellable.
+	assert.NoError(t, dr.Close())
+	assert.ErrorIs(t, capturedCtx.Err(), context.Canceled, "Close() should cancel the detached result context")
+}
+
 // TestRows_CloseCallback_ReceivesChunkCount verifies that when rows.Close() is called,
 // the closeCallback receives the correct chunkCount reflecting the number of result pages
 // that were fetched during iteration.
