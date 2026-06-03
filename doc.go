@@ -363,7 +363,7 @@ DATE --> time.Time
 
 TIMESTAMP --> time.Time
 
-DECIMAL(p,s) --> sql.RawBytes
+DECIMAL(p,s) --> string
 
 BINARY --> sql.RawBytes
 

@@ -409,6 +409,18 @@ func WithCloudFetch(useCloudFetch bool) ConnOption {
 	}
 }
 
+// WithUseArrowNativeDecimal enables native Arrow decimal support. Default is false.
+// When enabled, DECIMAL columns retrieved over Arrow batches are decoded as
+// native Arrow decimal128 values and returned as a lossless decimal string
+// (e.g. "123.45"), preserving full precision and scale. When disabled (the
+// default), decimals are returned as strings via the non-native path, so the
+// observable Go type is the same either way.
+func WithUseArrowNativeDecimal(enable bool) ConnOption {
+	return func(c *config.Config) {
+		c.UseArrowNativeDecimal = enable
+	}
+}
+
 // WithMaxDownloadThreads sets up maximum download threads for cloud fetch. Default is 10.
 func WithMaxDownloadThreads(numThreads int) ConnOption {
 	return func(c *config.Config) {
