@@ -657,3 +657,71 @@ func getServer(state *callState) *httptest.Server {
 		},
 	})
 }
+
+// TestE2ECloudFetchExactRowCount validates that a large CloudFetch result drains
+// the EXACT number of rows requested. CloudFetch Arrow IPC files can carry padding
+// rows beyond a link's server-declared RowCount; without capping to RowCount the
+// driver over-reports (e.g. 301,407 rows for a LIMIT 300000). This is the
+// regression guard for the row-count cap. Skipped in -short mode because it
+// drains a multi-million-row result over several CloudFetch link pages.
+func TestE2ECloudFetchExactRowCount(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping large CloudFetch drain in -short mode")
+	}
+	host := os.Getenv("DATABRICKS_PECOTESTING_SERVER_HOSTNAME")
+	httpPath := os.Getenv("DATABRICKS_PECOTESTING_HTTP_PATH2")
+	token := os.Getenv("DATABRICKS_PECOTESTING_TOKEN")
+	if token == "" {
+		token = os.Getenv("DATABRICKS_PECOTESTING_TOKEN_PERSONAL")
+	}
+	if host == "" || httpPath == "" || token == "" {
+		t.Skip("set DATABRICKS_PECOTESTING_SERVER_HOSTNAME, DATABRICKS_PECOTESTING_HTTP_PATH2, and DATABRICKS_PECOTESTING_TOKEN to run")
+	}
+
+	const wantRows = 2000000
+
+	connector, err := NewConnector(
+		WithServerHostname(host),
+		WithPort(443),
+		WithHTTPPath(httpPath),
+		WithAccessToken(token),
+		WithMaxRows(500000),
+	)
+	require.NoError(t, err)
+
+	db := sql.OpenDB(connector)
+	defer db.Close() //nolint:errcheck
+
+	conn, err := db.Conn(context.Background())
+	require.NoError(t, err)
+	defer conn.Close() //nolint:errcheck
+
+	// A wide-ish row (id + 64-byte pad) over 2M rows forces a multi-page
+	// CloudFetch (URL-based) result rather than inline Arrow.
+	query := fmt.Sprintf("SELECT id, repeat('x', 64) AS pad FROM range(%d)", wantRows)
+	var driverRows driver.Rows
+	err = conn.Raw(func(d any) error {
+		var queryErr error
+		driverRows, queryErr = d.(driver.QueryerContext).QueryContext(context.Background(), query, nil)
+		return queryErr
+	})
+	require.NoError(t, err)
+	defer driverRows.Close() //nolint:errcheck
+
+	batches, err := driverRows.(dbsqlrows.Rows).GetArrowBatches(context.Background())
+	require.NoError(t, err)
+	defer batches.Close()
+
+	var rowCount int64
+	for {
+		record, nextErr := batches.Next()
+		if nextErr == io.EOF {
+			break
+		}
+		require.NoError(t, nextErr)
+		rowCount += record.NumRows()
+		record.Release()
+	}
+
+	require.Equal(t, int64(wantRows), rowCount, "CloudFetch must surface exactly the requested rows, with no Arrow padding")
+}
