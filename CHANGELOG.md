@@ -1,5 +1,10 @@
 # Release History
 
+## v1.13.0 (2026-06-04)
+- Add SPOG (unified) host support: extract the org-id from the cluster HTTP path for non-Thrift requests, and fix U2M/M2M OAuth on unified AWS hosts (databricks/databricks-sql-go#367, #374)
+- Cap CloudFetch Arrow batches to the server-declared row count to avoid over-reading (databricks/databricks-sql-go#372)
+- Detach result streaming from `QueryContext` cancellation so in-flight results aren't dropped when the query context is cancelled (databricks/databricks-sql-go#373)
+
 ## v1.12.0 (2026-05-25)
 - Retry transient S3 errors in CloudFetch downloads and staging PUT/GET/REMOVE operations (databricks/databricks-sql-go#355, #361)
 - Telemetry: normalize host key for per-host client + breaker registries; stop retrying into 429s, honour Retry-After, fix userAgent (databricks/databricks-sql-go#354, #364)
