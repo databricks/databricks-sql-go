@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -81,11 +82,11 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 	}
 	log := logger.WithContext(conn.id, driverctx.CorrelationIdFromContext(ctx), "")
 
-	// Extract SPOG routing headers from ?o= in HTTPPath. When ?o=<workspaceId>
-	// is present (Custom URL / SPOG hosts), wrap the HTTP client used for
-	// telemetry + feature-flag calls with a transport that injects
-	// x-databricks-org-id. Thrift routes via the URL so its own c.client
-	// doesn't need wrapping.
+	// Extract SPOG routing headers from HTTPPath. When the workspace ID is
+	// available via ?o=<workspaceId> or a cluster /o/<workspaceId>/ path segment,
+	// wrap the HTTP client used for telemetry + feature-flag calls with a
+	// transport that injects x-databricks-org-id. Thrift routes via the URL so
+	// its own c.client doesn't need wrapping.
 	telemetryClient := c.client
 	if spogHeaders := extractSpogHeaders(c.cfg.HTTPPath); len(spogHeaders) > 0 {
 		telemetryClient = withSpogHeaders(c.client, spogHeaders)
@@ -136,44 +137,67 @@ func NewConnector(options ...ConnOption) (driver.Connector, error) {
 	return &connector{cfg: cfg, client: client}, nil
 }
 
-// extractSpogHeaders extracts ?o=<workspaceId> from httpPath and returns
-// an x-databricks-org-id header for SPOG routing.
+// clusterPathOrgIDPattern matches the workspace ID inside an all-purpose-compute
+// Thrift path of the form [/]sql/protocolv1/o/<workspace-id>/<cluster-id>[/...].
+var (
+	orgIDPattern            = regexp.MustCompile(`^[0-9]+$`)
+	clusterPathOrgIDPattern = regexp.MustCompile(`^/?sql/protocolv1/o/([0-9]+)/[^/?]+`)
+)
+
+// extractSpogHeaders inspects httpPath for the workspace ID and returns it as an
+// x-databricks-org-id header dict for SPOG routing.
 //
-// On SPOG (Custom URL) workspaces, httpPath is of the form
-// /sql/1.0/warehouses/<id>?o=<workspaceId>. The ?o= parameter keeps Thrift
-// requests routed to the correct workspace via the URL itself, but other
-// endpoints (telemetry, feature flags) run on separate hosts and need the
-// x-databricks-org-id header. This function extracts ?o= from httpPath once
-// and returns it so those paths can inject it as an HTTP header.
+// Two sources are checked, in priority order:
+//  1. ?o=<workspace-id> query parameter (warehouse paths on SPOG typically use
+//     this form, e.g. /sql/1.0/warehouses/<id>?o=<workspace-id>).
+//  2. /sql/protocolv1/o/<workspace-id>/<cluster-id> path segment (all-purpose
+//     cluster paths embed the workspace in the path itself).
 //
-// Returns nil if:
-//   - httpPath has no query string ("?"), or
-//   - the query string is malformed and can't be parsed, or
-//   - the ?o= parameter is missing or empty.
+// Thrift requests are routed by the URL itself, but other endpoints
+// (telemetry, feature flags) run on separate paths that don't carry the
+// workspace ID — without this header, PoPP on SPOG hosts can't determine the
+// workspace and redirects the request to /login.
+//
+// Returns nil if no workspace ID can be determined.
 func extractSpogHeaders(httpPath string) map[string]string {
-	if !strings.Contains(httpPath, "?") {
+	if httpPath == "" {
 		return nil
 	}
-	// Parse query string from httpPath
-	parts := strings.SplitN(httpPath, "?", 2)
-	params, err := url.ParseQuery(parts[1])
-	if err != nil {
+
+	// 1) ?o=<wsid> query parameter.
+	if strings.Contains(httpPath, "?") {
+		parts := strings.SplitN(httpPath, "?", 2)
+		params, err := url.ParseQuery(parts[1])
+		if err != nil {
+			logger.Debug().Msgf(
+				"SPOG header extraction: malformed query string in httpPath, falling back to path inspection: %s",
+				err)
+		} else if orgID := params.Get("o"); orgID != "" {
+			if !orgIDPattern.MatchString(orgID) {
+				logger.Debug().Msg(
+					"SPOG header extraction: ignoring non-numeric ?o= value in httpPath, falling back to path inspection")
+			} else {
+				logger.Debug().Msgf(
+					"SPOG header extraction: injecting x-databricks-org-id=%s (extracted from ?o= in httpPath)",
+					orgID)
+				return map[string]string{"x-databricks-org-id": orgID}
+			}
+		}
+	}
+
+	// 2) /sql/protocolv1/o/<wsid>/<cluster> path segment.
+	if match := clusterPathOrgIDPattern.FindStringSubmatch(httpPath); match != nil {
+		orgID := match[1]
 		logger.Debug().Msgf(
-			"SPOG header extraction: malformed query string in httpPath, skipping org-id extraction: %s",
-			err)
-		return nil
+			"SPOG header extraction: injecting x-databricks-org-id=%s (extracted from cluster path segment)",
+			orgID)
+		return map[string]string{"x-databricks-org-id": orgID}
 	}
-	orgID := params.Get("o")
-	if orgID == "" {
-		logger.Debug().Msg(
-			"SPOG header extraction: httpPath has query string but no ?o= param, " +
-				"skipping x-databricks-org-id injection")
-		return nil
-	}
-	logger.Debug().Msgf(
-		"SPOG header extraction: injecting x-databricks-org-id=%s (extracted from ?o= in httpPath)",
-		orgID)
-	return map[string]string{"x-databricks-org-id": orgID}
+
+	logger.Debug().Msg(
+		"SPOG header extraction: no workspace ID found in httpPath, " +
+			"skipping x-databricks-org-id injection")
+	return nil
 }
 
 // withSpogHeaders returns a new *http.Client that reuses the transport of the
