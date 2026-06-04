@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -61,50 +62,129 @@ func TestGetAzureDnsZone(t *testing.T) {
 	}
 }
 
-func TestResolveOIDCIssuer_substitutesAccountID(t *testing.T) {
-	// Unified / SPOG host advertises an account-rooted endpoint with a placeholder.
-	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/.well-known/databricks-config" {
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
-		_, _ = w.Write([]byte(`{
-			"oidc_endpoint": "https://spog.example.com/oidc/accounts/{account_id}",
-			"account_id": "7a99b43c-b46c-432b-b0a7-814217701909",
-			"host_type": "unified"
-		}`))
-	}))
-	defer srv.Close()
+// TestResolveOIDCIssuer drives resolveOIDCIssuer end-to-end against an httptest
+// server: the server stands in for the connection host, so a 200 with a given
+// databricks-config body exercises the real fetch + substitution + validation +
+// fallback wiring.
+func TestResolveOIDCIssuer(t *testing.T) {
+	const fallbackForUnreachable = "https://no-such-host.invalid/oidc"
 
-	meta, ok := fetchHostMetadata(context.Background(), srv.Client(), srv.URL+"/.well-known/databricks-config")
-	if !ok {
-		t.Fatal("fetchHostMetadata returned ok=false, want true")
+	cases := []struct {
+		name string
+		// body served at /.well-known/databricks-config (status 200). Empty body
+		// with status!=200 simulates a missing endpoint.
+		status int
+		body   string
+		// want is the exact resolved issuer. If wantFallback is true we instead
+		// assert the bare-host fallback (https://<server-host>/oidc).
+		want         string
+		wantFallback bool
+	}{
+		{
+			name:   "unified host substitutes account_id",
+			status: 200,
+			body:   `{"oidc_endpoint":"https://spog.databricks.com/oidc/accounts/{account_id}","account_id":"acc-123","host_type":"unified"}`,
+			want:   "https://spog.databricks.com/oidc/accounts/acc-123",
+		},
+		{
+			name:   "workspace host returned unchanged",
+			status: 200,
+			body:   `{"oidc_endpoint":"https://ws.cloud.databricks.com/oidc","account_id":"acc-123","host_type":"workspace"}`,
+			want:   "https://ws.cloud.databricks.com/oidc",
+		},
+		{
+			name:         "placeholder with empty account_id falls back",
+			status:       200,
+			body:         `{"oidc_endpoint":"https://spog.databricks.com/oidc/accounts/{account_id}","account_id":""}`,
+			wantFallback: true,
+		},
+		{
+			name:         "empty oidc_endpoint falls back",
+			status:       200,
+			body:         `{"account_id":"acc-123"}`,
+			wantFallback: true,
+		},
+		{
+			name:         "non-https endpoint falls back",
+			status:       200,
+			body:         `{"oidc_endpoint":"http://spog.databricks.com/oidc","account_id":"acc-123"}`,
+			wantFallback: true,
+		},
+		{
+			name:         "non-databricks host falls back",
+			status:       200,
+			body:         `{"oidc_endpoint":"https://evil.example.com/oidc","account_id":"acc-123"}`,
+			wantFallback: true,
+		},
+		{
+			name:         "404 falls back",
+			status:       404,
+			wantFallback: true,
+		},
+		{
+			name:         "garbage body falls back",
+			status:       200,
+			body:         `not json`,
+			wantFallback: true,
+		},
 	}
-	got := substituteAccountID(meta)
-	want := "https://spog.example.com/oidc/accounts/7a99b43c-b46c-432b-b0a7-814217701909"
-	if got != want {
-		t.Fatalf("issuer = %q, want %q", got, want)
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/.well-known/databricks-config" {
+					w.WriteHeader(http.StatusNotFound)
+					return
+				}
+				if tc.status != 200 {
+					w.WriteHeader(tc.status)
+					return
+				}
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer srv.Close()
+
+			host := strings.TrimPrefix(srv.URL, "https://")
+			got := resolveOIDCIssuer(context.Background(), srv.Client(), host)
+
+			if tc.wantFallback {
+				if want := "https://" + host + "/oidc"; got != want {
+					t.Fatalf("issuer = %q, want fallback %q", got, want)
+				}
+				return
+			}
+			if got != tc.want {
+				t.Fatalf("issuer = %q, want %q", got, tc.want)
+			}
+		})
+	}
+
+	// Sanity: an unreachable host falls back without panicking.
+	if got := resolveOIDCIssuer(context.Background(), &http.Client{}, "no-such-host.invalid"); got != fallbackForUnreachable {
+		t.Fatalf("unreachable host issuer = %q, want %q", got, fallbackForUnreachable)
 	}
 }
 
-func TestResolveOIDCIssuer_workspaceHostUnchanged(t *testing.T) {
-	// Normal workspace host: endpoint has no placeholder, so it is returned as-is
-	// (equivalent to the historical https://<host>/oidc).
-	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{
-			"oidc_endpoint": "https://ws.cloud.databricks.com/oidc",
-			"account_id": "7a99b43c-b46c-432b-b0a7-814217701909",
-			"host_type": "workspace"
-		}`))
-	}))
-	defer srv.Close()
-
-	meta, ok := fetchHostMetadata(context.Background(), srv.Client(), srv.URL+"/.well-known/databricks-config")
-	if !ok {
-		t.Fatal("fetchHostMetadata returned ok=false, want true")
+func TestIsValidDatabricksIssuer(t *testing.T) {
+	cases := []struct {
+		issuer string
+		want   bool
+	}{
+		{"https://spog.databricks.com/oidc/accounts/acc-123", true},
+		{"https://ws.cloud.databricks.com/oidc", true},
+		{"https://adb-1.azuredatabricks.net/oidc", true},
+		{"https://spog.databricks.com/oidc/accounts/{account_id}", false}, // unresolved placeholder
+		{"http://spog.databricks.com/oidc", false},                        // not https
+		{"https://evil.example.com/oidc", false},                          // not a databricks host
+		{"://bad", false},                                                 // unparseable
+		{"", false},
 	}
-	if got := substituteAccountID(meta); got != "https://ws.cloud.databricks.com/oidc" {
-		t.Fatalf("issuer = %q, want unchanged workspace endpoint", got)
+	for _, tc := range cases {
+		t.Run(tc.issuer, func(t *testing.T) {
+			if got := isValidDatabricksIssuer(tc.issuer); got != tc.want {
+				t.Fatalf("isValidDatabricksIssuer(%q) = %v, want %v", tc.issuer, got, tc.want)
+			}
+		})
 	}
 }
 

@@ -6,16 +6,23 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
+	"github.com/rs/zerolog/log"
 	"golang.org/x/oauth2"
 )
 
-// hostConfigTimeout bounds the /.well-known/databricks-config lookup so it cannot
-// stall connection setup; on any failure we fall back to bare-host OIDC discovery.
-const hostConfigTimeout = 30 * time.Second
+// hostConfigTimeout bounds the /.well-known/databricks-config lookup (and the
+// subsequent OIDC discovery) so they cannot stall connection setup; on any
+// failure we fall back to bare-host OIDC discovery.
+const hostConfigTimeout = 10 * time.Second
+
+// accountIDPlaceholder is the token the host-metadata oidc_endpoint uses for the
+// account id, e.g. "https://<host>/oidc/accounts/{account_id}".
+const accountIDPlaceholder = "{account_id}"
 
 var azureTenants = map[string]string{
 	".dev.azuredatabricks.net":     "62a912ac-b58e-4c1d-89ea-b2dbfc7358fc",
@@ -47,7 +54,14 @@ func GetEndpoint(ctx context.Context, hostName string) (oauth2.Endpoint, error) 
 	// use their account-rooted endpoint instead of the account-agnostic console login.
 	// For normal workspace hosts this resolves to https://<host>/oidc, identical to
 	// the previous behavior.
-	issuerURL := resolveOIDCIssuer(ctx, hostName)
+	//
+	// NOTE: this client uses the default transport, matching the existing
+	// oidc.NewProvider discovery below. A connector-supplied transport / TLS config
+	// (WithTransport, WithSkipTLSHostVerify) is not yet threaded into the OAuth
+	// endpoint-resolution path; that is a pre-existing limitation, tracked separately.
+	client := &http.Client{Timeout: hostConfigTimeout}
+	issuerURL := resolveOIDCIssuer(ctx, client, hostName)
+	ctx = oidc.ClientContext(ctx, client)
 	ctx = oidc.InsecureIssuerURLContext(ctx, issuerURL)
 	provider, err := oidc.NewProvider(ctx, issuerURL)
 	if err != nil {
@@ -75,27 +89,57 @@ type hostMetadata struct {
 // {account_id} placeholder); we consult it and substitute the account id.
 //
 // For a normal workspace host the advertised endpoint is just https://<host>/oidc,
-// so the result is identical to the historical bare-host issuer. Any failure
-// (endpoint absent, non-200, unparseable, missing field, timeout) falls back to
-// the bare-host issuer, preserving existing behavior.
-func resolveOIDCIssuer(ctx context.Context, hostName string) string {
+// so the result is identical to the historical bare-host issuer. Any failure or
+// unusable value (endpoint absent, non-200, unparseable, missing/empty account_id,
+// non-https, non-Databricks host, timeout) falls back to the bare-host issuer,
+// preserving existing behavior.
+func resolveOIDCIssuer(ctx context.Context, client *http.Client, hostName string) string {
 	fallback := fmt.Sprintf("https://%s/oidc", hostName)
 
-	url := fmt.Sprintf("https://%s/.well-known/databricks-config", hostName)
-	client := &http.Client{Timeout: hostConfigTimeout}
-
-	meta, ok := fetchHostMetadata(ctx, client, url)
+	cfgURL := fmt.Sprintf("https://%s/.well-known/databricks-config", hostName)
+	meta, ok := fetchHostMetadata(ctx, client, cfgURL)
 	if !ok || meta.OIDCEndpoint == "" {
+		log.Debug().Msgf("oauth: no usable databricks-config for %q; using bare-host OIDC issuer", hostName)
 		return fallback
 	}
 
-	return substituteAccountID(meta)
+	// An account-rooted endpoint needs a non-empty account_id; otherwise the
+	// placeholder would resolve to a malformed ".../accounts/" issuer. Fall back
+	// rather than emit it (the function's documented contract).
+	if strings.Contains(meta.OIDCEndpoint, accountIDPlaceholder) && meta.AccountID == "" {
+		log.Warn().Msgf("oauth: databricks-config for %q has an %s placeholder but empty account_id; using bare-host OIDC issuer", hostName, accountIDPlaceholder)
+		return fallback
+	}
+
+	issuer := substituteAccountID(meta)
+	if !isValidDatabricksIssuer(issuer) {
+		log.Warn().Msgf("oauth: databricks-config for %q advertised an unusable oidc_endpoint %q; using bare-host OIDC issuer", hostName, issuer)
+		return fallback
+	}
+	return issuer
 }
 
 // substituteAccountID resolves the {account_id} placeholder in the advertised
 // oidc_endpoint. Workspace hosts have no placeholder and are returned unchanged.
 func substituteAccountID(meta hostMetadata) string {
-	return strings.ReplaceAll(meta.OIDCEndpoint, "{account_id}", meta.AccountID)
+	return strings.ReplaceAll(meta.OIDCEndpoint, accountIDPlaceholder, meta.AccountID)
+}
+
+// isValidDatabricksIssuer guards the metadata-supplied OIDC issuer before it is
+// passed to discovery: it must be an https URL on a recognized Databricks domain
+// with the {account_id} placeholder fully resolved. This bounds the trust placed
+// in the host-supplied document (the issuer-match check is disabled via
+// InsecureIssuerURLContext because the discovered issuer is cross-host) and avoids
+// cleartext OAuth from an http:// endpoint.
+func isValidDatabricksIssuer(issuer string) bool {
+	if strings.Contains(issuer, accountIDPlaceholder) {
+		return false
+	}
+	u, err := url.Parse(issuer)
+	if err != nil || u.Scheme != "https" || u.Hostname() == "" {
+		return false
+	}
+	return InferCloudFromHost(u.Hostname()) != Unknown
 }
 
 // fetchHostMetadata GETs /.well-known/databricks-config and decodes it. The bool
