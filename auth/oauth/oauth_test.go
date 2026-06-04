@@ -117,6 +117,12 @@ func TestResolveOIDCIssuer(t *testing.T) {
 			wantFallback: true,
 		},
 		{
+			name:         "suffix-spoof host falls back",
+			status:       200,
+			body:         `{"oidc_endpoint":"https://databricks.com.evil.example/oidc/accounts/{account_id}","account_id":"acc-123"}`,
+			wantFallback: true,
+		},
+		{
 			name:         "404 falls back",
 			status:       404,
 			wantFallback: true,
@@ -170,12 +176,21 @@ func TestIsValidDatabricksIssuer(t *testing.T) {
 		issuer string
 		want   bool
 	}{
+		// Real hosts from the validated SPOG/non-SPOG flows must stay valid.
+		{"https://dogfood.staging.databricks.com/oidc/accounts/7a99b43c", true}, // SPOG (unified) issuer
+		{"https://e2-dogfood.staging.cloud.databricks.com/oidc", true},          // non-SPOG workspace
+		{"https://accounts.staging.cloud.databricks.com/oidc/accounts/x", true}, // account-rooted
 		{"https://spog.databricks.com/oidc/accounts/acc-123", true},
 		{"https://ws.cloud.databricks.com/oidc", true},
 		{"https://adb-1.azuredatabricks.net/oidc", true},
+		{"https://x.cloud.databricks.us/oidc", true},
+		// Rejections.
 		{"https://spog.databricks.com/oidc/accounts/{account_id}", false}, // unresolved placeholder
 		{"http://spog.databricks.com/oidc", false},                        // not https
 		{"https://evil.example.com/oidc", false},                          // not a databricks host
+		{"https://databricks.com.evil.example/oidc", false},               // suffix-spoof: must NOT pass
+		{"https://notdatabricks.com/oidc", false},                         // "-databricks.com" is not ".databricks.com"
+		{"https://databricks.com/oidc", false},                            // bare apex, no subdomain
 		{"://bad", false},                                                 // unparseable
 		{"", false},
 	}
@@ -183,6 +198,32 @@ func TestIsValidDatabricksIssuer(t *testing.T) {
 		t.Run(tc.issuer, func(t *testing.T) {
 			if got := isValidDatabricksIssuer(tc.issuer); got != tc.want {
 				t.Fatalf("isValidDatabricksIssuer(%q) = %v, want %v", tc.issuer, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestIsDatabricksHost(t *testing.T) {
+	cases := []struct {
+		host string
+		want bool
+	}{
+		{"dogfood.staging.databricks.com", true},
+		{"e2-dogfood.staging.cloud.databricks.com", true},
+		{"foo.gcp.databricks.com", true},
+		{"adb-1.azuredatabricks.net", true},
+		{"x.cloud.databricks.us", true},
+		{"DOGFOOD.STAGING.DATABRICKS.COM", true}, // case-insensitive
+		{"databricks.com.evil.example", false},
+		{"notdatabricks.com", false},
+		{"databricks.com", false},
+		{"evil.example", false},
+		{"", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.host, func(t *testing.T) {
+			if got := isDatabricksHost(tc.host); got != tc.want {
+				t.Fatalf("isDatabricksHost(%q) = %v, want %v", tc.host, got, tc.want)
 			}
 		})
 	}

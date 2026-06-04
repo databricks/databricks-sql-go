@@ -139,7 +139,32 @@ func isValidDatabricksIssuer(issuer string) bool {
 	if err != nil || u.Scheme != "https" || u.Hostname() == "" {
 		return false
 	}
-	return InferCloudFromHost(u.Hostname()) != Unknown
+	return isDatabricksHost(u.Hostname())
+}
+
+// databricksHostSuffixes is the set of DNS suffixes treated as first-party
+// Databricks hosts when deciding whether to trust a metadata-supplied OIDC issuer.
+//
+// Suffix matching (not the substring matching InferCloudFromHost uses for cloud
+// routing) is deliberate here: this is a trust gate for a cross-host issuer, so
+// "databricks.com.evil.example" must NOT pass. ".databricks.com" covers the
+// .cloud/.dev/.gcp variants and the bare unified/SPOG custom URLs.
+var databricksHostSuffixes = []string{
+	".databricks.com",
+	".cloud.databricks.us",
+	".azuredatabricks.net",
+	".databricks.azure.us",
+	".databricks.azure.cn",
+}
+
+func isDatabricksHost(host string) bool {
+	host = strings.ToLower(host)
+	for _, suffix := range databricksHostSuffixes {
+		if strings.HasSuffix(host, suffix) {
+			return true
+		}
+	}
+	return false
 }
 
 // fetchHostMetadata GETs /.well-known/databricks-config and decodes it. The bool
