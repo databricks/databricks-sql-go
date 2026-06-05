@@ -102,7 +102,7 @@ func inferTypes(params []Parameter) {
 }
 
 func inferType(param *Parameter) {
-	if param.Value != nil && reflect.ValueOf(param.Value).Kind() == reflect.Ptr {
+	if param.Value != nil && reflect.ValueOf(param.Value).Kind() == reflect.Pointer {
 		param.Value = reflect.ValueOf(param.Value).Elem().Interface()
 		inferType(param)
 		return

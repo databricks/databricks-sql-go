@@ -2125,7 +2125,7 @@ func TestConn_handleStagingRetry(t *testing.T) {
 		assert.Nil(t, err)
 		assert.Equal(t, int32(2), atomic.LoadInt32(&attempts))
 
-		got, readErr := os.ReadFile(localFile)
+		got, readErr := os.ReadFile(localFile) //nolint:gosec
 		assert.Nil(t, readErr)
 		assert.Equal(t, body, got, "GET should write the final-attempt body to local file")
 	})

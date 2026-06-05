@@ -1,70 +1,47 @@
-linters:
-  disable-all: true
-  enable:
-    - bodyclose
-    - deadcode
-    - depguard
-    - dogsled
-    # - dupl
-    - errcheck
-    # - exportloopref
-    # - funlen
-    # - gochecknoinits
-    # - goconst
-    # - gocritic
-    # - gocyclo
-    - gofmt
-    # - goimports
-    # - gomnd
-    - goprintffuncname
-    - gosec
-    - gosimple
-    - govet
-    - ineffassign
-    # - lll
-    # - misspell
-    - nakedret
-    # - noctx
-    - nolintlint
-    - staticcheck
-    - structcheck
-    # - stylecheck
-    - typecheck
-    # - unconvert
-    # - unparam
-    - unused
-    - varcheck
-    # - whitespace
-
-  # don't enable:
-  # - asciicheck
-  # - scopelint
-  # - gochecknoglobals
-  # - gocognit
-  # - godot
-  # - godox
-  # - goerr113
-  # - interfacer
-  # - maligned
-  # - nestif
-  # - prealloc
-  # - testpackage
-  # - revive
-  # - wsl
-
-linters-settings:
-  depguard:
-    rules:
-      main:
-        allow:
-          - $gostd
-          - github.com/databricks/databricks-sql-go
-  gosec:
-    exclude-generated: true
-    severity: "low"
-    confidence: "low"
-  nolintlint:
-    allow-unused: true
+version: "2"
 
 run:
   timeout: 5m
+
+linters:
+  default: none
+  enable:
+    - bodyclose
+    - depguard
+    - dogsled
+    - errcheck
+    - gosec
+    - govet
+    - ineffassign
+    - nakedret
+    - nolintlint
+    - staticcheck
+    - unused
+  settings:
+    depguard:
+      rules:
+        main:
+          allow:
+            - $gostd
+            - github.com/databricks/databricks-sql-go
+            - github.com/apache/arrow/go/v12
+            - github.com/apache/thrift/lib/go/thrift
+            - github.com/coreos/go-oidc/v3/oidc
+            - github.com/golang-jwt/jwt/v5
+            - github.com/hashicorp/go-retryablehttp
+            - github.com/joho/godotenv
+            - github.com/mattn/go-isatty
+            - github.com/pierrec/lz4/v4
+            - github.com/pkg/browser
+            - github.com/pkg/errors
+            - github.com/rs/zerolog
+            - github.com/stretchr/testify
+            - golang.org/x/oauth2
+    gosec:
+      severity: low
+      confidence: low
+    nolintlint:
+      allow-unused: true
+formatters:
+  enable:
+    - gofmt

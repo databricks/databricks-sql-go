@@ -27,18 +27,28 @@ jobs:
       - name: Set up Go Toolchain
         uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
-          go-version: '1.20.x'
+          go-version: '1.25.x'
           cache: false
 
       - name: Lint
-        uses: golangci/golangci-lint-action@d6238b002a20823d52840fda27e2d4891c5952dc # v4
+        uses: golangci/golangci-lint-action@db582008a42febd596419635a5abc9d9815daa9c # v9.2.1
         with:
-          version: 'v1.51'
+          # v2.x is built with go 1.25+, which is required so the
+          # linter can read Go 1.25 stdlib export data. The v1 family
+          # was built with go ≤1.23 and produces "could not import
+          # sync/atomic" typecheck errors against our `go 1.25.0`
+          # directive.
+          version: 'v2.12'
   build-and-test:
     name: Test and Build
     strategy:
+      # Matches Go's release support window. Per go.dev/doc/devel/release,
+      # only the latest two major releases receive security patches.
+      # As of 2026-05 that's 1.25 (Active LTS) and 1.26. The protected
+      # runners pin GOTOOLCHAIN=local so we can't include 1.24 — Go would
+      # refuse to satisfy the `go 1.25.0` directive without auto-downloading.
       matrix:
-        go-version: [1.20.x]
+        go-version: ['1.25.x', '1.26.x']
     runs-on:
       group: databricks-protected-runner-group
       labels: linux-ubuntu-latest
