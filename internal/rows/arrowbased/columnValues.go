@@ -195,13 +195,14 @@ var _ columnValues = (*listValueContainer)(nil)
 
 func (lvc *listValueContainer) Value(i int) (any, error) {
 	if i < lvc.listArray.Len() {
-		r := "["
+		var sb strings.Builder
+		sb.WriteByte('[')
 		s, e := lvc.listArray.ValueOffsets(i)
 		len := int(e - s)
 
 		for i := 0; i < len; i++ {
 			if lvc.values.IsNull(i + int(s)) {
-				r = r + "null"
+				sb.WriteString("null")
 			} else {
 
 				val, err := lvc.values.Value(i + int(s))
@@ -214,19 +215,19 @@ func (lvc *listValueContainer) Value(i int) (any, error) {
 					if err != nil {
 						return nil, err
 					}
-					r = r + string(vb)
+					sb.Write(vb)
 				} else {
-					r = r + val.(string)
+					sb.WriteString(val.(string))
 				}
 			}
 
 			if i < len-1 {
-				r = r + ","
+				sb.WriteByte(',')
 			}
 		}
 
-		r = r + "]"
-		return r, nil
+		sb.WriteByte(']')
+		return sb.String(), nil
 	}
 	return nil, nil
 }
@@ -267,7 +268,8 @@ func (mvc *mapValueContainer) Value(i int) (any, error) {
 	if i < mvc.mapArray.Len() {
 		s, e := mvc.mapArray.ValueOffsets(i)
 		len := e - s
-		r := "{"
+		var sb strings.Builder
+		sb.WriteByte('{')
 		for i := int64(0); i < len; i++ {
 			k, err := mvc.keys.Value(int(i + s))
 			if err != nil {
@@ -284,33 +286,34 @@ func (mvc *mapValueContainer) Value(i int) (any, error) {
 				return nil, err
 			}
 
-			var b string
+			if !strings.HasPrefix(string(key), "\"") {
+				sb.WriteByte('"')
+				sb.Write(key)
+				sb.WriteString("\":")
+			} else {
+				sb.Write(key)
+				sb.WriteByte(':')
+			}
+
 			if mvc.values.IsNull(int(i + s)) {
-				b = "null"
+				sb.WriteString("null")
 			} else if mvc.complexValue {
-				b = v.(string)
+				sb.WriteString(v.(string))
 			} else {
 				vb, err := marshal(v)
 				if err != nil {
 					return nil, err
 				}
-				b = string(vb)
+				sb.Write(vb)
 			}
 
-			if !strings.HasPrefix(string(key), "\"") {
-				r = r + "\"" + string(key) + "\":"
-			} else {
-				r = r + string(key) + ":"
-			}
-
-			r = r + b
 			if i < len-1 {
-				r = r + ","
+				sb.WriteByte(',')
 			}
 		}
-		r = r + "}"
+		sb.WriteByte('}')
 
-		return r, nil
+		return sb.String(), nil
 	}
 	return nil, nil
 }
@@ -356,38 +359,38 @@ var _ columnValues = (*structValueContainer)(nil)
 
 func (svc *structValueContainer) Value(i int) (any, error) {
 	if i < svc.structArray.Len() {
-		r := "{"
+		var sb strings.Builder
+		sb.WriteByte('{')
 		for j := range svc.fieldValues {
-			r = r + "\"" + svc.fieldNames[j] + "\":"
+			sb.WriteByte('"')
+			sb.WriteString(svc.fieldNames[j])
+			sb.WriteString("\":")
 
 			if svc.fieldValues[j].IsNull(int(i)) {
-				r = r + "null"
+				sb.WriteString("null")
 			} else {
 				v, err := svc.fieldValues[j].Value(int(i))
 				if err != nil {
 					return nil, err
 				}
 
-				var b string
 				if svc.complexValue[j] {
-					b = v.(string)
+					sb.WriteString(v.(string))
 				} else {
 					vb, err := marshal(v)
 					if err != nil {
 						return nil, err
 					}
-					b = string(vb)
+					sb.Write(vb)
 				}
-
-				r = r + b
 			}
 			if j < len(svc.fieldValues)-1 {
-				r = r + ","
+				sb.WriteByte(',')
 			}
 		}
-		r = r + "}"
+		sb.WriteByte('}')
 
-		return r, nil
+		return sb.String(), nil
 	}
 	return nil, nil
 }
