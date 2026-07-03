@@ -11450,6 +11450,7 @@ type TSparkArrowTypes struct {
   ComplexTypesAsArrow *bool `thrift:"complexTypesAsArrow,3" db:"complexTypesAsArrow" json:"complexTypesAsArrow,omitempty"`
   IntervalTypesAsArrow *bool `thrift:"intervalTypesAsArrow,4" db:"intervalTypesAsArrow" json:"intervalTypesAsArrow,omitempty"`
   NullTypeAsArrow *bool `thrift:"nullTypeAsArrow,5" db:"nullTypeAsArrow" json:"nullTypeAsArrow,omitempty"`
+  GeospatialAsArrow *bool `thrift:"geospatialAsArrow,6" db:"geospatialAsArrow" json:"geospatialAsArrow,omitempty"`
 }
 
 func NewTSparkArrowTypes() *TSparkArrowTypes {
@@ -11511,6 +11512,17 @@ func (p *TSparkArrowTypes) IsSetNullTypeAsArrow() bool {
   return p.NullTypeAsArrow != nil
 }
 
+var TSparkArrowTypes_GeospatialAsArrow_DEFAULT bool
+func (p *TSparkArrowTypes) GetGeospatialAsArrow() bool {
+  if !p.IsSetGeospatialAsArrow() {
+    return TSparkArrowTypes_GeospatialAsArrow_DEFAULT
+  }
+return *p.GeospatialAsArrow
+}
+func (p *TSparkArrowTypes) IsSetGeospatialAsArrow() bool {
+  return p.GeospatialAsArrow != nil
+}
+
 func (p *TSparkArrowTypes) Read(ctx context.Context, iprot thrift.TProtocol) error {
   if _, err := iprot.ReadStructBegin(ctx); err != nil {
     return thrift.PrependError(fmt.Sprintf("%T read error: ", p), err)
@@ -11567,6 +11579,16 @@ func (p *TSparkArrowTypes) Read(ctx context.Context, iprot thrift.TProtocol) err
     case 5:
       if fieldTypeId == thrift.BOOL {
         if err := p.ReadField5(ctx, iprot); err != nil {
+          return err
+        }
+      } else {
+        if err := iprot.Skip(ctx, fieldTypeId); err != nil {
+          return err
+        }
+      }
+    case 6:
+      if fieldTypeId == thrift.BOOL {
+        if err := p.ReadField6(ctx, iprot); err != nil {
           return err
         }
       } else {
@@ -11634,6 +11656,15 @@ func (p *TSparkArrowTypes)  ReadField5(ctx context.Context, iprot thrift.TProtoc
   return nil
 }
 
+func (p *TSparkArrowTypes)  ReadField6(ctx context.Context, iprot thrift.TProtocol) error {
+  if v, err := iprot.ReadBool(ctx); err != nil {
+  return thrift.PrependError("error reading field 6: ", err)
+} else {
+  p.GeospatialAsArrow = &v
+}
+  return nil
+}
+
 func (p *TSparkArrowTypes) Write(ctx context.Context, oprot thrift.TProtocol) error {
   if err := oprot.WriteStructBegin(ctx, "TSparkArrowTypes"); err != nil {
     return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err) }
@@ -11643,6 +11674,7 @@ func (p *TSparkArrowTypes) Write(ctx context.Context, oprot thrift.TProtocol) er
     if err := p.writeField3(ctx, oprot); err != nil { return err }
     if err := p.writeField4(ctx, oprot); err != nil { return err }
     if err := p.writeField5(ctx, oprot); err != nil { return err }
+    if err := p.writeField6(ctx, oprot); err != nil { return err }
   }
   if err := oprot.WriteFieldStop(ctx); err != nil {
     return thrift.PrependError("write field stop error: ", err) }
@@ -11707,6 +11739,18 @@ func (p *TSparkArrowTypes) writeField5(ctx context.Context, oprot thrift.TProtoc
     return thrift.PrependError(fmt.Sprintf("%T.nullTypeAsArrow (5) field write error: ", p), err) }
     if err := oprot.WriteFieldEnd(ctx); err != nil {
       return thrift.PrependError(fmt.Sprintf("%T write field end error 5:nullTypeAsArrow: ", p), err) }
+  }
+  return err
+}
+
+func (p *TSparkArrowTypes) writeField6(ctx context.Context, oprot thrift.TProtocol) (err error) {
+  if p.IsSetGeospatialAsArrow() {
+    if err := oprot.WriteFieldBegin(ctx, "geospatialAsArrow", thrift.BOOL, 6); err != nil {
+      return thrift.PrependError(fmt.Sprintf("%T write field begin error 6:geospatialAsArrow: ", p), err) }
+    if err := oprot.WriteBool(ctx, bool(*p.GeospatialAsArrow)); err != nil {
+    return thrift.PrependError(fmt.Sprintf("%T.geospatialAsArrow (6) field write error: ", p), err) }
+    if err := oprot.WriteFieldEnd(ctx); err != nil {
+      return thrift.PrependError(fmt.Sprintf("%T write field end error 6:geospatialAsArrow: ", p), err) }
   }
   return err
 }
