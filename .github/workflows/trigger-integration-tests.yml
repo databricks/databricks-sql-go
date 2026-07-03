@@ -36,7 +36,7 @@ jobs:
       group: databricks-protected-runner-group
       labels: linux-ubuntu-latest
     permissions:
-      pull-requests: write
+      # Labels + comments are the issues API; no pulls.* calls here.
       issues: write
     steps:
       - name: Remove integration-test labels
@@ -125,8 +125,8 @@ jobs:
       group: databricks-protected-runner-group
       labels: linux-ubuntu-latest
     permissions:
+      # Comments are the issues API; the dispatch uses the App token, not GITHUB_TOKEN.
       issues: write
-      pull-requests: write
       checks: write
     steps:
       - name: Resolve proxy mode from label
@@ -199,7 +199,7 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
-              body: `Go integration tests triggered (\`${process.env.PROXY_MODE}\`). [View workflow run](https://github.com/databricks/databricks-driver-test/actions/workflows/databricks-go-integration-tests.yml).`,
+              body: `Go integration tests triggered (\`${process.env.PROXY_MODE}\`). [View workflow runs](https://github.com/databricks/databricks-driver-test/actions).`,
             });
 
   # Merge queue: the required gate. Runs replay once before merge.
