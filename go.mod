@@ -53,6 +53,6 @@ require (
 	github.com/hashicorp/go-retryablehttp v0.7.7
 	github.com/pkg/browser v0.0.0-20210911075715-681adbf594b8
 	github.com/pkg/errors v0.9.1
-	github.com/rs/zerolog v1.28.0
+	github.com/rs/zerolog v1.34.0
 	golang.org/x/sys v0.30.0 // indirect
 )
