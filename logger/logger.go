@@ -40,11 +40,31 @@ var Logger = &DBSQLLogger{
 	zerolog.New(os.Stderr).With().Timestamp().Logger(),
 }
 
+// out is the destination shared by Logger and the debug-trace sibling, so
+// SetLogOutput redirects both together.
+var out io.Writer = os.Stderr
+
+// debugLogger is a sibling of Logger that shares its output and format but is
+// held at trace level, so the step tracer (internal/debuglog) is gated by its
+// own toggle rather than by the package log level.
+var debugLogger = newDebugLogger(out)
+
+func newDebugLogger(w io.Writer) zerolog.Logger {
+	return zerolog.New(w).With().Timestamp().Logger().Level(zerolog.TraceLevel)
+}
+
+// DebugLogger returns the trace-level sibling logger used for step tracing. Its
+// events are emitted regardless of the package log level; callers gate emission
+// with their own flag (see internal/debuglog).
+func DebugLogger() *zerolog.Logger { return &debugLogger }
+
 // Enable pretty printing for interactive terminals and json for production.
 func init() {
 	// for tty terminal enable pretty logs
 	if isatty.IsTerminal(os.Stdout.Fd()) && runtime.GOOS != "windows" {
-		Logger = &DBSQLLogger{Logger.Output(zerolog.ConsoleWriter{Out: os.Stderr})}
+		out = zerolog.ConsoleWriter{Out: os.Stderr}
+		Logger = &DBSQLLogger{Logger.Output(out)}
+		debugLogger = newDebugLogger(out)
 	}
 	// by default only log warns or above
 	loglvl := zerolog.WarnLevel
@@ -71,8 +91,11 @@ func SetLogLevel(l string) error {
 }
 
 // Sets logging output. Default is os.Stderr. If in terminal, pretty logs are enabled.
+// Redirects both the main logger and the debug-trace sibling so they stay on one sink.
 func SetLogOutput(w io.Writer) {
+	out = w
 	Logger.Logger = Logger.Output(w)
+	debugLogger = newDebugLogger(w)
 }
 
 // Sets log to trace. -1
