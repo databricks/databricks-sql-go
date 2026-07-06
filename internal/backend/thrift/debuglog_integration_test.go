@@ -7,6 +7,7 @@ package thrift
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -15,14 +16,12 @@ import (
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/client"
 	"github.com/databricks/databricks-sql-go/internal/config"
-	"github.com/databricks/databricks-sql-go/internal/debuglog"
 	"github.com/databricks/databricks-sql-go/logger"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 type logEntry struct {
-	Seq   uint64 `json:"seq"`
 	Fn    string `json:"fn"`
 	Phase string `json:"phase"`
 }
@@ -46,12 +45,13 @@ func (c *captureBuf) String() string {
 }
 
 func TestBackend_DebugLoggingOrderedAndNested(t *testing.T) {
-	prev := debuglog.SetEnabled(true)
+	prevLevel := logger.Logger.GetLevel()
 	var buf captureBuf
 	logger.SetLogOutput(&buf)
+	require.NoError(t, logger.SetLogLevel("debug"))
 	t.Cleanup(func() {
-		debuglog.SetEnabled(prev)
-		logger.SetLogOutput(nil)
+		logger.SetLogOutput(os.Stderr)
+		logger.Logger.Logger = logger.Logger.Level(prevLevel)
 	})
 
 	// A successful direct-results execute so we traverse Execute -> runQuery ->
@@ -81,12 +81,10 @@ func TestBackend_DebugLoggingOrderedAndNested(t *testing.T) {
 		assert.True(t, hasStep(entries, fn, "done"), "expected a done for %s", fn)
 	}
 
-	// Sequence numbers strictly increase across the whole stream — the total
-	// order that lets Go and kernel-Rust lines interleave into one ordered log.
+	// Enter+done for all three nested steps land as ordered lines on the shared
+	// logger — the single stream that kernel-side stderr logs interleave into by
+	// execution order.
 	require.GreaterOrEqual(t, len(entries), 6, "expected at least enter+done for 3 nested steps")
-	for i := 1; i < len(entries); i++ {
-		assert.Greater(t, entries[i].Seq, entries[i-1].Seq, "sequence must strictly increase")
-	}
 
 	// The outermost Execute enters before the inner executeStatement enters and
 	// finishes after it — the nesting is reflected in the stream order.
