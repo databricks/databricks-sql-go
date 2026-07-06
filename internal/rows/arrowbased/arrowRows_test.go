@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/big"
 	"os"
 	"strings"
 	"testing"
@@ -13,6 +14,8 @@ import (
 
 	"github.com/apache/arrow/go/v12/arrow"
 	"github.com/apache/arrow/go/v12/arrow/array"
+	"github.com/apache/arrow/go/v12/arrow/decimal128"
+	"github.com/apache/arrow/go/v12/arrow/memory"
 	"github.com/databricks/databricks-sql-go/driverctx"
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
@@ -311,7 +314,7 @@ func TestArrowRowScanner(t *testing.T) {
 		cfg := config.Config{}
 		cfg.UseArrowBatches = true
 		cfg.UseArrowNativeTimestamp = true
-		cfg.UseArrowNativeDecimal = true
+		cfg.ArrowConfig.UseArrowNativeDecimal = true
 
 		d, _ := NewArrowRowScanner(metadataResp, rowSet, &cfg, nil, context.Background(), nil)
 
@@ -342,7 +345,7 @@ func TestArrowRowScanner(t *testing.T) {
 		cfg := config.Config{}
 		cfg.UseArrowBatches = true
 		cfg.UseArrowNativeTimestamp = true
-		cfg.UseArrowNativeDecimal = true
+		cfg.ArrowConfig.UseArrowNativeDecimal = true
 
 		_, err := NewArrowRowScanner(metadataResp, rowSet, &cfg, nil, context.Background(), nil)
 		require.Nil(t, err)
@@ -887,7 +890,11 @@ func TestArrowRowScanner(t *testing.T) {
 
 			err := ars.ScanRow(dest, 0)
 
-			if i < 3 {
+			// Columns 0-2 are complex types (array/map/struct) and column 3 is
+			// decimal, all of which are now materialized. Columns 4-5 are
+			// interval types, which are still not supported natively and error.
+			// See databricks/databricks-sql-go#274 for the decimal change.
+			if i < 4 {
 				assert.Nil(t, err)
 			} else {
 				assert.NotNil(t, err)
@@ -931,7 +938,7 @@ func TestArrowRowScanner(t *testing.T) {
 			config := config.WithDefaults()
 			config.UseArrowNativeTimestamp = nativeDates
 			config.UseArrowNativeComplexTypes = false
-			config.UseArrowNativeDecimal = false
+			config.ArrowConfig.UseArrowNativeDecimal = false
 			config.UseArrowNativeIntervalTypes = false
 			d, err := NewArrowRowScanner(executeStatementResp.DirectResults.ResultSetMetadata, executeStatementResp.DirectResults.ResultSet.Results, config, nil, context.Background(), nil)
 			assert.Nil(t, err)
@@ -1104,7 +1111,7 @@ func TestArrowRowScanner(t *testing.T) {
 		config := config.WithDefaults()
 		config.UseArrowNativeTimestamp = true
 		config.UseArrowNativeComplexTypes = false
-		config.UseArrowNativeDecimal = false
+		config.ArrowConfig.UseArrowNativeDecimal = false
 		config.UseArrowNativeIntervalTypes = false
 		d, err := NewArrowRowScanner(executeStatementResp.DirectResults.ResultSetMetadata, executeStatementResp.DirectResults.ResultSet.Results, config, nil, context.Background(), nil)
 		assert.Nil(t, err)
@@ -1132,7 +1139,7 @@ func TestArrowRowScanner(t *testing.T) {
 		config := config.WithDefaults()
 		config.UseArrowNativeTimestamp = true
 		config.UseArrowNativeComplexTypes = false
-		config.UseArrowNativeDecimal = false
+		config.ArrowConfig.UseArrowNativeDecimal = false
 		config.UseArrowNativeIntervalTypes = false
 		d, err := NewArrowRowScanner(executeStatementResp.DirectResults.ResultSetMetadata, executeStatementResp.DirectResults.ResultSet.Results, config, nil, context.Background(), nil)
 		assert.Nil(t, err)
@@ -1184,7 +1191,7 @@ func TestArrowRowScanner(t *testing.T) {
 		config := config.WithDefaults()
 		config.UseArrowNativeTimestamp = true
 		config.UseArrowNativeComplexTypes = true
-		config.UseArrowNativeDecimal = false
+		config.ArrowConfig.UseArrowNativeDecimal = false
 		config.UseArrowNativeIntervalTypes = false
 		d, err1 := NewArrowRowScanner(executeStatementResp.DirectResults.ResultSetMetadata, executeStatementResp.DirectResults.ResultSet.Results, config, nil, context.Background(), nil)
 		assert.Nil(t, err1)
@@ -1225,7 +1232,7 @@ func TestArrowRowScanner(t *testing.T) {
 		config := config.WithDefaults()
 		config.UseArrowNativeTimestamp = true
 		config.UseArrowNativeComplexTypes = true
-		config.UseArrowNativeDecimal = false
+		config.ArrowConfig.UseArrowNativeDecimal = false
 		config.UseArrowNativeIntervalTypes = false
 		d, err := NewArrowRowScanner(executeStatementResp.DirectResults.ResultSetMetadata, executeStatementResp.DirectResults.ResultSet.Results, config, nil, context.Background(), nil)
 		assert.Nil(t, err)
@@ -1284,7 +1291,7 @@ func TestArrowRowScanner(t *testing.T) {
 		config := config.WithDefaults()
 		config.UseArrowNativeTimestamp = true
 		config.UseArrowNativeComplexTypes = true
-		config.UseArrowNativeDecimal = false
+		config.ArrowConfig.UseArrowNativeDecimal = false
 		config.UseArrowNativeIntervalTypes = false
 		d, err := NewArrowRowScanner(executeStatementResp.DirectResults.ResultSetMetadata, executeStatementResp.DirectResults.ResultSet.Results, config, nil, context.Background(), nil)
 		assert.Nil(t, err)
@@ -1317,7 +1324,7 @@ func TestArrowRowScanner(t *testing.T) {
 		config := config.WithDefaults()
 		config.UseArrowNativeTimestamp = true
 		config.UseArrowNativeComplexTypes = true
-		config.UseArrowNativeDecimal = false
+		config.ArrowConfig.UseArrowNativeDecimal = false
 		config.UseArrowNativeIntervalTypes = false
 		d, err := NewArrowRowScanner(executeStatementResp.DirectResults.ResultSetMetadata, executeStatementResp.DirectResults.ResultSet.Results, config, nil, context.Background(), nil)
 		assert.Nil(t, err)
@@ -1356,7 +1363,7 @@ func TestArrowRowScanner(t *testing.T) {
 		config := config.WithDefaults()
 		config.UseArrowNativeTimestamp = true
 		config.UseArrowNativeComplexTypes = true
-		config.UseArrowNativeDecimal = false
+		config.ArrowConfig.UseArrowNativeDecimal = false
 		config.UseArrowNativeIntervalTypes = false
 		d, err := NewArrowRowScanner(executeStatementResp.DirectResults.ResultSetMetadata, executeStatementResp.DirectResults.ResultSet.Results, config, nil, context.Background(), nil)
 		assert.Nil(t, err)
@@ -1395,7 +1402,7 @@ func TestArrowRowScanner(t *testing.T) {
 		config := config.WithDefaults()
 		config.UseArrowNativeTimestamp = true
 		config.UseArrowNativeComplexTypes = true
-		config.UseArrowNativeDecimal = false
+		config.ArrowConfig.UseArrowNativeDecimal = false
 		config.UseArrowNativeIntervalTypes = false
 		d, err := NewArrowRowScanner(executeStatementResp.DirectResults.ResultSetMetadata, executeStatementResp.DirectResults.ResultSet.Results, config, nil, context.Background(), nil)
 		assert.Nil(t, err)
@@ -1431,7 +1438,7 @@ func TestArrowRowScanner(t *testing.T) {
 		config := config.WithDefaults()
 		config.UseArrowNativeTimestamp = true
 		config.UseArrowNativeComplexTypes = true
-		config.UseArrowNativeDecimal = false
+		config.ArrowConfig.UseArrowNativeDecimal = false
 		config.UseArrowNativeIntervalTypes = false
 		d, err := NewArrowRowScanner(executeStatementResp.DirectResults.ResultSetMetadata, executeStatementResp.DirectResults.ResultSet.Results, config, nil, context.Background(), nil)
 		assert.Nil(t, err)
@@ -1510,7 +1517,7 @@ func TestArrowRowScanner(t *testing.T) {
 		config := config.WithDefaults()
 		config.UseArrowNativeTimestamp = true
 		config.UseArrowNativeComplexTypes = true
-		config.UseArrowNativeDecimal = false
+		config.ArrowConfig.UseArrowNativeDecimal = false
 		config.UseArrowNativeIntervalTypes = false
 		_, err := NewArrowRowScanner(executeStatementResp.DirectResults.ResultSetMetadata, executeStatementResp.DirectResults.ResultSet.Results, config, nil, context.Background(), nil)
 		assert.Nil(t, err)
@@ -2025,4 +2032,212 @@ func loadTestData(t *testing.T, name string, v any) {
 func getMetadataResp(schema *cli_service.TTableSchema) *cli_service.TGetResultSetMetadataResp {
 	rowSetType := cli_service.TSparkRowSetType_ARROW_BASED_SET
 	return &cli_service.TGetResultSetMetadataResp{Schema: schema, ResultFormat: &rowSetType}
+}
+
+// normalizeDecimalString independently computes the canonical fixed-point form
+// (exactly `scale` fractional digits) that ValueString is expected to produce,
+// using big.Rat rather than the code-under-test's own logic, so the assertion
+// is not tautological.
+func normalizeDecimalString(value string, scale int32) string {
+	r, ok := new(big.Rat).SetString(value) //nolint:gosec // G113: value is a hardcoded test literal, not untrusted input
+	if !ok {
+		panic("bad decimal literal in test: " + value)
+	}
+	// big.Rat.FloatString rounds to `scale` digits; since our inputs already
+	// have <= scale fractional digits, this is exact.
+	return r.FloatString(int(scale))
+}
+
+// newDecimal128Container builds a decimal128Container backed by a real arrow
+// decimal128 array with the given precision/scale and string values.
+//
+// Values are converted to the exact unscaled 128-bit integer via big.Rat and
+// decimal128.FromBigInt — NOT arrow's decimal128.FromString, which rounds
+// through big.Float and would corrupt high-precision inputs before they ever
+// reach the code under test. Over the wire the driver receives these exact
+// bytes, so FromBigInt faithfully reproduces the production value.
+func newDecimal128Container(t *testing.T, precision, scale int32, values []string) *decimal128Container {
+	t.Helper()
+	dt := &arrow.Decimal128Type{Precision: precision, Scale: scale}
+	bldr := array.NewDecimal128Builder(memory.DefaultAllocator, dt)
+	defer bldr.Release()
+	for _, v := range values {
+		if v == "" {
+			bldr.AppendNull()
+			continue
+		}
+		bldr.Append(decimal128.FromBigInt(unscaledBigInt(t, v, scale)))
+	}
+	arr := bldr.NewDecimal128Array()
+	c := &decimal128Container{scale: scale}
+	require.NoError(t, c.SetValueArray(arr.Data()))
+	return c
+}
+
+// unscaledBigInt returns value * 10^scale as an exact integer (the on-wire
+// unscaled representation of a decimal128), erroring if the literal has more
+// fractional digits than `scale` (which would require rounding).
+func unscaledBigInt(t *testing.T, value string, scale int32) *big.Int {
+	t.Helper()
+	r, ok := new(big.Rat).SetString(value) //nolint:gosec // G113: value is a hardcoded test literal, not untrusted input
+	require.True(t, ok, "bad decimal literal: %s", value)
+	mult := new(big.Rat).SetInt(new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(scale)), nil))
+	scaled := new(big.Rat).Mul(r, mult)
+	require.Equal(t, big.NewInt(1), scaled.Denom(), "value %s does not fit in scale %d", value, scale)
+	return new(big.Int).Set(scaled.Num())
+}
+
+// TestDecimal128ContainerNativeDecimal is a regression test for
+// databricks/databricks-sql-go#274. A top-level native DECIMAL column must be
+// materialized as a lossless, scale-applied string (via rowValues.Value),
+// while decimals nested in complex types keep the legacy float64 rendering
+// (via decimal128Container.Value directly).
+func TestDecimal128ContainerNativeDecimal(t *testing.T) {
+	t.Run("ValueString is lossless and scale-applied", func(t *testing.T) {
+		// Include full DECIMAL(38,x) values whose significant digits far exceed
+		// what float64 (~15-17) — or arrow's own big.Float-based
+		// decimal128.Num.ToString — can represent exactly. These must round-trip
+		// byte-for-byte. See databricks/databricks-sql-go#274.
+		cases := []struct {
+			value            string
+			precision, scale int32
+		}{
+			{"1", 10, 0},
+			{"5.15", 10, 2},
+			{"123456789.123456789", 30, 9},
+			// High-precision values that arrow's ToString corrupts:
+			{"1234567890123456789.99", 38, 2},
+			{"0.99999999999999999999999999999999999999", 38, 38},
+			{"12345678901234567890.1234567890", 38, 10},
+			// Negative and sub-one values exercise sign + zero-padding.
+			{"-9876543210.0123456789", 38, 10},
+			{"0.001", 10, 3},
+			{"-0.5", 5, 2},
+			{"0", 10, 4},
+		}
+		for _, tc := range cases {
+			c := newDecimal128Container(t, tc.precision, tc.scale, []string{tc.value})
+			assert.Equal(t, normalizeDecimalString(tc.value, tc.scale), c.ValueString(0),
+				"value=%s precision=%d scale=%d", tc.value, tc.precision, tc.scale)
+		}
+
+		// Confirm the float64 path really is lossy for a high-precision value,
+		// so the lossless string path is doing meaningful work.
+		highPrec := "1234567890123456789.99"
+		c := newDecimal128Container(t, 38, 2, []string{highPrec})
+		lossy, err := c.Value(0)
+		assert.NoError(t, err)
+		assert.NotEqual(t, highPrec, fmt.Sprintf("%.2f", lossy.(float64)))
+		// And the lossless path returns it exactly.
+		assert.Equal(t, highPrec, c.ValueString(0))
+	})
+
+	t.Run("Value returns lossy float64 for complex-type rendering", func(t *testing.T) {
+		c := newDecimal128Container(t, 10, 2, []string{"5.15"})
+		v, err := c.Value(0)
+		assert.NoError(t, err)
+		assert.Equal(t, float64(5.15), v)
+	})
+
+	t.Run("rowValues.DecimalStringValue returns lossless string for a decimal holder", func(t *testing.T) {
+		c := newDecimal128Container(t, 10, 2, []string{"5.15", ""})
+		rv := NewRowValues(rowscanner.NewDelimiter(0, 2), []columnValues{c})
+
+		assert.False(t, rv.IsNull(0, 0))
+		s, ok := rv.DecimalStringValue(0, 0)
+		assert.True(t, ok)
+		assert.Equal(t, "5.15", s)
+
+		// Value still returns the legacy float64 (used for nested rendering).
+		v, err := rv.Value(0, 0)
+		assert.NoError(t, err)
+		assert.Equal(t, float64(5.15), v)
+
+		assert.True(t, rv.IsNull(0, 1))
+	})
+
+	t.Run("rowValues.DecimalStringValue reports ok=false for non-decimal holders", func(t *testing.T) {
+		rv := NewRowValues(rowscanner.NewDelimiter(0, 1), []columnValues{&columnValuesTyped[*array.String, string]{}})
+		s, ok := rv.DecimalStringValue(0, 0)
+		assert.False(t, ok)
+		assert.Equal(t, "", s)
+	})
+}
+
+// TestScanRowNativeDecimal drives the full ScanRow path with a real
+// decimal128Container installed for a top-level DECIMAL column, verifying that
+// native decimal materializes as a lossless string only when the feature is
+// enabled, and as the legacy float64 otherwise (even though the holder is a
+// decimal128 either way — the decision is gated on config, not holder type).
+// See databricks/databricks-sql-go#274.
+func TestScanRowNativeDecimal(t *testing.T) {
+	var scale int32 = 2
+	var precision int32 = 38
+	schema := &cli_service.TTableSchema{
+		Columns: []*cli_service.TColumnDesc{
+			{
+				ColumnName: "decimal_col",
+				TypeDesc: &cli_service.TTypeDesc{
+					Types: []*cli_service.TTypeEntry{
+						{
+							PrimitiveEntry: &cli_service.TPrimitiveTypeEntry{
+								Type: cli_service.TTypeId_DECIMAL_TYPE,
+								TypeQualifiers: &cli_service.TTypeQualifiers{
+									Qualifiers: map[string]*cli_service.TTypeQualifierValue{
+										"scale":     {I32Value: &scale},
+										"precision": {I32Value: &precision},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	rowSet := &cli_service.TRowSet{ArrowBatches: []*cli_service.TSparkArrowBatch{{RowCount: 1}}}
+
+	// A value that float64 cannot represent exactly.
+	const highPrecision = "1234567890123456789.99"
+
+	scanFirstRow := func(t *testing.T, nativeDecimal bool) driver.Value {
+		t.Helper()
+		metadataResp := getMetadataResp(schema)
+		cfg := config.Config{}
+		cfg.ArrowConfig.UseArrowNativeDecimal = nativeDecimal
+
+		d, err := NewArrowRowScanner(metadataResp, rowSet, &cfg, nil, context.Background(), nil)
+		require.NoError(t, err)
+		ars := d.(*arrowRowScanner)
+
+		ars.batchIterator = &fakeBatchIterator{
+			batches: []SparkArrowBatch{
+				&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(0, 1), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(0, 1), Record: &fakeRecord{}}}},
+			},
+			index:     -1,
+			callCount: 0,
+		}
+		// Install a real decimal128Container holding the high-precision value.
+		ars.valueContainerMaker = &fakeValueContainerMaker{fnMakeColumnValuesContainers: func(ars *arrowRowScanner, _ rowscanner.Delimiter) dbsqlerr.DBError {
+			c := newDecimal128Container(t, precision, scale, []string{highPrecision})
+			ars.rowValues = NewRowValues(rowscanner.NewDelimiter(0, 1), []columnValues{c})
+			return nil
+		}}
+
+		dest := make([]driver.Value, 1)
+		require.Nil(t, ars.ScanRow(dest, 0))
+		return dest[0]
+	}
+
+	t.Run("native decimal enabled yields lossless string", func(t *testing.T) {
+		assert.Equal(t, highPrecision, scanFirstRow(t, true))
+	})
+
+	t.Run("native decimal disabled yields legacy float64", func(t *testing.T) {
+		v := scanFirstRow(t, false)
+		f, ok := v.(float64)
+		assert.True(t, ok, "expected float64, got %T", v)
+		// float64 cannot represent the value exactly — confirms the gate matters.
+		assert.NotEqual(t, highPrecision, fmt.Sprintf("%.2f", f))
+	})
 }
