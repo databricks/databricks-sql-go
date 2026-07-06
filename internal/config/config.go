@@ -116,11 +116,14 @@ type UserConfig struct {
 	Transport                http.RoundTripper
 	UseLz4Compression        bool
 	EnableMetricViewMetadata bool
-	// UseArrowNativeDecimal requests native Arrow decimal128 for DECIMAL columns.
-	// It is surfaced through UserConfig (rather than only ArrowConfig) so it can
-	// be set via the DSN; it is propagated into Config.ArrowConfig when a
-	// connector is assembled. See databricks/databricks-sql-go#274.
-	UseArrowNativeDecimal bool
+	// UseArrowNativeDecimalDSN is a DSN-only carrier for the useArrowNativeDecimal
+	// parameter. The authoritative setting lives on ArrowConfig; ParseDSN records
+	// the DSN value here (because it can only return a UserConfig) and the
+	// connector copies it into Config.ArrowConfig.UseArrowNativeDecimal when it is
+	// assembled. The name intentionally differs from ArrowConfig's field so the
+	// promoted selector Config.UseArrowNativeDecimal stays unambiguous.
+	// See databricks/databricks-sql-go#274.
+	UseArrowNativeDecimalDSN bool
 	CloudFetchConfig
 }
 
@@ -163,7 +166,7 @@ func (ucfg UserConfig) DeepCopy() UserConfig {
 		Transport:                ucfg.Transport,
 		UseLz4Compression:        ucfg.UseLz4Compression,
 		EnableMetricViewMetadata: ucfg.EnableMetricViewMetadata,
-		UseArrowNativeDecimal:    ucfg.UseArrowNativeDecimal,
+		UseArrowNativeDecimalDSN: ucfg.UseArrowNativeDecimalDSN,
 		CloudFetchConfig:         ucfg.CloudFetchConfig,
 		EnableTelemetry:          ucfg.EnableTelemetry,
 		TelemetryBatchSize:       ucfg.TelemetryBatchSize,
@@ -314,7 +317,7 @@ func ParseDSN(dsn string) (UserConfig, error) {
 		if err != nil {
 			return UserConfig{}, err
 		}
-		ucfg.UseArrowNativeDecimal = useArrowNativeDecimal
+		ucfg.UseArrowNativeDecimalDSN = useArrowNativeDecimal
 	}
 
 	// Telemetry parameters

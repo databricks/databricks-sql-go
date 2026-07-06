@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/big"
 	"os"
 	"strings"
 	"testing"
@@ -2033,8 +2034,28 @@ func getMetadataResp(schema *cli_service.TTableSchema) *cli_service.TGetResultSe
 	return &cli_service.TGetResultSetMetadataResp{Schema: schema, ResultFormat: &rowSetType}
 }
 
+// normalizeDecimalString independently computes the canonical fixed-point form
+// (exactly `scale` fractional digits) that ValueString is expected to produce,
+// using big.Rat rather than the code-under-test's own logic, so the assertion
+// is not tautological.
+func normalizeDecimalString(value string, scale int32) string {
+	r, ok := new(big.Rat).SetString(value)
+	if !ok {
+		panic("bad decimal literal in test: " + value)
+	}
+	// big.Rat.FloatString rounds to `scale` digits; since our inputs already
+	// have <= scale fractional digits, this is exact.
+	return r.FloatString(int(scale))
+}
+
 // newDecimal128Container builds a decimal128Container backed by a real arrow
 // decimal128 array with the given precision/scale and string values.
+//
+// Values are converted to the exact unscaled 128-bit integer via big.Rat and
+// decimal128.FromBigInt — NOT arrow's decimal128.FromString, which rounds
+// through big.Float and would corrupt high-precision inputs before they ever
+// reach the code under test. Over the wire the driver receives these exact
+// bytes, so FromBigInt faithfully reproduces the production value.
 func newDecimal128Container(t *testing.T, precision, scale int32, values []string) *decimal128Container {
 	t.Helper()
 	dt := &arrow.Decimal128Type{Precision: precision, Scale: scale}
@@ -2045,14 +2066,25 @@ func newDecimal128Container(t *testing.T, precision, scale int32, values []strin
 			bldr.AppendNull()
 			continue
 		}
-		num, err := decimal128.FromString(v, precision, scale)
-		require.NoError(t, err)
-		bldr.Append(num)
+		bldr.Append(decimal128.FromBigInt(unscaledBigInt(t, v, scale)))
 	}
 	arr := bldr.NewDecimal128Array()
 	c := &decimal128Container{scale: scale}
 	require.NoError(t, c.SetValueArray(arr.Data()))
 	return c
+}
+
+// unscaledBigInt returns value * 10^scale as an exact integer (the on-wire
+// unscaled representation of a decimal128), erroring if the literal has more
+// fractional digits than `scale` (which would require rounding).
+func unscaledBigInt(t *testing.T, value string, scale int32) *big.Int {
+	t.Helper()
+	r, ok := new(big.Rat).SetString(value)
+	require.True(t, ok, "bad decimal literal: %s", value)
+	mult := new(big.Rat).SetInt(new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(scale)), nil))
+	scaled := new(big.Rat).Mul(r, mult)
+	require.Equal(t, big.NewInt(1), scaled.Denom(), "value %s does not fit in scale %d", value, scale)
+	return new(big.Int).Set(scaled.Num())
 }
 
 // TestDecimal128ContainerNativeDecimal is a regression test for
@@ -2062,21 +2094,42 @@ func newDecimal128Container(t *testing.T, precision, scale int32, values []strin
 // (via decimal128Container.Value directly).
 func TestDecimal128ContainerNativeDecimal(t *testing.T) {
 	t.Run("ValueString is lossless and scale-applied", func(t *testing.T) {
-		// A value with more significant digits than float64 can represent
-		// exactly (~15-17). Scanning it as float64 would corrupt it; as a
-		// string it round-trips.
-		highPrecision := "123456789.123456789"
-		c := newDecimal128Container(t, 30, 9, []string{"1", "5.15", highPrecision, ""})
+		// Include full DECIMAL(38,x) values whose significant digits far exceed
+		// what float64 (~15-17) — or arrow's own big.Float-based
+		// decimal128.Num.ToString — can represent exactly. These must round-trip
+		// byte-for-byte. See databricks/databricks-sql-go#274.
+		cases := []struct {
+			value            string
+			precision, scale int32
+		}{
+			{"1", 10, 0},
+			{"5.15", 10, 2},
+			{"123456789.123456789", 30, 9},
+			// High-precision values that arrow's ToString corrupts:
+			{"1234567890123456789.99", 38, 2},
+			{"0.99999999999999999999999999999999999999", 38, 38},
+			{"12345678901234567890.1234567890", 38, 10},
+			// Negative and sub-one values exercise sign + zero-padding.
+			{"-9876543210.0123456789", 38, 10},
+			{"0.001", 10, 3},
+			{"-0.5", 5, 2},
+			{"0", 10, 4},
+		}
+		for _, tc := range cases {
+			c := newDecimal128Container(t, tc.precision, tc.scale, []string{tc.value})
+			assert.Equal(t, normalizeDecimalString(tc.value, tc.scale), c.ValueString(0),
+				"value=%s precision=%d scale=%d", tc.value, tc.precision, tc.scale)
+		}
 
-		assert.Equal(t, "1.000000000", c.ValueString(0))
-		assert.Equal(t, "5.150000000", c.ValueString(1))
-		assert.Equal(t, highPrecision, c.ValueString(2))
-
-		// Confirm the float64 path really is lossy for this value, so the
-		// string path is doing meaningful work.
-		lossy, err := c.Value(2)
+		// Confirm the float64 path really is lossy for a high-precision value,
+		// so the lossless string path is doing meaningful work.
+		big := "1234567890123456789.99"
+		c := newDecimal128Container(t, 38, 2, []string{big})
+		lossy, err := c.Value(0)
 		assert.NoError(t, err)
-		assert.NotEqual(t, highPrecision, fmt.Sprintf("%.9f", lossy.(float64)))
+		assert.NotEqual(t, big, fmt.Sprintf("%.2f", lossy.(float64)))
+		// And the lossless path returns it exactly.
+		assert.Equal(t, big, c.ValueString(0))
 	})
 
 	t.Run("Value returns lossy float64 for complex-type rendering", func(t *testing.T) {

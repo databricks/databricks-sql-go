@@ -2,11 +2,13 @@ package arrowbased
 
 import (
 	"encoding/json"
+	"math/big"
 	"strings"
 	"time"
 
 	"github.com/apache/arrow/go/v12/arrow"
 	"github.com/apache/arrow/go/v12/arrow/array"
+	"github.com/apache/arrow/go/v12/arrow/decimal128"
 	"github.com/databricks/databricks-sql-go/internal/rows/rowscanner"
 	dbsqllog "github.com/databricks/databricks-sql-go/logger"
 	"github.com/pkg/errors"
@@ -543,7 +545,48 @@ func (tvc *decimal128Container) Value(i int) (any, error) {
 // for backwards-compatible JSON rendering inside complex types.
 // See databricks/databricks-sql-go#274.
 func (tvc *decimal128Container) ValueString(i int) string {
-	return tvc.decimalArray.Value(i).ToString(tvc.scale)
+	return decimal128ToString(tvc.decimalArray.Value(i), tvc.scale)
+}
+
+// decimal128ToString renders a decimal128 value exactly as a fixed-point
+// string with `scale` fractional digits. It formats from the value's exact
+// 128-bit unscaled integer (BigInt) and inserts the decimal point by string
+// manipulation, so — unlike arrow's decimal128.Num.ToString, which divides via
+// big.Float and rounds beyond ~17 significant digits — it never loses
+// precision. See databricks/databricks-sql-go#274.
+func decimal128ToString(n decimal128.Num, scale int32) string {
+	unscaled := n.BigInt() // exact signed unscaled integer
+
+	neg := unscaled.Sign() < 0
+	digits := new(big.Int).Abs(unscaled).String()
+
+	var b strings.Builder
+	if neg {
+		b.WriteByte('-')
+	}
+
+	if scale <= 0 {
+		// No fractional part (negative scale is not produced by the server,
+		// but treat it as scale 0 rather than panicking).
+		b.WriteString(digits)
+		return b.String()
+	}
+
+	s := int(scale)
+	if len(digits) <= s {
+		// Pad with leading zeros so there are exactly `scale` fractional digits
+		// and a single leading integer zero, e.g. 5 with scale 3 -> "0.005".
+		b.WriteString("0.")
+		b.WriteString(strings.Repeat("0", s-len(digits)))
+		b.WriteString(digits)
+	} else {
+		intPart := digits[:len(digits)-s]
+		fracPart := digits[len(digits)-s:]
+		b.WriteString(intPart)
+		b.WriteByte('.')
+		b.WriteString(fracPart)
+	}
+	return b.String()
 }
 
 func (tvc *decimal128Container) IsNull(i int) bool {

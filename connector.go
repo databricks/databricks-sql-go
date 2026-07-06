@@ -248,9 +248,10 @@ func (t *headerInjectingTransport) RoundTrip(req *http.Request) (*http.Response,
 func withUserConfig(ucfg config.UserConfig) ConnOption {
 	return func(c *config.Config) {
 		c.UserConfig = ucfg
-		// UseArrowNativeDecimal is surfaced on UserConfig so it can be set via
-		// the DSN, but it is consumed from ArrowConfig. Propagate it here.
-		c.ArrowConfig.UseArrowNativeDecimal = ucfg.UseArrowNativeDecimal
+		// The useArrowNativeDecimal DSN parameter is carried on UserConfig (all
+		// ParseDSN can return) but is consumed from ArrowConfig. This is the one
+		// place that bridges the two.
+		c.ArrowConfig.UseArrowNativeDecimal = ucfg.UseArrowNativeDecimalDSN
 	}
 }
 
