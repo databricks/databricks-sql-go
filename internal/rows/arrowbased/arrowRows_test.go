@@ -2123,13 +2123,13 @@ func TestDecimal128ContainerNativeDecimal(t *testing.T) {
 
 		// Confirm the float64 path really is lossy for a high-precision value,
 		// so the lossless string path is doing meaningful work.
-		big := "1234567890123456789.99"
-		c := newDecimal128Container(t, 38, 2, []string{big})
+		highPrec := "1234567890123456789.99"
+		c := newDecimal128Container(t, 38, 2, []string{highPrec})
 		lossy, err := c.Value(0)
 		assert.NoError(t, err)
-		assert.NotEqual(t, big, fmt.Sprintf("%.2f", lossy.(float64)))
+		assert.NotEqual(t, highPrec, fmt.Sprintf("%.2f", lossy.(float64)))
 		// And the lossless path returns it exactly.
-		assert.Equal(t, big, c.ValueString(0))
+		assert.Equal(t, highPrec, c.ValueString(0))
 	})
 
 	t.Run("Value returns lossy float64 for complex-type rendering", func(t *testing.T) {
@@ -2139,15 +2139,105 @@ func TestDecimal128ContainerNativeDecimal(t *testing.T) {
 		assert.Equal(t, float64(5.15), v)
 	})
 
-	t.Run("rowValues.Value returns lossless string for top-level decimal", func(t *testing.T) {
+	t.Run("rowValues.DecimalStringValue returns lossless string for a decimal holder", func(t *testing.T) {
 		c := newDecimal128Container(t, 10, 2, []string{"5.15", ""})
 		rv := NewRowValues(rowscanner.NewDelimiter(0, 2), []columnValues{c})
 
 		assert.False(t, rv.IsNull(0, 0))
+		s, ok := rv.DecimalStringValue(0, 0)
+		assert.True(t, ok)
+		assert.Equal(t, "5.15", s)
+
+		// Value still returns the legacy float64 (used for nested rendering).
 		v, err := rv.Value(0, 0)
 		assert.NoError(t, err)
-		assert.Equal(t, "5.15", v)
+		assert.Equal(t, float64(5.15), v)
 
 		assert.True(t, rv.IsNull(0, 1))
+	})
+
+	t.Run("rowValues.DecimalStringValue reports ok=false for non-decimal holders", func(t *testing.T) {
+		rv := NewRowValues(rowscanner.NewDelimiter(0, 1), []columnValues{&columnValuesTyped[*array.String, string]{}})
+		s, ok := rv.DecimalStringValue(0, 0)
+		assert.False(t, ok)
+		assert.Equal(t, "", s)
+	})
+}
+
+// TestScanRowNativeDecimal drives the full ScanRow path with a real
+// decimal128Container installed for a top-level DECIMAL column, verifying that
+// native decimal materializes as a lossless string only when the feature is
+// enabled, and as the legacy float64 otherwise (even though the holder is a
+// decimal128 either way — the decision is gated on config, not holder type).
+// See databricks/databricks-sql-go#274.
+func TestScanRowNativeDecimal(t *testing.T) {
+	var scale int32 = 2
+	var precision int32 = 38
+	schema := &cli_service.TTableSchema{
+		Columns: []*cli_service.TColumnDesc{
+			{
+				ColumnName: "decimal_col",
+				TypeDesc: &cli_service.TTypeDesc{
+					Types: []*cli_service.TTypeEntry{
+						{
+							PrimitiveEntry: &cli_service.TPrimitiveTypeEntry{
+								Type: cli_service.TTypeId_DECIMAL_TYPE,
+								TypeQualifiers: &cli_service.TTypeQualifiers{
+									Qualifiers: map[string]*cli_service.TTypeQualifierValue{
+										"scale":     {I32Value: &scale},
+										"precision": {I32Value: &precision},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	rowSet := &cli_service.TRowSet{ArrowBatches: []*cli_service.TSparkArrowBatch{{RowCount: 1}}}
+
+	// A value that float64 cannot represent exactly.
+	const highPrecision = "1234567890123456789.99"
+
+	scanFirstRow := func(t *testing.T, nativeDecimal bool) driver.Value {
+		t.Helper()
+		metadataResp := getMetadataResp(schema)
+		cfg := config.Config{}
+		cfg.ArrowConfig.UseArrowNativeDecimal = nativeDecimal
+
+		d, err := NewArrowRowScanner(metadataResp, rowSet, &cfg, nil, context.Background(), nil)
+		require.NoError(t, err)
+		ars := d.(*arrowRowScanner)
+
+		ars.batchIterator = &fakeBatchIterator{
+			batches: []SparkArrowBatch{
+				&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(0, 1), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(0, 1), Record: &fakeRecord{}}}},
+			},
+			index:     -1,
+			callCount: 0,
+		}
+		// Install a real decimal128Container holding the high-precision value.
+		ars.valueContainerMaker = &fakeValueContainerMaker{fnMakeColumnValuesContainers: func(ars *arrowRowScanner, _ rowscanner.Delimiter) dbsqlerr.DBError {
+			c := newDecimal128Container(t, precision, scale, []string{highPrecision})
+			ars.rowValues = NewRowValues(rowscanner.NewDelimiter(0, 1), []columnValues{c})
+			return nil
+		}}
+
+		dest := make([]driver.Value, 1)
+		require.Nil(t, ars.ScanRow(dest, 0))
+		return dest[0]
+	}
+
+	t.Run("native decimal enabled yields lossless string", func(t *testing.T) {
+		assert.Equal(t, highPrecision, scanFirstRow(t, true))
+	})
+
+	t.Run("native decimal disabled yields legacy float64", func(t *testing.T) {
+		v := scanFirstRow(t, false)
+		f, ok := v.(float64)
+		assert.True(t, ok, "expected float64, got %T", v)
+		// float64 cannot represent the value exactly — confirms the gate matters.
+		assert.NotEqual(t, highPrecision, fmt.Sprintf("%.2f", f))
 	})
 }

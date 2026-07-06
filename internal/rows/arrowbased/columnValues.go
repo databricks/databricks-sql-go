@@ -22,6 +22,12 @@ type RowValues interface {
 	SetColumnValues(columnIndex int, values arrow.ArrayData) error
 	IsNull(columnIndex int, rowNumber int64) bool
 	Value(columnIndex int, rowNumber int64) (any, error)
+	// DecimalStringValue returns a native-Arrow DECIMAL column value as a
+	// lossless, scale-applied string. ok is false when the column is not backed
+	// by a decimal128 holder, in which case the caller should fall back to
+	// Value. Used only for top-level DECIMAL columns when native decimal is
+	// enabled; see databricks/databricks-sql-go#274.
+	DecimalStringValue(columnIndex int, rowNumber int64) (value string, ok bool)
 	SetDelimiter(d rowscanner.Delimiter)
 }
 
@@ -66,19 +72,18 @@ func (rv *rowValues) Value(columnIndex int, rowNumber int64) (any, error) {
 	var err error
 	var value any
 	if columnIndex < len(rv.columnValueHolders) {
-		holder := rv.columnValueHolders[columnIndex]
-		i := int(rowNumber - rv.Start())
-		// A top-level native-arrow DECIMAL column is returned as a lossless
-		// string so precision beyond float64 is preserved. Nested decimals
-		// (inside arrays/maps/structs) continue to go through Value() below and
-		// render as JSON numbers for backwards compatibility.
-		// See databricks/databricks-sql-go#274.
-		if d, ok := holder.(*decimal128Container); ok {
-			return d.ValueString(i), nil
-		}
-		value, err = holder.Value(i)
+		value, err = rv.columnValueHolders[columnIndex].Value(int(rowNumber - rv.Start()))
 	}
 	return value, err
+}
+
+func (rv *rowValues) DecimalStringValue(columnIndex int, rowNumber int64) (string, bool) {
+	if columnIndex < len(rv.columnValueHolders) {
+		if d, ok := rv.columnValueHolders[columnIndex].(*decimal128Container); ok {
+			return d.ValueString(int(rowNumber - rv.Start())), true
+		}
+	}
+	return "", false
 }
 
 func (rv *rowValues) NColumns() int { return len(rv.columnValueHolders) }
