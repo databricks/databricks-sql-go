@@ -4,6 +4,7 @@ import (
 	"io"
 	"os"
 	"runtime"
+	"sync/atomic"
 	"time"
 
 	"github.com/mattn/go-isatty"
@@ -46,17 +47,27 @@ var out io.Writer = os.Stderr
 
 // debugLogger is a sibling of Logger that shares its output and format but is
 // held at trace level, so the step tracer (internal/debuglog) is gated by its
-// own toggle rather than by the package log level.
-var debugLogger = newDebugLogger(out)
+// own toggle rather than by the package log level. Held in an atomic.Pointer
+// because SetLogOutput can swap it while the step tracer reads it from query
+// goroutines; a plain struct assignment would be a torn read/write under -race.
+var debugLogger atomic.Pointer[zerolog.Logger]
 
 func newDebugLogger(w io.Writer) zerolog.Logger {
 	return zerolog.New(w).With().Timestamp().Logger().Level(zerolog.TraceLevel)
 }
 
+// storeDebugLogger atomically installs a fresh trace-level logger over w.
+func storeDebugLogger(w io.Writer) {
+	l := newDebugLogger(w)
+	debugLogger.Store(&l)
+}
+
 // DebugLogger returns the trace-level sibling logger used for step tracing. Its
 // events are emitted regardless of the package log level; callers gate emission
-// with their own flag (see internal/debuglog).
-func DebugLogger() *zerolog.Logger { return &debugLogger }
+// with their own flag (see internal/debuglog). The returned pointer is a stable
+// snapshot — a concurrent SetLogOutput swaps in a new logger without mutating
+// the one already handed out.
+func DebugLogger() *zerolog.Logger { return debugLogger.Load() }
 
 // Enable pretty printing for interactive terminals and json for production.
 func init() {
@@ -64,8 +75,9 @@ func init() {
 	if isatty.IsTerminal(os.Stdout.Fd()) && runtime.GOOS != "windows" {
 		out = zerolog.ConsoleWriter{Out: os.Stderr}
 		Logger = &DBSQLLogger{Logger.Output(out)}
-		debugLogger = newDebugLogger(out)
 	}
+	// Install the debug-trace sibling over the (possibly tty-adjusted) sink.
+	storeDebugLogger(out)
 	// by default only log warns or above
 	loglvl := zerolog.WarnLevel
 	if lvst := os.Getenv("DATABRICKS_LOG_LEVEL"); lvst != "" {
@@ -95,7 +107,7 @@ func SetLogLevel(l string) error {
 func SetLogOutput(w io.Writer) {
 	out = w
 	Logger.Logger = Logger.Output(w)
-	debugLogger = newDebugLogger(w)
+	storeDebugLogger(w)
 }
 
 // Sets log to trace. -1

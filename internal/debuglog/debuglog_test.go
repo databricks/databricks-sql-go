@@ -291,6 +291,40 @@ func TestConcurrentLoggingIsRaceFree(t *testing.T) {
 	wg.Wait()
 }
 
+// TestConcurrentSetLogOutputIsRaceFree exercises the debug logger swap under
+// -race: goroutines emit step traces (reading logger.DebugLogger()) while
+// another goroutine calls logger.SetLogOutput, which reinstalls the sibling
+// logger. A plain (non-atomic) global would be a torn read/write of the
+// multi-field zerolog.Logger struct here.
+func TestConcurrentSetLogOutputIsRaceFree(t *testing.T) {
+	prev := SetEnabled(true)
+	defer SetEnabled(prev)
+	defer logger.SetLogOutput(nil)
+
+	var wg sync.WaitGroup
+	for g := 0; g < 8; g++ {
+		wg.Add(1)
+		go func(g int) {
+			defer wg.Done()
+			for i := 0; i < 100; i++ {
+				Logf(context.Background(), "pkg.Fn", "g=%d i=%d", g, i)
+				done := Track(context.Background(), "pkg.Fn", "step")
+				done()
+			}
+		}(g)
+	}
+	// Swap the output sink repeatedly while the tracers above are reading the
+	// sibling logger on every event.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 100; i++ {
+			logger.SetLogOutput(&syncBuf{})
+		}
+	}()
+	wg.Wait()
+}
+
 // syncBuf is a concurrency-safe buffer for capturing log output under -race.
 type syncBuf struct {
 	mu  sync.Mutex
