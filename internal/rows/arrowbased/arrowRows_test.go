@@ -13,6 +13,8 @@ import (
 
 	"github.com/apache/arrow/go/v12/arrow"
 	"github.com/apache/arrow/go/v12/arrow/array"
+	"github.com/apache/arrow/go/v12/arrow/decimal128"
+	"github.com/apache/arrow/go/v12/arrow/memory"
 	"github.com/databricks/databricks-sql-go/driverctx"
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
@@ -311,7 +313,7 @@ func TestArrowRowScanner(t *testing.T) {
 		cfg := config.Config{}
 		cfg.UseArrowBatches = true
 		cfg.UseArrowNativeTimestamp = true
-		cfg.UseArrowNativeDecimal = true
+		cfg.ArrowConfig.UseArrowNativeDecimal = true
 
 		d, _ := NewArrowRowScanner(metadataResp, rowSet, &cfg, nil, context.Background(), nil)
 
@@ -342,7 +344,7 @@ func TestArrowRowScanner(t *testing.T) {
 		cfg := config.Config{}
 		cfg.UseArrowBatches = true
 		cfg.UseArrowNativeTimestamp = true
-		cfg.UseArrowNativeDecimal = true
+		cfg.ArrowConfig.UseArrowNativeDecimal = true
 
 		_, err := NewArrowRowScanner(metadataResp, rowSet, &cfg, nil, context.Background(), nil)
 		require.Nil(t, err)
@@ -887,7 +889,11 @@ func TestArrowRowScanner(t *testing.T) {
 
 			err := ars.ScanRow(dest, 0)
 
-			if i < 3 {
+			// Columns 0-2 are complex types (array/map/struct) and column 3 is
+			// decimal, all of which are now materialized. Columns 4-5 are
+			// interval types, which are still not supported natively and error.
+			// See databricks/databricks-sql-go#274 for the decimal change.
+			if i < 4 {
 				assert.Nil(t, err)
 			} else {
 				assert.NotNil(t, err)
@@ -931,7 +937,7 @@ func TestArrowRowScanner(t *testing.T) {
 			config := config.WithDefaults()
 			config.UseArrowNativeTimestamp = nativeDates
 			config.UseArrowNativeComplexTypes = false
-			config.UseArrowNativeDecimal = false
+			config.ArrowConfig.UseArrowNativeDecimal = false
 			config.UseArrowNativeIntervalTypes = false
 			d, err := NewArrowRowScanner(executeStatementResp.DirectResults.ResultSetMetadata, executeStatementResp.DirectResults.ResultSet.Results, config, nil, context.Background(), nil)
 			assert.Nil(t, err)
@@ -1104,7 +1110,7 @@ func TestArrowRowScanner(t *testing.T) {
 		config := config.WithDefaults()
 		config.UseArrowNativeTimestamp = true
 		config.UseArrowNativeComplexTypes = false
-		config.UseArrowNativeDecimal = false
+		config.ArrowConfig.UseArrowNativeDecimal = false
 		config.UseArrowNativeIntervalTypes = false
 		d, err := NewArrowRowScanner(executeStatementResp.DirectResults.ResultSetMetadata, executeStatementResp.DirectResults.ResultSet.Results, config, nil, context.Background(), nil)
 		assert.Nil(t, err)
@@ -1132,7 +1138,7 @@ func TestArrowRowScanner(t *testing.T) {
 		config := config.WithDefaults()
 		config.UseArrowNativeTimestamp = true
 		config.UseArrowNativeComplexTypes = false
-		config.UseArrowNativeDecimal = false
+		config.ArrowConfig.UseArrowNativeDecimal = false
 		config.UseArrowNativeIntervalTypes = false
 		d, err := NewArrowRowScanner(executeStatementResp.DirectResults.ResultSetMetadata, executeStatementResp.DirectResults.ResultSet.Results, config, nil, context.Background(), nil)
 		assert.Nil(t, err)
@@ -1184,7 +1190,7 @@ func TestArrowRowScanner(t *testing.T) {
 		config := config.WithDefaults()
 		config.UseArrowNativeTimestamp = true
 		config.UseArrowNativeComplexTypes = true
-		config.UseArrowNativeDecimal = false
+		config.ArrowConfig.UseArrowNativeDecimal = false
 		config.UseArrowNativeIntervalTypes = false
 		d, err1 := NewArrowRowScanner(executeStatementResp.DirectResults.ResultSetMetadata, executeStatementResp.DirectResults.ResultSet.Results, config, nil, context.Background(), nil)
 		assert.Nil(t, err1)
@@ -1225,7 +1231,7 @@ func TestArrowRowScanner(t *testing.T) {
 		config := config.WithDefaults()
 		config.UseArrowNativeTimestamp = true
 		config.UseArrowNativeComplexTypes = true
-		config.UseArrowNativeDecimal = false
+		config.ArrowConfig.UseArrowNativeDecimal = false
 		config.UseArrowNativeIntervalTypes = false
 		d, err := NewArrowRowScanner(executeStatementResp.DirectResults.ResultSetMetadata, executeStatementResp.DirectResults.ResultSet.Results, config, nil, context.Background(), nil)
 		assert.Nil(t, err)
@@ -1284,7 +1290,7 @@ func TestArrowRowScanner(t *testing.T) {
 		config := config.WithDefaults()
 		config.UseArrowNativeTimestamp = true
 		config.UseArrowNativeComplexTypes = true
-		config.UseArrowNativeDecimal = false
+		config.ArrowConfig.UseArrowNativeDecimal = false
 		config.UseArrowNativeIntervalTypes = false
 		d, err := NewArrowRowScanner(executeStatementResp.DirectResults.ResultSetMetadata, executeStatementResp.DirectResults.ResultSet.Results, config, nil, context.Background(), nil)
 		assert.Nil(t, err)
@@ -1317,7 +1323,7 @@ func TestArrowRowScanner(t *testing.T) {
 		config := config.WithDefaults()
 		config.UseArrowNativeTimestamp = true
 		config.UseArrowNativeComplexTypes = true
-		config.UseArrowNativeDecimal = false
+		config.ArrowConfig.UseArrowNativeDecimal = false
 		config.UseArrowNativeIntervalTypes = false
 		d, err := NewArrowRowScanner(executeStatementResp.DirectResults.ResultSetMetadata, executeStatementResp.DirectResults.ResultSet.Results, config, nil, context.Background(), nil)
 		assert.Nil(t, err)
@@ -1356,7 +1362,7 @@ func TestArrowRowScanner(t *testing.T) {
 		config := config.WithDefaults()
 		config.UseArrowNativeTimestamp = true
 		config.UseArrowNativeComplexTypes = true
-		config.UseArrowNativeDecimal = false
+		config.ArrowConfig.UseArrowNativeDecimal = false
 		config.UseArrowNativeIntervalTypes = false
 		d, err := NewArrowRowScanner(executeStatementResp.DirectResults.ResultSetMetadata, executeStatementResp.DirectResults.ResultSet.Results, config, nil, context.Background(), nil)
 		assert.Nil(t, err)
@@ -1395,7 +1401,7 @@ func TestArrowRowScanner(t *testing.T) {
 		config := config.WithDefaults()
 		config.UseArrowNativeTimestamp = true
 		config.UseArrowNativeComplexTypes = true
-		config.UseArrowNativeDecimal = false
+		config.ArrowConfig.UseArrowNativeDecimal = false
 		config.UseArrowNativeIntervalTypes = false
 		d, err := NewArrowRowScanner(executeStatementResp.DirectResults.ResultSetMetadata, executeStatementResp.DirectResults.ResultSet.Results, config, nil, context.Background(), nil)
 		assert.Nil(t, err)
@@ -1431,7 +1437,7 @@ func TestArrowRowScanner(t *testing.T) {
 		config := config.WithDefaults()
 		config.UseArrowNativeTimestamp = true
 		config.UseArrowNativeComplexTypes = true
-		config.UseArrowNativeDecimal = false
+		config.ArrowConfig.UseArrowNativeDecimal = false
 		config.UseArrowNativeIntervalTypes = false
 		d, err := NewArrowRowScanner(executeStatementResp.DirectResults.ResultSetMetadata, executeStatementResp.DirectResults.ResultSet.Results, config, nil, context.Background(), nil)
 		assert.Nil(t, err)
@@ -1510,7 +1516,7 @@ func TestArrowRowScanner(t *testing.T) {
 		config := config.WithDefaults()
 		config.UseArrowNativeTimestamp = true
 		config.UseArrowNativeComplexTypes = true
-		config.UseArrowNativeDecimal = false
+		config.ArrowConfig.UseArrowNativeDecimal = false
 		config.UseArrowNativeIntervalTypes = false
 		_, err := NewArrowRowScanner(executeStatementResp.DirectResults.ResultSetMetadata, executeStatementResp.DirectResults.ResultSet.Results, config, nil, context.Background(), nil)
 		assert.Nil(t, err)
@@ -2025,4 +2031,70 @@ func loadTestData(t *testing.T, name string, v any) {
 func getMetadataResp(schema *cli_service.TTableSchema) *cli_service.TGetResultSetMetadataResp {
 	rowSetType := cli_service.TSparkRowSetType_ARROW_BASED_SET
 	return &cli_service.TGetResultSetMetadataResp{Schema: schema, ResultFormat: &rowSetType}
+}
+
+// newDecimal128Container builds a decimal128Container backed by a real arrow
+// decimal128 array with the given precision/scale and string values.
+func newDecimal128Container(t *testing.T, precision, scale int32, values []string) *decimal128Container {
+	t.Helper()
+	dt := &arrow.Decimal128Type{Precision: precision, Scale: scale}
+	bldr := array.NewDecimal128Builder(memory.DefaultAllocator, dt)
+	defer bldr.Release()
+	for _, v := range values {
+		if v == "" {
+			bldr.AppendNull()
+			continue
+		}
+		num, err := decimal128.FromString(v, precision, scale)
+		require.NoError(t, err)
+		bldr.Append(num)
+	}
+	arr := bldr.NewDecimal128Array()
+	c := &decimal128Container{scale: scale}
+	require.NoError(t, c.SetValueArray(arr.Data()))
+	return c
+}
+
+// TestDecimal128ContainerNativeDecimal is a regression test for
+// databricks/databricks-sql-go#274. A top-level native DECIMAL column must be
+// materialized as a lossless, scale-applied string (via rowValues.Value),
+// while decimals nested in complex types keep the legacy float64 rendering
+// (via decimal128Container.Value directly).
+func TestDecimal128ContainerNativeDecimal(t *testing.T) {
+	t.Run("ValueString is lossless and scale-applied", func(t *testing.T) {
+		// A value with more significant digits than float64 can represent
+		// exactly (~15-17). Scanning it as float64 would corrupt it; as a
+		// string it round-trips.
+		highPrecision := "123456789.123456789"
+		c := newDecimal128Container(t, 30, 9, []string{"1", "5.15", highPrecision, ""})
+
+		assert.Equal(t, "1.000000000", c.ValueString(0))
+		assert.Equal(t, "5.150000000", c.ValueString(1))
+		assert.Equal(t, highPrecision, c.ValueString(2))
+
+		// Confirm the float64 path really is lossy for this value, so the
+		// string path is doing meaningful work.
+		lossy, err := c.Value(2)
+		assert.NoError(t, err)
+		assert.NotEqual(t, highPrecision, fmt.Sprintf("%.9f", lossy.(float64)))
+	})
+
+	t.Run("Value returns lossy float64 for complex-type rendering", func(t *testing.T) {
+		c := newDecimal128Container(t, 10, 2, []string{"5.15"})
+		v, err := c.Value(0)
+		assert.NoError(t, err)
+		assert.Equal(t, float64(5.15), v)
+	})
+
+	t.Run("rowValues.Value returns lossless string for top-level decimal", func(t *testing.T) {
+		c := newDecimal128Container(t, 10, 2, []string{"5.15", ""})
+		rv := NewRowValues(rowscanner.NewDelimiter(0, 2), []columnValues{c})
+
+		assert.False(t, rv.IsNull(0, 0))
+		v, err := rv.Value(0, 0)
+		assert.NoError(t, err)
+		assert.Equal(t, "5.15", v)
+
+		assert.True(t, rv.IsNull(0, 1))
+	})
 }

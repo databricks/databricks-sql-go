@@ -64,7 +64,17 @@ func (rv *rowValues) Value(columnIndex int, rowNumber int64) (any, error) {
 	var err error
 	var value any
 	if columnIndex < len(rv.columnValueHolders) {
-		value, err = rv.columnValueHolders[columnIndex].Value(int(rowNumber - rv.Start()))
+		holder := rv.columnValueHolders[columnIndex]
+		i := int(rowNumber - rv.Start())
+		// A top-level native-arrow DECIMAL column is returned as a lossless
+		// string so precision beyond float64 is preserved. Nested decimals
+		// (inside arrays/maps/structs) continue to go through Value() below and
+		// render as JSON numbers for backwards compatibility.
+		// See databricks/databricks-sql-go#274.
+		if d, ok := holder.(*decimal128Container); ok {
+			return d.ValueString(i), nil
+		}
+		value, err = holder.Value(i)
 	}
 	return value, err
 }
@@ -524,6 +534,16 @@ func (tvc *decimal128Container) Value(i int) (any, error) {
 	dv := tvc.decimalArray.Value(i)
 	fv := dv.ToFloat64(tvc.scale)
 	return fv, nil
+}
+
+// ValueString returns the decimal as a lossless, scale-applied string.
+// Databricks DECIMAL values can exceed float64 precision, so a caller that
+// needs the exact value (e.g. a top-level DECIMAL column scanned into
+// sql.Rows) should use this instead of Value, which returns a lossy float64
+// for backwards-compatible JSON rendering inside complex types.
+// See databricks/databricks-sql-go#274.
+func (tvc *decimal128Container) ValueString(i int) string {
+	return tvc.decimalArray.Value(i).ToString(tvc.scale)
 }
 
 func (tvc *decimal128Container) IsNull(i int) bool {
