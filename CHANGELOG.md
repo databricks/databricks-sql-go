@@ -1,5 +1,8 @@
 # Release History
 
+## Unreleased
+- Expose native Arrow decimal handling: add the `WithArrowNativeDecimal` connector option and the `useArrowNativeDecimal` DSN parameter so DECIMAL columns can be returned as native Arrow `decimal128` (via `GetArrowBatches`) instead of strings. When scanned through `database/sql`, native DECIMAL values are returned as lossless, scale-applied strings (databricks/databricks-sql-go#274)
+
 ## v1.13.0 (2026-06-04)
 - Add SPOG (unified) host support: extract the org-id from the cluster HTTP path for non-Thrift requests, and fix U2M/M2M OAuth on unified AWS hosts (databricks/databricks-sql-go#367, #374)
 - Cap CloudFetch Arrow batches to the server-declared row count to avoid over-reading (databricks/databricks-sql-go#372)

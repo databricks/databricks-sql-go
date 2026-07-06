@@ -2,11 +2,13 @@ package arrowbased
 
 import (
 	"encoding/json"
+	"math/big"
 	"strings"
 	"time"
 
 	"github.com/apache/arrow/go/v12/arrow"
 	"github.com/apache/arrow/go/v12/arrow/array"
+	"github.com/apache/arrow/go/v12/arrow/decimal128"
 	"github.com/databricks/databricks-sql-go/internal/rows/rowscanner"
 	dbsqllog "github.com/databricks/databricks-sql-go/logger"
 	"github.com/pkg/errors"
@@ -20,6 +22,12 @@ type RowValues interface {
 	SetColumnValues(columnIndex int, values arrow.ArrayData) error
 	IsNull(columnIndex int, rowNumber int64) bool
 	Value(columnIndex int, rowNumber int64) (any, error)
+	// DecimalStringValue returns a native-Arrow DECIMAL column value as a
+	// lossless, scale-applied string. ok is false when the column is not backed
+	// by a decimal128 holder, in which case the caller should fall back to
+	// Value. Used only for top-level DECIMAL columns when native decimal is
+	// enabled; see databricks/databricks-sql-go#274.
+	DecimalStringValue(columnIndex int, rowNumber int64) (value string, ok bool)
 	SetDelimiter(d rowscanner.Delimiter)
 }
 
@@ -67,6 +75,15 @@ func (rv *rowValues) Value(columnIndex int, rowNumber int64) (any, error) {
 		value, err = rv.columnValueHolders[columnIndex].Value(int(rowNumber - rv.Start()))
 	}
 	return value, err
+}
+
+func (rv *rowValues) DecimalStringValue(columnIndex int, rowNumber int64) (string, bool) {
+	if columnIndex < len(rv.columnValueHolders) {
+		if d, ok := rv.columnValueHolders[columnIndex].(*decimal128Container); ok {
+			return d.ValueString(int(rowNumber - rv.Start())), true
+		}
+	}
+	return "", false
 }
 
 func (rv *rowValues) NColumns() int { return len(rv.columnValueHolders) }
@@ -524,6 +541,57 @@ func (tvc *decimal128Container) Value(i int) (any, error) {
 	dv := tvc.decimalArray.Value(i)
 	fv := dv.ToFloat64(tvc.scale)
 	return fv, nil
+}
+
+// ValueString returns the decimal as a lossless, scale-applied string.
+// Databricks DECIMAL values can exceed float64 precision, so a caller that
+// needs the exact value (e.g. a top-level DECIMAL column scanned into
+// sql.Rows) should use this instead of Value, which returns a lossy float64
+// for backwards-compatible JSON rendering inside complex types.
+// See databricks/databricks-sql-go#274.
+func (tvc *decimal128Container) ValueString(i int) string {
+	return decimal128ToString(tvc.decimalArray.Value(i), tvc.scale)
+}
+
+// decimal128ToString renders a decimal128 value exactly as a fixed-point
+// string with `scale` fractional digits. It formats from the value's exact
+// 128-bit unscaled integer (BigInt) and inserts the decimal point by string
+// manipulation, so — unlike arrow's decimal128.Num.ToString, which divides via
+// big.Float and rounds beyond ~17 significant digits — it never loses
+// precision. See databricks/databricks-sql-go#274.
+func decimal128ToString(n decimal128.Num, scale int32) string {
+	unscaled := n.BigInt() // exact signed unscaled integer
+
+	neg := unscaled.Sign() < 0
+	digits := new(big.Int).Abs(unscaled).String()
+
+	var b strings.Builder
+	if neg {
+		b.WriteByte('-')
+	}
+
+	if scale <= 0 {
+		// No fractional part (negative scale is not produced by the server,
+		// but treat it as scale 0 rather than panicking).
+		b.WriteString(digits)
+		return b.String()
+	}
+
+	s := int(scale)
+	if len(digits) <= s {
+		// Pad with leading zeros so there are exactly `scale` fractional digits
+		// and a single leading integer zero, e.g. 5 with scale 3 -> "0.005".
+		b.WriteString("0.")
+		b.WriteString(strings.Repeat("0", s-len(digits)))
+		b.WriteString(digits)
+	} else {
+		intPart := digits[:len(digits)-s]
+		fracPart := digits[len(digits)-s:]
+		b.WriteString(intPart)
+		b.WriteByte('.')
+		b.WriteString(fracPart)
+	}
+	return b.String()
 }
 
 func (tvc *decimal128Container) IsNull(i int) bool {

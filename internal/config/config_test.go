@@ -257,6 +257,27 @@ func TestParseConfig(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			name: "with useArrowNativeDecimal",
+			args: args{dsn: "token:supersecret@example.cloud.databricks.com:8000/sql/1.0/endpoints/12346a5b5b0e123b?useArrowNativeDecimal=true"},
+			wantCfg: UserConfig{
+				Protocol:                 "https",
+				Host:                     "example.cloud.databricks.com",
+				Port:                     8000,
+				MaxRows:                  defaultMaxRows,
+				AccessToken:              "supersecret",
+				Authenticator:            &pat.PATAuth{AccessToken: "supersecret"},
+				HTTPPath:                 "/sql/1.0/endpoints/12346a5b5b0e123b",
+				SessionParams:            make(map[string]string),
+				RetryMax:                 4,
+				RetryWaitMin:             1 * time.Second,
+				RetryWaitMax:             30 * time.Second,
+				UseArrowNativeDecimalDSN: true,
+				CloudFetchConfig:         defCloudConfig,
+			},
+			wantURL: "https://example.cloud.databricks.com:8000/sql/1.0/endpoints/12346a5b5b0e123b",
+			wantErr: false,
+		},
+		{
 			name: "with useCloudFetch and maxDownloadThreads",
 			args: args{dsn: "token:supersecret@example.cloud.databricks.com:8000/sql/1.0/endpoints/12346a5b5b0e123b?useCloudFetch=true&maxDownloadThreads=15"},
 			wantCfg: UserConfig{

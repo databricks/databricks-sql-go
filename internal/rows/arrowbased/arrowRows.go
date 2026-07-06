@@ -218,11 +218,26 @@ func (ars *arrowRowScanner) ScanRow(
 			col := ars.colInfo[i]
 			dbType := col.dbType
 
-			if (dbType == cli_service.TTypeId_DECIMAL_TYPE && ars.UseArrowNativeDecimal) ||
-				(isIntervalType(dbType) && ars.UseArrowNativeIntervalTypes) {
+			if isIntervalType(dbType) && ars.UseArrowNativeIntervalTypes {
 				//	not yet fully supported
 				ars.Error().Msgf(errArrowRowsUnsupportedNativeType(dbType.String()))
 				return dbsqlerrint.NewDriverError(ars.ctx, errArrowRowsUnsupportedNativeType(dbType.String()), nil)
+			}
+
+			// A top-level native-arrow DECIMAL column is returned as a lossless,
+			// scale-applied string so precision beyond float64 is preserved.
+			// Gated on the requested config (not merely the holder type) so that
+			// disabling native decimal keeps the prior float64 behavior even if
+			// the server-provided arrow schema carries a decimal128. Decimals
+			// nested in complex types are unaffected: their holders are
+			// list/map/struct containers, not *decimal128Container, so they fall
+			// through to Value and keep rendering as JSON numbers.
+			// See databricks/databricks-sql-go#274.
+			if dbType == cli_service.TTypeId_DECIMAL_TYPE && ars.UseArrowNativeDecimal {
+				if s, ok := ars.rowValues.DecimalStringValue(i, rowNumber); ok {
+					destination[i] = s
+					continue
+				}
 			}
 
 			// get the value from the column values holder
