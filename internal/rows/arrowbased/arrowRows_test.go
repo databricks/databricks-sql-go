@@ -2039,7 +2039,7 @@ func getMetadataResp(schema *cli_service.TTableSchema) *cli_service.TGetResultSe
 // using big.Rat rather than the code-under-test's own logic, so the assertion
 // is not tautological.
 func normalizeDecimalString(value string, scale int32) string {
-	r, ok := new(big.Rat).SetString(value)
+	r, ok := new(big.Rat).SetString(value) //nolint:gosec // G113: value is a hardcoded test literal, not untrusted input
 	if !ok {
 		panic("bad decimal literal in test: " + value)
 	}
@@ -2079,7 +2079,7 @@ func newDecimal128Container(t *testing.T, precision, scale int32, values []strin
 // fractional digits than `scale` (which would require rounding).
 func unscaledBigInt(t *testing.T, value string, scale int32) *big.Int {
 	t.Helper()
-	r, ok := new(big.Rat).SetString(value)
+	r, ok := new(big.Rat).SetString(value) //nolint:gosec // G113: value is a hardcoded test literal, not untrusted input
 	require.True(t, ok, "bad decimal literal: %s", value)
 	mult := new(big.Rat).SetInt(new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(scale)), nil))
 	scaled := new(big.Rat).Mul(r, mult)
