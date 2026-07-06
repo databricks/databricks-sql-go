@@ -65,7 +65,7 @@ func Track(ctx context.Context, fn string, format string, args ...any) func() {
 	start := time.Now()
 	event(ctx, fn, "enter").Msgf(format, args...)
 	return func() {
-		event(ctx, fn, "done").Dur("elapsed", time.Now().Sub(start)).Msg("")
+		event(ctx, fn, "done").Dur("elapsed", time.Since(start)).Msg("")
 	}
 }
 
