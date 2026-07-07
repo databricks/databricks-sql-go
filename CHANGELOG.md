@@ -1,6 +1,6 @@
 # Release History
 
-## Unreleased
+## v1.13.1 (2026-07-07)
 - Expose native Arrow decimal handling: add the `WithArrowNativeDecimal` connector option and the `useArrowNativeDecimal` DSN parameter so DECIMAL columns can be returned as native Arrow `decimal128` (via `GetArrowBatches`) instead of strings. When scanned through `database/sql`, native DECIMAL values are returned as lossless, scale-applied strings (databricks/databricks-sql-go#274)
 
 ## v1.13.0 (2026-06-04)
