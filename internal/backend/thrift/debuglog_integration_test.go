@@ -68,7 +68,7 @@ func TestBackend_DebugLoggingOrderedAndNested(t *testing.T) {
 			},
 		}, nil
 	}
-	be := newTestBackend(&client.TestClient{FnExecuteStatement: executeStatement}, getTestSession(), config.WithDefaults())
+	be := NewForTest(&client.TestClient{FnExecuteStatement: executeStatement}, getTestSession(), config.WithDefaults())
 
 	_, err := be.Execute(context.Background(), backend.ExecRequest{Query: "select 1"})
 	assert.NoError(t, err)

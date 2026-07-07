@@ -6,7 +6,9 @@
 // The interfaces are expressed in neutral terms — plain Go request structs, a
 // driver.Rows result, and small accessors for statement id, affected rows, and
 // sqlstate-aware error wrapping — so that only a Backend implementation imports
-// its protocol's client (e.g. the Thrift backend imports internal/cli_service).
+// its protocol's client. Row decoding is not part of this neutral seam: the
+// internal/rows constructor is coupled to Thrift result types, so each Backend
+// supplies driver.Rows through its own construction path.
 package backend
 
 import (
@@ -50,6 +52,16 @@ type Backend interface {
 // Operation is a submitted statement that has reached (or attempted to reach) a
 // terminal state. It exposes only neutral accessors, keeping the concrete
 // protocol types inside the backend implementation.
+//
+// Server-side close ownership is path-dependent. On the exec path (ExecContext,
+// staging) the caller closes the server-side operation via Close. On the query
+// path (QueryContext) the caller does NOT call Close; instead the driver.Rows
+// returned by Results owns closing the server-side operation on its Close. An
+// implementation MUST therefore make both this Operation.Close and the
+// Rows.Close returned by Results independently idempotent: either one may be
+// the sole closer, and both may be invoked on the same operation (e.g. an
+// error-path defer plus a normal-path close), so a second invocation of either
+// closer must be a no-op rather than issuing a duplicate teardown RPC.
 type Operation interface {
 	// StatementID is the server statement/operation id (empty if the server
 	// returned no handle).
@@ -65,6 +77,11 @@ type Operation interface {
 	// carry the telemetry hooks (chunk timing, close, CloudFetch file); the caller
 	// supplies whichever subset it needs (a full query wires all three, the
 	// staging path wires only chunk timing).
+	//
+	// On the query path the returned Rows owns closing the server-side operation:
+	// the caller does not invoke Operation.Close on that path and relies on
+	// Rows.Close to issue any needed teardown RPC. See the type-level Operation
+	// comment for the idempotency contract this places on both closers.
 	Results(ctx context.Context, callbacks *dbsqlrows.TelemetryCallbacks) (driver.Rows, error)
 
 	// IsStaging reports whether this is a staging (PUT/GET/REMOVE) operation. It
@@ -73,10 +90,16 @@ type Operation interface {
 	IsStaging(ctx context.Context) (bool, error)
 
 	// Close best-effort closes the server-side operation, if one is still open.
+	// It is called only on the exec/staging paths — on the query path the
+	// returned Rows owns close (see the Operation and Results doc comments).
 	// It is idempotent and safe to call regardless of whether execution
-	// succeeded. closed reports whether a close RPC was actually issued (false
-	// when the operation had no handle or was already closed), so the caller can
-	// record CLOSE_STATEMENT telemetry only when a real close happened.
+	// succeeded: a second call on the same Operation, or a call after Rows.Close
+	// already tore down the server operation, must be a no-op rather than
+	// issuing a duplicate close RPC. closed reports whether a close RPC was
+	// actually issued (false when the operation had no handle, was already
+	// closed via direct results, was already closed by a prior invocation, or
+	// was already closed via Rows.Close), so the caller can record
+	// CLOSE_STATEMENT telemetry only when a real close happened.
 	Close(ctx context.Context) (closed bool, err error)
 
 	// ExecutionError wraps cause as the driver's execution error, attaching this

@@ -26,6 +26,10 @@ type thriftOperation struct {
 	// goroutine at a time (pool discipline), so a plain memo needs no lock.
 	statementID    string
 	statementIDSet bool
+	// closed records whether Close has already issued the CloseOperation RPC on
+	// this Operation, so a second call is a no-op per the backend.Operation
+	// idempotency contract.
+	closed bool
 }
 
 var _ backend.Operation = (*thriftOperation)(nil)
@@ -99,12 +103,16 @@ func (o *thriftOperation) IsStaging(ctx context.Context) (bool, error) {
 }
 
 // Close best-effort closes the server operation. It skips the CloseOperation RPC
-// when there is no handle, when direct results already closed it, or when the
-// operation is already in the CLOSED state; closed reports whether the RPC was
-// actually sent, so the caller records CLOSE_STATEMENT telemetry only in that case.
+// when there is no handle, when direct results already closed it, when the
+// operation is already in the CLOSED state, or when Close has already been
+// invoked on this Operation; closed reports whether the RPC was actually sent,
+// so the caller records CLOSE_STATEMENT telemetry only in that case.
 func (o *thriftOperation) Close(ctx context.Context) (bool, error) {
 	defer debuglog.Track(ctx, "thrift.Operation.Close", "stmt=%s", o.StatementID())()
 
+	if o.closed {
+		return false, nil
+	}
 	if !o.hasHandle() {
 		return false, nil
 	}
@@ -120,6 +128,7 @@ func (o *thriftOperation) Close(ctx context.Context) (bool, error) {
 	_, err := o.backend.client.CloseOperation(ctx, &cli_service.TCloseOperationReq{
 		OperationHandle: o.exStmtResp.OperationHandle,
 	})
+	o.closed = true
 	if err != nil {
 		return true, err
 	}

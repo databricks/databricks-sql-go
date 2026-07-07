@@ -6,6 +6,7 @@ package thrift
 import (
 	"context"
 	"database/sql/driver"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -17,17 +18,8 @@ import (
 	"github.com/databricks/databricks-sql-go/internal/config"
 	"github.com/databricks/databricks-sql-go/internal/thrift_protocol"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
-
-// newTestBackend builds a Backend around a mock client and canned session,
-// bypassing New/OpenSession.
-func newTestBackend(cli cli_service.TCLIService, session *cli_service.TOpenSessionResp, cfg *config.Config) *Backend {
-	b := &Backend{cfg: cfg, client: cli, session: session}
-	if session != nil && session.SessionHandle != nil {
-		b.sessionID = client.SprintGuid(session.SessionHandle.GetSessionId().GUID)
-	}
-	return b
-}
 
 // namedToParams converts driver.NamedValues to backend.Params with a minimal
 // string-typed mapping — enough for these tests, which only exercise param
@@ -66,7 +58,7 @@ func TestBackend_executeStatement(t *testing.T) {
 		testClient := &client.TestClient{
 			FnExecuteStatement: executeStatement,
 		}
-		be := newTestBackend(testClient, getTestSession(), config.WithDefaults())
+		be := NewForTest(testClient, getTestSession(), config.WithDefaults())
 		_, err := be.executeStatement(context.Background(), backend.ExecRequest{Query: "select 1", Params: namedToParams([]driver.NamedValue{})})
 		assert.Error(t, err)
 		assert.Equal(t, 1, executeStatementCount)
@@ -112,7 +104,7 @@ func TestBackend_executeStatement(t *testing.T) {
 		testClient := &client.TestClient{
 			FnExecuteStatement: executeStatement,
 		}
-		be := newTestBackend(testClient, getTestSession(), config.WithDefaults())
+		be := NewForTest(testClient, getTestSession(), config.WithDefaults())
 		_, err := be.executeStatement(context.Background(), backend.ExecRequest{Query: "select 1", Params: namedToParams([]driver.NamedValue{})})
 
 		assert.NoError(t, err)
@@ -177,7 +169,7 @@ func TestBackend_executeStatement(t *testing.T) {
 			FnExecuteStatement: executeStatement,
 			FnCancelOperation:  cancelOperation,
 		}
-		be := newTestBackend(testClient, getTestSession(), config.WithDefaults())
+		be := NewForTest(testClient, getTestSession(), config.WithDefaults())
 
 		ctx := context.Background()
 		ctx, cancel = context.WithCancel(ctx)
@@ -241,7 +233,7 @@ func TestBackend_executeStatement(t *testing.T) {
 			FnExecuteStatement: executeStatement,
 			FnCancelOperation:  cancelOperation,
 		}
-		be := newTestBackend(testClient, getTestSession(), config.WithDefaults())
+		be := NewForTest(testClient, getTestSession(), config.WithDefaults())
 		ctx := context.Background()
 		ctx, cancel = context.WithCancel(ctx)
 		defer cancel()
@@ -348,7 +340,7 @@ func TestBackend_executeStatement_ProtocolFeatures(t *testing.T) {
 					FnExecuteStatement: executeStatement,
 				}
 
-				be := newTestBackend(testClient, session, tc.cfg)
+				be := NewForTest(testClient, session, tc.cfg)
 
 				var args []driver.NamedValue
 				if tc.hasParameters {
@@ -438,7 +430,7 @@ func TestBackend_executeStatement_QueryTags(t *testing.T) {
 			}, nil
 		}
 
-		return newTestBackend(
+		return NewForTest(
 			&client.TestClient{FnExecuteStatement: executeStatement},
 			getTestSession(),
 			config.WithDefaults(),
@@ -588,7 +580,7 @@ func TestBackend_executeStatement_QueryTags(t *testing.T) {
 		// Create conn with session that has session-level tags
 		cfg := config.WithDefaults()
 		cfg.SessionParams = sessionParams
-		be := newTestBackend(testClient, session, cfg)
+		be := NewForTest(testClient, session, cfg)
 
 		// Execute with statement-level tags
 		ctx := driverctx.NewContextWithQueryTags(context.Background(), map[string]string{
@@ -622,7 +614,7 @@ func TestBackend_pollOperation(t *testing.T) {
 		testClient := &client.TestClient{
 			FnGetOperationStatus: getOperationStatus,
 		}
-		be := newTestBackend(testClient, getTestSession(), config.WithDefaults())
+		be := NewForTest(testClient, getTestSession(), config.WithDefaults())
 		res, err := be.pollOperation(context.Background(), &cli_service.TOperationHandle{
 			OperationId: &cli_service.THandleIdentifier{
 				GUID:   []byte{1, 2, 3, 4, 2, 23, 4, 2, 3, 2, 4, 7, 8, 223, 34, 54},
@@ -648,7 +640,7 @@ func TestBackend_pollOperation(t *testing.T) {
 		testClient := &client.TestClient{
 			FnGetOperationStatus: getOperationStatus,
 		}
-		be := newTestBackend(testClient, getTestSession(), config.WithDefaults())
+		be := NewForTest(testClient, getTestSession(), config.WithDefaults())
 		res, err := be.pollOperation(context.Background(), &cli_service.TOperationHandle{
 			OperationId: &cli_service.THandleIdentifier{
 				GUID:   []byte{1, 2, 3, 4, 2, 23, 4, 2, 3, 2, 3, 4, 4, 223, 34, 54},
@@ -674,7 +666,7 @@ func TestBackend_pollOperation(t *testing.T) {
 		testClient := &client.TestClient{
 			FnGetOperationStatus: getOperationStatus,
 		}
-		be := newTestBackend(testClient, getTestSession(), config.WithDefaults())
+		be := NewForTest(testClient, getTestSession(), config.WithDefaults())
 		res, err := be.pollOperation(context.Background(), &cli_service.TOperationHandle{
 			OperationId: &cli_service.THandleIdentifier{
 				GUID:   []byte{1, 2, 3, 4, 2, 23, 4, 2, 3, 2, 3, 4, 4, 223, 34, 54},
@@ -700,7 +692,7 @@ func TestBackend_pollOperation(t *testing.T) {
 		testClient := &client.TestClient{
 			FnGetOperationStatus: getOperationStatus,
 		}
-		be := newTestBackend(testClient, getTestSession(), config.WithDefaults())
+		be := NewForTest(testClient, getTestSession(), config.WithDefaults())
 		res, err := be.pollOperation(context.Background(), &cli_service.TOperationHandle{
 			OperationId: &cli_service.THandleIdentifier{
 				GUID:   []byte{1, 2, 3, 4, 2, 23, 4, 2, 3, 1, 2, 3, 4, 223, 34, 54},
@@ -726,7 +718,7 @@ func TestBackend_pollOperation(t *testing.T) {
 		testClient := &client.TestClient{
 			FnGetOperationStatus: getOperationStatus,
 		}
-		be := newTestBackend(testClient, getTestSession(), config.WithDefaults())
+		be := NewForTest(testClient, getTestSession(), config.WithDefaults())
 		res, err := be.pollOperation(context.Background(), &cli_service.TOperationHandle{
 			OperationId: &cli_service.THandleIdentifier{
 				GUID:   []byte{1, 2, 3, 4, 2, 23, 4, 2, 3, 1, 2, 4, 4, 223, 34, 54},
@@ -754,7 +746,7 @@ func TestBackend_pollOperation(t *testing.T) {
 		testClient := &client.TestClient{
 			FnGetOperationStatus: getOperationStatus,
 		}
-		be := newTestBackend(testClient, getTestSession(), config.WithDefaults())
+		be := NewForTest(testClient, getTestSession(), config.WithDefaults())
 		res, err := be.pollOperation(context.Background(), &cli_service.TOperationHandle{
 			OperationId: &cli_service.THandleIdentifier{
 				GUID:   []byte{1, 2, 3, 4, 2, 23, 4, 2, 3, 1, 3, 4, 4, 223, 34, 54},
@@ -792,7 +784,7 @@ func TestBackend_pollOperation(t *testing.T) {
 			FnGetOperationStatus: getOperationStatus,
 			FnCancelOperation:    cancelOperation,
 		}
-		be := newTestBackend(testClient, getTestSession(), config.WithDefaults())
+		be := NewForTest(testClient, getTestSession(), config.WithDefaults())
 		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 		defer cancel()
 		res, err := be.pollOperation(ctx, &cli_service.TOperationHandle{
@@ -834,7 +826,7 @@ func TestBackend_pollOperation(t *testing.T) {
 		}
 		cfg := config.WithDefaults()
 		cfg.PollInterval = 100 * time.Millisecond
-		be := newTestBackend(testClient, getTestSession(), cfg)
+		be := NewForTest(testClient, getTestSession(), cfg)
 		ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
 		defer cancel()
 		res, err := be.pollOperation(ctx, &cli_service.TOperationHandle{
@@ -876,7 +868,7 @@ func TestBackend_pollOperation(t *testing.T) {
 		}
 		cfg := config.WithDefaults()
 		cfg.PollInterval = 100 * time.Millisecond
-		be := newTestBackend(testClient, getTestSession(), cfg)
+		be := NewForTest(testClient, getTestSession(), cfg)
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		go func() {
@@ -907,7 +899,7 @@ func TestBackend_runQuery(t *testing.T) {
 		testClient := &client.TestClient{
 			FnExecuteStatement: executeStatement,
 		}
-		be := newTestBackend(testClient, getTestSession(), config.WithDefaults())
+		be := NewForTest(testClient, getTestSession(), config.WithDefaults())
 		exStmtResp, opStatusResp, err := be.runQuery(context.Background(), backend.ExecRequest{Query: "select 1", Params: namedToParams([]driver.NamedValue{})})
 		assert.Error(t, err)
 		assert.Nil(t, exStmtResp)
@@ -945,7 +937,7 @@ func TestBackend_runQuery(t *testing.T) {
 			FnExecuteStatement:   executeStatement,
 			FnGetOperationStatus: getOperationStatus,
 		}
-		be := newTestBackend(testClient, getTestSession(), config.WithDefaults())
+		be := NewForTest(testClient, getTestSession(), config.WithDefaults())
 		exStmtResp, opStatusResp, err := be.runQuery(context.Background(), backend.ExecRequest{Query: "select 1", Params: namedToParams([]driver.NamedValue{})})
 
 		assert.Error(t, err)
@@ -987,7 +979,7 @@ func TestBackend_runQuery(t *testing.T) {
 			FnExecuteStatement:   executeStatement,
 			FnGetOperationStatus: getOperationStatus,
 		}
-		be := newTestBackend(testClient, getTestSession(), config.WithDefaults())
+		be := NewForTest(testClient, getTestSession(), config.WithDefaults())
 		exStmtResp, opStatusResp, err := be.runQuery(context.Background(), backend.ExecRequest{Query: "select 1", Params: namedToParams([]driver.NamedValue{})})
 
 		assert.NoError(t, err)
@@ -1030,7 +1022,7 @@ func TestBackend_runQuery(t *testing.T) {
 			FnExecuteStatement:   executeStatement,
 			FnGetOperationStatus: getOperationStatus,
 		}
-		be := newTestBackend(testClient, getTestSession(), config.WithDefaults())
+		be := NewForTest(testClient, getTestSession(), config.WithDefaults())
 		exStmtResp, opStatusResp, err := be.runQuery(context.Background(), backend.ExecRequest{Query: "select 1", Params: namedToParams([]driver.NamedValue{})})
 
 		assert.Error(t, err)
@@ -1079,7 +1071,7 @@ func TestBackend_runQuery(t *testing.T) {
 			FnExecuteStatement:   executeStatement,
 			FnGetOperationStatus: getOperationStatus,
 		}
-		be := newTestBackend(testClient, getTestSession(), config.WithDefaults())
+		be := NewForTest(testClient, getTestSession(), config.WithDefaults())
 		exStmtResp, opStatusResp, err := be.runQuery(context.Background(), backend.ExecRequest{Query: "select 1", Params: namedToParams([]driver.NamedValue{})})
 
 		assert.NoError(t, err)
@@ -1127,7 +1119,7 @@ func TestBackend_runQuery(t *testing.T) {
 			FnExecuteStatement:   executeStatement,
 			FnGetOperationStatus: getOperationStatus,
 		}
-		be := newTestBackend(testClient, getTestSession(), config.WithDefaults())
+		be := NewForTest(testClient, getTestSession(), config.WithDefaults())
 		exStmtResp, opStatusResp, err := be.runQuery(context.Background(), backend.ExecRequest{Query: "select 1", Params: namedToParams([]driver.NamedValue{})})
 
 		assert.Error(t, err)
@@ -1176,7 +1168,7 @@ func TestBackend_runQuery(t *testing.T) {
 			FnExecuteStatement:   executeStatement,
 			FnGetOperationStatus: getOperationStatus,
 		}
-		be := newTestBackend(testClient, getTestSession(), config.WithDefaults())
+		be := NewForTest(testClient, getTestSession(), config.WithDefaults())
 		exStmtResp, opStatusResp, err := be.runQuery(context.Background(), backend.ExecRequest{Query: "select 1", Params: namedToParams([]driver.NamedValue{})})
 
 		assert.NoError(t, err)
@@ -1225,7 +1217,7 @@ func TestBackend_runQuery(t *testing.T) {
 			FnExecuteStatement:   executeStatement,
 			FnGetOperationStatus: getOperationStatus,
 		}
-		be := newTestBackend(testClient, getTestSession(), config.WithDefaults())
+		be := NewForTest(testClient, getTestSession(), config.WithDefaults())
 		exStmtResp, opStatusResp, err := be.runQuery(context.Background(), backend.ExecRequest{Query: "select 1", Params: namedToParams([]driver.NamedValue{})})
 
 		assert.Error(t, err)
@@ -1233,5 +1225,83 @@ func TestBackend_runQuery(t *testing.T) {
 		assert.Equal(t, 1, getOperationStatusCount)
 		assert.NotNil(t, exStmtResp)
 		assert.NotNil(t, opStatusResp)
+	})
+}
+
+// TestBackend_Execute pins the load-bearing contract from backend.Backend.Execute:
+// even when err is non-nil, the returned Operation MUST be non-nil so the caller
+// can uniformly reach the operation-close and telemetry paths. This is what lets
+// conn.runQuery use a single `if op == nil` guard to distinguish pre-backend
+// failures (param conversion) from post-backend errors that still need close.
+func TestBackend_Execute(t *testing.T) {
+	// Case 1: the pre-handle error path — ExecuteStatement RPC itself fails.
+	// The returned Operation has no handle, so its handle-less accessor contract
+	// (StatementID "", Close closed=false with no RPC) must hold.
+	t.Run("pre-handle failure returns non-nil Operation with handle-less accessors", func(t *testing.T) {
+		closeCalls := 0
+		be := NewForTest(
+			&client.TestClient{
+				FnExecuteStatement: func(ctx context.Context, req *cli_service.TExecuteStatementReq) (*cli_service.TExecuteStatementResp, error) {
+					return nil, errors.New("boom: rpc failed before a handle was issued")
+				},
+				FnCloseOperation: func(ctx context.Context, req *cli_service.TCloseOperationReq) (*cli_service.TCloseOperationResp, error) {
+					closeCalls++
+					return &cli_service.TCloseOperationResp{}, nil
+				},
+			},
+			getTestSession(),
+			config.WithDefaults(),
+		)
+		op, err := be.Execute(context.Background(), backend.ExecRequest{Query: "select 1"})
+		require.Error(t, err)
+		require.NotNil(t, op, "Execute MUST return a non-nil Operation even on error")
+		assert.Equal(t, "", op.StatementID(), "handle-less op returns empty statement id")
+		closed, closeErr := op.Close(context.Background())
+		assert.False(t, closed, "handle-less Close must not issue an RPC")
+		assert.NoError(t, closeErr)
+		assert.Equal(t, 0, closeCalls, "no CloseOperation RPC on a handle-less op")
+	})
+
+	// Case 2: the post-handle error path — the server returns a handle but the
+	// operation lands in a non-FINISHED terminal state. The Operation must still
+	// be non-nil (the caller uses it for Close + ExecutionError + telemetry) and
+	// carry the handle so it can close the server op on the error path.
+	t.Run("post-handle terminal-error returns non-nil Operation carrying handle+status", func(t *testing.T) {
+		displayMsg := "server said no"
+		closeCalls := 0
+		be := NewForTest(
+			&client.TestClient{
+				FnExecuteStatement: func(ctx context.Context, req *cli_service.TExecuteStatementReq) (*cli_service.TExecuteStatementResp, error) {
+					return &cli_service.TExecuteStatementResp{
+						Status:          &cli_service.TStatus{StatusCode: cli_service.TStatusCode_SUCCESS_STATUS},
+						OperationHandle: opHandle(),
+						DirectResults: &cli_service.TSparkDirectResults{
+							OperationStatus: &cli_service.TGetOperationStatusResp{
+								OperationState: cli_service.TOperationStatePtr(cli_service.TOperationState_ERROR_STATE),
+								DisplayMessage: &displayMsg,
+							},
+						},
+					}, nil
+				},
+				FnCloseOperation: func(ctx context.Context, req *cli_service.TCloseOperationReq) (*cli_service.TCloseOperationResp, error) {
+					closeCalls++
+					return &cli_service.TCloseOperationResp{}, nil
+				},
+			},
+			getTestSession(),
+			config.WithDefaults(),
+		)
+		op, err := be.Execute(context.Background(), backend.ExecRequest{Query: "select 1"})
+		require.Error(t, err)
+		require.NotNil(t, op, "Execute MUST return a non-nil Operation even on error")
+		assert.NotEmpty(t, op.StatementID(), "post-handle op carries a statement id")
+		// The caller drives Close on the error path; it must issue the RPC because
+		// the operation is still open on the server (ERROR_STATE, not CLOSED_STATE).
+		closed, closeErr := op.Close(context.Background())
+		assert.True(t, closed, "post-handle Close on a live ERROR_STATE op must issue the RPC")
+		assert.NoError(t, closeErr)
+		assert.Equal(t, 1, closeCalls)
+		// ExecutionError must also work off the non-nil op and pull sqlstate from opStatusResp.
+		require.Error(t, op.ExecutionError(context.Background(), err))
 	})
 }

@@ -133,10 +133,8 @@ func (c *conn) ExecContext(ctx context.Context, query string, args []driver.Name
 		log.Err(err).Msgf("databricks: failed to execute query: query %s", query)
 		return nil, err
 	}
-	// Enrich the logger/context with the statement id, matching the removed
-	// client.LoggerAndContext semantics: fill the queryId only if the caller
-	// hasn't set one, and always call NewContextWithQueryId on the empty branch
-	// so a registered QueryIdCallback fires (even with an empty id).
+	// Attach the statement id to the context queryId and refresh the logger so
+	// subsequent lines carry it.
 	ctx = enrichQueryId(ctx, op.StatementID())
 	log = logger.WithContext(driverctx.ConnIdFromContext(ctx), corrId, driverctx.QueryIdFromContext(ctx))
 
@@ -266,10 +264,8 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 		log.Duration(msg, start)
 		return nil, err
 	}
-	// Enrich the logger/context with the statement id, matching the removed
-	// client.LoggerAndContext semantics: fill the queryId only if the caller
-	// hasn't set one, and always call NewContextWithQueryId on the empty branch
-	// so a registered QueryIdCallback fires (even with an empty id).
+	// Attach the statement id to the context queryId and refresh the logger so
+	// subsequent lines carry it.
 	ctx = enrichQueryId(ctx, op.StatementID())
 	log = logger.WithContext(driverctx.ConnIdFromContext(ctx), corrId, driverctx.QueryIdFromContext(ctx))
 	defer log.Duration(msg, start)
@@ -402,11 +398,10 @@ func (c *conn) runQuery(ctx context.Context, query string, args []driver.NamedVa
 	return c.backend.Execute(ctx, backend.ExecRequest{Query: query, Params: params})
 }
 
-// enrichQueryId sets the operation's statement id as the context queryId,
-// preserving the pre-refactor client.LoggerAndContext behavior: a queryId the
-// caller already put on the context is kept (not overwritten), and when the
-// context has no queryId, NewContextWithQueryId is always called with the
-// derived id — even if it is empty — so any registered QueryIdCallback fires.
+// enrichQueryId sets the operation's statement id as the context queryId. A
+// caller-set queryId is never overwritten. When the context has no queryId,
+// NewContextWithQueryId is always called with the derived id — even if it is
+// empty — so any registered QueryIdCallback fires.
 func enrichQueryId(ctx context.Context, statementID string) context.Context {
 	if driverctx.QueryIdFromContext(ctx) != "" {
 		return ctx

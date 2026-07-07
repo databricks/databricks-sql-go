@@ -8,12 +8,10 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// TestEnrichQueryId pins the queryId-enrichment semantics preserved from the
-// removed client.LoggerAndContext: (1) a caller-set queryId is never
-// overwritten, and (2) when the context has no queryId, the derived id is always
-// applied via NewContextWithQueryId — even when empty — so a registered
-// QueryIdCallback fires. The pre-refactor code relied on both; a naive
-// "if id != ” { set }" rewrite broke both.
+// TestEnrichQueryId pins the two non-obvious queryId-enrichment semantics:
+// (1) a caller-set queryId is never overwritten, and (2) when the context has
+// no queryId, the derived id is always applied via NewContextWithQueryId —
+// even when empty — so a registered QueryIdCallback fires.
 func TestEnrichQueryId(t *testing.T) {
 	t.Run("preserves a caller-set queryId", func(t *testing.T) {
 		ctx := driverctx.NewContextWithQueryId(context.Background(), "caller-set")
@@ -34,8 +32,7 @@ func TestEnrichQueryId(t *testing.T) {
 			fired = true
 			got = id
 		})
-		// No handle -> empty statement id. The callback must still fire (old
-		// LoggerAndContext always called NewContextWithQueryId on the empty branch).
+		// No handle -> empty statement id. The callback must still fire.
 		_ = enrichQueryId(ctx, "")
 		assert.True(t, fired, "QueryIdCallback must fire on the no-queryId path even with an empty id")
 		assert.Equal(t, "", got)
