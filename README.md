@@ -41,12 +41,37 @@ The DSN format is:
 token:[your token]@[Workspace hostname]:[Port number][Endpoint HTTP Path]?param=value
 ```
 
-You can set query timeout value by appending a `timeout` query parameter (in seconds) and you can set max rows to retrieve per network request by setting the `maxRows` query parameter:
+The `token:[your token]@` prefix authenticates with a personal access token (PAT). For other authentication types, omit the prefix and use the `authType`, `clientID`/`clientSecret`, or `accessToken` parameters described below.
+
+#### Supported connection parameters
+
+Optional parameters can be appended to the DSN as `?param=value&param=value`:
+
+| Parameter | Description | Default |
+|---|---|---|
+| `catalog` | Sets the initial catalog name in the session | |
+| `schema` | Sets the initial schema name in the session | |
+| `maxRows` | Max rows fetched per network request | `100000` |
+| `timeout` | Server-side query execution timeout, in seconds | no timeout |
+| `userAgentEntry` | Identifies your application (partners/ISVs). Format: `<isv-name+product-name>` | |
+| `useCloudFetch` | Enables Cloud Fetch to fetch large results in parallel via cloud storage | `true` |
+| `maxDownloadThreads` | Number of concurrent Cloud Fetch download goroutines | `10` |
+| `authType` | Authentication type. One of `Pat`, `OauthM2M`, `OauthU2M` | inferred from params |
+| `accessToken` | Personal access token. Used when `authType=Pat` | |
+| `clientID` | Service principal client ID. Used with OAuth M2M | |
+| `clientSecret` | Service principal client secret. Used with OAuth M2M | |
+
+Any parameter not listed above (e.g. `ansi_mode`, `timezone`) is passed through as a session parameter.
+
+For example, to set a query timeout and max rows per request:
 
 ```
 token:[your token]@[Workspace hostname]:[Port number][Endpoint HTTP Path]?timeout=1000&maxRows=1000
 ```
-You can turn on Cloud Fetch (now enabled by default) to increase the performance of extracting large query results by fetching data in parallel via cloud storage (more info [here](https://www.databricks.com/blog/2021/08/11/how-we-achieved-high-bandwidth-connectivity-with-bi-tools.html)). You can also set the number of concurrently fetching goroutines by setting the `maxDownloadThreads` query parameter (default is 10):
+
+#### Cloud Fetch
+
+Cloud Fetch (enabled by default) increases the performance of extracting large query results by fetching data in parallel via cloud storage (more info [here](https://www.databricks.com/blog/2021/08/11/how-we-achieved-high-bandwidth-connectivity-with-bi-tools.html)). You can set the number of concurrently fetching goroutines with `maxDownloadThreads`:
 
 ```
 token:[your token]@[Workspace hostname]:[Port number][Endpoint HTTP Path]?useCloudFetch=true&maxDownloadThreads=3
@@ -54,6 +79,30 @@ token:[your token]@[Workspace hostname]:[Port number][Endpoint HTTP Path]?useClo
 To disable Cloud Fetch (e.g., when handling smaller datasets or to avoid additional overhead), append `useCloudFetch=false`:
 ```
 token:[your token]@[Workspace hostname]:[Port number][Endpoint HTTP Path]?useCloudFetch=false
+```
+
+#### Authenticating with OAuth (client ID and secret)
+
+To authenticate with OAuth machine-to-machine (M2M) credentials instead of a personal access token, leave the `token:...@` prefix off the DSN and pass the service principal's `clientID` and `clientSecret` as query parameters:
+
+```
+[Workspace hostname]:[Port number][Endpoint HTTP Path]?authType=OauthM2M&clientID=[your client ID]&clientSecret=[your client secret]
+```
+
+The `authType=OauthM2M` parameter is optional — supplying `clientID` and `clientSecret` is enough to select OAuth M2M authentication.
+
+To authenticate interactively with OAuth user-to-machine (U2M) credentials (opens a browser login flow), set `authType=OauthU2M` with no token or client credentials:
+
+```
+[Workspace hostname]:[Port number][Endpoint HTTP Path]?authType=OauthU2M
+```
+
+#### Setting the user agent
+
+To identify your application (e.g. for partners/ISVs), append a `userAgentEntry` query parameter with the format `<isv-name+product-name>`:
+
+```
+token:[your token]@[Workspace hostname]:[Port number][Endpoint HTTP Path]?userAgentEntry=[your-isv-name+product-name]
 ```
 
 ### Telemetry Configuration (Optional)
