@@ -248,6 +248,53 @@ func TestNewConnector(t *testing.T) {
 		assert.False(t, coni.cfg.EnableMetricViewMetadata)
 	})
 
+	t.Run("Connector test WithArrowNativeDecimal enabled", func(t *testing.T) {
+		host := "databricks-host"
+		accessToken := "token"
+		httpPath := "http-path"
+		con, err := NewConnector(
+			WithServerHostname(host),
+			WithAccessToken(accessToken),
+			WithHTTPPath(httpPath),
+			WithArrowNativeDecimal(true),
+		)
+		assert.Nil(t, err)
+
+		coni, ok := con.(*connector)
+		require.True(t, ok)
+		assert.True(t, coni.cfg.ArrowConfig.UseArrowNativeDecimal)
+	})
+
+	t.Run("Connector test WithArrowNativeDecimal disabled by default", func(t *testing.T) {
+		host := "databricks-host"
+		accessToken := "token"
+		httpPath := "http-path"
+		con, err := NewConnector(
+			WithServerHostname(host),
+			WithAccessToken(accessToken),
+			WithHTTPPath(httpPath),
+		)
+		assert.Nil(t, err)
+
+		coni, ok := con.(*connector)
+		require.True(t, ok)
+		assert.False(t, coni.cfg.ArrowConfig.UseArrowNativeDecimal)
+	})
+
+	t.Run("Connector test useArrowNativeDecimal DSN param propagates to ArrowConfig", func(t *testing.T) {
+		// Covers the full DSN path: ParseDSN -> withUserConfig -> ArrowConfig,
+		// which is what connection.go reads. This is the bridge that makes the
+		// DSN parameter actually take effect (databricks/databricks-sql-go#274).
+		ucfg, err := config.ParseDSN("token:supersecret@databricks-host:443/sql/1.0/endpoints/abc?useArrowNativeDecimal=true")
+		require.NoError(t, err)
+		con, err := NewConnector(withUserConfig(ucfg))
+		require.NoError(t, err)
+
+		coni, ok := con.(*connector)
+		require.True(t, ok)
+		assert.True(t, coni.cfg.ArrowConfig.UseArrowNativeDecimal)
+	})
+
 	t.Run("Connector test WithTransport sets HTTPClient in CloudFetchConfig", func(t *testing.T) {
 		host := "databricks-host"
 		accessToken := "token"

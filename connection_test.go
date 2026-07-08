@@ -369,7 +369,7 @@ func TestConn_executeStatement_ProtocolFeatures(t *testing.T) {
 				cfg.UseLz4Compression = true
 				cfg.UseCloudFetch = true
 				cfg.UseArrowBatches = true
-				cfg.UseArrowNativeDecimal = true
+				cfg.ArrowConfig.UseArrowNativeDecimal = true
 				cfg.UseArrowNativeTimestamp = true
 				cfg.UseArrowNativeComplexTypes = true
 				cfg.UseArrowNativeIntervalTypes = true
@@ -478,7 +478,7 @@ func TestConn_executeStatement_ProtocolFeatures(t *testing.T) {
 					assert.NotNil(t, capturedReq.CanReadArrowResult_)
 					assert.True(t, *capturedReq.CanReadArrowResult_)
 					assert.NotNil(t, capturedReq.UseArrowNativeTypes)
-					assert.Equal(t, tc.cfg.UseArrowNativeDecimal, *capturedReq.UseArrowNativeTypes.DecimalAsArrow)
+					assert.Equal(t, tc.cfg.ArrowConfig.UseArrowNativeDecimal, *capturedReq.UseArrowNativeTypes.DecimalAsArrow)
 					assert.Equal(t, tc.cfg.UseArrowNativeTimestamp, *capturedReq.UseArrowNativeTypes.TimestampAsArrow)
 					assert.Equal(t, tc.cfg.UseArrowNativeComplexTypes, *capturedReq.UseArrowNativeTypes.ComplexTypesAsArrow)
 					assert.Equal(t, tc.cfg.UseArrowNativeIntervalTypes, *capturedReq.UseArrowNativeTypes.IntervalTypesAsArrow)
