@@ -2,6 +2,7 @@
 
 ## Unreleased
 - Stop using `html/template` in the U2M OAuth callback page. Reachable use of `html/template` disabled the Go linker's dead-code elimination for the entire binary of any application importing this driver; the page is now rendered with plain string building and explicit HTML escaping, restoring full DCE (databricks/databricks-sql-go#343)
+- Fix DECIMAL precision loss inside complex types: DECIMAL values nested in STRUCT, ARRAY, and MAP columns are now rendered losslessly with their exact scale (e.g. `19.99` instead of `19.990000000000002`), matching the behavior of top-level DECIMAL columns (databricks/databricks-sql-go#253)
 
 ## v1.13.1 (2026-07-07)
 - Expose native Arrow decimal handling: add the `WithArrowNativeDecimal` connector option and the `useArrowNativeDecimal` DSN parameter so DECIMAL columns can be returned as native Arrow `decimal128` (via `GetArrowBatches`) instead of strings. When scanned through `database/sql`, native DECIMAL values are returned as lossless, scale-applied strings (databricks/databricks-sql-go#274)

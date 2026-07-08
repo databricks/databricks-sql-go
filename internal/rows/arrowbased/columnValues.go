@@ -227,7 +227,7 @@ func (lvc *listValueContainer) Value(i int) (any, error) {
 				}
 
 				if !lvc.complexValue {
-					vb, err := marshal(val)
+					vb, err := marshalScalar(lvc.values, i+int(s), val)
 					if err != nil {
 						return nil, err
 					}
@@ -291,7 +291,7 @@ func (mvc *mapValueContainer) Value(i int) (any, error) {
 				return nil, err
 			}
 
-			key, err := marshal(k)
+			key, err := marshalScalar(mvc.keys, int(i+s), k)
 			if err != nil {
 				return nil, err
 			}
@@ -307,7 +307,7 @@ func (mvc *mapValueContainer) Value(i int) (any, error) {
 			} else if mvc.complexValue {
 				b = v.(string)
 			} else {
-				vb, err := marshal(v)
+				vb, err := marshalScalar(mvc.values, int(i+s), v)
 				if err != nil {
 					return nil, err
 				}
@@ -389,7 +389,7 @@ func (svc *structValueContainer) Value(i int) (any, error) {
 				if svc.complexValue[j] {
 					b = v.(string)
 				} else {
-					vb, err := marshal(v)
+					vb, err := marshalScalar(svc.fieldValues[j], int(i), v)
 					if err != nil {
 						return nil, err
 					}
@@ -616,6 +616,20 @@ func marshal(val any) ([]byte, error) {
 	}
 	vb, err := json.Marshal(val)
 	return vb, err
+}
+
+// marshalScalar renders a non-complex nested value (a struct field, list
+// element, or map value/key) into its JSON fragment. When the holder is a
+// native decimal128, it emits the exact scale-applied decimal string as a JSON
+// number literal rather than marshaling the lossy float64 returned by
+// holder.Value — otherwise a DECIMAL(5,2) 19.99 would render as
+// 19.990000000000002 (and high-precision decimals would be corrupted at the
+// integer level). See databricks/databricks-sql-go#253 and #274.
+func marshalScalar(holder columnValues, i int, val any) ([]byte, error) {
+	if d, ok := holder.(*decimal128Container); ok {
+		return []byte(d.ValueString(i)), nil
+	}
+	return marshal(val)
 }
 
 var nullContainer *nullContainer_ = &nullContainer_{}
