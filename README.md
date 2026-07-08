@@ -56,6 +56,24 @@ To disable Cloud Fetch (e.g., when handling smaller datasets or to avoid additio
 token:[your token]@[Workspace hostname]:[Port number][Endpoint HTTP Path]?useCloudFetch=false
 ```
 
+#### Authenticating with OAuth (client ID and secret)
+
+To authenticate with OAuth machine-to-machine (M2M) credentials instead of a personal access token, leave the `token:...@` prefix off the DSN and pass the service principal's `clientID` and `clientSecret` as query parameters:
+
+```
+[Workspace hostname]:[Port number][Endpoint HTTP Path]?authType=OauthM2M&clientID=[your client ID]&clientSecret=[your client secret]
+```
+
+The `authType=OauthM2M` parameter is optional — supplying `clientID` and `clientSecret` is enough to select OAuth M2M authentication.
+
+#### Setting the user agent
+
+To identify your application (e.g. for partners/ISVs), append a `userAgentEntry` query parameter with the format `<isv-name+product-name>`:
+
+```
+token:[your token]@[Workspace hostname]:[Port number][Endpoint HTTP Path]?userAgentEntry=[your-isv-name+product-name]
+```
+
 ### Telemetry Configuration (Optional)
 
 The driver includes optional telemetry to help improve performance and reliability. Telemetry is **disabled by default** and requires explicit opt-in.
