@@ -2241,3 +2241,160 @@ func TestScanRowNativeDecimal(t *testing.T) {
 		assert.NotEqual(t, highPrecision, fmt.Sprintf("%.2f", f))
 	})
 }
+
+// TestDecimalInComplexTypes is a regression test for
+// databricks/databricks-sql-go#253. A DECIMAL nested inside a STRUCT, ARRAY, or
+// MAP must be rendered in the JSON string with its exact scale-applied value,
+// not a lossy float64 (e.g. 19.99 must not become 19.990000000000002).
+func TestDecimalInComplexTypes(t *testing.T) {
+	// A value that float64 cannot represent exactly: 19.99 round-trips through
+	// float64 as 19.990000000000002, which is exactly the bug reported in #253.
+	const lossyValue = "19.99"
+	// A value whose significant digits exceed float64's ~15-17, to prove the
+	// nested path is fully lossless and not merely formatted.
+	const highPrecision = "1234567890123456789.99"
+
+	// newDecimalArray builds a real arrow decimal128 array (exact unscaled ints)
+	// for use as a child of a complex-type array.
+	newDecimalArray := func(precision, scale int32, values []string) *array.Decimal128 {
+		dt := &arrow.Decimal128Type{Precision: precision, Scale: scale}
+		bldr := array.NewDecimal128Builder(memory.DefaultAllocator, dt)
+		defer bldr.Release()
+		for _, v := range values {
+			if v == "" {
+				bldr.AppendNull()
+				continue
+			}
+			bldr.Append(decimal128.FromBigInt(unscaledBigInt(t, v, scale)))
+		}
+		return bldr.NewDecimal128Array()
+	}
+
+	t.Run("decimal in struct field", func(t *testing.T) {
+		// named_struct('col1', 'Field1', 'col2', CAST(19.99 AS DECIMAL(5,2)))
+		dt := arrow.StructOf(
+			arrow.Field{Name: "col1", Type: arrow.BinaryTypes.String},
+			arrow.Field{Name: "col2", Type: &arrow.Decimal128Type{Precision: 5, Scale: 2}},
+		)
+		bldr := array.NewStructBuilder(memory.DefaultAllocator, dt)
+		defer bldr.Release()
+		bldr.Append(true)
+		bldr.FieldBuilder(0).(*array.StringBuilder).Append("Field1")
+		bldr.FieldBuilder(1).(*array.Decimal128Builder).Append(decimal128.FromBigInt(unscaledBigInt(t, lossyValue, 2)))
+		arr := bldr.NewStructArray()
+		defer arr.Release()
+
+		c, err := (&arrowValueContainerMaker{}).makeColumnValueContainer(dt, time.UTC, nil, nil)
+		require.NoError(t, err)
+		require.NoError(t, c.SetValueArray(arr.Data()))
+
+		v, err := c.Value(0)
+		require.NoError(t, err)
+		assert.Equal(t, `{"col1":"Field1","col2":19.99}`, v)
+	})
+
+	t.Run("high-precision decimal in struct field", func(t *testing.T) {
+		dt := arrow.StructOf(
+			arrow.Field{Name: "col2", Type: &arrow.Decimal128Type{Precision: 38, Scale: 2}},
+		)
+		bldr := array.NewStructBuilder(memory.DefaultAllocator, dt)
+		defer bldr.Release()
+		bldr.Append(true)
+		bldr.FieldBuilder(0).(*array.Decimal128Builder).Append(decimal128.FromBigInt(unscaledBigInt(t, highPrecision, 2)))
+		arr := bldr.NewStructArray()
+		defer arr.Release()
+
+		c, err := (&arrowValueContainerMaker{}).makeColumnValueContainer(dt, time.UTC, nil, nil)
+		require.NoError(t, err)
+		require.NoError(t, c.SetValueArray(arr.Data()))
+
+		v, err := c.Value(0)
+		require.NoError(t, err)
+		assert.Equal(t, `{"col2":1234567890123456789.99}`, v)
+	})
+
+	t.Run("decimal in array element", func(t *testing.T) {
+		// ARRAY(CAST(19.99 AS DECIMAL(5,2)), CAST(0.01 AS DECIMAL(5,2)))
+		dt := arrow.ListOf(&arrow.Decimal128Type{Precision: 5, Scale: 2})
+		values := newDecimalArray(5, 2, []string{lossyValue, "0.01"})
+		defer values.Release()
+		offsets := array.NewInt32Builder(memory.DefaultAllocator)
+		defer offsets.Release()
+		offsets.Append(0)
+		offsets.Append(2)
+		offsetArr := offsets.NewInt32Array()
+		defer offsetArr.Release()
+		listData := array.NewData(dt, 1,
+			[]*memory.Buffer{nil, offsetArr.Data().Buffers()[1]},
+			[]arrow.ArrayData{values.Data()}, 0, 0)
+		defer listData.Release()
+
+		c, err := (&arrowValueContainerMaker{}).makeColumnValueContainer(dt, time.UTC, nil, nil)
+		require.NoError(t, err)
+		require.NoError(t, c.SetValueArray(listData))
+
+		v, err := c.Value(0)
+		require.NoError(t, err)
+		assert.Equal(t, `[19.99,0.01]`, v)
+	})
+
+	t.Run("decimal in map value", func(t *testing.T) {
+		// map('a', CAST(19.99 AS DECIMAL(5,2)))
+		dt := arrow.MapOf(arrow.BinaryTypes.String, &arrow.Decimal128Type{Precision: 5, Scale: 2})
+		bldr := array.NewMapBuilder(memory.DefaultAllocator, arrow.BinaryTypes.String, &arrow.Decimal128Type{Precision: 5, Scale: 2}, false)
+		defer bldr.Release()
+		bldr.Append(true)
+		bldr.KeyBuilder().(*array.StringBuilder).Append("a")
+		bldr.ItemBuilder().(*array.Decimal128Builder).Append(decimal128.FromBigInt(unscaledBigInt(t, lossyValue, 2)))
+		arr := bldr.NewMapArray()
+		defer arr.Release()
+
+		c, err := (&arrowValueContainerMaker{}).makeColumnValueContainer(dt, time.UTC, nil, nil)
+		require.NoError(t, err)
+		require.NoError(t, c.SetValueArray(arr.Data()))
+
+		v, err := c.Value(0)
+		require.NoError(t, err)
+		assert.Equal(t, `{"a":19.99}`, v)
+	})
+
+	t.Run("decimal in map key", func(t *testing.T) {
+		// map(CAST(1.5 AS DECIMAL(3,1)), 'x')
+		dt := arrow.MapOf(&arrow.Decimal128Type{Precision: 3, Scale: 1}, arrow.BinaryTypes.String)
+		bldr := array.NewMapBuilder(memory.DefaultAllocator, &arrow.Decimal128Type{Precision: 3, Scale: 1}, arrow.BinaryTypes.String, false)
+		defer bldr.Release()
+		bldr.Append(true)
+		bldr.KeyBuilder().(*array.Decimal128Builder).Append(decimal128.FromBigInt(unscaledBigInt(t, "1.5", 1)))
+		bldr.ItemBuilder().(*array.StringBuilder).Append("x")
+		arr := bldr.NewMapArray()
+		defer arr.Release()
+
+		c, err := (&arrowValueContainerMaker{}).makeColumnValueContainer(dt, time.UTC, nil, nil)
+		require.NoError(t, err)
+		require.NoError(t, c.SetValueArray(arr.Data()))
+
+		v, err := c.Value(0)
+		require.NoError(t, err)
+		assert.Equal(t, `{"1.5":"x"}`, v)
+	})
+
+	t.Run("null decimal in struct field", func(t *testing.T) {
+		dt := arrow.StructOf(
+			arrow.Field{Name: "col2", Type: &arrow.Decimal128Type{Precision: 5, Scale: 2}},
+		)
+		bldr := array.NewStructBuilder(memory.DefaultAllocator, dt)
+		defer bldr.Release()
+		bldr.Append(true)
+		bldr.FieldBuilder(0).(*array.Decimal128Builder).AppendNull()
+		arr := bldr.NewStructArray()
+		defer arr.Release()
+
+		c, err := (&arrowValueContainerMaker{}).makeColumnValueContainer(dt, time.UTC, nil, nil)
+		require.NoError(t, err)
+		require.NoError(t, c.SetValueArray(arr.Data()))
+
+		v, err := c.Value(0)
+		require.NoError(t, err)
+		assert.Equal(t, `{"col2":null}`, v)
+	})
+}
