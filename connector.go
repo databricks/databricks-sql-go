@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/tls"
 	"database/sql/driver"
-	"fmt"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -16,11 +15,10 @@ import (
 	"github.com/databricks/databricks-sql-go/auth/pat"
 	"github.com/databricks/databricks-sql-go/auth/tokenprovider"
 	"github.com/databricks/databricks-sql-go/driverctx"
-	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
-	"github.com/databricks/databricks-sql-go/internal/cli_service"
+	"github.com/databricks/databricks-sql-go/internal/backend/thrift"
 	"github.com/databricks/databricks-sql-go/internal/client"
 	"github.com/databricks/databricks-sql-go/internal/config"
-	dbsqlerrint "github.com/databricks/databricks-sql-go/internal/errors"
+	"github.com/databricks/databricks-sql-go/internal/debuglog"
 	"github.com/databricks/databricks-sql-go/logger"
 	"github.com/databricks/databricks-sql-go/telemetry"
 )
@@ -32,53 +30,25 @@ type connector struct {
 
 // Connect returns a connection to the Databricks database from a connection pool.
 func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
-	var catalogName *cli_service.TIdentifier
-	var schemaName *cli_service.TIdentifier
-	if c.cfg.Catalog != "" {
-		catalogName = cli_service.TIdentifierPtr(cli_service.TIdentifier(c.cfg.Catalog))
-	}
-	if c.cfg.Schema != "" {
-		schemaName = cli_service.TIdentifierPtr(cli_service.TIdentifier(c.cfg.Schema))
-	}
+	defer debuglog.Track(ctx, "connector.Connect", "host=%s", c.cfg.Host)()
 
-	tclient, err := client.InitThriftClient(c.cfg, c.client)
+	// Build the execution backend. Currently always the Thrift backend; a second
+	// SEA-via-kernel backend will be selected here by a connect-time flag.
+	be, err := thrift.New(ctx, c.cfg, c.client)
 	if err != nil {
-		return nil, dbsqlerrint.NewDriverError(ctx, dbsqlerr.ErrThriftClient, err)
+		return nil, err
 	}
-
-	// Prepare session configuration
-	sessionParams := make(map[string]string)
-	for k, v := range c.cfg.SessionParams {
-		sessionParams[k] = v
-	}
-
-	if c.cfg.EnableMetricViewMetadata {
-		sessionParams["spark.sql.thriftserver.metadata.metricview.enabled"] = "true"
-	}
-
-	protocolVersion := int64(c.cfg.ThriftProtocolVersion)
 
 	sessionStart := time.Now()
-	session, err := tclient.OpenSession(ctx, &cli_service.TOpenSessionReq{
-		ClientProtocolI64: &protocolVersion,
-		Configuration:     sessionParams,
-		InitialNamespace: &cli_service.TNamespace{
-			CatalogName: catalogName,
-			SchemaName:  schemaName,
-		},
-		CanUseMultipleCatalogs: &c.cfg.CanUseMultipleCatalogs,
-	})
+	if err := be.OpenSession(ctx); err != nil {
+		return nil, err
+	}
 	sessionLatencyMs := time.Since(sessionStart).Milliseconds()
 
-	if err != nil {
-		return nil, dbsqlerrint.NewRequestError(ctx, fmt.Sprintf("error connecting: host=%s port=%d, httpPath=%s", c.cfg.Host, c.cfg.Port, c.cfg.HTTPPath), err)
-	}
-
 	conn := &conn{
-		id:      client.SprintGuid(session.SessionHandle.GetSessionId().GUID),
+		id:      be.SessionID(),
 		cfg:     c.cfg,
-		client:  tclient,
-		session: session,
+		backend: be,
 	}
 	log := logger.WithContext(conn.id, driverctx.CorrelationIdFromContext(ctx), "")
 
@@ -107,7 +77,7 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 		conn.telemetry.RecordOperation(ctx, conn.id, "", telemetry.OperationTypeCreateSession, sessionLatencyMs, nil)
 	}
 
-	log.Info().Msgf("connect: host=%s port=%d httpPath=%s serverProtocolVersion=0x%X", c.cfg.Host, c.cfg.Port, c.cfg.HTTPPath, session.ServerProtocolVersion)
+	log.Info().Msgf("connect: host=%s port=%d httpPath=%s serverProtocolVersion=0x%X", c.cfg.Host, c.cfg.Port, c.cfg.HTTPPath, be.ServerProtocolVersion())
 
 	return conn, nil
 }

@@ -2,15 +2,28 @@ package dbsql
 
 import (
 	"database/sql/driver"
-	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
-	"github.com/stretchr/testify/require"
 	"strconv"
 	"testing"
 	"time"
 
+	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
+	thriftbackend "github.com/databricks/databricks-sql-go/internal/backend/thrift"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
+
+// convertNamedValuesToSparkParams composes dbsql-side type inference
+// (convertNamedValuesToParams) with the Thrift-side wire mapping
+// (thriftbackend.ParamsToSparkForTest) so these tests can assert on the
+// end-to-end TSparkParameter output.
+func convertNamedValuesToSparkParams(values []driver.NamedValue) ([]*cli_service.TSparkParameter, error) {
+	params, err := convertNamedValuesToParams(values)
+	if err != nil {
+		return nil, err
+	}
+	return thriftbackend.ParamsToSparkForTest(params), nil
+}
 
 func TestParameter_Inference(t *testing.T) {
 	t.Run("Should infer types correctly", func(t *testing.T) {
@@ -212,5 +225,58 @@ func TestParameters_ConvertToSpark(t *testing.T) {
 		_, err := convertNamedValuesToSparkParams(values[:])
 		require.Error(t, err)
 		require.Equal(t, err.Error(), dbsqlerr.ErrMixedNamedAndPositionalParameters)
+	})
+}
+
+// TestConvertNamedValuesToParams checks the neutral backend.Param output of the
+// dbsql-side conversion directly — the boundary the backend consumes. In
+// particular a nil value must map to type VOID with a nil Value (SQL NULL), and
+// a decimal must carry its derived DECIMAL(p,s) type. This complements the
+// end-to-end TSparkParameter assertions above.
+func TestConvertNamedValuesToParams(t *testing.T) {
+	t.Run("infers types and renders neutral params", func(t *testing.T) {
+		values := []driver.NamedValue{
+			{Name: "a", Value: int64(5)},
+			{Name: "b", Value: "hello"},
+			{Name: "", Value: Parameter{Name: "c", Value: "6.2", Type: SqlDecimal}},
+		}
+		params, err := convertNamedValuesToParams(values)
+		require.NoError(t, err)
+		require.Len(t, params, 3)
+
+		require.Equal(t, "a", params[0].Name)
+		require.Equal(t, "BIGINT", params[0].Type)
+		require.NotNil(t, params[0].Value)
+		require.Equal(t, "5", *params[0].Value)
+
+		require.Equal(t, "STRING", params[1].Type)
+		require.Equal(t, "hello", *params[1].Value)
+
+		require.Equal(t, "DECIMAL(2,1)", params[2].Type)
+		require.Equal(t, "6.2", *params[2].Value)
+	})
+
+	t.Run("nil value maps to VOID with nil Value", func(t *testing.T) {
+		params, err := convertNamedValuesToParams([]driver.NamedValue{{Value: nil}})
+		require.NoError(t, err)
+		require.Len(t, params, 1)
+		require.Equal(t, "VOID", params[0].Type)
+		require.Nil(t, params[0].Value, "SQL NULL must have a nil Value")
+	})
+
+	t.Run("empty input yields no params", func(t *testing.T) {
+		params, err := convertNamedValuesToParams(nil)
+		require.NoError(t, err)
+		require.Empty(t, params)
+	})
+
+	t.Run("mixed named and positional params error", func(t *testing.T) {
+		values := []driver.NamedValue{
+			{Name: "a", Value: int(1)},
+			{Value: int(2)},
+		}
+		_, err := convertNamedValuesToParams(values)
+		require.Error(t, err)
+		require.Equal(t, dbsqlerr.ErrMixedNamedAndPositionalParameters, err.Error())
 	})
 }
