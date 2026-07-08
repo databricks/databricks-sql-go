@@ -248,6 +248,10 @@ func (t *headerInjectingTransport) RoundTrip(req *http.Request) (*http.Response,
 func withUserConfig(ucfg config.UserConfig) ConnOption {
 	return func(c *config.Config) {
 		c.UserConfig = ucfg
+		// The useArrowNativeDecimal DSN parameter is carried on UserConfig (all
+		// ParseDSN can return) but is consumed from ArrowConfig. This is the one
+		// place that bridges the two.
+		c.ArrowConfig.UseArrowNativeDecimal = ucfg.UseArrowNativeDecimalDSN
 	}
 }
 
@@ -445,6 +449,22 @@ func WithMaxDownloadThreads(numThreads int) ConnOption {
 func WithEnableMetricViewMetadata(enable bool) ConnOption {
 	return func(c *config.Config) {
 		c.EnableMetricViewMetadata = enable
+	}
+}
+
+// WithArrowNativeDecimal controls whether DECIMAL columns are returned as native
+// Arrow decimal128 values. Default is false, in which case the server returns
+// DECIMAL columns as strings.
+//
+// When enabled, DECIMAL columns retrieved via GetArrowBatches carry the native
+// arrow.Decimal128 type. When scanned through the standard database/sql Rows
+// interface, DECIMAL values are returned as lossless, scale-applied strings to
+// avoid the precision loss that a float64 would introduce.
+//
+// See https://github.com/databricks/databricks-sql-go/issues/274.
+func WithArrowNativeDecimal(useNativeDecimal bool) ConnOption {
+	return func(c *config.Config) {
+		c.ArrowConfig.UseArrowNativeDecimal = useNativeDecimal
 	}
 }
 

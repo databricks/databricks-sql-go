@@ -504,7 +504,7 @@ func (c *conn) executeStatement(ctx context.Context, query string, args []driver
 	if thrift_protocol.SupportsArrow(serverProtocolVersion) && c.cfg.UseArrowBatches {
 		req.CanReadArrowResult_ = &c.cfg.UseArrowBatches
 		req.UseArrowNativeTypes = &cli_service.TSparkArrowTypes{
-			DecimalAsArrow:       &c.cfg.UseArrowNativeDecimal,
+			DecimalAsArrow:       &c.cfg.ArrowConfig.UseArrowNativeDecimal,
 			TimestampAsArrow:     &c.cfg.UseArrowNativeTimestamp,
 			ComplexTypesAsArrow:  &c.cfg.UseArrowNativeComplexTypes,
 			IntervalTypesAsArrow: &c.cfg.UseArrowNativeIntervalTypes,
