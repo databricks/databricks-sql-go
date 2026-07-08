@@ -229,10 +229,10 @@ func (ars *arrowRowScanner) ScanRow(
 			// Gated on the requested config (not merely the holder type) so that
 			// disabling native decimal keeps the prior float64 behavior even if
 			// the server-provided arrow schema carries a decimal128. Decimals
-			// nested in complex types are unaffected: their holders are
-			// list/map/struct containers, not *decimal128Container, so they fall
-			// through to Value and keep rendering as JSON numbers.
-			// See databricks/databricks-sql-go#274.
+			// nested in complex types take a different path: the complex
+			// container renders them losslessly via marshalScalar during JSON
+			// serialization, independent of this config gate.
+			// See databricks/databricks-sql-go#274 and #253.
 			if dbType == cli_service.TTypeId_DECIMAL_TYPE && ars.UseArrowNativeDecimal {
 				if s, ok := ars.rowValues.DecimalStringValue(i, rowNumber); ok {
 					destination[i] = s
