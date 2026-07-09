@@ -65,6 +65,13 @@ func writeJSON(b *strings.Builder, col arrow.Array, row int, loc *time.Location)
 		return writeMapJSON(b, c, row, loc)
 	case *array.Struct:
 		return writeStructJSON(b, c, row, loc)
+	case *array.Decimal128:
+		// Emit the exact scale-applied decimal as a raw JSON number literal, not a
+		// float64 — a float64 would render DECIMAL(5,2) 19.99 as 19.990000000000002
+		// and corrupt high-precision values. Matches the Thrift path's marshalScalar
+		// → ValueString (databricks-sql-go#253/#274).
+		b.WriteString(decimal128ToExactString(c.Value(row), col.DataType().(*arrow.Decimal128Type).Scale))
+		return nil
 	default:
 		v, err := scalarForJSON(col, row, loc)
 		if err != nil {
@@ -163,23 +170,13 @@ func writeScalarJSON(b *strings.Builder, v any) error {
 	return nil
 }
 
-// scalarForJSON returns the Go value used inside JSON for a leaf cell. It differs
-// from scanCell in one way: a nested decimal renders as float64 (lossy), matching
-// the Thrift path's in-JSON decimal rendering (#274); the exact-string decimal
-// applies only to a top-level decimal column.
+// scalarForJSON returns the Go value used for a nested leaf that is not itself a
+// container — today only a map key (values are written directly by writeJSON).
+// It reuses scanCell's scalar arm, so a decimal key renders via the exact-string
+// path (writeJSONKey then quotes it), never a lossy float64.
 func scalarForJSON(col arrow.Array, row int, loc *time.Location) (any, error) {
 	if col.IsNull(row) {
 		return nil, nil
 	}
-	switch c := col.(type) {
-	case *array.Decimal128:
-		dt := col.DataType().(*arrow.Decimal128Type)
-		return c.Value(row).ToFloat64(dt.Scale), nil
-	case *array.Decimal256:
-		dt := col.DataType().(*arrow.Decimal256Type)
-		return c.Value(row).ToFloat64(dt.Scale), nil
-	default:
-		// Reuse scanCell's scalar arm for every non-nested, non-decimal leaf.
-		return scanCell(col, row, loc)
-	}
+	return scanCell(col, row, loc)
 }

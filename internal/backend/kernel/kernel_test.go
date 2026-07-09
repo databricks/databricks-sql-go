@@ -242,6 +242,27 @@ func TestScanCellNested(t *testing.T) {
 		}
 	})
 
+	t.Run("nested_decimal_exact", func(t *testing.T) {
+		// A decimal inside a struct must render as an exact JSON number, not a
+		// lossy float64 (19.99, not 19.990000000000002) — matching Thrift's
+		// marshalScalar. Regression guard for a bug the POC missed by only testing
+		// float64-exact values.
+		dt := arrow.StructOf(arrow.Field{Name: "d", Type: &arrow.Decimal128Type{Precision: 5, Scale: 2}})
+		b := array.NewStructBuilder(pool, dt)
+		defer b.Release()
+		b.Append(true)
+		b.FieldBuilder(0).(*array.Decimal128Builder).Append(decimal128.FromU64(1999))
+		arr := b.NewArray()
+		defer arr.Release()
+		v, err := scanCell(arr, 0, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if v.(string) != `{"d":19.99}` {
+			t.Errorf("got %q, want {\"d\":19.99}", v)
+		}
+	})
+
 	t.Run("nested_null", func(t *testing.T) {
 		b := array.NewListBuilder(pool, arrow.PrimitiveTypes.Int64)
 		defer b.Release()
