@@ -15,13 +15,29 @@ import (
 	"github.com/databricks/databricks-sql-go/internal/backend"
 )
 
-// Config is the connection config for the kernel backend: host, the warehouse
-// (by bare id or http path), and a PAT.
+// Config is the flat connection config for the kernel backend. The connector
+// fills it from the driver's config so the user-facing options are unchanged
+// (this mirrors how the kernel's pyo3/napi bindings take flat connection
+// params). Zero-valued fields are simply not applied.
 type Config struct {
 	Host        string // workspace hostname, no scheme
 	HTTPPath    string // e.g. /sql/1.0/warehouses/abc123 (carries ?o= org routing)
 	WarehouseID string // bare warehouse id; preferred over HTTPPath when set
 	Token       string // PAT (dapi...)
+
+	// SessionConf carries server-bound session confs verbatim — the same map the
+	// Thrift backend forwards (STATEMENT_TIMEOUT, QUERY_TAGS, TIMEZONE, …).
+	SessionConf map[string]string
+
+	// TLSSkipVerify disables server-cert hostname verification (maps the driver's
+	// WithSkipTLSHostVerify / TLSConfig.InsecureSkipVerify).
+	TLSSkipVerify bool
+
+	// ProxyURL configures an HTTP proxy, already resolved for this endpoint from
+	// the same HTTP(S)_PROXY / NO_PROXY environment the Thrift path uses (NO_PROXY
+	// is applied during resolution). Empty leaves the kernel on a direct
+	// connection.
+	ProxyURL string
 }
 
 // KernelBackend implements backend.Backend over the kernel C ABI. One backend
@@ -90,6 +106,44 @@ func (k *KernelBackend) OpenSession(ctx context.Context) error {
 		return C.kernel_session_config_set_auth_pat(cfg, tok.c)
 	}); err != nil {
 		return fmt.Errorf("kernel: set_auth_pat: %w", toDriverError(err))
+	}
+
+	// TLS: skip server-cert hostname verification when the driver requested it.
+	if k.cfg.TLSSkipVerify {
+		if err := call(func() C.KernelStatusCode {
+			return C.kernel_session_config_set_tls_skip_hostname_verification(cfg, C.bool(true))
+		}); err != nil {
+			return fmt.Errorf("kernel: set_tls_skip_hostname_verification: %w", toDriverError(err))
+		}
+	}
+
+	// Proxy: only when the environment configured one for this endpoint. NO_PROXY
+	// was already applied during resolution, so no bypass list is needed here;
+	// any credentials are carried in the URL userinfo (Go's proxy-env convention),
+	// so username/password are NULL.
+	if k.cfg.ProxyURL != "" {
+		url := newCStr(k.cfg.ProxyURL)
+		defer url.free()
+		if err := call(func() C.KernelStatusCode {
+			return C.kernel_session_config_set_proxy(cfg, url.c, nil, nil, nil)
+		}); err != nil {
+			return fmt.Errorf("kernel: set_proxy: %w", toDriverError(err))
+		}
+	}
+
+	// Session confs (STATEMENT_TIMEOUT, QUERY_TAGS, TIMEZONE, …) — the same map
+	// the Thrift backend forwards, applied one key at a time.
+	for key, val := range k.cfg.SessionConf {
+		ck := newCStr(key)
+		cv := newCStr(val)
+		errSet := call(func() C.KernelStatusCode {
+			return C.kernel_session_config_set_session_conf(cfg, ck.c, cv.c)
+		})
+		ck.free()
+		cv.free()
+		if errSet != nil {
+			return fmt.Errorf("kernel: set_session_conf[%s]: %w", key, toDriverError(errSet))
+		}
 	}
 
 	var sess *C.kernel_session_t

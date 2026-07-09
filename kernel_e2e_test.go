@@ -51,6 +51,77 @@ func TestKernelE2ESelect1(t *testing.T) {
 	}
 }
 
+// kernelTestDBWith opens a kernel-backed *sql.DB with extra connector options on
+// top of the base host/path/PAT, or skips when creds are unset. It is the config
+// counterpart to kernelTestDB.
+func kernelTestDBWith(t *testing.T, extra ...ConnOption) *sql.DB {
+	t.Helper()
+	host := os.Getenv("DATABRICKS_HOST")
+	httpPath := os.Getenv("DATABRICKS_HTTP_PATH")
+	token := os.Getenv("DATABRICKS_TOKEN")
+	if host == "" || httpPath == "" || token == "" {
+		t.Skip("set DATABRICKS_HOST / DATABRICKS_HTTP_PATH / DATABRICKS_TOKEN for the kernel e2e")
+	}
+	opts := append([]ConnOption{
+		WithServerHostname(host),
+		WithHTTPPath(httpPath),
+		WithAccessToken(token),
+		WithUseKernel(true),
+	}, extra...)
+	connector, err := NewConnector(opts...)
+	if err != nil {
+		t.Fatalf("NewConnector: %v", err)
+	}
+	return sql.OpenDB(connector)
+}
+
+// TestKernelE2EQueryTags proves session confs reach the server: WithQueryTags
+// (the same option the Thrift path uses) is routed to the kernel and read back
+// via SET, which echoes each tag by key.
+func TestKernelE2EQueryTags(t *testing.T) {
+	db := kernelTestDBWith(t, WithQueryTags(map[string]string{"team": "peco"}))
+	defer db.Close()
+
+	var key, val string
+	if err := db.QueryRowContext(context.Background(), "SET query_tags").Scan(&key, &val); err != nil {
+		t.Fatalf("SET query_tags: %v", err)
+	}
+	if key != "team" || val != "peco" {
+		t.Errorf("query tag read back as %q=%q, want team=peco", key, val)
+	}
+}
+
+// TestKernelE2EStatementTimeout proves a STATEMENT_TIMEOUT session param (via
+// WithSessionParams) is applied on the kernel session and read back via SET.
+func TestKernelE2EStatementTimeout(t *testing.T) {
+	db := kernelTestDBWith(t, WithSessionParams(map[string]string{"STATEMENT_TIMEOUT": "300"}))
+	defer db.Close()
+
+	var key, val string
+	if err := db.QueryRowContext(context.Background(), "SET statement_timeout").Scan(&key, &val); err != nil {
+		t.Fatalf("SET statement_timeout: %v", err)
+	}
+	if val != "300" {
+		t.Errorf("statement_timeout read back as %q, want 300", val)
+	}
+}
+
+// TestKernelE2ETLSSkipVerify checks that WithSkipTLSHostVerify (a relaxation
+// knob) is accepted on the kernel path; the connection must still succeed
+// against the warehouse's valid certificate.
+func TestKernelE2ETLSSkipVerify(t *testing.T) {
+	db := kernelTestDBWith(t, WithSkipTLSHostVerify())
+	defer db.Close()
+
+	var got int64
+	if err := db.QueryRowContext(context.Background(), "SELECT 1").Scan(&got); err != nil {
+		t.Fatalf("query with TLS skip-verify: %v", err)
+	}
+	if got != 1 {
+		t.Errorf("SELECT 1 = %d, want 1", got)
+	}
+}
+
 // TestKernelE2EDataTypes scans each supported scalar type in its own subtest, so
 // a failure names the exact type rather than being masked by others in a shared
 // row. Each case selects a single value and compares the scanned result. NULL is
