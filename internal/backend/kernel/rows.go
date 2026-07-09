@@ -162,13 +162,15 @@ func (r *kernelRows) nextBatch() error {
 	return nil
 }
 
-// scanCell extracts one cell as a driver.Value. It handles the scalar types:
+// scanCell extracts one cell as a driver.Value. Scalars map to their Go value:
 // bool, all int/uint widths, float, string, binary, date, timestamp, and
 // top-level decimal (as an exact fixed-point string, matching the Thrift path —
 // a float64 would lose precision beyond ~17 digits; see databricks-sql-go#274).
-// NULLs map to nil. An unsupported type (nested List/Map/Struct, Variant,
-// Geometry, interval/duration) returns an error rather than a silently wrong
-// value.
+// Nested types (List/Map/Struct, and VARIANT which arrives nested) render to a
+// JSON string byte-identical to the Thrift path (see scan_nested.go); GEOMETRY
+// arrives as a WKB/WKT string and is handled by the string arm. NULLs map to
+// nil. A genuinely unhandled type (e.g. interval/duration) returns an error
+// rather than a silently wrong value.
 func scanCell(col arrow.Array, row int) (driver.Value, error) {
 	if col.IsNull(row) {
 		return nil, nil
@@ -217,8 +219,12 @@ func scanCell(col arrow.Array, row int) (driver.Value, error) {
 	case *array.Decimal128:
 		dt := col.DataType().(*arrow.Decimal128Type)
 		return decimal128ToExactString(c.Value(row), dt.Scale), nil
+	case *array.List, *array.LargeList, *array.FixedSizeList, *array.Map, *array.Struct:
+		// Nested types (and VARIANT, which arrives as a nested value) render to a
+		// JSON string matching the Thrift path.
+		return renderJSONString(col, row)
 	default:
 		return nil, fmt.Errorf("kernel: scanning arrow type %s is not supported "+
-			"(nested types, variant, geometry, and intervals are not yet handled)", col.DataType())
+			"(intervals are not yet handled)", col.DataType())
 	}
 }

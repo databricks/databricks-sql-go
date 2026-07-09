@@ -77,6 +77,13 @@ func TestKernelE2EDataTypes(t *testing.T) {
 		{"date", "CAST('2026-07-09' AS DATE)", time.Date(2026, time.July, 9, 0, 0, 0, 0, time.UTC)},
 		{"timestamp", "CAST('2026-07-09 12:34:56' AS TIMESTAMP)", time.Date(2026, time.July, 9, 12, 34, 56, 0, time.UTC)},
 		{"null", "CAST(NULL AS STRING)", nil},
+		// Nested types render to a JSON string; VARIANT arrives nested, GEOMETRY
+		// as a WKT/WKB string.
+		{"array", "array(1, 2, 3)", "[1,2,3]"},
+		{"map", "map('k', 9)", `{"k":9}`},
+		{"struct", "named_struct('a', 1, 'b', 'x')", `{"a":1,"b":"x"}`},
+		{"variant", `parse_json('{"a":1,"b":[2,3]}')`, `{"a":1,"b":[2,3]}`},
+		{"geometry", "st_point(1, 2)", "POINT(1 2)"},
 	}
 
 	for _, c := range cases {

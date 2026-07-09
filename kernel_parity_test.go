@@ -36,7 +36,9 @@ func thriftTestDB(t *testing.T) *sql.DB {
 // equivalently.
 func TestKernelThriftParity(t *testing.T) {
 	const query = "SELECT CAST(7 AS BIGINT), CAST(2.5 AS DOUBLE), 'parity', " +
-		"CAST(NULL AS STRING), CAST(9.99 AS DECIMAL(5,2)), true"
+		"CAST(NULL AS STRING), CAST(9.99 AS DECIMAL(5,2)), true, " +
+		"array(1, 2, 3), map('k', 9), named_struct('a', 1, 'b', 'x'), " +
+		`parse_json('{"a":1,"b":[2,3]}'), st_point(1, 2)`
 
 	kernelDB := kernelTestDB(t)
 	defer kernelDB.Close()

@@ -122,15 +122,95 @@ func TestScanCellScalars(t *testing.T) {
 	})
 
 	t.Run("unsupported_type_errors", func(t *testing.T) {
-		// A List is unsupported: must error, not return a wrong value.
-		b := array.NewListBuilder(pool, arrow.PrimitiveTypes.Int64)
+		// A duration (INTERVAL) is not yet handled: must error, not return a
+		// wrong value.
+		b := array.NewDurationBuilder(pool, &arrow.DurationType{Unit: arrow.Microsecond})
 		defer b.Release()
-		b.Append(true)
-		b.ValueBuilder().(*array.Int64Builder).Append(1)
+		b.Append(1000)
 		arr := b.NewArray()
 		defer arr.Release()
 		if _, err := scanCell(arr, 0); err == nil {
-			t.Error("scanning a List should return an unsupported-type error")
+			t.Error("scanning a Duration should return an unsupported-type error")
+		}
+	})
+}
+
+// scanCell renders nested types (list/struct/map) to a JSON string matching the
+// Thrift path.
+func TestScanCellNested(t *testing.T) {
+	pool := memory.NewGoAllocator()
+
+	t.Run("list", func(t *testing.T) {
+		b := array.NewListBuilder(pool, arrow.PrimitiveTypes.Int64)
+		defer b.Release()
+		vb := b.ValueBuilder().(*array.Int64Builder)
+		b.Append(true)
+		vb.Append(1)
+		vb.Append(2)
+		vb.Append(3)
+		arr := b.NewArray()
+		defer arr.Release()
+		v, err := scanCell(arr, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if v.(string) != "[1,2,3]" {
+			t.Errorf("got %q, want [1,2,3]", v)
+		}
+	})
+
+	t.Run("struct", func(t *testing.T) {
+		dt := arrow.StructOf(
+			arrow.Field{Name: "a", Type: arrow.PrimitiveTypes.Int64},
+			arrow.Field{Name: "b", Type: arrow.BinaryTypes.String},
+		)
+		b := array.NewStructBuilder(pool, dt)
+		defer b.Release()
+		b.Append(true)
+		b.FieldBuilder(0).(*array.Int64Builder).Append(1)
+		b.FieldBuilder(1).(*array.StringBuilder).Append("x")
+		arr := b.NewArray()
+		defer arr.Release()
+		v, err := scanCell(arr, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if v.(string) != `{"a":1,"b":"x"}` {
+			t.Errorf("got %q, want {\"a\":1,\"b\":\"x\"}", v)
+		}
+	})
+
+	t.Run("map", func(t *testing.T) {
+		b := array.NewMapBuilder(pool, arrow.BinaryTypes.String, arrow.PrimitiveTypes.Int64, false)
+		defer b.Release()
+		kb := b.KeyBuilder().(*array.StringBuilder)
+		ib := b.ItemBuilder().(*array.Int64Builder)
+		b.Append(true)
+		kb.Append("k")
+		ib.Append(9)
+		arr := b.NewArray()
+		defer arr.Release()
+		v, err := scanCell(arr, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if v.(string) != `{"k":9}` {
+			t.Errorf("got %q, want {\"k\":9}", v)
+		}
+	})
+
+	t.Run("nested_null", func(t *testing.T) {
+		b := array.NewListBuilder(pool, arrow.PrimitiveTypes.Int64)
+		defer b.Release()
+		b.AppendNull()
+		arr := b.NewArray()
+		defer arr.Release()
+		v, err := scanCell(arr, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if v != nil {
+			t.Errorf("null list should scan to nil, got %v", v)
 		}
 	})
 }
