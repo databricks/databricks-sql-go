@@ -17,6 +17,7 @@ import (
 	"database/sql/driver"
 	"fmt"
 	"io"
+	"time"
 	"unsafe"
 
 	"github.com/apache/arrow/go/v12/arrow"
@@ -115,7 +116,7 @@ func (r *kernelRows) Next(dest []driver.Value) error {
 	}
 	rec := r.cur
 	for c := 0; c < len(dest); c++ {
-		v, err := scanCell(rec.Column(c), r.rowInCur)
+		v, err := scanCell(rec.Column(c), r.rowInCur, r.op.location)
 		if err != nil {
 			return fmt.Errorf("kernel: scan col %d (%s): %w", c, r.cols[c], err)
 		}
@@ -171,7 +172,7 @@ func (r *kernelRows) nextBatch() error {
 // arrives as a WKB/WKT string and is handled by the string arm. NULLs map to
 // nil. A genuinely unhandled type (e.g. interval/duration) returns an error
 // rather than a silently wrong value.
-func scanCell(col arrow.Array, row int) (driver.Value, error) {
+func scanCell(col arrow.Array, row int, loc *time.Location) (driver.Value, error) {
 	if col.IsNull(row) {
 		return nil, nil
 	}
@@ -207,24 +208,33 @@ func scanCell(col arrow.Array, row int) (driver.Value, error) {
 	case *array.Binary:
 		return c.Value(row), nil
 	case *array.Date32:
-		return c.Value(row).ToTime(), nil
+		return inLocation(c.Value(row).ToTime(), loc), nil
 	case *array.Date64:
-		return c.Value(row).ToTime(), nil
+		return inLocation(c.Value(row).ToTime(), loc), nil
 	case *array.Timestamp:
 		dt, ok := col.DataType().(*arrow.TimestampType)
 		if !ok {
 			return nil, fmt.Errorf("timestamp column has unexpected datatype %s", col.DataType())
 		}
-		return c.Value(row).ToTime(dt.Unit), nil
+		return inLocation(c.Value(row).ToTime(dt.Unit), loc), nil
 	case *array.Decimal128:
 		dt := col.DataType().(*arrow.Decimal128Type)
 		return decimal128ToExactString(c.Value(row), dt.Scale), nil
 	case *array.List, *array.LargeList, *array.FixedSizeList, *array.Map, *array.Struct:
 		// Nested types (and VARIANT, which arrives as a nested value) render to a
 		// JSON string matching the Thrift path.
-		return renderJSONString(col, row)
+		return renderJSONString(col, row, loc)
 	default:
 		return nil, fmt.Errorf("kernel: scanning arrow type %s is not supported "+
 			"(intervals are not yet handled)", col.DataType())
 	}
+}
+
+// inLocation renders t in loc, matching the Thrift path's .In(location); a nil
+// loc leaves the value in UTC (arrow's ToTime default).
+func inLocation(t time.Time, loc *time.Location) time.Time {
+	if loc == nil {
+		return t
+	}
+	return t.In(loc)
 }

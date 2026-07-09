@@ -108,7 +108,7 @@ func (k *KernelBackend) execute(ctx context.Context, req backend.ExecRequest) (b
 		C.kernel_statement_canceller_free(canceller)
 	}
 
-	op := &kernelOp{stmt: stmt}
+	op := &kernelOp{stmt: stmt, location: k.cfg.Location}
 	if execErr != nil {
 		// Prefer the caller's ctx error when the ctx was cancelled (database/sql
 		// convention), keeping the kernel error as the cause.
@@ -131,6 +131,9 @@ type kernelOp struct {
 	stmt   *C.kernel_statement_t
 	exec   *C.kernel_executed_statement_t
 	closed bool
+	// location renders DATE / TIMESTAMP values in the session time zone, matching
+	// the Thrift path; nil means UTC. Carried onto the rows built by Results.
+	location *time.Location
 }
 
 var _ backend.Operation = (*kernelOp)(nil)
@@ -158,6 +161,10 @@ func (o *kernelOp) Results(ctx context.Context, callbacks *dbsqlrows.TelemetryCa
 	if err := call(func() C.KernelStatusCode {
 		return C.kernel_executed_statement_get_result_stream(o.exec, &stream)
 	}); err != nil {
+		// No Rows is returned to own teardown, and the query path does not call
+		// Operation.Close on a Results error — so close the handles here to avoid
+		// leaking the statement / executed handle (and its server operation).
+		o.close()
 		return nil, fmt.Errorf("kernel: get_result_stream: %w", toDriverError(err))
 	}
 	return newKernelRows(ctx, o, stream, callbacks)

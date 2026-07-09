@@ -11,6 +11,7 @@ import "C"
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/databricks/databricks-sql-go/internal/backend"
 )
@@ -38,6 +39,10 @@ type Config struct {
 	// is applied during resolution). Empty leaves the kernel on a direct
 	// connection.
 	ProxyURL string
+
+	// Location is the session time zone used to render DATE / TIMESTAMP values,
+	// matching the Thrift path which returns them in this location. nil means UTC.
+	Location *time.Location
 }
 
 // KernelBackend implements backend.Backend over the kernel C ABI. One backend

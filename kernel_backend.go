@@ -4,6 +4,7 @@ package dbsql
 
 import (
 	"context"
+	"errors"
 	"net/http"
 
 	"github.com/databricks/databricks-sql-go/internal/backend"
@@ -17,14 +18,32 @@ import (
 // connection config, so the user-facing options are unchanged — only the routing
 // differs. The public API adds nothing beyond WithUseKernel.
 func newKernelBackend(_ context.Context, cfg *config.Config) (backend.Backend, error) {
+	// A few options aren't wired for the kernel backend yet. Fail loudly rather
+	// than silently ignore them (which would behave differently than Thrift):
+	//   - Catalog/Schema (WithInitialNamespace): no kernel C-ABI setter yet, so
+	//     the session would run in the default namespace and unqualified names
+	//     would resolve differently.
+	//   - EnableMetricViewMetadata: deferred — it maps to a server session conf,
+	//     which we want to route backend-neutrally rather than duplicate here.
+	if cfg.Catalog != "" || cfg.Schema != "" {
+		return nil, errors.New("databricks: WithInitialNamespace (catalog/schema) is not yet supported by the kernel backend; " +
+			"omit it or use the default (Thrift) backend")
+	}
+	if cfg.EnableMetricViewMetadata {
+		return nil, errors.New("databricks: WithEnableMetricViewMetadata is not yet supported by the kernel backend; " +
+			"omit it or use the default (Thrift) backend")
+	}
+
 	kc := kernel.Config{
 		Host:        cfg.Host,
 		HTTPPath:    cfg.HTTPPath,
 		WarehouseID: cfg.WarehouseID,
 		Token:       cfg.AccessToken,
-		// Session confs (STATEMENT_TIMEOUT, QUERY_TAGS, TIMEZONE, …) are the same
-		// map the Thrift backend forwards; SPOG org routing rides in HTTPPath's ?o=
-		// and is parsed kernel-side, matching Thrift's URL-based routing.
+		Location:    cfg.Location,
+		// Session confs (STATEMENT_TIMEOUT, QUERY_TAGS, TIMEZONE, …) — the same
+		// SessionParams map the Thrift backend forwards, so they flow to the
+		// server identically with no per-backend translation. SPOG org routing
+		// rides in HTTPPath's ?o= and is parsed kernel-side.
 		SessionConf: cfg.SessionParams,
 	}
 	// TLS: the driver honors TLSConfig only for InsecureSkipVerify (see

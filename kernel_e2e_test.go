@@ -106,6 +106,24 @@ func TestKernelE2EStatementTimeout(t *testing.T) {
 	}
 }
 
+// TestKernelE2ETimeZone proves the session time zone (WithSessionParams
+// timezone) is applied to scanned TIMESTAMP values, matching the Thrift path —
+// the returned time.Time carries the configured location, not UTC.
+func TestKernelE2ETimeZone(t *testing.T) {
+	const tz = "America/New_York"
+	db := kernelTestDBWith(t, WithSessionParams(map[string]string{"timezone": tz}))
+	defer db.Close()
+
+	var ts time.Time
+	if err := db.QueryRowContext(context.Background(),
+		"SELECT CAST('2026-07-09 12:00:00' AS TIMESTAMP)").Scan(&ts); err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if ts.Location().String() != tz {
+		t.Errorf("timestamp location = %q, want %q", ts.Location(), tz)
+	}
+}
+
 // TestKernelE2ETLSSkipVerify checks that WithSkipTLSHostVerify (a relaxation
 // knob) is accepted on the kernel path; the connection must still succeed
 // against the warehouse's valid certificate.

@@ -33,38 +33,40 @@ import (
 	"github.com/apache/arrow/go/v12/arrow/array"
 )
 
-// renderJSONString renders one nested cell as a JSON string (nil for a NULL cell).
-func renderJSONString(col arrow.Array, row int) (driver.Value, error) {
+// renderJSONString renders one nested cell as a JSON string (nil for a NULL
+// cell). loc is applied to any timestamp/date leaves, matching the top-level
+// scan and the Thrift path.
+func renderJSONString(col arrow.Array, row int, loc *time.Location) (driver.Value, error) {
 	if col.IsNull(row) {
 		return nil, nil
 	}
 	var b strings.Builder
-	if err := writeJSON(&b, col, row); err != nil {
+	if err := writeJSON(&b, col, row, loc); err != nil {
 		return nil, err
 	}
 	return b.String(), nil
 }
 
 // writeJSON writes the JSON form of col[row] into b, recursing for nested types.
-func writeJSON(b *strings.Builder, col arrow.Array, row int) error {
+func writeJSON(b *strings.Builder, col arrow.Array, row int, loc *time.Location) error {
 	if col.IsNull(row) {
 		b.WriteString("null")
 		return nil
 	}
 	switch c := col.(type) {
 	case *array.List:
-		return writeListJSON(b, c.ListValues(), int(c.Offsets()[row]), int(c.Offsets()[row+1]))
+		return writeListJSON(b, c.ListValues(), int(c.Offsets()[row]), int(c.Offsets()[row+1]), loc)
 	case *array.LargeList:
-		return writeListJSON(b, c.ListValues(), int(c.Offsets()[row]), int(c.Offsets()[row+1]))
+		return writeListJSON(b, c.ListValues(), int(c.Offsets()[row]), int(c.Offsets()[row+1]), loc)
 	case *array.FixedSizeList:
 		n := int(c.DataType().(*arrow.FixedSizeListType).Len())
-		return writeListJSON(b, c.ListValues(), row*n, row*n+n)
+		return writeListJSON(b, c.ListValues(), row*n, row*n+n, loc)
 	case *array.Map:
-		return writeMapJSON(b, c, row)
+		return writeMapJSON(b, c, row, loc)
 	case *array.Struct:
-		return writeStructJSON(b, c, row)
+		return writeStructJSON(b, c, row, loc)
 	default:
-		v, err := scalarForJSON(col, row)
+		v, err := scalarForJSON(col, row, loc)
 		if err != nil {
 			return err
 		}
@@ -72,13 +74,13 @@ func writeJSON(b *strings.Builder, col arrow.Array, row int) error {
 	}
 }
 
-func writeListJSON(b *strings.Builder, values arrow.Array, start, end int) error {
+func writeListJSON(b *strings.Builder, values arrow.Array, start, end int, loc *time.Location) error {
 	b.WriteByte('[')
 	for i := start; i < end; i++ {
 		if i > start {
 			b.WriteByte(',')
 		}
-		if err := writeJSON(b, values, i); err != nil {
+		if err := writeJSON(b, values, i, loc); err != nil {
 			return err
 		}
 	}
@@ -86,7 +88,7 @@ func writeListJSON(b *strings.Builder, values arrow.Array, start, end int) error
 	return nil
 }
 
-func writeMapJSON(b *strings.Builder, m *array.Map, row int) error {
+func writeMapJSON(b *strings.Builder, m *array.Map, row int, loc *time.Location) error {
 	start, end := int(m.Offsets()[row]), int(m.Offsets()[row+1])
 	keys := m.Keys()
 	items := m.Items()
@@ -96,13 +98,13 @@ func writeMapJSON(b *strings.Builder, m *array.Map, row int) error {
 			b.WriteByte(',')
 		}
 		// JSON object keys must be strings; stringify the key value.
-		kv, err := scalarForJSON(keys, i)
+		kv, err := scalarForJSON(keys, i, loc)
 		if err != nil {
 			return err
 		}
 		writeJSONKey(b, kv)
 		b.WriteByte(':')
-		if err := writeJSON(b, items, i); err != nil {
+		if err := writeJSON(b, items, i, loc); err != nil {
 			return err
 		}
 	}
@@ -110,7 +112,7 @@ func writeMapJSON(b *strings.Builder, m *array.Map, row int) error {
 	return nil
 }
 
-func writeStructJSON(b *strings.Builder, s *array.Struct, row int) error {
+func writeStructJSON(b *strings.Builder, s *array.Struct, row int, loc *time.Location) error {
 	st := s.DataType().(*arrow.StructType)
 	b.WriteByte('{')
 	for f := 0; f < s.NumField(); f++ {
@@ -120,7 +122,7 @@ func writeStructJSON(b *strings.Builder, s *array.Struct, row int) error {
 		keyBytes, _ := json.Marshal(st.Field(f).Name)
 		b.Write(keyBytes)
 		b.WriteByte(':')
-		if err := writeJSON(b, s.Field(f), row); err != nil {
+		if err := writeJSON(b, s.Field(f), row, loc); err != nil {
 			return err
 		}
 	}
@@ -165,7 +167,7 @@ func writeScalarJSON(b *strings.Builder, v any) error {
 // from scanCell in one way: a nested decimal renders as float64 (lossy), matching
 // the Thrift path's in-JSON decimal rendering (#274); the exact-string decimal
 // applies only to a top-level decimal column.
-func scalarForJSON(col arrow.Array, row int) (any, error) {
+func scalarForJSON(col arrow.Array, row int, loc *time.Location) (any, error) {
 	if col.IsNull(row) {
 		return nil, nil
 	}
@@ -178,6 +180,6 @@ func scalarForJSON(col arrow.Array, row int) (any, error) {
 		return c.Value(row).ToFloat64(dt.Scale), nil
 	default:
 		// Reuse scanCell's scalar arm for every non-nested, non-decimal leaf.
-		return scanCell(col, row)
+		return scanCell(col, row, loc)
 	}
 }

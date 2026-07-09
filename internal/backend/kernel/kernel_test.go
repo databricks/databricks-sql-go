@@ -6,6 +6,7 @@ import (
 	"database/sql/driver"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/apache/arrow/go/v12/arrow"
 	"github.com/apache/arrow/go/v12/arrow/array"
@@ -65,7 +66,7 @@ func TestScanCellScalars(t *testing.T) {
 		b.Append(42)
 		arr := b.NewArray()
 		defer arr.Release()
-		v, err := scanCell(arr, 0)
+		v, err := scanCell(arr, 0, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -80,7 +81,7 @@ func TestScanCellScalars(t *testing.T) {
 		b.Append("hi")
 		arr := b.NewArray()
 		defer arr.Release()
-		v, err := scanCell(arr, 0)
+		v, err := scanCell(arr, 0, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -95,7 +96,7 @@ func TestScanCellScalars(t *testing.T) {
 		b.AppendNull()
 		arr := b.NewArray()
 		defer arr.Release()
-		v, err := scanCell(arr, 0)
+		v, err := scanCell(arr, 0, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -112,7 +113,7 @@ func TestScanCellScalars(t *testing.T) {
 		b.Append(decimal128.FromU64(12345))
 		arr := b.NewArray()
 		defer arr.Release()
-		v, err := scanCell(arr, 0)
+		v, err := scanCell(arr, 0, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -129,8 +130,50 @@ func TestScanCellScalars(t *testing.T) {
 		b.Append(1000)
 		arr := b.NewArray()
 		defer arr.Release()
-		if _, err := scanCell(arr, 0); err == nil {
+		if _, err := scanCell(arr, 0, nil); err == nil {
 			t.Error("scanning a Duration should return an unsupported-type error")
+		}
+	})
+}
+
+// scanCell renders DATE / TIMESTAMP in the requested location, matching the
+// Thrift path's .In(location); a nil location leaves the value in UTC.
+func TestScanCellTimestampLocation(t *testing.T) {
+	pool := memory.NewGoAllocator()
+	loc, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Skipf("tz database unavailable: %v", err)
+	}
+
+	// 2026-07-09T12:00:00Z as microseconds since epoch.
+	utcTS := time.Date(2026, time.July, 9, 12, 0, 0, 0, time.UTC)
+	b := array.NewTimestampBuilder(pool, &arrow.TimestampType{Unit: arrow.Microsecond})
+	defer b.Release()
+	b.Append(arrow.Timestamp(utcTS.UnixMicro()))
+	arr := b.NewArray()
+	defer arr.Release()
+
+	t.Run("location applied", func(t *testing.T) {
+		v, err := scanCell(arr, 0, loc)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := v.(time.Time)
+		if got.Location() != loc {
+			t.Errorf("location = %v, want %v", got.Location(), loc)
+		}
+		if !got.Equal(utcTS) {
+			t.Errorf("instant changed: got %v, want %v", got, utcTS)
+		}
+	})
+
+	t.Run("nil location is UTC", func(t *testing.T) {
+		v, err := scanCell(arr, 0, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if v.(time.Time).Location() != time.UTC {
+			t.Errorf("nil location should render UTC, got %v", v.(time.Time).Location())
 		}
 	})
 }
@@ -150,7 +193,7 @@ func TestScanCellNested(t *testing.T) {
 		vb.Append(3)
 		arr := b.NewArray()
 		defer arr.Release()
-		v, err := scanCell(arr, 0)
+		v, err := scanCell(arr, 0, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -171,7 +214,7 @@ func TestScanCellNested(t *testing.T) {
 		b.FieldBuilder(1).(*array.StringBuilder).Append("x")
 		arr := b.NewArray()
 		defer arr.Release()
-		v, err := scanCell(arr, 0)
+		v, err := scanCell(arr, 0, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -190,7 +233,7 @@ func TestScanCellNested(t *testing.T) {
 		ib.Append(9)
 		arr := b.NewArray()
 		defer arr.Release()
-		v, err := scanCell(arr, 0)
+		v, err := scanCell(arr, 0, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -205,7 +248,7 @@ func TestScanCellNested(t *testing.T) {
 		b.AppendNull()
 		arr := b.NewArray()
 		defer arr.Release()
-		v, err := scanCell(arr, 0)
+		v, err := scanCell(arr, 0, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
