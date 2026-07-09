@@ -15,6 +15,7 @@ import (
 	"github.com/databricks/databricks-sql-go/auth/pat"
 	"github.com/databricks/databricks-sql-go/auth/tokenprovider"
 	"github.com/databricks/databricks-sql-go/driverctx"
+	"github.com/databricks/databricks-sql-go/internal/backend"
 	"github.com/databricks/databricks-sql-go/internal/backend/thrift"
 	"github.com/databricks/databricks-sql-go/internal/client"
 	"github.com/databricks/databricks-sql-go/internal/config"
@@ -32,9 +33,18 @@ type connector struct {
 func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 	defer debuglog.Track(ctx, "connector.Connect", "host=%s", c.cfg.Host)()
 
-	// Build the execution backend. Currently always the Thrift backend; a second
-	// SEA-via-kernel backend will be selected here by a connect-time flag.
-	be, err := thrift.New(ctx, c.cfg, c.client)
+	// Build the execution backend. Thrift is the default; the SEA-via-kernel
+	// backend is selected when UseKernel is set. newKernelBackend is build-tag
+	// gated: in the default pure-Go build it returns a clear "not linked in"
+	// error, so the kernel path compiles and links only under -tags
+	// databricks_kernel + CGO_ENABLED=1.
+	var be backend.Backend
+	var err error
+	if c.cfg.UseKernel {
+		be, err = newKernelBackend(ctx, c.cfg)
+	} else {
+		be, err = thrift.New(ctx, c.cfg, c.client)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -77,7 +87,14 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 		conn.telemetry.RecordOperation(ctx, conn.id, "", telemetry.OperationTypeCreateSession, sessionLatencyMs, nil)
 	}
 
-	log.Info().Msgf("connect: host=%s port=%d httpPath=%s serverProtocolVersion=0x%X", c.cfg.Host, c.cfg.Port, c.cfg.HTTPPath, be.ServerProtocolVersion())
+	// ServerProtocolVersion is Thrift-specific (not on the neutral backend
+	// interface); the kernel backend has no negotiated Thrift protocol, so log it
+	// only when present.
+	if tb, ok := be.(*thrift.Backend); ok {
+		log.Info().Msgf("connect: host=%s port=%d httpPath=%s serverProtocolVersion=0x%X", c.cfg.Host, c.cfg.Port, c.cfg.HTTPPath, tb.ServerProtocolVersion())
+	} else {
+		log.Info().Msgf("connect: host=%s port=%d httpPath=%s backend=kernel", c.cfg.Host, c.cfg.Port, c.cfg.HTTPPath)
+	}
 
 	return conn, nil
 }
@@ -298,6 +315,26 @@ func WithHTTPPath(path string) ConnOption {
 			path = "/" + path
 		}
 		c.HTTPPath = path
+	}
+}
+
+// WithUseKernel selects the SEA-via-kernel backend instead of the default
+// Thrift backend. It has effect only in a build compiled with
+// `-tags databricks_kernel` and CGO_ENABLED=1; in the default pure-Go build a
+// connection made with this option set returns a clear error at connect time
+// (the kernel backend is not linked in).
+func WithUseKernel(useKernel bool) ConnOption {
+	return func(c *config.Config) {
+		c.UseKernel = useKernel
+	}
+}
+
+// WithWarehouseID sets the bare SQL warehouse id. The kernel backend addresses a
+// warehouse by id; when set it is preferred over the http path. The Thrift
+// backend ignores it and continues to route by http path.
+func WithWarehouseID(id string) ConnOption {
+	return func(c *config.Config) {
+		c.WarehouseID = id
 	}
 }
 

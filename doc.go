@@ -155,6 +155,42 @@ The result log may look like this:
 
 	{"level":"debug","connId":"01ed6545-5669-1ec7-8c7e-6d8a1ea0ab16","corrId":"workflow-example","queryId":"01ed6545-57cc-188a-bfc5-d9c0eaf8e189","time":1668558402,"message":"Run Main elapsed time: 1.298712292s"}
 
+# SEA-via-kernel backend (experimental)
+
+By default the driver uses the Thrift/HiveServer2 backend and is pure Go
+(CGO_ENABLED=0, go-gettable, cross-compilable). An experimental second backend
+runs statements over the Statement Execution API via the Rust
+databricks-sql-kernel, reached through a cgo C ABI. It is opt-in and compiled in
+only under a build tag, so the default build is unchanged.
+
+To use it, build with the databricks_kernel tag and CGO enabled, and select it
+per connection with WithUseKernel:
+
+	CGO_ENABLED=1 go build -tags databricks_kernel ./...
+
+	connector, _ := dbsql.NewConnector(
+		dbsql.WithServerHostname(host),
+		dbsql.WithHTTPPath(httpPath),
+		dbsql.WithAccessToken(token),
+		dbsql.WithUseKernel(true),
+	)
+	db := sql.OpenDB(connector)
+
+In a build without the tag, WithUseKernel(true) returns a clear error at connect
+time rather than silently using Thrift.
+
+To see the kernel's own logs interleaved with the driver's, enable both on the
+same stderr. The kernel filters on the target databricks::sql::kernel (note the
+colons — it is not the crate module path), and the driver's step tracer is
+enabled by the standard logging level:
+
+	RUST_LOG=databricks::sql::kernel=debug DATABRICKS_LOG_LEVEL=debug ./your_app 2>&1
+
+The kernel backend currently supports PAT authentication and reading
+scalar-typed results (CloudFetch is handled transparently), with context
+cancellation. Bound parameters, nested and complex types, and other
+authentication and transport options are not yet supported on this backend.
+
 # Programmatically Retrieving Connection and Query Id
 
 Use the driverctx package under driverctx/ctx.go to add callbacks to the query context to receive the connection id and query id.

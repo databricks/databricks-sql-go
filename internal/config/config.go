@@ -125,6 +125,13 @@ type UserConfig struct {
 	// See databricks/databricks-sql-go#274.
 	UseArrowNativeDecimalDSN bool
 	CloudFetchConfig
+	// UseKernel selects the SEA-via-kernel backend instead of Thrift. See the
+	// WithUseKernel connector option for the build requirements. DSN: useKernel=true.
+	UseKernel bool
+	// WarehouseID is the bare SQL warehouse id, used by the kernel backend (which
+	// addresses a warehouse by id) in preference to HTTPPath. The Thrift backend
+	// ignores it and routes by HTTPPath. DSN: warehouseId=<id>.
+	WarehouseID string
 }
 
 // DeepCopy returns a true deep copy of UserConfig
@@ -171,6 +178,8 @@ func (ucfg UserConfig) DeepCopy() UserConfig {
 		EnableTelemetry:          ucfg.EnableTelemetry,
 		TelemetryBatchSize:       ucfg.TelemetryBatchSize,
 		TelemetryFlushInterval:   ucfg.TelemetryFlushInterval,
+		UseKernel:                ucfg.UseKernel,
+		WarehouseID:              ucfg.WarehouseID,
 	}
 }
 
@@ -318,6 +327,17 @@ func ParseDSN(dsn string) (UserConfig, error) {
 			return UserConfig{}, err
 		}
 		ucfg.UseArrowNativeDecimalDSN = useArrowNativeDecimal
+	}
+
+	// Kernel backend parameters
+	if useKernel, ok, err := params.extractAsBool("useKernel"); ok {
+		if err != nil {
+			return UserConfig{}, err
+		}
+		ucfg.UseKernel = useKernel
+	}
+	if warehouseID, ok := params.extract("warehouseId"); ok {
+		ucfg.WarehouseID = warehouseID
 	}
 
 	// Telemetry parameters
