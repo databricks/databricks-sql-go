@@ -7,6 +7,7 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"errors"
 	"os"
 	"testing"
 	"time"
@@ -259,8 +260,17 @@ func TestKernelE2ECancellation(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected a cancellation error, got nil")
 	}
-	if elapsed > 30*time.Second {
-		t.Errorf("cancellation took %v; expected it to abandon well before the query's natural runtime", elapsed)
+	// It must be the deadline firing, not an unrelated failure (syntax error,
+	// transient network, server-side timeout) — otherwise the test would pass
+	// without proving cancellation works.
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("expected context.DeadlineExceeded, got %v", err)
+	}
+	// Well under the query's natural runtime and not far past the 3s deadline;
+	// a no-op cancel that only returned when the query finished would blow past
+	// this.
+	if elapsed > 10*time.Second {
+		t.Errorf("cancellation took %v; expected it to abandon close to the 3s deadline", elapsed)
 	}
 	t.Logf("cancelled after %v with err=%v", elapsed, err)
 }

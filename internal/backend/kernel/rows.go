@@ -23,6 +23,7 @@ import (
 	"github.com/apache/arrow/go/v12/arrow"
 	"github.com/apache/arrow/go/v12/arrow/array"
 	"github.com/apache/arrow/go/v12/arrow/cdata"
+	"github.com/databricks/databricks-sql-go/internal/decimalfmt"
 	dbsqlrows "github.com/databricks/databricks-sql-go/internal/rows"
 )
 
@@ -42,11 +43,12 @@ type kernelRows struct {
 	stream    *C.kernel_result_stream_t
 	callbacks *dbsqlrows.TelemetryCallbacks
 
-	cols     []string
-	cur      arrow.Record // current batch (nil until first Next)
-	rowInCur int          // next row index within cur
-	closed   bool
-	eof      bool
+	cols       []string
+	cur        arrow.Record // current batch (nil until first Next)
+	rowInCur   int          // next row index within cur
+	chunkCount int          // cumulative batches fetched, for OnChunkFetched
+	closed     bool
+	eof        bool
 }
 
 // newKernelRows fetches the schema up front (for Columns()) and returns the row
@@ -129,6 +131,15 @@ func (r *kernelRows) Next(dest []driver.Value) error {
 // nextBatch pulls the next Arrow batch. A released array (release==NULL) is the
 // kernel's end-of-stream sentinel.
 func (r *kernelRows) nextBatch() error {
+	// Fail fast if the caller's context is already done rather than entering the
+	// blocking C fetch (which cannot itself observe ctx). database/sql also runs
+	// its own watcher that calls Rows.Close on cancellation, so an in-flight fetch
+	// is still torn down; this just avoids starting a new one under a dead ctx.
+	if r.ctx != nil {
+		if err := r.ctx.Err(); err != nil {
+			return err
+		}
+	}
 	if r.cur != nil {
 		r.cur.Release()
 		r.cur = nil
@@ -156,10 +167,16 @@ func (r *kernelRows) nextBatch() error {
 	}
 	r.cur = rec
 	r.rowInCur = 0
+	r.chunkCount++
 	if r.callbacks != nil && r.callbacks.OnChunkFetched != nil {
-		r.callbacks.OnChunkFetched(1, 0, 0, 0, 0)
+		// chunkCount is cumulative (per the callback contract). bytesDownloaded,
+		// chunkIndex, and latency are left 0: the kernel does CloudFetch/decompress
+		// internally and hands back ready Arrow batches, so the Go side never sees
+		// the compressed wire bytes or per-chunk fetch latency the Thrift path
+		// reports — a fabricated number would be worse than a truthful zero.
+		r.callbacks.OnChunkFetched(r.chunkCount, 0, 0, 0, 0)
 	}
-	klog("nextBatch: %d rows", rec.NumRows())
+	klog("nextBatch: %d rows (chunk %d)", rec.NumRows(), r.chunkCount)
 	return nil
 }
 
@@ -219,7 +236,7 @@ func scanCell(col arrow.Array, row int, loc *time.Location) (driver.Value, error
 		return inLocation(c.Value(row).ToTime(dt.Unit), loc), nil
 	case *array.Decimal128:
 		dt := col.DataType().(*arrow.Decimal128Type)
-		return decimal128ToExactString(c.Value(row), dt.Scale), nil
+		return decimalfmt.ExactString(c.Value(row), dt.Scale), nil
 	case *array.List, *array.LargeList, *array.FixedSizeList, *array.Map, *array.Struct:
 		// Nested types (and VARIANT, which arrives as a nested value) render to a
 		// JSON string matching the Thrift path.

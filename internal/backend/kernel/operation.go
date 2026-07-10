@@ -29,9 +29,12 @@ import (
 //  5. drain the watcher before returning, so a late cancel cannot land on a
 //     statement that reuses this handle
 //
-// Executes SQL text only; req.Params (bound parameters) are not yet wired.
+// Executes SQL text only; bound parameters are rejected up front by Execute.
 func (k *KernelBackend) execute(ctx context.Context, req backend.ExecRequest) (backend.Operation, error) {
-	klog("Execute sql=%q", truncate(req.Query, 120))
+	// Log the SQL length, not the text: query bodies can carry PII/secrets in
+	// WHERE/INSERT/SET, and this goes to stderr. Matches the driver's own
+	// debuglog convention (conn.ExecContext logs sql.len=%d).
+	klog("Execute sql.len=%d", len(req.Query))
 
 	var stmt *C.kernel_statement_t
 	if err := call(func() C.KernelStatusCode {
@@ -131,7 +134,10 @@ func (k *KernelBackend) execute(ctx context.Context, req backend.ExecRequest) (b
 		return op, fmt.Errorf("kernel: execute: %w", toDriverError(execErr))
 	}
 	op.exec = exec
-	klog("Execute OK stmt=%p exec=%p", stmt, exec)
+	// Capture the modified-row count now, while exec is live — the operation is
+	// closed (nulling exec) before AffectedRows is read on the ExecContext path.
+	op.affectedRows = int64(C.kernel_executed_statement_num_modified_rows(exec))
+	klog("Execute OK stmt=%p exec=%p affectedRows=%d", stmt, exec, op.affectedRows)
 	return op, nil
 }
 
@@ -140,6 +146,10 @@ type kernelOp struct {
 	stmt   *C.kernel_statement_t
 	exec   *C.kernel_executed_statement_t
 	closed bool
+	// affectedRows is the modified-row count captured at execute time. It is
+	// cached (not read live from exec) because the caller closes the operation —
+	// which nulls exec — before reading AffectedRows (see conn.ExecContext).
+	affectedRows int64
 	// location renders DATE / TIMESTAMP values in the session time zone, matching
 	// the Thrift path; nil means UTC. Carried onto the rows built by Results.
 	location *time.Location
@@ -152,12 +162,11 @@ var _ backend.Operation = (*kernelOp)(nil)
 // session id.
 func (o *kernelOp) StatementID() string { return "" }
 
-// AffectedRows is the modified-row count for ExecContext.
+// AffectedRows is the modified-row count for ExecContext. It returns the value
+// cached at execute time, so it is correct even after the operation is closed
+// (the ExecContext path closes the op before reading this).
 func (o *kernelOp) AffectedRows() int64 {
-	if o.exec == nil {
-		return 0
-	}
-	return int64(C.kernel_executed_statement_num_modified_rows(o.exec))
+	return o.affectedRows
 }
 
 // Results builds the driver.Rows over the executed statement's result stream.
@@ -216,11 +225,4 @@ func (o *kernelOp) close() bool {
 // (nil when cause is nil), matching the neutral contract.
 func (o *kernelOp) ExecutionError(ctx context.Context, cause error) error {
 	return toDriverError(cause)
-}
-
-func truncate(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n] + "…"
 }

@@ -245,8 +245,7 @@ func TestScanCellNested(t *testing.T) {
 	t.Run("nested_decimal_exact", func(t *testing.T) {
 		// A decimal inside a struct must render as an exact JSON number, not a
 		// lossy float64 (19.99, not 19.990000000000002) — matching Thrift's
-		// marshalScalar. Regression guard for a bug the POC missed by only testing
-		// float64-exact values.
+		// marshalScalar.
 		dt := arrow.StructOf(arrow.Field{Name: "d", Type: &arrow.Decimal128Type{Precision: 5, Scale: 2}})
 		b := array.NewStructBuilder(pool, dt)
 		defer b.Release()
@@ -260,6 +259,26 @@ func TestScanCellNested(t *testing.T) {
 		}
 		if v.(string) != `{"d":19.99}` {
 			t.Errorf("got %q, want {\"d\":19.99}", v)
+		}
+	})
+
+	t.Run("nested_float32_exact", func(t *testing.T) {
+		// A float32 inside a struct must marshal as the native float32 (3.14), not
+		// a widened float64 (3.140000104904175) — matching Thrift's nested path,
+		// which marshals the native float32. See databricks-sql-go#393 review M2.
+		dt := arrow.StructOf(arrow.Field{Name: "f", Type: arrow.PrimitiveTypes.Float32})
+		b := array.NewStructBuilder(pool, dt)
+		defer b.Release()
+		b.Append(true)
+		b.FieldBuilder(0).(*array.Float32Builder).Append(3.14)
+		arr := b.NewArray()
+		defer arr.Release()
+		v, err := scanCell(arr, 0, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if v.(string) != `{"f":3.14}` {
+			t.Errorf("got %q, want {\"f\":3.14}", v)
 		}
 	})
 
@@ -279,24 +298,8 @@ func TestScanCellNested(t *testing.T) {
 	})
 }
 
-// decimal128ToExactString applies scale by string placement, preserving digits a
-// float64 would lose.
-func TestDecimal128ToExactString(t *testing.T) {
-	cases := []struct {
-		unscaled uint64
-		scale    int32
-		want     string
-	}{
-		{12345, 2, "123.45"},
-		{5, 3, "0.005"},
-		{100, 0, "100"},
-	}
-	for _, c := range cases {
-		got := decimal128ToExactString(decimal128.FromU64(c.unscaled), c.scale)
-		if got != c.want {
-			t.Errorf("unscaled=%d scale=%d: got %q want %q", c.unscaled, c.scale, got, c.want)
-		}
-	}
-}
+// The exact decimal formatter now lives in internal/decimalfmt (shared with the
+// Thrift path); its unit test is decimalfmt.TestExactString. The nested/scalar
+// tests above still assert the kernel path renders decimals exactly.
 
 var _ driver.Value // keep database/sql/driver imported for the scanCell signature

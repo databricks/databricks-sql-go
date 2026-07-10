@@ -39,6 +39,7 @@ import (
 	"unsafe"
 
 	dbsqlerrint "github.com/databricks/databricks-sql-go/internal/errors"
+	"github.com/databricks/databricks-sql-go/logger"
 )
 
 // ─── Debug logging ───────────────────────────────────────────────────────────
@@ -141,6 +142,12 @@ func lastError(code C.KernelStatusCode) *KernelError {
 	}
 	klog("kernel error: code=%d sqlstate=%q vendor=%d http=%d retryable=%v msg=%q",
 		ke.Code, ke.SQLState, ke.VendorCode, ke.HTTPStatus, ke.Retryable, ke.Message)
+	// Also emit at the driver's default (Warn) level — no SQL text or PII, just
+	// the status/sqlstate/http fields — so a kernel-path failure is visible
+	// without DBSQL_KERNEL_DEBUG. This is the error path only (never the hot
+	// per-row/per-batch path), so it does not perturb benchmarks.
+	logger.Logger.Warn().Msgf("databricks: kernel call failed: code=%d sqlstate=%q vendor=%d http=%d retryable=%v",
+		ke.Code, ke.SQLState, ke.VendorCode, ke.HTTPStatus, ke.Retryable)
 	return ke
 }
 

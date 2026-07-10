@@ -12,8 +12,8 @@ package kernel
 //   - struct      → {"field0":v0,...}
 //   - nested NULL → null
 //   - time.Time   → quoted .String()  (matches the Thrift marshal() special-case)
-//   - nested decimal → float64 (lossy, matching Thrift's in-JSON rendering; the
-//     exact-string path applies only to top-level decimal columns, #274)
+//   - nested decimal → exact scale-applied JSON number literal (never a lossy
+//     float64), matching Thrift's marshalScalar → ValueString (#253/#274)
 //
 // VARIANT arrives as a nested value and renders through this path; GEOMETRY
 // arrives as a WKB/WKT string and is handled by scanCell's scalar arm.
@@ -27,11 +27,34 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/apache/arrow/go/v12/arrow"
 	"github.com/apache/arrow/go/v12/arrow/array"
+	"github.com/databricks/databricks-sql-go/internal/decimalfmt"
 )
+
+// structKeyPrefixCache memoizes the JSON-escaped, quote-wrapped, colon-terminated
+// key prefixes for each struct type (e.g. `"field":`). Field names are invariant
+// across rows, but writeStructJSON runs per row; arrow reuses the same
+// *arrow.StructType pointer for a column across its rows, so this is a hit after
+// the first row. Keyed by that pointer; safe for concurrent Rows via sync.Map.
+var structKeyPrefixCache sync.Map // map[*arrow.StructType][]string
+
+func structKeyPrefixes(st *arrow.StructType) []string {
+	if v, ok := structKeyPrefixCache.Load(st); ok {
+		return v.([]string)
+	}
+	fields := st.Fields()
+	prefixes := make([]string, len(fields))
+	for f := range fields {
+		name, _ := json.Marshal(fields[f].Name) // JSON-escapes the field name
+		prefixes[f] = string(name) + ":"
+	}
+	structKeyPrefixCache.Store(st, prefixes)
+	return prefixes
+}
 
 // renderJSONString renders one nested cell as a JSON string (nil for a NULL
 // cell). loc is applied to any timestamp/date leaves, matching the top-level
@@ -70,8 +93,14 @@ func writeJSON(b *strings.Builder, col arrow.Array, row int, loc *time.Location)
 		// float64 — a float64 would render DECIMAL(5,2) 19.99 as 19.990000000000002
 		// and corrupt high-precision values. Matches the Thrift path's marshalScalar
 		// → ValueString (databricks-sql-go#253/#274).
-		b.WriteString(decimal128ToExactString(c.Value(row), col.DataType().(*arrow.Decimal128Type).Scale))
+		b.WriteString(decimalfmt.ExactString(c.Value(row), col.DataType().(*arrow.Decimal128Type).Scale))
 		return nil
+	case *array.Float32:
+		// Marshal the native float32, NOT a widened float64: json.Marshal(float32
+		// (3.14)) is "3.14" but json.Marshal(float64(float32(3.14))) is
+		// "3.140000104904175". The Thrift nested path marshals the native float32,
+		// so widening here would break byte-parity for ARRAY/MAP/STRUCT<…FLOAT…>.
+		return writeScalarJSON(b, c.Value(row))
 	default:
 		v, err := scalarForJSON(col, row, loc)
 		if err != nil {
@@ -120,15 +149,13 @@ func writeMapJSON(b *strings.Builder, m *array.Map, row int, loc *time.Location)
 }
 
 func writeStructJSON(b *strings.Builder, s *array.Struct, row int, loc *time.Location) error {
-	st := s.DataType().(*arrow.StructType)
+	prefixes := structKeyPrefixes(s.DataType().(*arrow.StructType))
 	b.WriteByte('{')
 	for f := 0; f < s.NumField(); f++ {
 		if f > 0 {
 			b.WriteByte(',')
 		}
-		keyBytes, _ := json.Marshal(st.Field(f).Name)
-		b.Write(keyBytes)
-		b.WriteByte(':')
+		b.WriteString(prefixes[f]) // pre-escaped `"name":`
 		if err := writeJSON(b, s.Field(f), row, loc); err != nil {
 			return err
 		}

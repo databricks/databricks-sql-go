@@ -586,6 +586,34 @@ func TestParseConfig(t *testing.T) {
 			wantCfg: UserConfig{},
 			wantErr: true,
 		},
+		{
+			name: "kernel backend params useKernel and warehouseId",
+			args: args{dsn: "token:supersecret@example.cloud.databricks.com:443/sql/1.0/endpoints/12346a5b5b0e123a?useKernel=true&warehouseId=abc123"},
+			wantCfg: UserConfig{
+				Protocol:         "https",
+				Host:             "example.cloud.databricks.com",
+				Port:             443,
+				MaxRows:          defaultMaxRows,
+				Authenticator:    &pat.PATAuth{AccessToken: "supersecret"},
+				AccessToken:      "supersecret",
+				HTTPPath:         "/sql/1.0/endpoints/12346a5b5b0e123a",
+				SessionParams:    make(map[string]string),
+				RetryMax:         4,
+				RetryWaitMin:     1 * time.Second,
+				RetryWaitMax:     30 * time.Second,
+				CloudFetchConfig: defCloudConfig,
+				UseKernel:        true,
+				WarehouseID:      "abc123",
+			},
+			wantURL: "https://example.cloud.databricks.com:443/sql/1.0/endpoints/12346a5b5b0e123a",
+			wantErr: false,
+		},
+		{
+			name:    "malformed useKernel is an error",
+			args:    args{dsn: "token:supersecret@example.cloud.databricks.com:443/sql/1.0/endpoints/12346a5b5b0e123a?useKernel=notabool"},
+			wantCfg: UserConfig{},
+			wantErr: true,
+		},
 	}
 	for i, tt := range tests {
 		fmt.Println(i)
@@ -649,6 +677,8 @@ func TestUserConfig_DeepCopy(t *testing.T) {
 			UserAgentEntry: "test",
 			Location:       location,
 			SessionParams:  map[string]string{"a": "32", "b": "4"},
+			UseKernel:      true,
+			WarehouseID:    "wh-abc123",
 		}
 
 		cfg_copy := cfg.DeepCopy()

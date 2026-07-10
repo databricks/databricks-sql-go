@@ -10,6 +10,7 @@ import "C"
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -72,6 +73,11 @@ func New(cfg Config) *KernelBackend {
 // time. The config handle is consumed by kernel_session_open on success and
 // freed by us on any earlier failure.
 func (k *KernelBackend) OpenSession(ctx context.Context) error {
+	// Fail fast on an already-cancelled context before the blocking kernel_session
+	// _open (which the C ABI does not let us interrupt mid-call).
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	initKernelLogging()
 	klog("OpenSession host=%s httpPath=%s warehouse=%s", k.cfg.Host, k.cfg.HTTPPath, k.cfg.WarehouseID)
 
@@ -209,5 +215,14 @@ func (k *KernelBackend) SessionID() string { return k.sessionID }
 // Per the Backend contract it returns a non-nil Operation even on error so the
 // caller can read StatementID / wrap the error / Close uniformly.
 func (k *KernelBackend) Execute(ctx context.Context, req backend.ExecRequest) (backend.Operation, error) {
+	// Bound parameters are not yet wired for the kernel backend. Reject them with
+	// a clear error rather than silently shipping the query with unbound
+	// placeholders (which would behave differently than Thrift). Parameters arrive
+	// per-query, so this is an execute-time error, not a connect-time one. Return a
+	// non-nil Operation per the Backend contract.
+	if len(req.Params) > 0 {
+		return &kernelOp{}, errors.New("databricks: query parameters are not yet supported by the kernel backend; " +
+			"inline the values or use the default (Thrift) backend")
+	}
 	return k.execute(ctx, req)
 }

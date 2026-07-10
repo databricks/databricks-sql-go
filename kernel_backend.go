@@ -7,6 +7,8 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/databricks/databricks-sql-go/auth/noop"
+	"github.com/databricks/databricks-sql-go/auth/pat"
 	"github.com/databricks/databricks-sql-go/internal/backend"
 	"github.com/databricks/databricks-sql-go/internal/backend/kernel"
 	"github.com/databricks/databricks-sql-go/internal/config"
@@ -32,6 +34,20 @@ func newKernelBackend(_ context.Context, cfg *config.Config) (backend.Backend, e
 	if cfg.EnableMetricViewMetadata {
 		return nil, errors.New("databricks: WithEnableMetricViewMetadata is not yet supported by the kernel backend; " +
 			"omit it or use the default (Thrift) backend")
+	}
+	// Auth: the kernel backend authenticates with a PAT only (kc.Token below).
+	// Any other authenticator — OAuth M2M/U2M, a token provider, external/static
+	// token, federated — sets cfg.Authenticator but leaves cfg.AccessToken empty,
+	// so an empty PAT would reach the kernel and fail with an opaque
+	// Unauthenticated error. Reject it here so the failure names the cause, per
+	// the doc.go contract. nil / NoopAuth / PATAuth are the PAT-or-none cases.
+	switch cfg.Authenticator.(type) {
+	case nil, *noop.NoopAuth, *pat.PATAuth:
+		// PAT (or no explicit authenticator) — supported.
+	default:
+		return nil, errors.New("databricks: only personal access token (WithAccessToken) auth is supported by the kernel backend; " +
+			"OAuth (M2M/U2M), token-provider, external/static, and federated authenticators are not yet supported — " +
+			"use PAT or the default (Thrift) backend")
 	}
 
 	kc := kernel.Config{
