@@ -40,6 +40,25 @@ linters:
     gosec:
       severity: low
       confidence: low
+    staticcheck:
+      # Keep golangci-lint's default staticcheck check set, minus QF1008.
+      # The leading "*" is the default set (SA bug-finding + curated checks,
+      # NOT the full ST/QF style suite). QF1008 is a stylistic quickfix
+      # ("could remove embedded field from selector"); we intentionally keep
+      # the explicit `c.ArrowConfig.Field` selector for readability —
+      # config.go documents that the setting "lives on ArrowConfig" and the
+      # field name deliberately differs from the DSN-level name.
+      checks:
+        # golangci-lint's default staticcheck set is `all` minus these ST
+        # style checks; we append -QF1008 to that default.
+        - all
+        - -ST1000
+        - -ST1003
+        - -ST1016
+        - -ST1020
+        - -ST1021
+        - -ST1022
+        - -QF1008
     nolintlint:
       allow-unused: true
 formatters:
