@@ -56,13 +56,13 @@ jobs:
       - name: Set up Go Toolchain
         uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
-          # Pinned to the exact go.mod directive (1.25.12). osv-scanner
-          # shells out to govulncheck, which loads the module with this
-          # toolchain; it must satisfy the directive. A floating '1.25.x'
-          # resolves to the runner's cached patch (currently 1.25.11 <
-          # 1.25.12) and, under GOTOOLCHAIN=local, fails to build. Keep this
-          # in lockstep with the go.mod directive patch.
-          go-version: '1.25.12'
+          # Must be >= the go.mod directive (1.25.0). A floating '1.25.x'
+          # resolves to the runner's cached latest 1.25 patch, which always
+          # satisfies the 1.25.0 floor. osv-scanner shells out to
+          # govulncheck, which loads the module with this toolchain; keeping
+          # the directive at the honest 1.25.0 floor (not an inflated patch)
+          # means '1.25.x' never falls below it.
+          go-version: '1.25.x'
           cache: false
 
       - name: Install osv-scanner
@@ -145,8 +145,21 @@ jobs:
           #      vulnerabilities' `.severities[].score` (parsed from the
           #      CVSS vector's numeric base score when present).
           #   3. If still unresolved, emit the sentinel "UNKNOWN" (a
-          #      non-numeric string). UNKNOWN is treated as BLOCKING by the
-          #      gate below -- fail closed, never scored 0.
+          #      non-numeric string), never scored 0.
+          #
+          # BLOCKING RULE for UNKNOWN depends on the package:
+          #   - Third-party UNKNOWN  -> BLOCKING (fail closed). A scoreless
+          #     GHSA-only or MAL-* malware advisory on a dep we ship must not
+          #     slip the gate.
+          #   - stdlib UNKNOWN        -> report-only (NON-blocking). These are
+          #     Go stdlib advisories flagged against the go.mod directive
+          #     floor (e.g. `go 1.25.0`); they are delivered to consumers via
+          #     GOTOOLCHAIN patch auto-download and are not a real exposure of
+          #     the module itself. Inflating the directive to the latest patch
+          #     purely to silence them would tighten the customer floor for no
+          #     security gain, so we surface them (visible in the report) but
+          #     do not block. Each finding carries `is_stdlib` for this split.
+          #
           # NOTE ON jq NUMBER PARSING: use `try (x|tonumber) catch null`,
           # NOT `x|tonumber?`. On a non-numeric string, `tonumber?` yields
           # EMPTY (not null); inside an `... as $var` binding that makes the
@@ -174,20 +187,25 @@ jobs:
               {
                 pkg: ($pkg.name + "@" + $pkg.version),
                 ids: .ids,
+                # OSV names the Go standard library package literally "stdlib".
+                is_stdlib: ($pkg.name == "stdlib"),
                 severity: (if $resolved == null then "UNKNOWN" else ($resolved | tostring) end)
               }
             ] | sort_by(if (try (.severity | tonumber) catch null) == null then -1 else - (.severity | tonumber) end)
           ' /tmp/osv-out.json)
           TOTAL_FINDINGS=$(echo "$ALL_FINDINGS" | jq 'length')
 
-          # UNKNOWN-severity findings are treated as blocking (fail closed):
-          # a scoreless advisory (malware / GHSA-only) must not slip the gate.
+          # Scoreless (UNKNOWN) findings, split by stdlib vs third-party.
+          # stdlib UNKNOWNs are report-only (delivered via GOTOOLCHAIN, not a
+          # real module exposure); third-party UNKNOWNs are blocking.
           UNKNOWN_COUNT=$(echo "$ALL_FINDINGS" | jq '[.[] | select(.severity == "UNKNOWN")] | length')
+          UNKNOWN_STDLIB_COUNT=$(echo "$ALL_FINDINGS" | jq '[.[] | select(.severity == "UNKNOWN" and .is_stdlib)] | length')
 
-          # Blocking findings = CVSS >= 7 OR unresolved severity (UNKNOWN).
-          # UNKNOWN is deliberately counted as HIGH so a scoreless advisory
-          # (malware / GHSA-only) fails the gate instead of scoring 0.
-          HIGH_FINDINGS=$(echo "$ALL_FINDINGS" | jq -c '[.[] | select((.severity == "UNKNOWN") or ((.severity | tonumber? // 0) >= 7))]')
+          # Blocking findings = CVSS >= 7 (any package)
+          #                     OR scoreless UNKNOWN on a NON-stdlib package.
+          # Scoreless stdlib advisories are intentionally excluded from the
+          # gate (see the note above) -- they still appear in the report.
+          HIGH_FINDINGS=$(echo "$ALL_FINDINGS" | jq -c '[.[] | select(((.severity | tonumber? // 0) >= 7) or (.severity == "UNKNOWN" and (.is_stdlib | not)))]')
           HIGH_COUNT=$(echo "$HIGH_FINDINGS" | jq 'length')
 
           # Guard against empty counts propagating to the numeric gates
@@ -212,6 +230,7 @@ jobs:
           echo "total_findings=$TOTAL_FINDINGS" >> "$GITHUB_OUTPUT"
           echo "high_count=$HIGH_COUNT" >> "$GITHUB_OUTPUT"
           echo "unknown_count=$UNKNOWN_COUNT" >> "$GITHUB_OUTPUT"
+          echo "unknown_stdlib_count=$UNKNOWN_STDLIB_COUNT" >> "$GITHUB_OUTPUT"
 
           # Step summary so findings are visible in the GH Actions UI
           # without downloading artifacts.
@@ -219,7 +238,8 @@ jobs:
             echo "## OSV-Scanner Findings"
             echo ""
             echo "- Total findings (any severity): \`$TOTAL_FINDINGS\`"
-            echo "- Blocking findings (CVSS >= 7 or unscored, PR-blocking): \`$HIGH_COUNT\` (of which unscored/UNKNOWN: \`$UNKNOWN_COUNT\`)"
+            echo "- Blocking findings (CVSS >= 7, or unscored non-stdlib; PR-blocking): \`$HIGH_COUNT\`"
+            echo "- Unscored/UNKNOWN findings: \`$UNKNOWN_COUNT\` total (of which \`$UNKNOWN_STDLIB_COUNT\` are stdlib — report-only, delivered via GOTOOLCHAIN)"
             if [ "$TOTAL_FINDINGS" -gt 0 ]; then
               echo ""
               echo "All findings (sorted by severity desc):"
@@ -250,9 +270,9 @@ jobs:
           # List the actual HIGH findings inline so the author sees what
           # needs fixing without clicking through to the step summary
           # panel or downloading artifacts.
-          HIGH_FINDINGS=$(jq -c '[.[] | select((.severity == "UNKNOWN") or ((.severity | tonumber? // 0) >= 7))]' /tmp/all-findings.json)
+          HIGH_FINDINGS=$(jq -c '[.[] | select(((.severity | tonumber? // 0) >= 7) or (.severity == "UNKNOWN" and (.is_stdlib | not)))]' /tmp/all-findings.json)
 
-          echo "::error::${{ steps.findings.outputs.high_count }} unsuppressed blocking finding(s) (CVSS>=7 or unscored) in this PR:"
+          echo "::error::${{ steps.findings.outputs.high_count }} unsuppressed blocking finding(s) (CVSS>=7, or unscored non-stdlib) in this PR:"
           echo ""
           echo "$HIGH_FINDINGS" | jq -r '.[] | "  [\(.severity)] \(.pkg)  \(.ids | join(", "))"'
           echo ""

@@ -27,12 +27,7 @@ jobs:
       - name: Set up Go Toolchain
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
-          # Pinned to the exact go.mod directive (1.25.12). The protected
-          # runners use GOTOOLCHAIN=local and their toolchain cache lags the
-          # latest patch, so a floating '1.25.x' resolves to an older cached
-          # patch (<1.25.12) and fails to satisfy the directive. Bump this in
-          # lockstep whenever the go.mod directive's patch is raised.
-          go-version: '1.25.12'
+          go-version: '1.25.x'
           cache: false
 
       - name: Lint
@@ -52,12 +47,8 @@ jobs:
       # As of 2026-05 that's 1.25 (Active LTS) and 1.26. The protected
       # runners pin GOTOOLCHAIN=local so we can't include 1.24 — Go would
       # refuse to satisfy the `go 1.25.0` directive without auto-downloading.
-      # 1.25 is pinned to the exact go.mod directive patch (1.25.12) because
-      # protected runners are GOTOOLCHAIN=local and their cache lags the
-      # latest patch; a floating '1.25.x' resolves below the directive and
-      # fails. 1.26.x stays floating (any 1.26 patch is >= the 1.25.12 floor).
       matrix:
-        go-version: ['1.25.12', '1.26.x']
+        go-version: ['1.25.x', '1.26.x']
     runs-on:
       group: databricks-protected-runner-group
       labels: linux-ubuntu-latest
