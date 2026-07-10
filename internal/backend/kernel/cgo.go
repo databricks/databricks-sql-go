@@ -30,6 +30,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"sync"
 	"unsafe"
 
 	dbsqlerrint "github.com/databricks/databricks-sql-go/internal/errors"
@@ -40,9 +41,9 @@ import (
 // Gated on DBSQL_KERNEL_DEBUG so it is OFF by default and, in particular, OFF
 // during benchmarks (debug logging perturbs latency). Every binding step logs
 // through klog when enabled — entry, status codes, handle addresses, batch
-// counts — which is what makes a failing e2e cheap to diagnose. The kernel's own
-// Rust logs are enabled separately via kernel_init_logging / RUST_LOG and
-// interleave on the same stderr.
+// counts — which is what makes a failing e2e cheap to diagnose. The same flag
+// also installs the kernel's own Rust (tracing) logs via initKernelLogging, so
+// binding and kernel logs interleave on stderr as one stream.
 var kdebug = os.Getenv("DBSQL_KERNEL_DEBUG") != ""
 
 func klog(format string, args ...any) {
@@ -55,6 +56,32 @@ func klog(format string, args ...any) {
 // KernelDebugEnabled reports whether binding-level debug logging is on. Tests
 // assert the flag wiring; benchmarks assert it is false before measuring.
 func KernelDebugEnabled() bool { return kdebug }
+
+// initLoggingOnce guards kernel_init_logging, which is process-wide and
+// first-call-wins in the kernel. We install the kernel subscriber lazily on the
+// first session open rather than in init(), so a process that never opens a
+// kernel session installs nothing.
+var initLoggingOnce sync.Once
+
+// initKernelLogging turns on the kernel's own Rust (tracing) logs, gated on the
+// same DBSQL_KERNEL_DEBUG flag as klog so both are OFF by default and, in
+// particular, OFF during benchmarks — the subscriber is never installed in a
+// benchmark run. level=NULL lets the kernel honor RUST_LOG (default warn);
+// file_path=NULL sends kernel logs to stderr so they interleave with klog on one
+// stream. Best-effort: Internal (e.g. the host already installed a global
+// subscriber) is a documented, benign outcome — logged, never fatal to connect.
+func initKernelLogging() {
+	if !kdebug {
+		return
+	}
+	initLoggingOnce.Do(func() {
+		if err := call(func() C.KernelStatusCode {
+			return C.kernel_init_logging(nil, nil)
+		}); err != nil {
+			klog("kernel_init_logging: %v (kernel logs unavailable; proceeding)", err)
+		}
+	})
+}
 
 // call runs a fallible kernel entry point and, on a non-Success status, reads
 // the kernel's thread-local last error into a Go error.
@@ -74,6 +101,19 @@ func call(fn func() C.KernelStatusCode) error {
 		return nil
 	}
 	return lastError(st)
+}
+
+// fireCancel dispatches a server-side cancel and reports whether the RPC was
+// actually sent. The kernel returns dispatched=false while no server statement
+// id has been observed yet (the F4 window before the execute POST returns), and
+// true once the cancel RPC goes out — which is the watcher's cue to stop
+// re-firing. Best-effort: a non-Success status is ignored (dispatched stays
+// false, so the watcher keeps retrying), matching the "proceed without cancel"
+// stance rather than surfacing a cancel-path error.
+func fireCancel(canceller *C.kernel_statement_canceller_t) bool {
+	var dispatched C.bool
+	C.kernel_statement_canceller_cancel(canceller, &dispatched)
+	return bool(dispatched)
 }
 
 // lastError reads the kernel's thread-local last error and copies its string

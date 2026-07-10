@@ -70,12 +70,18 @@ func New(cfg Config) *KernelBackend {
 // time. The config handle is consumed by kernel_session_open on success and
 // freed by us on any earlier failure.
 func (k *KernelBackend) OpenSession(ctx context.Context) error {
+	initKernelLogging()
 	klog("OpenSession host=%s httpPath=%s warehouse=%s", k.cfg.Host, k.cfg.HTTPPath, k.cfg.WarehouseID)
 
 	var cfg *C.KernelSessionConfig
 	if err := call(func() C.KernelStatusCode { return C.kernel_session_config_new(&cfg) }); err != nil {
 		return fmt.Errorf("kernel: config_new: %w", toDriverError(err))
 	}
+	// kernel_session_open consumes the config on EVERY path — success and
+	// failure alike (it reclaims the box up front). So we free the config
+	// ourselves only when we bail out BEFORE reaching kernel_session_open (a
+	// setter error below); once that call is made, ownership has transferred and
+	// a free here would double-free.
 	consumed := false
 	defer func() {
 		if !consumed {
@@ -151,11 +157,15 @@ func (k *KernelBackend) OpenSession(ctx context.Context) error {
 		}
 	}
 
+	// kernel_session_open takes ownership of cfg here, on both success and
+	// failure — mark consumed before checking the error so the deferred free
+	// never runs on the already-consumed config.
 	var sess *C.kernel_session_t
-	if err := call(func() C.KernelStatusCode { return C.kernel_session_open(cfg, &sess) }); err != nil {
+	err := call(func() C.KernelStatusCode { return C.kernel_session_open(cfg, &sess) })
+	consumed = true
+	if err != nil {
 		return fmt.Errorf("kernel: session_open: %w", toDriverError(err))
 	}
-	consumed = true // kernel_session_open took ownership of cfg
 	k.session = sess
 	k.valid = true
 	// The C ABI exposes no formatted session-id accessor; use the handle pointer

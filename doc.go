@@ -179,17 +179,26 @@ per connection with WithUseKernel:
 In a build without the tag, WithUseKernel(true) returns a clear error at connect
 time rather than silently using Thrift.
 
-To see the kernel's own logs interleaved with the driver's, enable both on the
-same stderr. The kernel filters on the target databricks::sql::kernel (note the
-colons — it is not the crate module path), and the driver's step tracer is
-enabled by the standard logging level:
+To see the kernel's own logs interleaved with the driver's, set DBSQL_KERNEL_DEBUG
+to any non-empty value. That single flag turns on the driver's binding step tracer
+AND installs the kernel's Rust log subscriber, so both write to the same stderr in
+execution order. It is off by default (and must stay off during benchmarks — debug
+logging perturbs latency). The kernel's verbosity is then controlled by RUST_LOG,
+which the kernel honors directly; filter on the target databricks::sql::kernel
+(note the colons — it is the kernel's explicit log target, NOT the crate module
+path databricks_sql_kernel, which would match nothing):
 
-	RUST_LOG=databricks::sql::kernel=debug DATABRICKS_LOG_LEVEL=debug ./your_app 2>&1
+	# kernel logs only:
+	DBSQL_KERNEL_DEBUG=1 RUST_LOG=databricks::sql::kernel=debug ./your_app 2>&1
+	# kernel logs plus its HTTP stack (hyper/reqwest):
+	DBSQL_KERNEL_DEBUG=1 RUST_LOG=debug ./your_app 2>&1
 
-The kernel backend currently supports PAT authentication and reading
-scalar-typed results (CloudFetch is handled transparently), with context
-cancellation. Bound parameters, nested and complex types, and other
-authentication and transport options are not yet supported on this backend.
+The kernel backend currently supports PAT authentication; reading scalar, nested,
+and complex-typed results (CloudFetch is handled transparently); context
+cancellation; and the TLS, proxy, and session-conf (query tags, statement timeout,
+time zone) connection options. Bound parameters, OAuth (M2M/U2M), metadata
+commands, and initial catalog/schema are not yet supported on this backend and
+return a clear error at connect time rather than being silently ignored.
 
 # Programmatically Retrieving Connection and Query Id
 

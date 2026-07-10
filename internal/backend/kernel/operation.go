@@ -65,8 +65,11 @@ func (k *KernelBackend) execute(ctx context.Context, req backend.ExecRequest) (b
 	// canceller). The server publishes the statement id to the canceller's
 	// inflight slot only when the initial POST returns — held up to the server's
 	// inline wait (~10s) even for a long query — so a cancel fired before that is
-	// a no-op. Re-fire every 250ms after ctx.Done until execute returns, so the
-	// cancel takes effect once the id appears, with no kernel change.
+	// a no-op. Re-fire every 250ms after ctx.Done until the kernel reports the
+	// cancel RPC was actually dispatched (dispatched=true, i.e. the id appeared
+	// and the RPC went out), then stop: one real cancel is enough, and further
+	// fires would only hammer the server. Falls back to firing until execute
+	// returns (done) if the RPC never dispatches.
 	done := make(chan struct{})
 	var watcherWg sync.WaitGroup
 	if canceller != nil && ctx.Done() != nil {
@@ -78,16 +81,22 @@ func (k *KernelBackend) execute(ctx context.Context, req backend.ExecRequest) (b
 			case <-done:
 				return
 			}
-			klog("ctx.Done (%v) → firing canceller (with retry)", ctx.Err())
+			klog("ctx.Done (%v) → firing canceller (with retry until dispatched)", ctx.Err())
 			ticker := time.NewTicker(250 * time.Millisecond)
 			defer ticker.Stop()
-			C.kernel_statement_canceller_cancel(canceller)
+			if fireCancel(canceller) {
+				klog("cancel dispatched on first fire")
+				return
+			}
 			for {
 				select {
 				case <-done:
 					return
 				case <-ticker.C:
-					C.kernel_statement_canceller_cancel(canceller)
+					if fireCancel(canceller) {
+						klog("cancel dispatched, watcher stopping")
+						return
+					}
 				}
 			}
 		}()
