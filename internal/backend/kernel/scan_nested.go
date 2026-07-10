@@ -27,34 +27,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/apache/arrow/go/v12/arrow"
 	"github.com/apache/arrow/go/v12/arrow/array"
 	"github.com/databricks/databricks-sql-go/internal/decimalfmt"
 )
-
-// structKeyPrefixCache memoizes the JSON-escaped, quote-wrapped, colon-terminated
-// key prefixes for each struct type (e.g. `"field":`). Field names are invariant
-// across rows, but writeStructJSON runs per row; arrow reuses the same
-// *arrow.StructType pointer for a column across its rows, so this is a hit after
-// the first row. Keyed by that pointer; safe for concurrent Rows via sync.Map.
-var structKeyPrefixCache sync.Map // map[*arrow.StructType][]string
-
-func structKeyPrefixes(st *arrow.StructType) []string {
-	if v, ok := structKeyPrefixCache.Load(st); ok {
-		return v.([]string)
-	}
-	fields := st.Fields()
-	prefixes := make([]string, len(fields))
-	for f := range fields {
-		name, _ := json.Marshal(fields[f].Name) // JSON-escapes the field name
-		prefixes[f] = string(name) + ":"
-	}
-	structKeyPrefixCache.Store(st, prefixes)
-	return prefixes
-}
 
 // renderJSONString renders one nested cell as a JSON string (nil for a NULL
 // cell). loc is applied to any timestamp/date leaves, matching the top-level
@@ -149,13 +127,20 @@ func writeMapJSON(b *strings.Builder, m *array.Map, row int, loc *time.Location)
 }
 
 func writeStructJSON(b *strings.Builder, s *array.Struct, row int, loc *time.Location) error {
-	prefixes := structKeyPrefixes(s.DataType().(*arrow.StructType))
+	st := s.DataType().(*arrow.StructType)
 	b.WriteByte('{')
 	for f := 0; f < s.NumField(); f++ {
 		if f > 0 {
 			b.WriteByte(',')
 		}
-		b.WriteString(prefixes[f]) // pre-escaped `"name":`
+		// Marshal the field name to JSON-escape it. Not memoized per struct type: a
+		// process-global cache keyed by *arrow.StructType leaks, because
+		// cdata.ImportCRecordBatch allocates a fresh *StructType every batch (no
+		// interning), so the key never repeats across batches. Recomputing here is
+		// cheap relative to the once-per-batch cgo crossing.
+		keyBytes, _ := json.Marshal(st.Field(f).Name)
+		b.Write(keyBytes)
+		b.WriteByte(':')
 		if err := writeJSON(b, s.Field(f), row, loc); err != nil {
 			return err
 		}
