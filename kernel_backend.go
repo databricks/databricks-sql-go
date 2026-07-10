@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/url"
 
 	"github.com/databricks/databricks-sql-go/auth/noop"
 	"github.com/databricks/databricks-sql-go/auth/pat"
@@ -81,6 +82,15 @@ func newKernelBackend(_ context.Context, cfg *config.Config) (backend.Backend, e
 // NO_PROXY excludes the host or no proxy is set. No extra dependency: this is the
 // stdlib function the driver already relies on.
 func proxyForEndpoint(cfg *config.Config) string {
+	return proxyForEndpointFunc(cfg, http.ProxyFromEnvironment)
+}
+
+// proxyForEndpointFunc is the testable core: it builds the endpoint request and
+// asks resolve for the proxy, returning "" (direct) on any error, no proxy, or an
+// unbuildable endpoint. resolve is http.ProxyFromEnvironment in production; tests
+// inject a deterministic resolver to exercise proxy-set / NO_PROXY / direct
+// without depending on http.ProxyFromEnvironment's process-wide env caching.
+func proxyForEndpointFunc(cfg *config.Config, resolve func(*http.Request) (*url.URL, error)) string {
 	endpoint, err := cfg.ToEndpointURL()
 	if err != nil {
 		return ""
@@ -89,7 +99,7 @@ func proxyForEndpoint(cfg *config.Config) string {
 	if err != nil {
 		return ""
 	}
-	proxyURL, err := http.ProxyFromEnvironment(req)
+	proxyURL, err := resolve(req)
 	if err != nil || proxyURL == nil {
 		return ""
 	}

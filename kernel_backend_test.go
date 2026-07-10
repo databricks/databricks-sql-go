@@ -4,6 +4,9 @@ package dbsql
 
 import (
 	"context"
+	"errors"
+	"net/http"
+	"net/url"
 	"testing"
 
 	"github.com/databricks/databricks-sql-go/internal/config"
@@ -55,26 +58,69 @@ func TestNewKernelBackendRejectsUnsupportedOptions(t *testing.T) {
 	})
 }
 
-// proxyForEndpoint returns a valid config's endpoint proxy without error. Its
-// value comes from http.ProxyFromEnvironment, which snapshots the proxy env once
-// per process (a sync.Once) — the same cached decision the Thrift transport
-// makes — so the resolved value can't be re-driven by setting env vars mid-test.
-// This asserts the invariant that matters here: a well-formed config never makes
-// the resolver error out (it returns "" for direct), and a malformed config
-// (missing host) is handled gracefully rather than panicking.
+// proxyForEndpointFunc maps the injected resolver's decision to a proxy URL
+// string (or "" for direct), and returns "" for an unbuildable endpoint. The
+// production path uses http.ProxyFromEnvironment, whose env is snapshotted once
+// per process (sync.Once) and so can't be re-driven mid-test; the resolver seam
+// lets us assert every branch deterministically. Each case mirrors an
+// httpproxy-style outcome: proxy set for this host, host excluded by NO_PROXY,
+// no proxy configured, and an unbuildable endpoint.
 func TestProxyForEndpoint(t *testing.T) {
-	valid := config.WithDefaults()
-	valid.Host = "my-workspace.databricks.com"
-	valid.Port = 443
-	valid.HTTPPath = "/sql/1.0/warehouses/abc"
-	// Must not panic; with no proxy env in the test environment this is "".
-	_ = proxyForEndpoint(valid)
-
-	// A config whose endpoint URL can't be built (no host) resolves to direct
-	// rather than erroring.
-	bad := config.WithDefaults()
-	bad.Host = ""
-	if got := proxyForEndpoint(bad); got != "" {
-		t.Errorf("unbuildable endpoint should resolve to direct, got %q", got)
+	validCfg := func() *config.Config {
+		c := config.WithDefaults()
+		c.Host = "my-workspace.databricks.com"
+		c.Port = 443
+		c.HTTPPath = "/sql/1.0/warehouses/abc"
+		return c
 	}
+	proxyURL, _ := url.Parse("http://corp-proxy:3128")
+
+	cases := []struct {
+		name    string
+		cfg     *config.Config
+		resolve func(*http.Request) (*url.URL, error)
+		want    string
+	}{
+		{
+			name:    "proxy set for host",
+			cfg:     validCfg(),
+			resolve: func(*http.Request) (*url.URL, error) { return proxyURL, nil },
+			want:    "http://corp-proxy:3128",
+		},
+		{
+			name:    "host excluded by NO_PROXY -> direct",
+			cfg:     validCfg(),
+			resolve: func(*http.Request) (*url.URL, error) { return nil, nil },
+			want:    "",
+		},
+		{
+			name:    "resolver error -> direct",
+			cfg:     validCfg(),
+			resolve: func(*http.Request) (*url.URL, error) { return nil, errors.New("bad proxy url") },
+			want:    "",
+		},
+		{
+			name: "unbuildable endpoint -> direct (resolver never consulted)",
+			cfg: func() *config.Config {
+				c := config.WithDefaults()
+				c.Host = ""
+				return c
+			}(),
+			resolve: func(*http.Request) (*url.URL, error) {
+				t.Error("resolver must not be called for an unbuildable endpoint")
+				return proxyURL, nil
+			},
+			want: "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := proxyForEndpointFunc(tc.cfg, tc.resolve); got != tc.want {
+				t.Errorf("proxyForEndpointFunc = %q, want %q", got, tc.want)
+			}
+		})
+	}
+
+	// The production wrapper wires http.ProxyFromEnvironment and must not panic.
+	_ = proxyForEndpoint(validCfg())
 }
