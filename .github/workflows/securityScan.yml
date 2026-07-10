@@ -56,7 +56,13 @@ jobs:
       - name: Set up Go Toolchain
         uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
-          go-version: '1.20.x'
+          # Must be >= the `go` directive in go.mod (bumped to 1.25.0 in
+          # #368). osv-scanner shells out to govulncheck, which loads the
+          # module with this toolchain; an older Go (e.g. 1.20) fails to
+          # parse a `go 1.25.0` directive ("must match format 1.23"),
+          # degrading the scan to unscored/UNKNOWN results that trip the
+          # fail-closed gate. Keep this in lockstep with the go.mod floor.
+          go-version: '1.25.x'
           cache: false
 
       - name: Install osv-scanner
