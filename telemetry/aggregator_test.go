@@ -27,7 +27,7 @@ func TestAggregatorClose_WaitsForInFlightWorkerExports(t *testing.T) {
 		body, _ := io.ReadAll(r.Body)
 		var req TelemetryRequest
 		if err := json.Unmarshal(body, &req); err == nil {
-			atomic.AddInt32(&receivedCount, int32(len(req.ProtoLogs)))
+			atomic.AddInt32(&receivedCount, int32(len(req.ProtoLogs))) //nolint:gosec
 		}
 		// Simulate slow server — forces the worker to be mid-HTTP-export when close() runs
 		time.Sleep(exportDelay)
@@ -138,7 +138,7 @@ func TestAggregatorFlushUnlocked_InFlightAddBeforeSend(t *testing.T) {
 		body, _ := io.ReadAll(r.Body)
 		var req TelemetryRequest
 		if err := json.Unmarshal(body, &req); err == nil {
-			atomic.AddInt32(&receivedCount, int32(len(req.ProtoLogs)))
+			atomic.AddInt32(&receivedCount, int32(len(req.ProtoLogs))) //nolint:gosec
 		}
 		time.Sleep(20 * time.Millisecond)
 		w.WriteHeader(http.StatusOK)
