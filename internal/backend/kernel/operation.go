@@ -208,6 +208,13 @@ func (o *kernelOp) close() bool {
 		return false
 	}
 	o.closed = true
+	// Report closed=true only when there was actually a handle to tear down. A
+	// handle-less op (e.g. the &kernelOp{} returned on the bound-params error
+	// path) reaches here via conn.ExecContext's unconditional Close; returning
+	// true would record a phantom CLOSE_STATEMENT for a statement that never hit
+	// the server. Matches the backend.Operation contract (closed=false when the
+	// operation had no handle) and the Thrift backend's !hasHandle() behavior.
+	didClose := o.exec != nil || o.stmt != nil
 	if o.exec != nil {
 		C.kernel_executed_statement_close(o.exec)
 		o.exec = nil
@@ -216,8 +223,8 @@ func (o *kernelOp) close() bool {
 		C.kernel_statement_close(o.stmt)
 		o.stmt = nil
 	}
-	klog("kernelOp closed")
-	return true
+	klog("kernelOp closed (didClose=%v)", didClose)
+	return didClose
 }
 
 // ExecutionError wraps cause as the driver's execution error. The kernel error

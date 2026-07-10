@@ -215,7 +215,11 @@ func scanCell(col arrow.Array, row int, loc *time.Location) (driver.Value, error
 	case *array.Uint64:
 		return int64(c.Value(row)), nil
 	case *array.Float32:
-		return float64(c.Value(row)), nil
+		// Return the native float32, NOT a widened float64: the Thrift path returns
+		// a float32 driver.Value for a bare FLOAT column, and database/sql's
+		// asString formats it at bit-size 32 — so widening here would render
+		// CAST(0.1 AS FLOAT) as "0.10000000149011612" vs Thrift's "0.1".
+		return c.Value(row), nil
 	case *array.Float64:
 		return c.Value(row), nil
 	case *array.String:

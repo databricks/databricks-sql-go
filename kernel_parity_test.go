@@ -37,6 +37,9 @@ func thriftTestDB(t *testing.T) *sql.DB {
 func TestKernelThriftParity(t *testing.T) {
 	const query = "SELECT CAST(7 AS BIGINT), CAST(2.5 AS DOUBLE), 'parity', " +
 		"CAST(NULL AS STRING), CAST(9.99 AS DECIMAL(5,2)), true, " +
+		// A bare FLOAT at a non-exactly-representable value: catches the
+		// float32-vs-widened-float64 divergence (0.1 vs 0.10000000149011612).
+		"CAST(0.1 AS FLOAT), " +
 		"array(1, 2, 3), map('k', 9), named_struct('a', 1, 'b', 'x'), " +
 		`parse_json('{"a":1,"b":[2,3]}'), st_point(1, 2), ` +
 		// A decimal inside a struct: exercises exact-string nested-decimal

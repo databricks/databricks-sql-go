@@ -3,6 +3,7 @@
 package kernel
 
 import (
+	"context"
 	"database/sql/driver"
 	"errors"
 	"testing"
@@ -12,6 +13,8 @@ import (
 	"github.com/apache/arrow/go/v12/arrow/array"
 	"github.com/apache/arrow/go/v12/arrow/decimal128"
 	"github.com/apache/arrow/go/v12/arrow/memory"
+
+	"github.com/databricks/databricks-sql-go/internal/backend"
 )
 
 // isBadConnection maps the session-unusable status codes so the pool evicts the
@@ -87,6 +90,28 @@ func TestScanCellScalars(t *testing.T) {
 		}
 		if v.(string) != "hi" {
 			t.Errorf("got %v", v)
+		}
+	})
+
+	t.Run("float32_native", func(t *testing.T) {
+		// A top-level FLOAT column must scan to a native float32, not a widened
+		// float64 — matching Thrift, so database/sql's asString renders
+		// CAST(0.1 AS FLOAT) as "0.1", not "0.10000000149011612".
+		b := array.NewFloat32Builder(pool)
+		defer b.Release()
+		b.Append(0.1)
+		arr := b.NewArray()
+		defer arr.Release()
+		v, err := scanCell(arr, 0, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, ok := v.(float32)
+		if !ok {
+			t.Fatalf("want float32, got %T", v)
+		}
+		if got != float32(0.1) {
+			t.Errorf("got %v, want 0.1", got)
 		}
 	})
 
@@ -296,6 +321,35 @@ func TestScanCellNested(t *testing.T) {
 			t.Errorf("null list should scan to nil, got %v", v)
 		}
 	})
+}
+
+// Bound parameters are rejected up front by Execute with a clear error, before
+// any session/C work — so this runs on a zero-value backend. The returned
+// Operation must be non-nil (Backend contract) and its Close must report
+// closed=false, since no server statement was ever created (a phantom
+// CLOSE_STATEMENT would otherwise be recorded for it).
+func TestExecuteRejectsParams(t *testing.T) {
+	k := &KernelBackend{}
+	op, err := k.Execute(context.Background(), backend.ExecRequest{
+		Query:  "SELECT ?",
+		Params: []backend.Param{{Name: "x"}},
+	})
+	if err == nil {
+		t.Fatal("expected an error for bound parameters, got nil")
+	}
+	if op == nil {
+		t.Fatal("Execute must return a non-nil Operation per the Backend contract")
+	}
+	closed, closeErr := op.Close(context.Background())
+	if closeErr != nil {
+		t.Errorf("Close error = %v, want nil", closeErr)
+	}
+	if closed {
+		t.Error("Close on a handle-less op must report closed=false (no CLOSE_STATEMENT)")
+	}
+	if got := op.AffectedRows(); got != 0 {
+		t.Errorf("AffectedRows on a handle-less op = %d, want 0", got)
+	}
 }
 
 // The exact decimal formatter now lives in internal/decimalfmt (shared with the

@@ -144,7 +144,10 @@ func TestKernelE2EDataTypes(t *testing.T) {
 		{"smallint", "CAST(3 AS SMALLINT)", int64(3)},
 		{"tinyint", "CAST(1 AS TINYINT)", int64(1)},
 		{"double", "CAST(3.5 AS DOUBLE)", float64(3.5)},
-		{"float", "CAST(1.5 AS FLOAT)", float64(1.5)},
+		// 0.1 is NOT exactly representable, so a float32-vs-float64 mismatch would
+		// surface here (float64(float32(0.1)) != float32(0.1)); a bare FLOAT must
+		// scan to a native float32, matching Thrift.
+		{"float", "CAST(0.1 AS FLOAT)", float32(0.1)},
 		{"boolean", "true", true},
 		{"string", "'hi'", "hi"},
 		{"binary", "CAST('abc' AS BINARY)", []byte("abc")},
