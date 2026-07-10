@@ -157,9 +157,13 @@ type kernelOp struct {
 
 var _ backend.Operation = (*kernelOp)(nil)
 
-// StatementID returns "": the C ABI exposes no server statement id accessor. The
-// id is used only for logging/telemetry correlation, which falls back to the
-// session id.
+// StatementID returns "": the kernel C ABI exposes no success-path statement/query
+// id accessor (only the error path carries a query_id, on KernelError). Because
+// conn.ExecContext/QueryContext gate per-statement telemetry on
+// StatementID() != "", kernel queries currently emit no EXECUTE_STATEMENT metric
+// and their query-id log field is empty — there is no session-id fallback on that
+// gate. Surfacing an id needs a kernel accessor (e.g.
+// kernel_executed_statement_query_id); tracked as a follow-up.
 func (o *kernelOp) StatementID() string { return "" }
 
 // AffectedRows is the modified-row count for ExecContext. It returns the value

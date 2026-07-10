@@ -131,10 +131,14 @@ func (r *kernelRows) Next(dest []driver.Value) error {
 // nextBatch pulls the next Arrow batch. A released array (release==NULL) is the
 // kernel's end-of-stream sentinel.
 func (r *kernelRows) nextBatch() error {
-	// Fail fast if the caller's context is already done rather than entering the
-	// blocking C fetch (which cannot itself observe ctx). database/sql also runs
-	// its own watcher that calls Rows.Close on cancellation, so an in-flight fetch
-	// is still torn down; this just avoids starting a new one under a dead ctx.
+	// Honor cancellation at batch boundaries: check ctx before entering the
+	// blocking C fetch (which cannot itself observe ctx). This does NOT interrupt
+	// a fetch already in flight — and database/sql's own cancel watcher can't
+	// either: its Rows.Close takes rs.closemu.Lock(), which blocks until the
+	// in-progress Next (holding the RLock) returns, so the stream close waits for
+	// the C call to finish on its own. A single hung CloudFetch batch is therefore
+	// uninterruptible (the kernel exposes no per-download timeout); mid-fetch
+	// cancellation would need the execute path's watcher/canceller applied here.
 	if r.ctx != nil {
 		if err := r.ctx.Err(); err != nil {
 			return err
