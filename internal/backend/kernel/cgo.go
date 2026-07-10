@@ -11,16 +11,21 @@
 // the error mapping to the driver's error surface, and the gated step logger.
 // The backend, operation, and rows layers live in sibling files.
 //
-// The link directives below point at a locally built kernel
-// (~/oss/databricks-sql-kernel/target/release + include), so this package builds
-// only on a machine with that checkout. A shippable build instead links a
-// committed per-platform prebuilt static lib via a ${SRCDIR}-relative path (the
-// go-duckdb duckdb-go-bindings model); see cabi-distribution-references.md.
+// The directives below name the kernel library to link but carry no search
+// paths, so the header and static lib locations are supplied at build time via
+// the standard CGO_CFLAGS / CGO_LDFLAGS environment variables, e.g.:
+//
+//	CGO_CFLAGS="-I<kernel>/include" \
+//	CGO_LDFLAGS="-L<kernel>/target/release -Wl,-rpath,<kernel>/target/release" \
+//	go build -tags databricks_kernel ./...
+//
+// A shippable build instead links a committed per-platform prebuilt static lib
+// via a ${SRCDIR}-relative path (the go-duckdb duckdb-go-bindings model); wiring
+// that + a tagged CI job is a distribution follow-up.
 package kernel
 
 /*
-#cgo CFLAGS: -I/home/mani.mathur/oss/databricks-sql-kernel/include
-#cgo LDFLAGS: -L/home/mani.mathur/oss/databricks-sql-kernel/target/release -ldatabricks_sql_kernel -Wl,-rpath,/home/mani.mathur/oss/databricks-sql-kernel/target/release -ldl -lm
+#cgo LDFLAGS: -ldatabricks_sql_kernel -ldl -lm
 #include <stdlib.h>
 #include "databricks_kernel.h"
 */
