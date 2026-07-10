@@ -96,8 +96,7 @@ jobs:
       # kernel static library linked in CI, which arrives with the kernel
       # distribution work (a pinned-revision source build or a published .a) — see
       # the #393 follow-ups. Until then the kernel path's cgo files are not
-      # exercised here; the pure-Go decimal formatter it shares
-      # (internal/decimalfmt) IS covered by this matrix via its own untagged test.
+      # exercised here.
       - name: Test
         run: make test
         env:
