@@ -300,7 +300,9 @@ func InitThriftClient(cfg *config.Config, httpclient *http.Client) (*ThriftServi
 		return nil, dbsqlerrint.NewRequestError(context.TODO(), fmt.Sprintf("invalid protocol specified %s", cfg.ThriftProtocol), nil)
 	}
 	if cfg.ThriftDebugClientProtocol {
-		protocolFactory = thrift.NewTDebugProtocolFactoryWithLogger(protocolFactory, "client:", thrift.StdLogger(nil))
+		// thrift.StdLogger is deprecated as of v0.13 (no-op since), but is still the documented
+		// argument type for NewTDebugProtocolFactoryWithLogger; passing nil is the upstream pattern.
+		protocolFactory = thrift.NewTDebugProtocolFactoryWithLogger(protocolFactory, "client:", thrift.StdLogger(nil)) //nolint:staticcheck
 	}
 
 	var tTrans thrift.TTransport

@@ -297,7 +297,7 @@ func (rpf *resultPageIterator) checkDirectionValid(direction Direction) error {
 			return io.EOF
 		}
 	default:
-		rpf.logger.Error().Msgf(errRowsUnandledFetchDirection(direction.String()))
+		rpf.logger.Error().Msg(errRowsUnandledFetchDirection(direction.String()))
 		return dbsqlerrint.NewDriverError(rpf.ctx, errRowsUnandledFetchDirection(direction.String()), nil)
 	}
 	return nil
