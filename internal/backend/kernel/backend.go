@@ -30,8 +30,10 @@ type Config struct {
 	// Thrift backend forwards (STATEMENT_TIMEOUT, QUERY_TAGS, TIMEZONE, …).
 	SessionConf map[string]string
 
-	// TLSSkipVerify disables server-cert hostname verification (maps the driver's
-	// WithSkipTLSHostVerify / TLSConfig.InsecureSkipVerify).
+	// TLSSkipVerify accepts any server cert (maps the driver's
+	// WithSkipTLSHostVerify / TLSConfig.InsecureSkipVerify). crypto/tls's
+	// InsecureSkipVerify disables both chain validation and the hostname check,
+	// so the kernel path relaxes both to match.
 	TLSSkipVerify bool
 
 	// ProxyURL configures an HTTP proxy, already resolved for this endpoint from
@@ -119,8 +121,16 @@ func (k *KernelBackend) OpenSession(ctx context.Context) error {
 		return fmt.Errorf("kernel: set_auth_pat: %w", toDriverError(err))
 	}
 
-	// TLS: skip server-cert hostname verification when the driver requested it.
+	// TLS: crypto/tls's InsecureSkipVerify accepts any server cert, so relax both
+	// chain validation and the hostname check — mapping only one would leave the
+	// kernel path stricter than the Thrift path it mirrors (a self-signed cert
+	// would still be rejected).
 	if k.cfg.TLSSkipVerify {
+		if err := call(func() C.KernelStatusCode {
+			return C.kernel_session_config_set_tls_allow_self_signed(cfg, C.bool(true))
+		}); err != nil {
+			return fmt.Errorf("kernel: set_tls_allow_self_signed: %w", toDriverError(err))
+		}
 		if err := call(func() C.KernelStatusCode {
 			return C.kernel_session_config_set_tls_skip_hostname_verification(cfg, C.bool(true))
 		}); err != nil {

@@ -90,9 +90,7 @@ func initKernelLogging() {
 // call (kernel_get_last_error). Go's M:N scheduler can move a goroutine to a
 // different OS thread between two cgo calls, so a naive call-then-read pair can
 // observe the wrong thread's buffer. LockOSThread pins the goroutine to its OS
-// thread across the call and its error read, closing that window. (The kernel's
-// preferred long-term shape is a same-call out-param error, which would remove
-// the need for this; until then LockOSThread is correct and call-site-local.)
+// thread across the call and its error read, closing that window.
 func call(fn func() C.KernelStatusCode) error {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
@@ -105,11 +103,9 @@ func call(fn func() C.KernelStatusCode) error {
 
 // fireCancel dispatches a server-side cancel and reports whether the RPC was
 // actually sent. The kernel returns dispatched=false while no server statement
-// id has been observed yet (the F4 window before the execute POST returns), and
+// id has been observed yet (the window before the execute POST returns), and
 // true once the cancel RPC goes out — which is the watcher's cue to stop
-// re-firing. Best-effort: a non-Success status is ignored (dispatched stays
-// false, so the watcher keeps retrying), matching the "proceed without cancel"
-// stance rather than surfacing a cancel-path error.
+// re-firing.
 func fireCancel(canceller *C.kernel_statement_canceller_t) bool {
 	var dispatched C.bool
 	C.kernel_statement_canceller_cancel(canceller, &dispatched)
