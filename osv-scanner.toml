@@ -13,6 +13,27 @@
 #
 # See google.github.io/osv-scanner/configuration/ for the schema.
 #
-# This file starts empty -- populate iteratively as the first scan run
-# surfaces real false positives. Do not pre-populate with speculative
-# suppressions.
+# Populate iteratively as scan runs surface real false positives. Do not
+# pre-populate with speculative suppressions.
+#
+# CONVENTION: every [[IgnoredVulns]] entry MUST carry an `ignoreUntil`
+# (YYYY-MM-DD, ~6 months out) so no suppression is permanent. When it
+# lapses OSV re-reports the finding, forcing a re-review before renewal.
+# Keep the entry justified: reachability/no-fix reason, not "make CI green".
+
+[[IgnoredVulns]]
+id = "GO-2026-5932"
+# golang.org/x/crypto/openpgp is "unmaintained, unsafe by design" -- the
+# advisory has NO fixed version (introduced:0, no fix event), so it can
+# never be cleared by a dependency bump. We do NOT import openpgp (nor any
+# openpgp/* subpackage) anywhere in the driver -- verified via
+# `go list -deps ./...` (we use x/crypto's chacha20poly1305 / pbkdf2 /
+# cryptobyte, never openpgp). The advisory is flagged only because
+# golang.org/x/crypto (which we use for other subpackages) is in the module
+# graph; the vulnerable package itself is unreachable in our build.
+#
+# ignoreUntil forces a periodic re-review rather than a permanent ignore:
+# when it lapses, the finding re-surfaces and someone must reconfirm the
+# package is still unimported before re-adding the suppression.
+ignoreUntil = 2027-01-02
+reason = "golang.org/x/crypto/openpgp not imported by this driver (verified via go list -deps); advisory has no fixed version by design (package deprecated). Re-review on expiry: confirm openpgp still unimported before renewing."

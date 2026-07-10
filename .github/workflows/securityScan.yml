@@ -265,60 +265,26 @@ jobs:
           exit 1
 
       # --- Terminal: scheduled/manual event ---
-      # Weekly reports ALL findings (not just CVSS >= 7) so the team sees
-      # emerging risk before it crosses the PR gate. PR-time is narrower
-      # to avoid blocking on MEDIUM/LOW noise; weekly is broader because
-      # it's read by humans, not enforced.
-      - name: Compose email body
-        if: (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && steps.findings.outputs.total_findings != '0'
-        run: |
-          set -uo pipefail
-          {
-            echo "<!DOCTYPE html><html><head><title>SQL Go Driver Security Scan Results</title>"
-            echo "<style>"
-            echo "  body { font-family: -apple-system, sans-serif; }"
-            echo "  table { border-collapse: collapse; margin-top: 1em; }"
-            echo "  th, td { border: 1px solid #ddd; padding: 6px 12px; text-align: left; }"
-            echo "  th { background: #f5f5f5; }"
-            echo "  tr.high { background: #ffe5e5; }"
-            echo "  tr.medium { background: #fff5e5; }"
-            echo "</style></head><body>"
-            echo "<h1>Security Vulnerabilities Found</h1>"
-            echo "<p><b>${{ steps.findings.outputs.total_findings }}</b> total finding(s) on main; <b>${{ steps.findings.outputs.high_count }}</b> are CVSS &gt;= 7 (PR-blocking).</p>"
-            echo "<p>Full reports are attached to the GitHub Actions run as artifacts: <a href='https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}'>View Artifacts</a></p>"
-            echo "<table><tr><th>Severity</th><th>Package</th><th>IDs</th></tr>"
-            jq -r '.[] |
-              (if (.severity | tonumber? // 0) >= 7 then "high"
-               elif (.severity | tonumber? // 0) >= 4 then "medium"
-               else "" end) as $cls |
-              "<tr class=\"\($cls)\"><td>\(.severity)</td><td>\(.pkg)</td><td>\(.ids | join(", "))</td></tr>"
-            ' /tmp/all-findings.json
-            echo "</table>"
-            echo "</body></html>"
-          } > security-scan-report.html
-
-      - name: Send Email
-        if: (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && steps.findings.outputs.total_findings != '0'
-        uses: dawidd6/action-send-mail@4226df7daafa6fc901a43789c49bf7ab309066e7 # v3
-        with:
-          server_address: smtp.gmail.com
-          server_port: 465
-          username: ${{ secrets.SMTP_USERNAME }}
-          password: ${{ secrets.SMTP_PASSWORD }}
-          subject: OSS SQL Go Driver Security Scan - 🚨 Vulnerabilities Found
-          html_body: file://security-scan-report.html
-          to: ${{ secrets.EMAIL_RECIPIENTS }}
-          from: SQL Go Driver Security Scanner
-          content_type: text/html
-
+      # Weekly reports ALL findings (not just CVSS >= 7) so emerging risk is
+      # visible before it crosses the PR gate. PR-time is narrower to avoid
+      # blocking on MEDIUM/LOW noise; weekly is broader for situational
+      # awareness.
+      #
+      # Notification is intentionally NOT done here: a separate cross-repo
+      # action collates findings from all driver repos and sends a single
+      # digest. This job's job is to (a) fail so the scheduled run is red
+      # when anything is found, and (b) upload the raw osv-out.json artifact
+      # for the collator to consume.
       - name: Fail on findings (scheduled/manual)
         if: (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && steps.findings.outputs.total_findings != '0'
         run: |
-          echo "::error::${{ steps.findings.outputs.total_findings }} OSV finding(s) on main (${{ steps.findings.outputs.high_count }} at CVSS>=7). Email sent."
+          echo "::error::${{ steps.findings.outputs.total_findings }} OSV finding(s) on main (${{ steps.findings.outputs.high_count }} blocking at CVSS>=7 or unscored). See the security-scan-reports artifact."
           exit 1
 
-      # Always upload artifacts so triagers can pull the full reports
-      # without having to rerun anything.
+      # Always upload the raw scan output so triagers -- and the planned
+      # cross-repo collation/notification action -- can pull findings
+      # without rerunning. This is the machine-readable source of truth now
+      # that per-repo email has been removed.
       - name: Upload reports
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -326,5 +292,5 @@ jobs:
           name: security-scan-reports
           path: |
             /tmp/osv-out.json
-            security-scan-report.html
+            /tmp/all-findings.json
           if-no-files-found: ignore
