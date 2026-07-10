@@ -48,13 +48,68 @@ func TestExtractSpogHeaders(t *testing.T) {
 			want:     map[string]string{"x-databricks-org-id": "12345"},
 		},
 		{
-			name:     "first o= wins when duplicated",
-			httpPath: "/sql/1.0/warehouses/abc?o=first&o=second",
-			want:     map[string]string{"x-databricks-org-id": "first"},
+			name:     "first numeric o= wins when duplicated",
+			httpPath: "/sql/1.0/warehouses/abc?o=111&o=222",
+			want:     map[string]string{"x-databricks-org-id": "111"},
+		},
+		{
+			name:     "non-numeric o= value returns nil",
+			httpPath: "/sql/1.0/warehouses/abc?o=abc123",
+			want:     nil,
+		},
+		{
+			name:     "control-character o= value returns nil",
+			httpPath: "/sql/1.0/warehouses/abc?o=123%0D%0AX-Injected:%20yes",
+			want:     nil,
+		},
+		{
+			name:     "invalid o= falls back to valid cluster path segment",
+			httpPath: "sql/protocolv1/o/6051921418418893/0528-220959-uzmcn1qt?o=abc123",
+			want:     map[string]string{"x-databricks-org-id": "6051921418418893"},
 		},
 		{
 			name:     "just ? with nothing after returns nil",
 			httpPath: "/sql/1.0/warehouses/abc?",
+			want:     nil,
+		},
+		{
+			// All-purpose cluster paths embed the workspace ID in /o/<wsid>/<cluster>.
+			// Without ?o=, the driver must still extract it so non-Thrift endpoints
+			// (telemetry, feature flags) get x-databricks-org-id on SPOG hosts.
+			name:     "cluster path without ?o= extracts org id from path segment",
+			httpPath: "sql/protocolv1/o/6051921418418893/0528-220959-uzmcn1qt",
+			want:     map[string]string{"x-databricks-org-id": "6051921418418893"},
+		},
+		{
+			name:     "cluster path with leading slash also extracts",
+			httpPath: "/sql/protocolv1/o/6051921418418893/0528-220959-uzmcn1qt",
+			want:     map[string]string{"x-databricks-org-id": "6051921418418893"},
+		},
+		{
+			name:     "?o= query param wins over cluster path segment",
+			httpPath: "sql/protocolv1/o/111/0528-220959-uzmcn1qt?o=222",
+			want:     map[string]string{"x-databricks-org-id": "222"},
+		},
+		{
+			name:     "nested cluster path prefix returns nil",
+			httpPath: "evil/sql/protocolv1/o/999/0528-220959-uzmcn1qt",
+			want:     nil,
+		},
+		{
+			name:     "incomplete cluster path returns nil",
+			httpPath: "sql/protocolv1/o/999/",
+			want:     nil,
+		},
+		{
+			name:     "warehouse path containing cluster-looking suffix returns nil",
+			httpPath: "/sql/1.0/warehouses/sql/protocolv1/o/999/cluster-id",
+			want:     nil,
+		},
+		{
+			// Regression guard: the new cluster-path regex must not match
+			// warehouse paths (which never embed the workspace ID).
+			name:     "warehouse path without ?o= still returns nil",
+			httpPath: "/sql/1.0/warehouses/abc123",
 			want:     nil,
 		},
 	}
@@ -103,6 +158,29 @@ func TestHeaderInjectingTransport_DoesNotOverrideCallerSet(t *testing.T) {
 	req, err := http.NewRequest("GET", srv.URL, nil)
 	require.NoError(t, err)
 	req.Header.Set("x-databricks-org-id", "from-caller")
+	resp, err := client.Do(req)
+	require.NoError(t, err)
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+
+	assert.Equal(t, "from-caller", gotHeader, "caller-set header must not be overridden")
+}
+
+func TestHeaderInjectingTransport_DoesNotOverrideCallerSetMixedCase(t *testing.T) {
+	var gotHeader string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotHeader = r.Header.Get("x-databricks-org-id")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	client := withSpogHeaders(&http.Client{}, map[string]string{
+		"x-databricks-org-id": "from-wrapper",
+	})
+
+	req, err := http.NewRequest("GET", srv.URL, nil)
+	require.NoError(t, err)
+	req.Header.Set("X-Databricks-Org-Id", "from-caller")
 	resp, err := client.Do(req)
 	require.NoError(t, err)
 	_, _ = io.Copy(io.Discard, resp.Body)

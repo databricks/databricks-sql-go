@@ -257,6 +257,49 @@ func TestWatch(t *testing.T) {
 		assert.Nil(t, res)
 		assert.ErrorContains(t, err, "failed")
 	})
+	t.Run("it should not cancel when context is canceled concurrently with Done", func(t *testing.T) {
+		// Regression test for a race where, once StatusFn reports Done, a
+		// context cancellation that arrives at the same time could win the
+		// select against the OnDoneFn result and trigger OnCancelFn for an
+		// operation that has already completed. A finished operation must
+		// never be canceled, regardless of scheduler timing.
+		//
+		// We pre-cancel the context and report Done in the same StatusFn call,
+		// so both the success path and ctx.Done() are ready when Watch
+		// re-enters its select. The outcome must deterministically be success
+		// with no cancellation, on every run.
+		//
+		// A tiny non-zero interval keeps each iteration to microseconds (a 0
+		// interval would default to 100ms and make the loop take many seconds).
+		// The fix makes the outcome deterministic, so a modest iteration count
+		// is enough to guard against regression cheaply.
+		for i := 0; i < 100; i++ {
+			ctx, cancel := context.WithCancel(context.Background())
+			cancelFnCalls := 0
+			s := Sentinel{
+				StatusFn: func() (Done, any, error) {
+					// Cancel the context right as we report completion.
+					cancel()
+					return func() bool {
+						return true
+					}, "completed", nil
+				},
+				OnCancelFn: func() (any, error) {
+					cancelFnCalls++
+					return nil, nil
+				},
+				OnDoneFn: func(statusResp any) (any, error) {
+					return statusResp, nil
+				},
+			}
+			status, res, err := s.Watch(ctx, time.Microsecond, 0)
+			assert.Equal(t, WatchSuccess, status)
+			assert.Equal(t, "completed", res)
+			assert.Equal(t, 0, cancelFnCalls, "OnCancelFn must not be called for a completed operation (iteration %d)", i)
+			assert.NoError(t, err)
+			cancel()
+		}
+	})
 	t.Run("it should return statusFn error", func(t *testing.T) {
 		statusFnCalls := 0
 		cancelFnCalls := 0

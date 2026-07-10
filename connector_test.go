@@ -51,24 +51,23 @@ func TestNewConnector(t *testing.T) {
 			HTTPClient:                   &http.Client{Transport: roundTripper},
 		}
 		expectedUserConfig := config.UserConfig{
-			Host:                host,
-			Port:                port,
-			Protocol:            "https",
-			AccessToken:         accessToken,
-			Authenticator:       &pat.PATAuth{AccessToken: accessToken},
-			HTTPPath:            "/" + httpPath,
-			MaxRows:             maxRows,
-			QueryTimeout:        timeout,
-			Catalog:             catalog,
-			Schema:              schema,
-			UserAgentEntry:      userAgentEntry,
-			SessionParams:       sessionParams,
-			RetryMax:            10,
-			RetryWaitMin:        3 * time.Second,
-			RetryWaitMax:        60 * time.Second,
-			Transport:           roundTripper,
-			TelemetryRetryCount: -1,
-			CloudFetchConfig:    expectedCloudFetchConfig,
+			Host:             host,
+			Port:             port,
+			Protocol:         "https",
+			AccessToken:      accessToken,
+			Authenticator:    &pat.PATAuth{AccessToken: accessToken},
+			HTTPPath:         "/" + httpPath,
+			MaxRows:          maxRows,
+			QueryTimeout:     timeout,
+			Catalog:          catalog,
+			Schema:           schema,
+			UserAgentEntry:   userAgentEntry,
+			SessionParams:    sessionParams,
+			RetryMax:         10,
+			RetryWaitMin:     3 * time.Second,
+			RetryWaitMax:     60 * time.Second,
+			Transport:        roundTripper,
+			CloudFetchConfig: expectedCloudFetchConfig,
 		}
 		expectedCfg := config.WithDefaults()
 		expectedCfg.DriverVersion = DriverVersion
@@ -99,19 +98,18 @@ func TestNewConnector(t *testing.T) {
 			CloudFetchSpeedThresholdMbps: 0.1,
 		}
 		expectedUserConfig := config.UserConfig{
-			Host:                host,
-			Port:                port,
-			Protocol:            "https",
-			AccessToken:         accessToken,
-			Authenticator:       &pat.PATAuth{AccessToken: accessToken},
-			HTTPPath:            "/" + httpPath,
-			MaxRows:             maxRows,
-			SessionParams:       sessionParams,
-			RetryMax:            4,
-			RetryWaitMin:        1 * time.Second,
-			RetryWaitMax:        30 * time.Second,
-			TelemetryRetryCount: -1,
-			CloudFetchConfig:    expectedCloudFetchConfig,
+			Host:             host,
+			Port:             port,
+			Protocol:         "https",
+			AccessToken:      accessToken,
+			Authenticator:    &pat.PATAuth{AccessToken: accessToken},
+			HTTPPath:         "/" + httpPath,
+			MaxRows:          maxRows,
+			SessionParams:    sessionParams,
+			RetryMax:         4,
+			RetryWaitMin:     1 * time.Second,
+			RetryWaitMax:     30 * time.Second,
+			CloudFetchConfig: expectedCloudFetchConfig,
 		}
 		expectedCfg := config.WithDefaults()
 		expectedCfg.UserConfig = expectedUserConfig
@@ -142,19 +140,18 @@ func TestNewConnector(t *testing.T) {
 			CloudFetchSpeedThresholdMbps: 0.1,
 		}
 		expectedUserConfig := config.UserConfig{
-			Host:                host,
-			Port:                port,
-			Protocol:            "https",
-			AccessToken:         accessToken,
-			Authenticator:       &pat.PATAuth{AccessToken: accessToken},
-			HTTPPath:            "/" + httpPath,
-			MaxRows:             maxRows,
-			SessionParams:       sessionParams,
-			RetryMax:            -1,
-			RetryWaitMin:        0,
-			RetryWaitMax:        0,
-			TelemetryRetryCount: -1,
-			CloudFetchConfig:    expectedCloudFetchConfig,
+			Host:             host,
+			Port:             port,
+			Protocol:         "https",
+			AccessToken:      accessToken,
+			Authenticator:    &pat.PATAuth{AccessToken: accessToken},
+			HTTPPath:         "/" + httpPath,
+			MaxRows:          maxRows,
+			SessionParams:    sessionParams,
+			RetryMax:         -1,
+			RetryWaitMin:     0,
+			RetryWaitMax:     0,
+			CloudFetchConfig: expectedCloudFetchConfig,
 		}
 		expectedCfg := config.WithDefaults()
 		expectedCfg.DriverVersion = DriverVersion
@@ -249,6 +246,53 @@ func TestNewConnector(t *testing.T) {
 		coni, ok := con.(*connector)
 		require.True(t, ok)
 		assert.False(t, coni.cfg.EnableMetricViewMetadata)
+	})
+
+	t.Run("Connector test WithArrowNativeDecimal enabled", func(t *testing.T) {
+		host := "databricks-host"
+		accessToken := "token"
+		httpPath := "http-path"
+		con, err := NewConnector(
+			WithServerHostname(host),
+			WithAccessToken(accessToken),
+			WithHTTPPath(httpPath),
+			WithArrowNativeDecimal(true),
+		)
+		assert.Nil(t, err)
+
+		coni, ok := con.(*connector)
+		require.True(t, ok)
+		assert.True(t, coni.cfg.ArrowConfig.UseArrowNativeDecimal)
+	})
+
+	t.Run("Connector test WithArrowNativeDecimal disabled by default", func(t *testing.T) {
+		host := "databricks-host"
+		accessToken := "token"
+		httpPath := "http-path"
+		con, err := NewConnector(
+			WithServerHostname(host),
+			WithAccessToken(accessToken),
+			WithHTTPPath(httpPath),
+		)
+		assert.Nil(t, err)
+
+		coni, ok := con.(*connector)
+		require.True(t, ok)
+		assert.False(t, coni.cfg.ArrowConfig.UseArrowNativeDecimal)
+	})
+
+	t.Run("Connector test useArrowNativeDecimal DSN param propagates to ArrowConfig", func(t *testing.T) {
+		// Covers the full DSN path: ParseDSN -> withUserConfig -> ArrowConfig,
+		// which is what connection.go reads. This is the bridge that makes the
+		// DSN parameter actually take effect (databricks/databricks-sql-go#274).
+		ucfg, err := config.ParseDSN("token:supersecret@databricks-host:443/sql/1.0/endpoints/abc?useArrowNativeDecimal=true")
+		require.NoError(t, err)
+		con, err := NewConnector(withUserConfig(ucfg))
+		require.NoError(t, err)
+
+		coni, ok := con.(*connector)
+		require.True(t, ok)
+		assert.True(t, coni.cfg.ArrowConfig.UseArrowNativeDecimal)
 	})
 
 	t.Run("Connector test WithTransport sets HTTPClient in CloudFetchConfig", func(t *testing.T) {

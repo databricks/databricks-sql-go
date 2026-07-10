@@ -5,13 +5,11 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"math"
-	"math/rand"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/databricks/databricks-sql-go/internal/config"
+	"github.com/databricks/databricks-sql-go/internal/retry"
 	"github.com/databricks/databricks-sql-go/internal/rows/rowscanner"
 	"github.com/pierrec/lz4/v4"
 	"github.com/pkg/errors"
@@ -31,6 +29,27 @@ type IPCStreamIterator interface {
 	Next() (io.Reader, error)
 	HasNext() bool
 	Close()
+}
+
+// positionedIPCStreamIterator is an optional extension of IPCStreamIterator for
+// streams that carry server-declared positioning metadata alongside each IPC
+// payload. It is implemented ONLY by the CloudFetch iterator: CloudFetch result
+// links carry an authoritative StartRowOffset and RowCount, and the Arrow IPC
+// files they point at may be padded with extra rows beyond RowCount. batchIterator
+// uses this metadata to (a) anchor each batch at its true stream offset and
+// (b) cap the decoded records to RowCount so padding rows are not surfaced as
+// real data (see limitArrowRecords).
+//
+// The inline/local Arrow path intentionally does NOT implement this: those
+// batches are returned verbatim by the server with no padding, and their
+// per-batch RowCount has historically been untrusted, so capping there would
+// risk silently dropping rows. NextWithMetadata returns expectedRows < 0 to mean
+// "row count unknown — do not cap".
+type positionedIPCStreamIterator interface {
+	// NextWithMetadata returns the next IPC payload along with its absolute
+	// stream start offset and the server-declared row count (expectedRows). An
+	// expectedRows < 0 means the count is unknown and no capping should occur.
+	NextWithMetadata() (reader io.Reader, startRowOffset int64, expectedRows int64, err error)
 }
 
 func NewCloudIPCStreamIterator(
@@ -176,8 +195,17 @@ type cloudIPCStreamIterator struct {
 }
 
 var _ IPCStreamIterator = (*cloudIPCStreamIterator)(nil)
+var _ positionedIPCStreamIterator = (*cloudIPCStreamIterator)(nil)
 
 func (bi *cloudIPCStreamIterator) Next() (io.Reader, error) {
+	reader, _, _, err := bi.NextWithMetadata()
+	return reader, err
+}
+
+// NextWithMetadata returns the next downloaded CloudFetch IPC payload together
+// with the link's authoritative StartRowOffset and RowCount. The Arrow file may
+// contain padding rows beyond RowCount; the caller caps to RowCount.
+func (bi *cloudIPCStreamIterator) NextWithMetadata() (io.Reader, int64, int64, error) {
 	for (bi.downloadTasks.Len() < bi.cfg.MaxDownloadThreads) && (bi.pendingLinks.Len() > 0) {
 		link := bi.pendingLinks.Dequeue()
 		logger.Debug().Msgf(
@@ -206,7 +234,7 @@ func (bi *cloudIPCStreamIterator) Next() (io.Reader, error) {
 
 	task := bi.downloadTasks.Dequeue()
 	if task == nil {
-		return nil, io.EOF
+		return nil, 0, 0, io.EOF
 	}
 
 	data, downloadMs, err := task.GetResult()
@@ -214,7 +242,7 @@ func (bi *cloudIPCStreamIterator) Next() (io.Reader, error) {
 	// once we've got an errored out task - cancel the remaining ones
 	if err != nil {
 		bi.Close()
-		return nil, err
+		return nil, 0, 0, err
 	}
 
 	// explicitly call cancel function on successfully completed task to avoid context leak
@@ -228,7 +256,7 @@ func (bi *cloudIPCStreamIterator) Next() (io.Reader, error) {
 		bi.onFileDownloaded(downloadMs)
 	}
 
-	return data, nil
+	return data, task.link.StartRowOffset, task.link.RowCount, nil
 }
 
 func (bi *cloudIPCStreamIterator) HasNext() bool {
@@ -402,7 +430,7 @@ func fetchBatchBytes(
 
 	for attempt := 0; attempt <= retryMax; attempt++ {
 		if attempt > 0 {
-			wait := cloudFetchBackoff(attempt, retryWaitMin, retryWaitMax, lastRetryAfter)
+			wait := retry.Backoff(attempt, retryWaitMin, retryWaitMax, lastRetryAfter)
 			logger.Debug().Msgf(
 				"CloudFetch: retrying download of link at offset %d (attempt %d/%d) in %v; lastStatus=%d lastErr=%v",
 				link.StartRowOffset, attempt, retryMax, wait, lastStatus, lastErr,
@@ -475,7 +503,7 @@ func fetchBatchBytes(
 		lastErr = nil
 		lastRetryAfter = res.Header.Get("Retry-After")
 
-		if !isCloudFetchRetryableStatus(res.StatusCode) {
+		if !retry.IsRetryableStatus(res.StatusCode) {
 			msg := fmt.Sprintf("%s: %s %d", errArrowRowsCloudFetchDownloadFailure, "HTTP error", res.StatusCode)
 			return nil, dbsqlerrint.NewDriverError(ctx, msg, nil)
 		}
@@ -489,59 +517,6 @@ func fetchBatchBytes(
 	}
 	msg := fmt.Sprintf("%s: %v (after %d retries)", errArrowRowsCloudFetchDownloadFailure, lastErr, retryMax)
 	return nil, dbsqlerrint.NewDriverError(ctx, msg, lastErr)
-}
-
-// cloudFetchRetryableStatuses lists HTTP status codes from object storage that
-// indicate transient conditions and warrant a retry. Mirrors AWS S3 guidance
-// for SlowDown (503) / InternalError (500) plus the general 408/429/502/504.
-var cloudFetchRetryableStatuses = map[int]struct{}{
-	http.StatusRequestTimeout:      {}, // 408
-	http.StatusTooManyRequests:     {}, // 429
-	http.StatusInternalServerError: {}, // 500
-	http.StatusBadGateway:          {}, // 502
-	http.StatusServiceUnavailable:  {}, // 503
-	http.StatusGatewayTimeout:      {}, // 504
-}
-
-func isCloudFetchRetryableStatus(status int) bool {
-	_, ok := cloudFetchRetryableStatuses[status]
-	return ok
-}
-
-// cloudFetchBackoff returns the wait before retry attempt N (1-based). The
-// base delay is exponential — waitMin * 2^(attempt-1) capped at waitMax — with
-// equal jitter applied: the actual sleep is uniformly distributed in
-// [base/2, base]. Equal jitter (rather than no jitter) is used to spread
-// synchronized retries across the up-to-MaxDownloadThreads concurrent
-// downloads, which would otherwise hammer the storage endpoint in lockstep
-// after a region-wide blip. If the server returned a parseable integer
-// Retry-After header, that value (in seconds) is honored instead, capped at
-// waitMax. HTTP-date Retry-After values are ignored — same as the Thrift
-// client's backoff.
-func cloudFetchBackoff(attempt int, waitMin, waitMax time.Duration, retryAfter string) time.Duration {
-	if retryAfter != "" {
-		if secs, err := strconv.ParseInt(retryAfter, 10, 64); err == nil && secs >= 0 {
-			d := time.Duration(secs) * time.Second
-			if d > waitMax {
-				return waitMax
-			}
-			return d
-		}
-	}
-
-	expo := float64(waitMin) * math.Pow(2, float64(attempt-1))
-	if expo > float64(waitMax) || math.IsInf(expo, 0) {
-		expo = float64(waitMax)
-	}
-	base := time.Duration(expo)
-	if base <= 0 {
-		return 0
-	}
-	half := base / 2
-	if half <= 0 {
-		return base
-	}
-	return half + time.Duration(rand.Int63n(int64(half))) //nolint:gosec // G404: jitter only, non-cryptographic
 }
 
 func getReader(r io.Reader, useLz4Compression bool) io.Reader {
@@ -613,14 +588,36 @@ func NewBatchIterator(ipcIterator IPCStreamIterator, startRowOffset int64) Batch
 }
 
 func (bi *batchIterator) Next() (SparkArrowBatch, error) {
-	reader, err := bi.ipcIterator.Next()
+	// startRowOffset is the absolute offset of this batch within the result
+	// stream. For positioned (CloudFetch) streams it comes from the server's
+	// link metadata; otherwise we track it locally by accumulating decoded rows.
+	startRowOffset := bi.startRowOffset
+	// expectedRows is the server-declared row count for this batch. A value < 0
+	// means "unknown" and disables capping (the inline/local path).
+	expectedRows := int64(-1)
+	var reader io.Reader
+	var err error
+	if positionedIterator, ok := bi.ipcIterator.(positionedIPCStreamIterator); ok {
+		reader, startRowOffset, expectedRows, err = positionedIterator.NextWithMetadata()
+	} else {
+		reader, err = bi.ipcIterator.Next()
+	}
 	if err != nil {
 		return nil, err
 	}
 
-	records, err := getArrowRecords(reader, bi.startRowOffset)
+	records, err := getArrowRecords(reader, startRowOffset)
 	if err != nil {
 		return nil, err
+	}
+
+	// Cap the decoded records to the server-declared row count, dropping the
+	// padding rows some CloudFetch Arrow files carry beyond their link's
+	// RowCount. Only cap when the count is strictly positive: expectedRows == 0
+	// with decoded rows is treated as "untrustworthy, do not cap" rather than
+	// silently dropping the whole batch (see #371 review F1).
+	if expectedRows > 0 {
+		records = limitArrowRecords(records, expectedRows)
 	}
 
 	// When using CloudFetch, cached Arrow IPC files may contain stale column
@@ -648,12 +645,60 @@ func (bi *batchIterator) Next() (SparkArrowBatch, error) {
 	}
 
 	batch := &sparkArrowBatch{
-		Delimiter:    rowscanner.NewDelimiter(bi.startRowOffset, totalRows),
+		Delimiter:    rowscanner.NewDelimiter(startRowOffset, totalRows),
 		arrowRecords: records,
 	}
 
-	bi.startRowOffset += totalRows
+	// Advance the local offset for the next non-positioned batch. Positioned
+	// streams overwrite startRowOffset from server metadata on the next call.
+	bi.startRowOffset = startRowOffset + totalRows
 	return batch, nil
+}
+
+// limitArrowRecords caps a decoded batch to expectedRows, releasing any records
+// (and the tail of a partially-kept record) that fall beyond the server-declared
+// count. It is the mechanism that strips CloudFetch Arrow padding rows.
+//
+// Contract:
+//   - Callers must only invoke this when expectedRows is trustworthy and the
+//     batch may be over-long; expectedRows < 0 is treated as "unknown" and the
+//     records are returned unchanged.
+//   - When a record straddles the boundary it is sliced with NewSlice(0, remaining):
+//     the slice bounds are record-relative (0-based within the record), while the
+//     Delimiter's start is the ABSOLUTE stream offset of the record. Keep these two
+//     distinct — do not pass the absolute start as a slice index.
+func limitArrowRecords(records []SparkArrowRecord, expectedRows int64) []SparkArrowRecord {
+	if expectedRows < 0 {
+		return records
+	}
+
+	remaining := expectedRows
+	limited := records[:0]
+	for _, record := range records {
+		if remaining <= 0 {
+			record.Release()
+			continue
+		}
+
+		if record.NumRows() <= remaining {
+			limited = append(limited, record)
+			remaining -= record.NumRows()
+			continue
+		}
+
+		start := record.Start()
+		sliced := record.NewSlice(0, remaining)
+		record.Release()
+		if sliced != nil {
+			limited = append(limited, &sparkArrowRecord{
+				Delimiter: rowscanner.NewDelimiter(start, sliced.NumRows()),
+				Record:    sliced,
+			})
+		}
+		remaining = 0
+	}
+
+	return limited
 }
 
 func (bi *batchIterator) HasNext() bool {

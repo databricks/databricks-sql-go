@@ -99,7 +99,7 @@ func TestFeatureFlagCache_IsTelemetryEnabled_Cached(t *testing.T) {
 	ctx.lastFetched = time.Now()
 
 	// Should return cached value without HTTP call
-	result, err := cache.isTelemetryEnabled(context.Background(), host, "test-version", nil)
+	result, err := cache.isTelemetryEnabled(context.Background(), host, "test-version", "test-ua", nil)
 	if err != nil {
 		t.Errorf("Expected no error, got %v", err)
 	}
@@ -133,7 +133,7 @@ func TestFeatureFlagCache_IsTelemetryEnabled_Expired(t *testing.T) {
 
 	// Should fetch fresh value
 	httpClient := &http.Client{}
-	result, err := cache.isTelemetryEnabled(context.Background(), host, "test-version", httpClient)
+	result, err := cache.isTelemetryEnabled(context.Background(), host, "test-version", "test-ua", httpClient)
 	if err != nil {
 		t.Errorf("Expected no error, got %v", err)
 	}
@@ -158,7 +158,7 @@ func TestFeatureFlagCache_IsTelemetryEnabled_NoContext(t *testing.T) {
 	host := "non-existent-host.databricks.com"
 
 	// Should return false for non-existent context
-	result, err := cache.isTelemetryEnabled(context.Background(), host, "test-version", nil)
+	result, err := cache.isTelemetryEnabled(context.Background(), host, "test-version", "test-ua", nil)
 	if err != nil {
 		t.Errorf("Expected no error, got %v", err)
 	}
@@ -188,7 +188,7 @@ func TestFeatureFlagCache_IsTelemetryEnabled_ErrorFallback(t *testing.T) {
 
 	// Should return cached value on error
 	httpClient := &http.Client{}
-	result, err := cache.isTelemetryEnabled(context.Background(), host, "test-version", httpClient)
+	result, err := cache.isTelemetryEnabled(context.Background(), host, "test-version", "test-ua", httpClient)
 	if err != nil {
 		t.Errorf("Expected no error (fallback to cache), got %v", err)
 	}
@@ -213,7 +213,7 @@ func TestFeatureFlagCache_IsTelemetryEnabled_ErrorNoCache(t *testing.T) {
 
 	// No cached value, should return error
 	httpClient := &http.Client{}
-	result, err := cache.isTelemetryEnabled(context.Background(), host, "test-version", httpClient)
+	result, err := cache.isTelemetryEnabled(context.Background(), host, "test-version", "test-ua", httpClient)
 	if err == nil {
 		t.Error("Expected error when no cache available and fetch fails")
 	}
@@ -330,12 +330,34 @@ func TestFetchFeatureFlag_Success(t *testing.T) {
 	host := server.URL // Use full URL for testing
 	httpClient := &http.Client{}
 
-	enabled, err := fetchFeatureFlag(context.Background(), host, "test-version", httpClient)
+	enabled, err := fetchFeatureFlag(context.Background(), host, "test-version", "test-ua", httpClient)
 	if err != nil {
 		t.Errorf("Expected no error, got %v", err)
 	}
 	if !enabled {
 		t.Error("Expected feature flag to be enabled")
+	}
+}
+
+// TestFetchFeatureFlag_SetsUserAgent verifies the configured User-Agent is
+// sent on feature-flag GETs so traffic is attributable in access logs.
+func TestFetchFeatureFlag_SetsUserAgent(t *testing.T) {
+	const wantUA = "godatabrickssqlconnector/9.9.9"
+	gotUA := ""
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotUA = r.Header.Get("User-Agent")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"flags": [], "ttl_seconds": 300}`))
+	}))
+	defer server.Close()
+
+	_, err := fetchFeatureFlag(context.Background(), server.URL, "9.9.9", wantUA, &http.Client{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotUA != wantUA {
+		t.Errorf("User-Agent: got %q, want %q", gotUA, wantUA)
 	}
 }
 
@@ -350,7 +372,7 @@ func TestFetchFeatureFlag_Disabled(t *testing.T) {
 	host := server.URL // Use full URL for testing
 	httpClient := &http.Client{}
 
-	enabled, err := fetchFeatureFlag(context.Background(), host, "test-version", httpClient)
+	enabled, err := fetchFeatureFlag(context.Background(), host, "test-version", "test-ua", httpClient)
 	if err != nil {
 		t.Errorf("Expected no error, got %v", err)
 	}
@@ -370,7 +392,7 @@ func TestFetchFeatureFlag_FlagNotPresent(t *testing.T) {
 	host := server.URL // Use full URL for testing
 	httpClient := &http.Client{}
 
-	enabled, err := fetchFeatureFlag(context.Background(), host, "test-version", httpClient)
+	enabled, err := fetchFeatureFlag(context.Background(), host, "test-version", "test-ua", httpClient)
 	if err != nil {
 		t.Errorf("Expected no error, got %v", err)
 	}
@@ -388,7 +410,7 @@ func TestFetchFeatureFlag_HTTPError(t *testing.T) {
 	host := server.URL // Use full URL for testing
 	httpClient := &http.Client{}
 
-	_, err := fetchFeatureFlag(context.Background(), host, "test-version", httpClient)
+	_, err := fetchFeatureFlag(context.Background(), host, "test-version", "test-ua", httpClient)
 	if err == nil {
 		t.Error("Expected error for HTTP 500")
 	}
@@ -405,7 +427,7 @@ func TestFetchFeatureFlag_InvalidJSON(t *testing.T) {
 	host := server.URL // Use full URL for testing
 	httpClient := &http.Client{}
 
-	_, err := fetchFeatureFlag(context.Background(), host, "test-version", httpClient)
+	_, err := fetchFeatureFlag(context.Background(), host, "test-version", "test-ua", httpClient)
 	if err == nil {
 		t.Error("Expected error for invalid JSON")
 	}
@@ -424,7 +446,7 @@ func TestFetchFeatureFlag_ContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel immediately
 
-	_, err := fetchFeatureFlag(ctx, host, "test-version", httpClient)
+	_, err := fetchFeatureFlag(ctx, host, "test-version", "test-ua", httpClient)
 	if err == nil {
 		t.Error("Expected error for cancelled context")
 	}

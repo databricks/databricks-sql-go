@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"runtime"
@@ -697,67 +698,6 @@ func TestCloudFetchIterator(t *testing.T) {
 	})
 }
 
-func TestCloudFetchBackoff(t *testing.T) {
-	t.Run("retry-after integer seconds is honored", func(t *testing.T) {
-		got := cloudFetchBackoff(1, 100*time.Millisecond, 60*time.Second, "2")
-		assert.Equal(t, 2*time.Second, got)
-	})
-
-	t.Run("retry-after is capped at waitMax", func(t *testing.T) {
-		got := cloudFetchBackoff(1, 100*time.Millisecond, 1*time.Second, "100")
-		assert.Equal(t, 1*time.Second, got)
-	})
-
-	t.Run("retry-after http-date is ignored, falls back to exponential", func(t *testing.T) {
-		minWait := 100 * time.Millisecond
-		got := cloudFetchBackoff(1, minWait, 10*time.Second, "Tue, 15 Nov 1994 08:12:31 GMT")
-		// attempt=1 base = minWait; equal jitter in [minWait/2, minWait]
-		assert.GreaterOrEqual(t, got, minWait/2)
-		assert.LessOrEqual(t, got, minWait)
-	})
-
-	t.Run("exponential is capped at waitMax", func(t *testing.T) {
-		maxWait := 200 * time.Millisecond
-		// 100ms * 2^9 = 51200ms, capped at 200ms; equal jitter -> [100ms, 200ms]
-		for i := 0; i < 50; i++ {
-			got := cloudFetchBackoff(10, 100*time.Millisecond, maxWait, "")
-			assert.GreaterOrEqual(t, got, maxWait/2)
-			assert.LessOrEqual(t, got, maxWait)
-		}
-	})
-
-	t.Run("base grows exponentially with attempt", func(t *testing.T) {
-		minWait, maxWait := 100*time.Millisecond, 10*time.Second
-		// attempt=1 -> base 100ms,  jitter [50ms,100ms]
-		// attempt=3 -> base 400ms,  jitter [200ms,400ms]
-		for i := 0; i < 50; i++ {
-			got1 := cloudFetchBackoff(1, minWait, maxWait, "")
-			got3 := cloudFetchBackoff(3, minWait, maxWait, "")
-			assert.GreaterOrEqual(t, got1, 50*time.Millisecond)
-			assert.LessOrEqual(t, got1, 100*time.Millisecond)
-			assert.GreaterOrEqual(t, got3, 200*time.Millisecond)
-			assert.LessOrEqual(t, got3, 400*time.Millisecond)
-		}
-	})
-
-	t.Run("zero waitMin returns zero", func(t *testing.T) {
-		got := cloudFetchBackoff(1, 0, 0, "")
-		assert.Equal(t, time.Duration(0), got)
-	})
-}
-
-func TestCloudFetchRetryableStatus(t *testing.T) {
-	retryable := []int{408, 429, 500, 502, 503, 504}
-	notRetryable := []int{200, 201, 301, 302, 400, 401, 403, 404, 409, 410, 501}
-
-	for _, s := range retryable {
-		assert.True(t, isCloudFetchRetryableStatus(s), "%d should be retryable", s)
-	}
-	for _, s := range notRetryable {
-		assert.False(t, isCloudFetchRetryableStatus(s), "%d should not be retryable", s)
-	}
-}
-
 func TestCloudFetchSchemaOverride(t *testing.T) {
 	// Reproduces ES-1804970: When the server result cache serves Arrow IPC files
 	// from a prior query, the embedded schema has stale column names. The
@@ -1220,4 +1160,105 @@ func countDownloadTaskGoroutines() int {
 		buf = make([]byte, 2*len(buf))
 	}
 	return strings.Count(string(buf), "cloudFetchDownloadTask).Run")
+}
+
+// fakePositionedIPCIterator is a test IPCStreamIterator that also implements
+// positionedIPCStreamIterator, so it exercises the CloudFetch row-count-capping
+// path through NewBatchIterator without real CloudFetch downloads.
+type fakePositionedIPCIterator struct {
+	data           []byte
+	startRowOffset int64
+	expectedRows   int64
+	consumed       bool
+}
+
+var _ IPCStreamIterator = (*fakePositionedIPCIterator)(nil)
+var _ positionedIPCStreamIterator = (*fakePositionedIPCIterator)(nil)
+
+func (f *fakePositionedIPCIterator) Next() (io.Reader, error) {
+	r, _, _, err := f.NextWithMetadata()
+	return r, err
+}
+func (f *fakePositionedIPCIterator) NextWithMetadata() (io.Reader, int64, int64, error) {
+	if f.consumed {
+		return nil, 0, 0, io.EOF
+	}
+	f.consumed = true
+	return bytes.NewReader(f.data), f.startRowOffset, f.expectedRows, nil
+}
+func (f *fakePositionedIPCIterator) HasNext() bool { return !f.consumed }
+func (f *fakePositionedIPCIterator) Close()        {}
+
+// fakePlainIPCIterator implements only IPCStreamIterator (the inline/local
+// shape) so the cap must never apply to it.
+type fakePlainIPCIterator struct {
+	data     []byte
+	consumed bool
+}
+
+var _ IPCStreamIterator = (*fakePlainIPCIterator)(nil)
+
+func (f *fakePlainIPCIterator) Next() (io.Reader, error) {
+	if f.consumed {
+		return nil, io.EOF
+	}
+	f.consumed = true
+	return bytes.NewReader(f.data), nil
+}
+func (f *fakePlainIPCIterator) HasNext() bool { return !f.consumed }
+func (f *fakePlainIPCIterator) Close()        {}
+
+// TestBatchIterator_RowCountCap covers the batchIterator -> limitArrowRecords
+// integration (#371 review F1/F6). generateMockArrowBytes writes the 3-row
+// record twice, so each stream decodes to 6 rows.
+func TestBatchIterator_RowCountCap(t *testing.T) {
+	const decoded = 6
+	const startOffset int64 = 100
+
+	t.Run("positioned: caps padding rows down to RowCount", func(t *testing.T) {
+		it := &fakePositionedIPCIterator{data: generateMockArrowBytes(generateArrowRecord()), startRowOffset: startOffset, expectedRows: 4}
+		bi := NewBatchIterator(it, startOffset)
+		batch, err := bi.Next()
+		assert.NoError(t, err)
+		defer batch.Close()
+		assert.Equal(t, int64(4), batch.Count(), "batch should be capped to RowCount")
+		assert.Equal(t, startOffset, batch.Start(), "batch must anchor at the server offset")
+	})
+
+	t.Run("positioned: exact boundary keeps all rows", func(t *testing.T) {
+		it := &fakePositionedIPCIterator{data: generateMockArrowBytes(generateArrowRecord()), startRowOffset: startOffset, expectedRows: decoded}
+		bi := NewBatchIterator(it, startOffset)
+		batch, err := bi.Next()
+		assert.NoError(t, err)
+		defer batch.Close()
+		assert.Equal(t, int64(decoded), batch.Count())
+	})
+
+	t.Run("positioned: RowCount larger than decoded keeps all rows", func(t *testing.T) {
+		it := &fakePositionedIPCIterator{data: generateMockArrowBytes(generateArrowRecord()), startRowOffset: startOffset, expectedRows: 100}
+		bi := NewBatchIterator(it, startOffset)
+		batch, err := bi.Next()
+		assert.NoError(t, err)
+		defer batch.Close()
+		assert.Equal(t, int64(decoded), batch.Count())
+	})
+
+	t.Run("positioned: RowCount==0 is NOT trusted, keeps all rows (F1)", func(t *testing.T) {
+		it := &fakePositionedIPCIterator{data: generateMockArrowBytes(generateArrowRecord()), startRowOffset: startOffset, expectedRows: 0}
+		bi := NewBatchIterator(it, startOffset)
+		batch, err := bi.Next()
+		assert.NoError(t, err)
+		defer batch.Close()
+		assert.Equal(t, int64(decoded), batch.Count(), "RowCount==0 must not silently drop the batch")
+	})
+
+	t.Run("plain/inline iterator is never capped", func(t *testing.T) {
+		it := &fakePlainIPCIterator{data: generateMockArrowBytes(generateArrowRecord())}
+		bi := NewBatchIterator(it, startOffset)
+		batch, err := bi.Next()
+		assert.NoError(t, err)
+		defer batch.Close()
+		assert.Equal(t, int64(decoded), batch.Count(), "inline path must return all decoded rows")
+		assert.Equal(t, startOffset, batch.Start())
+	})
 }

@@ -14,24 +14,22 @@ import (
 
 	"github.com/databricks/databricks-sql-go/driverctx"
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
-	"github.com/databricks/databricks-sql-go/internal/cli_service"
+	"github.com/databricks/databricks-sql-go/internal/backend"
 	"github.com/databricks/databricks-sql-go/internal/client"
 	context2 "github.com/databricks/databricks-sql-go/internal/compat/context"
 	"github.com/databricks/databricks-sql-go/internal/config"
+	"github.com/databricks/databricks-sql-go/internal/debuglog"
 	dbsqlerrint "github.com/databricks/databricks-sql-go/internal/errors"
+	"github.com/databricks/databricks-sql-go/internal/retry"
 	"github.com/databricks/databricks-sql-go/internal/rows"
-	"github.com/databricks/databricks-sql-go/internal/sentinel"
-	"github.com/databricks/databricks-sql-go/internal/thrift_protocol"
 	"github.com/databricks/databricks-sql-go/logger"
 	"github.com/databricks/databricks-sql-go/telemetry"
-	"github.com/pkg/errors"
 )
 
 type conn struct {
 	id        string
 	cfg       *config.Config
-	client    cli_service.TCLIService
-	session   *cli_service.TOpenSessionResp
+	backend   backend.Backend
 	telemetry *telemetry.Interceptor // Optional telemetry interceptor
 }
 
@@ -54,9 +52,7 @@ func (c *conn) Close() error {
 
 	// Time CloseSession so we can record DELETE_SESSION before flushing telemetry
 	closeStart := time.Now()
-	_, err := c.client.CloseSession(ctx, &cli_service.TCloseSessionReq{
-		SessionHandle: c.session.SessionHandle,
-	})
+	err := c.backend.CloseSession(ctx)
 
 	// Record DELETE_SESSION regardless of error (matches JDBC), then flush and release
 	if c.telemetry != nil {
@@ -110,7 +106,7 @@ func (c *conn) ResetSession(ctx context.Context) error {
 
 // IsValid signals whether a connection is valid or if it should be discarded.
 func (c *conn) IsValid() bool {
-	return c.session.GetStatus().StatusCode == cli_service.TStatusCode_SUCCESS_STATUS
+	return c.backend.SessionValid()
 }
 
 // ExecContext executes a query that doesn't return rows, such
@@ -123,25 +119,36 @@ func (c *conn) ExecContext(ctx context.Context, query string, args []driver.Name
 	log, _ := client.LoggerAndContext(ctx, nil)
 	msg, start := logger.Track("ExecContext")
 	defer log.Duration(msg, start)
+	defer debuglog.Track(ctx, "conn.ExecContext", "sql.len=%d args=%d", len(query), len(args))()
 
 	corrId := driverctx.CorrelationIdFromContext(ctx)
 
 	// Capture execution start time for telemetry before running the query
 	executeStart := time.Now()
-	exStmtResp, opStatusResp, err := c.runQuery(ctx, query, args)
-	log, ctx = client.LoggerAndContext(ctx, exStmtResp)
+	op, err := c.runQuery(ctx, query, args)
+	// A nil op means execution never reached the backend (parameter conversion
+	// failed): no server statement to close or measure. Return the already-wrapped
+	// error directly.
+	if op == nil {
+		log.Err(err).Msgf("databricks: failed to execute query: query %s", query)
+		return nil, err
+	}
+	// Attach the statement id to the context queryId and refresh the logger so
+	// subsequent lines carry it.
+	ctx = enrichQueryId(ctx, op.StatementID())
+	log = logger.WithContext(driverctx.ConnIdFromContext(ctx), corrId, driverctx.QueryIdFromContext(ctx))
 
 	// Telemetry: set up metric context BEFORE staging operation so that the
 	// staging op's telemetryUpdate callback can attach tags to the metric context.
 	var statementID string
 	var closeOpErr error // Track CloseOperation errors for telemetry
-	if c.telemetry != nil && exStmtResp != nil && exStmtResp.OperationHandle != nil && exStmtResp.OperationHandle.OperationId != nil {
-		statementID = client.SprintGuid(exStmtResp.OperationHandle.OperationId.GUID)
+	if c.telemetry != nil && op.StatementID() != "" {
+		statementID = op.StatementID()
 		ctx = c.telemetry.BeforeExecuteWithTime(ctx, c.id, statementID, executeStart)
 		c.telemetry.AddTag(ctx, telemetry.TagOperationType, telemetry.OperationTypeExecuteStatement)
 	}
 
-	stagingErr := c.execStagingOperation(exStmtResp, ctx)
+	stagingErr := c.execStagingOperation(op, ctx)
 
 	if c.telemetry != nil && statementID != "" {
 		defer func() {
@@ -158,36 +165,33 @@ func (c *conn) ExecContext(ctx context.Context, query string, args []driver.Name
 		}()
 	}
 
-	if exStmtResp != nil && exStmtResp.OperationHandle != nil {
-		// since we have an operation handle we can close the operation if necessary
-		alreadyClosed := exStmtResp.DirectResults != nil && exStmtResp.DirectResults.CloseOperation != nil
-		newCtx := driverctx.NewContextWithCorrelationId(driverctx.NewContextWithConnId(context.Background(), c.id), corrId)
-		if !alreadyClosed && (opStatusResp == nil || opStatusResp.GetOperationState() != cli_service.TOperationState_CLOSED_STATE) {
-			closeOpStart := time.Now()
-			_, err1 := c.client.CloseOperation(newCtx, &cli_service.TCloseOperationReq{
-				OperationHandle: exStmtResp.OperationHandle,
-			})
-			if c.telemetry != nil {
-				c.telemetry.RecordOperation(ctx, c.id, statementID, telemetry.OperationTypeCloseStatement, time.Since(closeOpStart).Milliseconds(), err1)
-			}
-			if err1 != nil {
-				log.Err(err1).Msg("databricks: failed to close operation after executing statement")
-				closeOpErr = err1 // Capture for telemetry
-			}
+	// Close the server operation if one is still open. The backend decides
+	// whether a close RPC is actually needed and reports closed=true only when it
+	// issued one, so CLOSE_STATEMENT telemetry is recorded only for a real close.
+	newCtx := driverctx.NewContextWithCorrelationId(driverctx.NewContextWithConnId(context.Background(), c.id), corrId)
+	closeOpStart := time.Now()
+	closed, err1 := op.Close(newCtx)
+	if closed {
+		if c.telemetry != nil {
+			c.telemetry.RecordOperation(ctx, c.id, statementID, telemetry.OperationTypeCloseStatement, time.Since(closeOpStart).Milliseconds(), err1)
+		}
+		if err1 != nil {
+			log.Err(err1).Msg("databricks: failed to close operation after executing statement")
+			closeOpErr = err1 // Capture for telemetry
 		}
 	}
 
 	if err != nil {
 		log.Err(err).Msgf("databricks: failed to execute query: query %s", query)
-		return nil, dbsqlerrint.NewExecutionError(ctx, dbsqlerr.ErrQueryExecution, err, opStatusResp)
+		return nil, op.ExecutionError(ctx, err)
 	}
 
 	if stagingErr != nil {
 		log.Err(stagingErr).Msgf("databricks: failed to execute query: query %s", query)
-		return nil, dbsqlerrint.NewExecutionError(ctx, dbsqlerr.ErrQueryExecution, stagingErr, opStatusResp)
+		return nil, op.ExecutionError(ctx, stagingErr)
 	}
 
-	res := result{AffectedRows: opStatusResp.GetNumModifiedRows()}
+	res := result{AffectedRows: op.AffectedRows()}
 
 	return &res, nil
 }
@@ -242,21 +246,35 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 	ctx = driverctx.NewContextWithConnId(ctx, c.id)
 	log, _ := client.LoggerAndContext(ctx, nil)
 	msg, start := log.Track("QueryContext")
+	defer debuglog.Track(ctx, "conn.QueryContext", "sql.len=%d args=%d", len(query), len(args))()
 
 	// first we try to get the results synchronously.
 	// at any point in time that the context is done we must cancel and return
 
+	corrId := driverctx.CorrelationIdFromContext(ctx)
+
 	// Capture execution start time for telemetry before running the query
 	executeStart := time.Now()
-	exStmtResp, opStatusResp, err := c.runQuery(ctx, query, args)
-	log, ctx = client.LoggerAndContext(ctx, exStmtResp)
+	op, err := c.runQuery(ctx, query, args)
+	// A nil op means execution never reached the backend (parameter conversion
+	// failed): no statement id, no telemetry to emit. Log and return the
+	// already-wrapped error directly.
+	if op == nil {
+		log.Err(err).Msg("databricks: failed to run query") // To log query we need to redact credentials
+		log.Duration(msg, start)
+		return nil, err
+	}
+	// Attach the statement id to the context queryId and refresh the logger so
+	// subsequent lines carry it.
+	ctx = enrichQueryId(ctx, op.StatementID())
+	log = logger.WithContext(driverctx.ConnIdFromContext(ctx), corrId, driverctx.QueryIdFromContext(ctx))
 	defer log.Duration(msg, start)
 
 	// Telemetry: set up metric context for the statement.
 	// BeforeExecuteWithTime anchors startTime to before runQuery() ran.
 	var statementID string
-	if c.telemetry != nil && exStmtResp != nil && exStmtResp.OperationHandle != nil && exStmtResp.OperationHandle.OperationId != nil {
-		statementID = client.SprintGuid(exStmtResp.OperationHandle.OperationId.GUID)
+	if c.telemetry != nil && op.StatementID() != "" {
+		statementID = op.StatementID()
 		ctx = c.telemetry.BeforeExecuteWithTime(ctx, c.id, statementID, executeStart)
 		c.telemetry.AddTag(ctx, telemetry.TagOperationType, telemetry.OperationTypeExecuteStatement)
 	}
@@ -269,7 +287,7 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 			c.telemetry.CompleteStatement(ctx, statementID, true)
 		}
 		log.Err(err).Msg("databricks: failed to run query") // To log query we need to redact credentials
-		return nil, dbsqlerrint.NewExecutionError(ctx, dbsqlerr.ErrQueryExecution, err, opStatusResp)
+		return nil, op.ExecutionError(ctx, err)
 	}
 
 	// Success path: freeze execute latency NOW (before row iteration inflates time.Since).
@@ -357,7 +375,7 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 		}
 	}
 
-	rows, err := rows.NewRows(ctx, exStmtResp.OperationHandle, c.client, c.cfg, exStmtResp.DirectResults, &rows.TelemetryCallbacks{
+	rows, err := op.Results(ctx, &rows.TelemetryCallbacks{
 		OnChunkFetched:   telemetryUpdate,
 		OnClose:          closeCallback,
 		OnCloudFetchFile: cloudFetchCallback,
@@ -366,262 +384,29 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 
 }
 
-func (c *conn) runQuery(ctx context.Context, query string, args []driver.NamedValue) (*cli_service.TExecuteStatementResp, *cli_service.TGetOperationStatusResp, error) {
-	// first we try to get the results synchronously.
-	// at any point in time that the context is done we must cancel and return
-	exStmtResp, err := c.executeStatement(ctx, query, args)
-	var log *logger.DBSQLLogger
-	log, ctx = client.LoggerAndContext(ctx, exStmtResp)
-
+// runQuery converts the caller's parameters and executes the statement through
+// the backend. It returns a nil Operation only when execution never reached the
+// backend — parameter conversion failed before any server statement existed — in
+// which case the wrapped error is returned directly. Once the backend is called,
+// backend.Execute guarantees a non-nil Operation, so callers guard only for the
+// pre-backend nil.
+func (c *conn) runQuery(ctx context.Context, query string, args []driver.NamedValue) (backend.Operation, error) {
+	params, err := convertNamedValuesToParams(args)
 	if err != nil {
-		return exStmtResp, nil, err
+		return nil, dbsqlerrint.NewExecutionError(ctx, dbsqlerr.ErrQueryExecution, err, nil)
 	}
-
-	opHandle := exStmtResp.OperationHandle
-
-	if exStmtResp.DirectResults != nil {
-		opStatus := exStmtResp.DirectResults.GetOperationStatus()
-
-		switch opStatus.GetOperationState() {
-		// terminal states
-		// good
-		case cli_service.TOperationState_FINISHED_STATE:
-			return exStmtResp, opStatus, nil
-		// bad
-		case cli_service.TOperationState_CANCELED_STATE,
-			cli_service.TOperationState_CLOSED_STATE,
-			cli_service.TOperationState_ERROR_STATE,
-			cli_service.TOperationState_TIMEDOUT_STATE:
-			logBadQueryState(log, opStatus)
-			return exStmtResp, opStatus, unexpectedOperationState(opStatus)
-		// live states
-		case cli_service.TOperationState_INITIALIZED_STATE,
-			cli_service.TOperationState_PENDING_STATE,
-			cli_service.TOperationState_RUNNING_STATE:
-			statusResp, err := c.pollOperation(ctx, opHandle)
-			if err != nil {
-				return exStmtResp, statusResp, err
-			}
-			switch statusResp.GetOperationState() {
-			// terminal states
-			// good
-			case cli_service.TOperationState_FINISHED_STATE:
-				return exStmtResp, statusResp, nil
-			// bad
-			case cli_service.TOperationState_CANCELED_STATE,
-				cli_service.TOperationState_CLOSED_STATE,
-				cli_service.TOperationState_ERROR_STATE,
-				cli_service.TOperationState_TIMEDOUT_STATE:
-				logBadQueryState(log, statusResp)
-				return exStmtResp, statusResp, unexpectedOperationState(statusResp)
-				// live states
-			default:
-				logBadQueryState(log, statusResp)
-				return exStmtResp, statusResp, invalidOperationState(ctx, statusResp)
-			}
-		// weird states
-		default:
-			logBadQueryState(log, opStatus)
-			return exStmtResp, opStatus, invalidOperationState(ctx, opStatus)
-		}
-
-	} else {
-		statusResp, err := c.pollOperation(ctx, opHandle)
-		if err != nil {
-			return exStmtResp, statusResp, err
-		}
-		switch statusResp.GetOperationState() {
-		// terminal states
-		// good
-		case cli_service.TOperationState_FINISHED_STATE:
-			return exStmtResp, statusResp, nil
-		// bad
-		case cli_service.TOperationState_CANCELED_STATE,
-			cli_service.TOperationState_CLOSED_STATE,
-			cli_service.TOperationState_ERROR_STATE,
-			cli_service.TOperationState_TIMEDOUT_STATE:
-			logBadQueryState(log, statusResp)
-			return exStmtResp, statusResp, unexpectedOperationState(statusResp)
-			// live states
-		default:
-			logBadQueryState(log, statusResp)
-			return exStmtResp, statusResp, invalidOperationState(ctx, statusResp)
-		}
-	}
+	return c.backend.Execute(ctx, backend.ExecRequest{Query: query, Params: params})
 }
 
-func logBadQueryState(log *logger.DBSQLLogger, opStatus *cli_service.TGetOperationStatusResp) {
-	log.Error().Msgf("databricks: query state: %s", opStatus.GetOperationState())
-	log.Error().Msg(opStatus.GetDisplayMessage())
-	log.Debug().Msg(opStatus.GetDiagnosticInfo())
-}
-
-func unexpectedOperationState(opStatus *cli_service.TGetOperationStatusResp) error {
-	return errors.WithMessage(errors.New(opStatus.GetDisplayMessage()), dbsqlerr.ErrUnexpectedOperationState(opStatus.GetOperationState().String()))
-}
-
-func invalidOperationState(ctx context.Context, opStatus *cli_service.TGetOperationStatusResp) error {
-	return dbsqlerrint.NewDriverError(ctx, dbsqlerr.ErrInvalidOperationState(opStatus.GetOperationState().String()), nil)
-}
-
-func (c *conn) executeStatement(ctx context.Context, query string, args []driver.NamedValue) (*cli_service.TExecuteStatementResp, error) {
-	ctx = driverctx.NewContextWithConnId(ctx, c.id)
-
-	parameters, err := convertNamedValuesToSparkParams(args)
-	if err != nil {
-		return nil, err
+// enrichQueryId sets the operation's statement id as the context queryId. A
+// caller-set queryId is never overwritten. When the context has no queryId,
+// NewContextWithQueryId is always called with the derived id — even if it is
+// empty — so any registered QueryIdCallback fires.
+func enrichQueryId(ctx context.Context, statementID string) context.Context {
+	if driverctx.QueryIdFromContext(ctx) != "" {
+		return ctx
 	}
-
-	req := cli_service.TExecuteStatementReq{
-		SessionHandle: c.session.SessionHandle,
-		Statement:     query,
-		RunAsync:      true,
-		QueryTimeout:  int64(c.cfg.QueryTimeout / time.Second),
-	}
-
-	// Check protocol version for feature support
-	serverProtocolVersion := c.session.ServerProtocolVersion
-
-	// Add direct results if supported
-	if thrift_protocol.SupportsDirectResults(serverProtocolVersion) {
-		req.GetDirectResults = &cli_service.TSparkGetDirectResults{
-			MaxRows: int64(c.cfg.MaxRows),
-		}
-	}
-
-	// Add LZ4 compression if supported and enabled
-	if thrift_protocol.SupportsLz4Compression(serverProtocolVersion) && c.cfg.UseLz4Compression {
-		req.CanDecompressLZ4Result_ = &c.cfg.UseLz4Compression
-	}
-
-	// Add cloud fetch if supported and enabled
-	if thrift_protocol.SupportsCloudFetch(serverProtocolVersion) && c.cfg.UseCloudFetch {
-		req.CanDownloadResult_ = &c.cfg.UseCloudFetch
-	}
-
-	// Add Arrow support if supported and enabled
-	if thrift_protocol.SupportsArrow(serverProtocolVersion) && c.cfg.UseArrowBatches {
-		req.CanReadArrowResult_ = &c.cfg.UseArrowBatches
-		req.UseArrowNativeTypes = &cli_service.TSparkArrowTypes{
-			DecimalAsArrow:       &c.cfg.UseArrowNativeDecimal,
-			TimestampAsArrow:     &c.cfg.UseArrowNativeTimestamp,
-			ComplexTypesAsArrow:  &c.cfg.UseArrowNativeComplexTypes,
-			IntervalTypesAsArrow: &c.cfg.UseArrowNativeIntervalTypes,
-		}
-	}
-
-	// Add parameters if supported and provided
-	if thrift_protocol.SupportsParameterizedQueries(serverProtocolVersion) && len(parameters) > 0 {
-		req.Parameters = parameters
-	}
-
-	// Add per-statement query tags if provided via context
-	if queryTags := driverctx.QueryTagsFromContext(ctx); len(queryTags) > 0 {
-		serialized := SerializeQueryTags(queryTags)
-		if serialized != "" {
-			if req.ConfOverlay == nil {
-				req.ConfOverlay = make(map[string]string)
-			}
-			req.ConfOverlay["query_tags"] = serialized
-		}
-	}
-
-	resp, err := c.client.ExecuteStatement(ctx, &req)
-	var log *logger.DBSQLLogger
-	log, ctx = client.LoggerAndContext(ctx, resp)
-
-	var shouldCancel = func(resp *cli_service.TExecuteStatementResp) bool {
-		if resp == nil {
-			return false
-		}
-		hasHandle := resp.OperationHandle != nil
-		isOpen := resp.DirectResults == nil || resp.DirectResults.CloseOperation == nil
-		return hasHandle && isOpen
-	}
-
-	select {
-	default:
-		// Non-blocking check: continue if context not done
-	case <-ctx.Done():
-		newCtx := driverctx.NewContextFromBackground(ctx)
-		// in case context is done, we need to cancel the operation if necessary
-		if err == nil && shouldCancel(resp) {
-			log.Debug().Msg("databricks: canceling query")
-			_, err1 := c.client.CancelOperation(newCtx, &cli_service.TCancelOperationReq{
-				OperationHandle: resp.GetOperationHandle(),
-			})
-
-			if err1 != nil {
-				log.Err(err1).Msgf("databricks: cancel failed")
-			} else {
-				log.Debug().Msgf("databricks: cancel success")
-			}
-		} else {
-			log.Debug().Msg("databricks: query did not need cancellation")
-		}
-		return nil, ctx.Err()
-	}
-
-	return resp, err
-}
-
-func (c *conn) pollOperation(ctx context.Context, opHandle *cli_service.TOperationHandle) (*cli_service.TGetOperationStatusResp, error) {
-	corrId := driverctx.CorrelationIdFromContext(ctx)
-	log := logger.WithContext(c.id, corrId, client.SprintGuid(opHandle.OperationId.GUID))
-	var statusResp *cli_service.TGetOperationStatusResp
-	ctx = driverctx.NewContextWithConnId(ctx, c.id)
-	newCtx := context2.WithoutCancel(ctx)
-	pollSentinel := sentinel.Sentinel{
-		OnDoneFn: func(statusResp any) (any, error) {
-			return statusResp, nil
-		},
-		StatusFn: func() (sentinel.Done, any, error) {
-			var err error
-			log.Debug().Msg("databricks: polling status")
-			statusResp, err = c.client.GetOperationStatus(newCtx, &cli_service.TGetOperationStatusReq{
-				OperationHandle: opHandle,
-			})
-
-			if statusResp != nil && statusResp.OperationState != nil {
-				log.Debug().Msgf("databricks: status %s", statusResp.GetOperationState().String())
-			}
-			return func() bool {
-				if err != nil {
-					return true
-				}
-				switch statusResp.GetOperationState() {
-				case cli_service.TOperationState_INITIALIZED_STATE,
-					cli_service.TOperationState_PENDING_STATE,
-					cli_service.TOperationState_RUNNING_STATE:
-					return false
-				default:
-					log.Debug().Msg("databricks: polling done")
-					return true
-				}
-			}, statusResp, err
-		},
-		OnCancelFn: func() (any, error) {
-			log.Debug().Msg("databricks: sentinel canceling query")
-			ret, err := c.client.CancelOperation(newCtx, &cli_service.TCancelOperationReq{
-				OperationHandle: opHandle,
-			})
-			return ret, err
-		},
-	}
-	status, resp, err := pollSentinel.Watch(ctx, c.cfg.PollInterval, 0)
-	if err != nil {
-		log.Err(err).Msg("error polling operation status")
-		if status == sentinel.WatchTimeout {
-			err = dbsqlerrint.NewRequestError(ctx, dbsqlerr.ErrSentinelTimeout, err)
-		}
-		return nil, err
-	}
-
-	statusResp, ok := resp.(*cli_service.TGetOperationStatusResp)
-	if !ok {
-		return nil, dbsqlerrint.NewDriverError(ctx, dbsqlerr.ErrReadQueryStatus, nil)
-	}
-	return statusResp, nil
+	return driverctx.NewContextWithQueryId(ctx, statementID)
 }
 
 func (c *conn) CheckNamedValue(nv *driver.NamedValue) error {
@@ -647,17 +432,21 @@ var _ driver.ConnBeginTx = (*conn)(nil)
 var _ driver.NamedValueChecker = (*conn)(nil)
 
 func Succeeded(response *http.Response) bool {
-	if response.StatusCode == 200 || response.StatusCode == 201 || response.StatusCode == 202 || response.StatusCode == 204 {
-		return true
-	}
-	return false
+	return statusInSuccessRange(response.StatusCode)
+}
+
+// statusInSuccessRange returns true for the 2xx status codes the staging
+// HTTP path treats as success: 200 OK / 201 Created / 202 Accepted / 204
+// No Content. Exposed separately from Succeeded so handlers can extend the
+// accept set (e.g. REMOVE accepts 404 for idempotent-delete semantics).
+func statusInSuccessRange(status int) bool {
+	return status == 200 || status == 201 || status == 202 || status == 204
 }
 
 func (c *conn) handleStagingPut(ctx context.Context, presignedUrl string, headers map[string]string, localFile string) dbsqlerr.DBError {
 	if localFile == "" {
 		return dbsqlerrint.NewDriverError(ctx, "cannot perform PUT without specifying a local_file", nil)
 	}
-	client := &http.Client{}
 
 	dat, err := os.Open(localFile) //nolint:gosec // localFile is provided by the application, not user input
 	if err != nil {
@@ -669,73 +458,222 @@ func (c *conn) handleStagingPut(ctx context.Context, presignedUrl string, header
 	if err != nil {
 		return dbsqlerrint.NewDriverError(ctx, "error reading local file info", err)
 	}
+	size := info.Size()
 
-	req, _ := http.NewRequest("PUT", presignedUrl, dat)
-	req.ContentLength = info.Size() // backend actually requires content length to be known
-
-	for k, v := range headers {
-		req.Header.Set(k, v)
+	// Each retry attempt needs a fresh request because http.Client.Do consumes
+	// the request body. Rewind the *os.File between attempts so the server
+	// receives the full payload on every retry, not just attempt 1.
+	//
+	// Wrap the file in io.NopCloser so http.Client.Do can't close it — by
+	// default it closes any body that implements io.Closer, which would break
+	// the Seek on the next retry. The outer defer dat.Close() above owns the
+	// file's lifecycle.
+	reqFactory := func(attempt int) (*http.Request, error) {
+		if attempt > 0 {
+			if _, seekErr := dat.Seek(0, io.SeekStart); seekErr != nil {
+				return nil, seekErr
+			}
+		}
+		req, reqErr := http.NewRequestWithContext(ctx, http.MethodPut, presignedUrl, io.NopCloser(dat))
+		if reqErr != nil {
+			return nil, reqErr
+		}
+		req.ContentLength = size // backend actually requires content length to be known
+		for k, v := range headers {
+			req.Header.Set(k, v)
+		}
+		return req, nil
 	}
-	res, err := client.Do(req)
-	if err != nil {
-		return dbsqlerrint.NewDriverError(ctx, "error sending http request", err)
-	}
-	defer res.Body.Close() //nolint:errcheck
-	content, err := io.ReadAll(res.Body)
 
-	if err != nil || !Succeeded(res) {
-		return dbsqlerrint.NewDriverError(ctx, fmt.Sprintf("staging operation over HTTP was unsuccessful: %d-%s", res.StatusCode, content), nil)
+	if _, err := c.doStagingRequestWithRetry(ctx, reqFactory); err != nil {
+		return err
 	}
 	return nil
-
 }
 
 func (c *conn) handleStagingGet(ctx context.Context, presignedUrl string, headers map[string]string, localFile string) dbsqlerr.DBError {
 	if localFile == "" {
 		return dbsqlerrint.NewDriverError(ctx, "cannot perform GET without specifying a local_file", nil)
 	}
-	client := &http.Client{}
-	req, _ := http.NewRequest("GET", presignedUrl, nil)
 
-	for k, v := range headers {
-		req.Header.Set(k, v)
+	reqFactory := func(_ int) (*http.Request, error) {
+		req, reqErr := http.NewRequestWithContext(ctx, http.MethodGet, presignedUrl, nil)
+		if reqErr != nil {
+			return nil, reqErr
+		}
+		for k, v := range headers {
+			req.Header.Set(k, v)
+		}
+		return req, nil
 	}
-	res, err := client.Do(req)
+
+	content, err := c.doStagingRequestWithRetry(ctx, reqFactory)
 	if err != nil {
-		return dbsqlerrint.NewDriverError(ctx, "error sending http request", err)
+		return err
 	}
-	defer res.Body.Close() //nolint:errcheck
-	content, err := io.ReadAll(res.Body)
-
-	if err != nil || !Succeeded(res) {
-		return dbsqlerrint.NewDriverError(ctx, fmt.Sprintf("staging operation over HTTP was unsuccessful: %d-%s", res.StatusCode, content), nil)
-	}
-
-	err = os.WriteFile(localFile, content, 0644) //nolint:gosec
-	if err != nil {
-		return dbsqlerrint.NewDriverError(ctx, "error writing local file", err)
+	if writeErr := os.WriteFile(localFile, content, 0644); writeErr != nil { //nolint:gosec
+		return dbsqlerrint.NewDriverError(ctx, "error writing local file", writeErr)
 	}
 	return nil
 }
 
 func (c *conn) handleStagingRemove(ctx context.Context, presignedUrl string, headers map[string]string) dbsqlerr.DBError {
-	client := &http.Client{}
-	req, _ := http.NewRequest("DELETE", presignedUrl, nil)
-	for k, v := range headers {
-		req.Header.Set(k, v)
-	}
-	res, err := client.Do(req)
-	if err != nil {
-		return dbsqlerrint.NewDriverError(ctx, "error sending http request", err)
-	}
-	defer res.Body.Close() //nolint:errcheck
-	content, err := io.ReadAll(res.Body)
-
-	if err != nil || !Succeeded(res) {
-		return dbsqlerrint.NewDriverError(ctx, fmt.Sprintf("staging operation over HTTP was unsuccessful: %d-%s, nil", res.StatusCode, content), nil)
+	reqFactory := func(_ int) (*http.Request, error) {
+		req, reqErr := http.NewRequestWithContext(ctx, http.MethodDelete, presignedUrl, nil)
+		if reqErr != nil {
+			return nil, reqErr
+		}
+		for k, v := range headers {
+			req.Header.Set(k, v)
+		}
+		return req, nil
 	}
 
+	// Treat 404 as success on REMOVE: DELETE is idempotent, and a 404 means
+	// the object is already absent — which is the post-condition the caller
+	// asked for. This also avoids spurious failures when a successful DELETE
+	// returns a transient 5xx mid-response and the retry sees 404 from the
+	// server having already applied the original request.
+	acceptStatus := func(status int) bool {
+		return statusInSuccessRange(status) || status == http.StatusNotFound
+	}
+
+	if _, err := c.doStagingRequestWithRetryAccept(ctx, reqFactory, acceptStatus); err != nil {
+		return err
+	}
 	return nil
+}
+
+// maxStagingErrorBodyBytes bounds the response body bytes included in
+// terminal staging error messages. Proxies and misconfigured backends can
+// return multi-MB error bodies; truncating keeps the driver error readable
+// without dropping the typical S3 XML error code that fits well under 512B.
+const maxStagingErrorBodyBytes = 512
+
+// doStagingRequestWithRetry executes a staging HTTP request with retry on
+// transient object-storage failures (ES-1911239). Wraps
+// doStagingRequestWithRetryAccept with the default success predicate (2xx
+// from statusInSuccessRange / Succeeded).
+func (c *conn) doStagingRequestWithRetry(ctx context.Context, reqFactory func(attempt int) (*http.Request, error)) ([]byte, dbsqlerr.DBError) {
+	return c.doStagingRequestWithRetryAccept(ctx, reqFactory, statusInSuccessRange)
+}
+
+// doStagingRequestWithRetryAccept is the generalized staging retry helper
+// used by all three handleStaging* methods. Mirrors the CloudFetch retry
+// path (ES-1892645) in semantics — same retryable status set, same
+// exponential-backoff-with-jitter schedule, same RetryMax/RetryWaitMin/
+// RetryWaitMax config knobs — so behavior is consistent across the driver's
+// two object-storage code paths.
+//
+// reqFactory must return a fresh *http.Request on each call. Attempt 0 is
+// the initial request; attempt N>0 is a retry. The PUT path uses this to
+// rewind the file body between attempts; other staging paths just construct
+// a new request each time.
+//
+// acceptStatus reports whether a given HTTP status code should be treated
+// as success. Most handlers pass statusInSuccessRange. The REMOVE handler
+// extends this to also accept 404 (idempotent-delete semantics).
+//
+// On success returns the response body bytes. On terminal failure (non-
+// retryable status, exhausted retries, or context cancellation) returns a
+// dbsqlerr.DBError describing the final state.
+func (c *conn) doStagingRequestWithRetryAccept(
+	ctx context.Context,
+	reqFactory func(attempt int) (*http.Request, error),
+	acceptStatus func(status int) bool,
+) ([]byte, dbsqlerr.DBError) {
+	retryMax := c.cfg.RetryMax
+	if retryMax < 0 {
+		retryMax = 0
+	}
+	client := &http.Client{}
+
+	var (
+		lastErr        error
+		lastStatus     int
+		lastBody       []byte
+		lastRetryAfter string
+	)
+
+	for attempt := 0; attempt <= retryMax; attempt++ {
+		if attempt > 0 {
+			wait := retry.Backoff(attempt, c.cfg.RetryWaitMin, c.cfg.RetryWaitMax, lastRetryAfter)
+			logger.Debug().Msgf(
+				"staging: retrying HTTP request (attempt %d/%d) in %v; lastStatus=%d lastErr=%v",
+				attempt, retryMax, wait, lastStatus, lastErr,
+			)
+			t := time.NewTimer(wait)
+			select {
+			case <-ctx.Done():
+				if !t.Stop() {
+					<-t.C
+				}
+				return nil, dbsqlerrint.NewDriverError(ctx, "staging operation cancelled during retry backoff", ctx.Err())
+			case <-t.C:
+			}
+		}
+
+		req, reqErr := reqFactory(attempt)
+		if reqErr != nil {
+			return nil, dbsqlerrint.NewDriverError(ctx, "error building staging http request", reqErr)
+		}
+
+		res, err := client.Do(req)
+		if err != nil {
+			// Caller cancellation is terminal; otherwise treat transport
+			// errors (TCP RST, TLS timeout, etc.) as transient.
+			if ctx.Err() != nil {
+				return nil, dbsqlerrint.NewDriverError(ctx, "error sending http request", ctx.Err())
+			}
+			lastErr = err
+			lastStatus = 0
+			lastRetryAfter = ""
+			continue
+		}
+
+		body, readErr := io.ReadAll(res.Body)
+		res.Body.Close() //nolint:errcheck,gosec // G104: close after drain
+
+		if readErr != nil {
+			if ctx.Err() != nil {
+				return nil, dbsqlerrint.NewDriverError(ctx, "error reading http response", ctx.Err())
+			}
+			lastErr = readErr
+			lastStatus = 0
+			lastRetryAfter = ""
+			continue
+		}
+
+		if acceptStatus(res.StatusCode) {
+			return body, nil
+		}
+
+		lastStatus = res.StatusCode
+		lastErr = nil
+		lastBody = body
+		lastRetryAfter = res.Header.Get("Retry-After")
+
+		if !retry.IsRetryableStatus(res.StatusCode) {
+			return nil, dbsqlerrint.NewDriverError(ctx, fmt.Sprintf("staging operation over HTTP was unsuccessful: %d-%s", res.StatusCode, truncateErrorBody(body)), nil)
+		}
+	}
+
+	if lastStatus != 0 {
+		// lastErr is nil here by construction: the HTTP-status branch above
+		// explicitly clears it on every iteration. The status code and body
+		// are captured in msg, so there's no underlying error to wrap.
+		return nil, dbsqlerrint.NewDriverError(ctx, fmt.Sprintf("staging operation over HTTP was unsuccessful: %d-%s (after %d retries)", lastStatus, truncateErrorBody(lastBody), retryMax), nil)
+	}
+	return nil, dbsqlerrint.NewDriverError(ctx, fmt.Sprintf("staging operation HTTP request failed: %v (after %d retries)", lastErr, retryMax), lastErr)
+}
+
+// truncateErrorBody caps b at maxStagingErrorBodyBytes for inclusion in error
+// messages, appending an indicator when truncation occurred.
+func truncateErrorBody(b []byte) string {
+	if len(b) <= maxStagingErrorBodyBytes {
+		return string(b)
+	}
+	return fmt.Sprintf("%s... (%d bytes total, truncated)", b[:maxStagingErrorBodyBytes], len(b))
 }
 
 func localPathIsAllowed(stagingAllowedLocalPaths []string, localFile string) bool {
@@ -762,28 +700,17 @@ func localPathIsAllowed(stagingAllowedLocalPaths []string, localFile string) boo
 }
 
 func (c *conn) execStagingOperation(
-	exStmtResp *cli_service.TExecuteStatementResp,
+	op backend.Operation,
 	ctx context.Context) dbsqlerr.DBError {
 
-	if exStmtResp == nil || exStmtResp.OperationHandle == nil {
-		return nil
-	}
+	defer debuglog.Track(ctx, "conn.execStagingOperation", "stmt=%s", op.StatementID())()
 
 	var row driver.Rows
 	var err error
 
-	var isStagingOperation bool
-	if exStmtResp.DirectResults != nil && exStmtResp.DirectResults.ResultSetMetadata != nil {
-		isStagingOperation = exStmtResp.DirectResults.ResultSetMetadata.IsStagingOperation != nil && *exStmtResp.DirectResults.ResultSetMetadata.IsStagingOperation
-	} else {
-		req := cli_service.TGetResultSetMetadataReq{
-			OperationHandle: exStmtResp.OperationHandle,
-		}
-		resp, err := c.client.GetResultSetMetadata(ctx, &req)
-		if err != nil {
-			return dbsqlerrint.NewDriverError(ctx, "error performing staging operation", err)
-		}
-		isStagingOperation = resp.IsStagingOperation != nil && *resp.IsStagingOperation
+	isStagingOperation, stagingErr := op.IsStaging(ctx)
+	if stagingErr != nil {
+		return dbsqlerrint.NewDriverError(ctx, "error performing staging operation", stagingErr)
 	}
 
 	if !isStagingOperation {
@@ -798,7 +725,7 @@ func (c *conn) execStagingOperation(
 				c.telemetry.AddTag(ctx, telemetry.TagBytesDownloaded, bytesDownloaded)
 			}
 		}
-		row, err = rows.NewRows(ctx, exStmtResp.OperationHandle, c.client, c.cfg, exStmtResp.DirectResults, &rows.TelemetryCallbacks{
+		row, err = op.Results(ctx, &rows.TelemetryCallbacks{
 			OnChunkFetched: telemetryUpdate,
 		})
 		if err != nil {

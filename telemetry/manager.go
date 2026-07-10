@@ -2,10 +2,23 @@ package telemetry
 
 import (
 	"net/http"
+	"strings"
 	"sync"
 
 	"github.com/databricks/databricks-sql-go/logger"
 )
+
+// normalizeHostKey returns a canonical lookup key for host-based registries
+// (telemetry clients, circuit breakers). It lowercases, trims whitespace,
+// strips http/https scheme, and trims trailing slashes so trivial variations
+// in DSN input ("example.com", "example.com/", "https://example.com") share
+// state instead of fragmenting into independent breakers/clients.
+func normalizeHostKey(host string) string {
+	h := strings.ToLower(strings.TrimSpace(host))
+	h = strings.TrimPrefix(h, "https://")
+	h = strings.TrimPrefix(h, "http://")
+	return strings.TrimRight(h, "/")
+}
 
 // clientManager manages one telemetry client per host.
 //
@@ -45,13 +58,22 @@ func getClientManager() *clientManager {
 
 // getOrCreateClient gets or creates a telemetry client for the host.
 // Increments reference count.
-func (m *clientManager) getOrCreateClient(host string, driverVersion string, httpClient *http.Client, cfg *Config) *telemetryClient {
+//
+// The first caller for a host fixes the User-Agent for the lifetime of the
+// host's telemetry client. A later connection on the same host with a
+// different WithUserAgentEntry will see its telemetry traffic attributed
+// to the first caller's UA in access logs. This is intentional — the
+// per-host singleton consolidates telemetry across connections to keep
+// the request rate low.
+func (m *clientManager) getOrCreateClient(host string, driverVersion string, userAgent string, httpClient *http.Client, cfg *Config) *telemetryClient {
+	key := normalizeHostKey(host)
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	holder, exists := m.clients[host]
+	holder, exists := m.clients[key]
 	if !exists {
-		client := newTelemetryClient(host, driverVersion, httpClient, cfg)
+		client := newTelemetryClient(host, driverVersion, userAgent, httpClient, cfg)
 		if err := client.start(); err != nil {
 			// Failed to start client, don't add to map
 			logger.Logger.Debug().Str("host", host).Err(err).Msg("failed to start telemetry client")
@@ -60,7 +82,7 @@ func (m *clientManager) getOrCreateClient(host string, driverVersion string, htt
 		holder = &clientHolder{
 			client: client,
 		}
-		m.clients[host] = holder
+		m.clients[key] = holder
 	}
 	holder.refCount++
 	return holder.client
@@ -69,8 +91,10 @@ func (m *clientManager) getOrCreateClient(host string, driverVersion string, htt
 // releaseClient decrements reference count for the host.
 // Closes and removes client when ref count reaches zero.
 func (m *clientManager) releaseClient(host string) error {
+	key := normalizeHostKey(host)
+
 	m.mu.Lock()
-	holder, exists := m.clients[host]
+	holder, exists := m.clients[key]
 	if !exists {
 		m.mu.Unlock()
 		return nil
@@ -82,7 +106,7 @@ func (m *clientManager) releaseClient(host string) error {
 		logger.Logger.Debug().Str("host", host).Int("refCount", holder.refCount).Msg("telemetry client refCount became negative")
 	}
 	if holder.refCount <= 0 {
-		delete(m.clients, host)
+		delete(m.clients, key)
 		m.mu.Unlock()
 		return holder.client.close() // Close and flush
 	}

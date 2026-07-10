@@ -1,5 +1,22 @@
 # Release History
 
+## Unreleased
+- Stop using `html/template` in the U2M OAuth callback page. Reachable use of `html/template` disabled the Go linker's dead-code elimination for the entire binary of any application importing this driver; the page is now rendered with plain string building and explicit HTML escaping, restoring full DCE (databricks/databricks-sql-go#343)
+- Fix DECIMAL precision loss inside complex types: DECIMAL values nested in STRUCT, ARRAY, and MAP columns are now rendered losslessly with their exact scale (e.g. `19.99` instead of `19.990000000000002`), matching the behavior of top-level DECIMAL columns (databricks/databricks-sql-go#253)
+
+## v1.13.1 (2026-07-07)
+- Expose native Arrow decimal handling: add the `WithArrowNativeDecimal` connector option and the `useArrowNativeDecimal` DSN parameter so DECIMAL columns can be returned as native Arrow `decimal128` (via `GetArrowBatches`) instead of strings. When scanned through `database/sql`, native DECIMAL values are returned as lossless, scale-applied strings (databricks/databricks-sql-go#274)
+
+## v1.13.0 (2026-06-04)
+- Add SPOG (unified) host support: extract the org-id from the cluster HTTP path for non-Thrift requests, and fix U2M/M2M OAuth on unified AWS hosts (databricks/databricks-sql-go#367, #374)
+- Cap CloudFetch Arrow batches to the server-declared row count to avoid over-reading (databricks/databricks-sql-go#372)
+- Detach result streaming from `QueryContext` cancellation so in-flight results aren't dropped when the query context is cancelled (databricks/databricks-sql-go#373)
+
+## v1.12.0 (2026-05-25)
+- Retry transient S3 errors in CloudFetch downloads and staging PUT/GET/REMOVE operations (databricks/databricks-sql-go#355, #361)
+- Telemetry: normalize host key for per-host client + breaker registries; stop retrying into 429s, honour Retry-After, fix userAgent (databricks/databricks-sql-go#354, #364)
+- Bump dependencies to clear Go-1.20-compatible CVEs: golang-jwt, x/net, protobuf, go-jose v3.0.5 (CVE-2026-34986) (databricks/databricks-sql-go#360, #363)
+
 ## v1.11.1 (2026-05-20)
 - Fix CloudFetch goroutine leak that retained Arrow buffers after Close (databricks/databricks-sql-go#357)
 

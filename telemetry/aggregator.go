@@ -2,6 +2,7 @@ package telemetry
 
 import (
 	"context"
+	"math/rand"
 	"sync"
 	"time"
 
@@ -220,7 +221,25 @@ func (agg *metricsAggregator) completeStatement(ctx context.Context, statementID
 }
 
 // flushLoop runs periodic flush in background.
+//
+// The first flush is offset by a random jitter in [0, flushInterval) so a
+// fleet of clients started together (e.g. partner-connector workers booted
+// from the same scheduler) does not align all their flushes on the same
+// wall-clock phase and produce synchronized request bursts.
 func (agg *metricsAggregator) flushLoop() {
+	var jitter time.Duration
+	if agg.flushInterval > 0 {
+		jitter = time.Duration(rand.Int63n(int64(agg.flushInterval))) //nolint:gosec // G404: not used for security
+	}
+	jitterTimer := time.NewTimer(jitter)
+	defer jitterTimer.Stop()
+	select {
+	case <-jitterTimer.C:
+		agg.flush(agg.ctx)
+	case <-agg.stopCh:
+		return
+	}
+
 	agg.flushTimer = time.NewTicker(agg.flushInterval)
 	defer agg.flushTimer.Stop()
 
