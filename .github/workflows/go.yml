@@ -94,9 +94,8 @@ jobs:
       # NOT compile the SEA-via-kernel backend (//go:build cgo && databricks_kernel).
       # A dedicated CGO_ENABLED=1 `-tags databricks_kernel` test job needs the
       # kernel static library linked in CI, which arrives with the kernel
-      # distribution work (a pinned-revision source build or a published .a) — see
-      # the #393 follow-ups. Until then the kernel path's cgo files are not
-      # exercised here.
+      # distribution work (a pinned-revision source build or a published .a).
+      # Until then the kernel path's cgo files are not exercised here.
       - name: Test
         run: make test
         env:

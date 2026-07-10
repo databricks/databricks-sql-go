@@ -265,7 +265,7 @@ func TestScanCellNested(t *testing.T) {
 	t.Run("nested_float32_exact", func(t *testing.T) {
 		// A float32 inside a struct must marshal as the native float32 (3.14), not
 		// a widened float64 (3.140000104904175) — matching Thrift's nested path,
-		// which marshals the native float32. See databricks-sql-go#393 review M2.
+		// which marshals the native float32.
 		dt := arrow.StructOf(arrow.Field{Name: "f", Type: arrow.PrimitiveTypes.Float32})
 		b := array.NewStructBuilder(pool, dt)
 		defer b.Release()

@@ -196,11 +196,12 @@ path databricks_sql_kernel, which would match nothing):
 The kernel backend currently supports PAT authentication; reading scalar, nested,
 and complex-typed results (CloudFetch is handled transparently); context
 cancellation; and the TLS, proxy, and session-conf (query tags, statement timeout,
-time zone) connection options. OAuth (M2M/U2M), metadata commands, and initial
-catalog/schema are not yet supported and return a clear error at connect time
-rather than being silently ignored. Bound query parameters are likewise not yet
-supported and return a clear error at execute time (they arrive per-query, not at
-connect). None of these is silently ignored.
+time zone) connection options. OAuth (M2M/U2M) and initial catalog/schema are not
+yet supported and return a clear error at connect time rather than being silently
+ignored. Bound query parameters are likewise not yet supported and return a clear
+error at execute time (they arrive per-query, not at connect). None of these is
+silently ignored. (Metadata is issued as ordinary SQL — SHOW/DESCRIBE/
+information_schema — and runs on this backend like any other query.)
 
 # Programmatically Retrieving Connection and Query Id
 

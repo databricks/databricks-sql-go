@@ -19,22 +19,7 @@ import (
 // consumer uses — not a kernel-only connector.
 func kernelTestDB(t *testing.T) *sql.DB {
 	t.Helper()
-	host := os.Getenv("DATABRICKS_HOST")
-	httpPath := os.Getenv("DATABRICKS_HTTP_PATH")
-	token := os.Getenv("DATABRICKS_TOKEN")
-	if host == "" || httpPath == "" || token == "" {
-		t.Skip("set DATABRICKS_HOST / DATABRICKS_HTTP_PATH / DATABRICKS_TOKEN for the kernel e2e")
-	}
-	connector, err := NewConnector(
-		WithServerHostname(host),
-		WithHTTPPath(httpPath),
-		WithAccessToken(token),
-		WithUseKernel(true),
-	)
-	if err != nil {
-		t.Fatalf("NewConnector: %v", err)
-	}
-	return sql.OpenDB(connector)
+	return kernelTestDBWith(t)
 }
 
 // TestKernelE2ESelect1 is the smallest end-to-end proof: PAT session over the
