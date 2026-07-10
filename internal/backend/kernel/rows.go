@@ -17,13 +17,11 @@ import (
 	"database/sql/driver"
 	"fmt"
 	"io"
-	"time"
 	"unsafe"
 
 	"github.com/apache/arrow/go/v12/arrow"
-	"github.com/apache/arrow/go/v12/arrow/array"
 	"github.com/apache/arrow/go/v12/arrow/cdata"
-	"github.com/databricks/databricks-sql-go/internal/decimalfmt"
+	"github.com/databricks/databricks-sql-go/internal/arrowscan"
 	dbsqlrows "github.com/databricks/databricks-sql-go/internal/rows"
 )
 
@@ -118,7 +116,7 @@ func (r *kernelRows) Next(dest []driver.Value) error {
 	}
 	rec := r.cur
 	for c := 0; c < len(dest); c++ {
-		v, err := scanCell(rec.Column(c), r.rowInCur, r.op.location)
+		v, err := arrowscan.ScanCell(rec.Column(c), r.rowInCur, r.op.location)
 		if err != nil {
 			return fmt.Errorf("kernel: scan col %d (%s): %w", c, r.cols[c], err)
 		}
@@ -182,84 +180,4 @@ func (r *kernelRows) nextBatch() error {
 	}
 	klog("nextBatch: %d rows (chunk %d)", rec.NumRows(), r.chunkCount)
 	return nil
-}
-
-// scanCell extracts one cell as a driver.Value. Scalars map to their Go value:
-// bool, all int/uint widths, float, string, binary, date, timestamp, and
-// top-level decimal (as an exact fixed-point string, matching the Thrift path —
-// a float64 would lose precision beyond ~17 digits; see databricks-sql-go#274).
-// Nested types (List/Map/Struct, and VARIANT which arrives nested) render to a
-// JSON string byte-identical to the Thrift path (see scan_nested.go); GEOMETRY
-// arrives as a WKB/WKT string and is handled by the string arm. NULLs map to
-// nil. A genuinely unhandled type (e.g. interval/duration) returns an error
-// rather than a silently wrong value.
-func scanCell(col arrow.Array, row int, loc *time.Location) (driver.Value, error) {
-	if col.IsNull(row) {
-		return nil, nil
-	}
-	switch c := col.(type) {
-	case *array.Null:
-		return nil, nil
-	case *array.Boolean:
-		return c.Value(row), nil
-	case *array.Int8:
-		return int64(c.Value(row)), nil
-	case *array.Int16:
-		return int64(c.Value(row)), nil
-	case *array.Int32:
-		return int64(c.Value(row)), nil
-	case *array.Int64:
-		return c.Value(row), nil
-	case *array.Uint8:
-		return int64(c.Value(row)), nil
-	case *array.Uint16:
-		return int64(c.Value(row)), nil
-	case *array.Uint32:
-		return int64(c.Value(row)), nil
-	case *array.Uint64:
-		return int64(c.Value(row)), nil
-	case *array.Float32:
-		// Return the native float32, NOT a widened float64: the Thrift path returns
-		// a float32 driver.Value for a bare FLOAT column, and database/sql's
-		// asString formats it at bit-size 32 — so widening here would render
-		// CAST(0.1 AS FLOAT) as "0.10000000149011612" vs Thrift's "0.1".
-		return c.Value(row), nil
-	case *array.Float64:
-		return c.Value(row), nil
-	case *array.String:
-		return c.Value(row), nil
-	case *array.LargeString:
-		return c.Value(row), nil
-	case *array.Binary:
-		return c.Value(row), nil
-	case *array.Date32:
-		return inLocation(c.Value(row).ToTime(), loc), nil
-	case *array.Date64:
-		return inLocation(c.Value(row).ToTime(), loc), nil
-	case *array.Timestamp:
-		dt, ok := col.DataType().(*arrow.TimestampType)
-		if !ok {
-			return nil, fmt.Errorf("timestamp column has unexpected datatype %s", col.DataType())
-		}
-		return inLocation(c.Value(row).ToTime(dt.Unit), loc), nil
-	case *array.Decimal128:
-		dt := col.DataType().(*arrow.Decimal128Type)
-		return decimalfmt.ExactString(c.Value(row), dt.Scale), nil
-	case *array.List, *array.LargeList, *array.FixedSizeList, *array.Map, *array.Struct:
-		// Nested types (and VARIANT, which arrives as a nested value) render to a
-		// JSON string matching the Thrift path.
-		return renderJSONString(col, row, loc)
-	default:
-		return nil, fmt.Errorf("kernel: scanning arrow type %s is not supported "+
-			"(intervals are not yet handled)", col.DataType())
-	}
-}
-
-// inLocation renders t in loc, matching the Thrift path's .In(location); a nil
-// loc leaves the value in UTC (arrow's ToTime default).
-func inLocation(t time.Time, loc *time.Location) time.Time {
-	if loc == nil {
-		return t
-	}
-	return t.In(loc)
 }

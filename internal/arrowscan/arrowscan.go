@@ -1,12 +1,13 @@
-//go:build cgo && databricks_kernel
-
-package kernel
-
-// Recursive rendering of nested Arrow values (List/Map/Struct) to a JSON string,
-// byte-compatible with the Thrift arrow path
-// (internal/rows/arrowbased/columnValues.go). scanCell delegates here for nested
-// columns; database/sql consumers then get the same JSON shape from either
-// backend:
+// Package arrowscan converts Arrow array cells to database/sql driver.Values,
+// with nested types (List/Map/Struct, and VARIANT which arrives nested) rendered
+// to a JSON string byte-identical to the Thrift arrow path
+// (internal/rows/arrowbased). It is pure Go (no cgo), so it is shared by the
+// kernel backend and testable in the default CGO_ENABLED=0 build — the tests here
+// are the regression guard for the exact rendering rules (native float32, exact
+// decimals, time.Time formatting, JSON grammar) both backends must agree on.
+//
+// Rendering to JSON (not a Go map/slice) is deliberate: it is what the Thrift
+// path returns, so a query's result is identical across backends.
 //   - list        → [v0,v1,...]
 //   - map         → {"k0":v0,"k1":v1,...}   (keys stringified)
 //   - struct      → {"field0":v0,...}
@@ -14,13 +15,9 @@ package kernel
 //   - time.Time   → quoted .String()  (matches the Thrift marshal() special-case)
 //   - nested decimal → exact scale-applied JSON number literal (never a lossy
 //     float64), matching Thrift's marshalScalar → ValueString (#253/#274)
-//
-// VARIANT arrives as a nested value and renders through this path; GEOMETRY
-// arrives as a WKB/WKT string and is handled by scanCell's scalar arm.
-//
-// Rendering to JSON (not a Go map/slice) is deliberate: it is what the Thrift
-// path returns, so a query's result is identical across backends — the property
-// the Thrift-parity test asserts.
+//   - float32     → native float32 (not widened to float64), so JSON renders
+//     3.14, not 3.140000104904175
+package arrowscan
 
 import (
 	"database/sql/driver"
@@ -33,6 +30,87 @@ import (
 	"github.com/apache/arrow/go/v12/arrow/array"
 	"github.com/databricks/databricks-sql-go/internal/decimalfmt"
 )
+
+// ScanCell extracts one cell as a driver.Value. Scalars map to their Go value:
+// bool, all int/uint widths, float (native float32/float64), string, binary,
+// date, timestamp, and top-level decimal (as an exact fixed-point string,
+// matching the Thrift path — a float64 would lose precision beyond ~17 digits;
+// see databricks-sql-go#274). Nested types (List/Map/Struct, and VARIANT which
+// arrives nested) render to a JSON string byte-identical to the Thrift path;
+// GEOMETRY arrives as a WKB/WKT string and is handled by the string arm. NULLs
+// map to nil. A genuinely unhandled type (e.g. interval/duration) returns an
+// error rather than a silently wrong value. loc renders DATE / TIMESTAMP in the
+// session time zone (nil = UTC, arrow's ToTime default).
+func ScanCell(col arrow.Array, row int, loc *time.Location) (driver.Value, error) {
+	if col.IsNull(row) {
+		return nil, nil
+	}
+	switch c := col.(type) {
+	case *array.Null:
+		return nil, nil
+	case *array.Boolean:
+		return c.Value(row), nil
+	case *array.Int8:
+		return int64(c.Value(row)), nil
+	case *array.Int16:
+		return int64(c.Value(row)), nil
+	case *array.Int32:
+		return int64(c.Value(row)), nil
+	case *array.Int64:
+		return c.Value(row), nil
+	case *array.Uint8:
+		return int64(c.Value(row)), nil
+	case *array.Uint16:
+		return int64(c.Value(row)), nil
+	case *array.Uint32:
+		return int64(c.Value(row)), nil
+	case *array.Uint64:
+		return int64(c.Value(row)), nil
+	case *array.Float32:
+		// Return the native float32, NOT a widened float64: the Thrift path returns
+		// a float32 driver.Value for a bare FLOAT column, and database/sql's
+		// asString formats it at bit-size 32 — so widening here would render
+		// CAST(0.1 AS FLOAT) as "0.10000000149011612" vs Thrift's "0.1".
+		return c.Value(row), nil
+	case *array.Float64:
+		return c.Value(row), nil
+	case *array.String:
+		return c.Value(row), nil
+	case *array.LargeString:
+		return c.Value(row), nil
+	case *array.Binary:
+		return c.Value(row), nil
+	case *array.Date32:
+		return inLocation(c.Value(row).ToTime(), loc), nil
+	case *array.Date64:
+		return inLocation(c.Value(row).ToTime(), loc), nil
+	case *array.Timestamp:
+		dt, ok := col.DataType().(*arrow.TimestampType)
+		if !ok {
+			return nil, fmt.Errorf("timestamp column has unexpected datatype %s", col.DataType())
+		}
+		return inLocation(c.Value(row).ToTime(dt.Unit), loc), nil
+	case *array.Decimal128:
+		dt := col.DataType().(*arrow.Decimal128Type)
+		return decimalfmt.ExactString(c.Value(row), dt.Scale), nil
+	case *array.List, *array.LargeList, *array.FixedSizeList, *array.Map, *array.Struct:
+		// Nested types (and VARIANT, which arrives as a nested value) render to a
+		// JSON string matching the Thrift path.
+		return renderJSONString(col, row, loc)
+	default:
+		return nil, fmt.Errorf("scanning arrow type %s is not supported "+
+			"(intervals are not yet handled)", col.DataType())
+	}
+}
+
+// inLocation renders t in loc, matching the Thrift path's .In(location); a nil
+// loc leaves the value in UTC (arrow's ToTime default).
+func inLocation(t time.Time, loc *time.Location) time.Time {
+	if loc == nil {
+		return t
+	}
+	return t.In(loc)
+}
 
 // renderJSONString renders one nested cell as a JSON string (nil for a NULL
 // cell). loc is applied to any timestamp/date leaves, matching the top-level
@@ -134,10 +212,10 @@ func writeStructJSON(b *strings.Builder, s *array.Struct, row int, loc *time.Loc
 			b.WriteByte(',')
 		}
 		// Marshal the field name to JSON-escape it. Not memoized per struct type: a
-		// process-global cache keyed by *arrow.StructType leaks, because
-		// cdata.ImportCRecordBatch allocates a fresh *StructType every batch (no
+		// process-global cache keyed by *arrow.StructType leaks, because the Arrow C
+		// Data Interface import allocates a fresh *StructType every batch (no
 		// interning), so the key never repeats across batches. Recomputing here is
-		// cheap relative to the once-per-batch cgo crossing.
+		// cheap relative to the once-per-batch cost.
 		keyBytes, _ := json.Marshal(st.Field(f).Name)
 		b.Write(keyBytes)
 		b.WriteByte(':')
@@ -184,11 +262,11 @@ func writeScalarJSON(b *strings.Builder, v any) error {
 
 // scalarForJSON returns the Go value used for a nested leaf that is not itself a
 // container — today only a map key (values are written directly by writeJSON).
-// It reuses scanCell's scalar arm, so a decimal key renders via the exact-string
+// It reuses ScanCell's scalar arm, so a decimal key renders via the exact-string
 // path (writeJSONKey then quotes it), never a lossy float64.
 func scalarForJSON(col arrow.Array, row int, loc *time.Location) (any, error) {
 	if col.IsNull(row) {
 		return nil, nil
 	}
-	return scanCell(col, row, loc)
+	return ScanCell(col, row, loc)
 }
