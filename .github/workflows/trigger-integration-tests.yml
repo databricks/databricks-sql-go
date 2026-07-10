@@ -1,0 +1,288 @@
+name: Trigger Integration Tests
+
+# Dispatches the proxy-based Go integration suite in
+# databricks/databricks-driver-test to run against this PR's commit, and reports
+# the result back as the "Go Integration Tests" check.
+#
+# Matches the label-gated / merge-queue pattern used by the Node.js and Python
+# connectors: normal PR events get an immediate green check, maintainers can
+# preview with the `integration-test` label (replay) or `integration-test-full`
+# (full passthrough), and merge queue runs the real required gate.
+#
+# Required external setup:
+#
+#   1. `integration-test` and `integration-test-full` labels exist in this repo.
+#   2. `INTEGRATION_TEST_APP_ID` / `INTEGRATION_TEST_PRIVATE_KEY` repo secrets
+#      are installed in this repo for the dispatcher GitHub App.
+#   3. The app is installed/granted on `databricks-driver-test` so this workflow
+#      can send `repository_dispatch`.
+#   4. The same app is installed/granted on `databricks-sql-go` with checks:write
+#      so driver-test can report the final `Go Integration Tests` check back to
+#      this PR/merge-queue commit.
+#   5. Merge queue branch protection lists `Go Integration Tests` as a required
+#      status check.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+  merge_group: # the required gate runs here
+
+jobs:
+  # Drop the trigger labels when new commits are pushed, forcing a maintainer to
+  # re-review before re-running.
+  remove-label-on-new-commit:
+    if: github.event_name == 'pull_request' && github.event.action == 'synchronize'
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: linux-ubuntu-latest
+    permissions:
+      # removeLabel needs issues:write; commenting on a PR needs pull-requests:write
+      # (GitHub requires the PR scope for issues.createComment on a PR).
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Remove integration-test labels
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        with:
+          script: |
+            const present = context.payload.pull_request.labels.map((l) => l.name);
+            const triggerLabels = ['integration-test', 'integration-test-full'];
+            const removed = [];
+            for (const name of triggerLabels) {
+              if (!present.includes(name)) continue;
+              try {
+                await github.rest.issues.removeLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: context.issue.number,
+                  name,
+                });
+                removed.push(name);
+              } catch (error) {
+                if (error.status !== 404) throw error;
+              }
+            }
+            if (removed.length) {
+              const pr = context.payload.pull_request;
+              // head.repo is null when the PR's source fork has been deleted; treat an
+              // absent/differing head repo as a fork so this never throws on that edge.
+              const isFromFork = pr.head.repo?.full_name !== pr.base.repo.full_name;
+              const repoType = isFromFork ? '**fork PR**' : 'PR';
+              const body = [
+                'Integration test approval reset.',
+                '',
+                `New commits were pushed to this ${repoType}. Label(s) \`${removed.join('`, `')}\` were removed for security.`,
+                '',
+                '**A maintainer must re-review and re-add a label to preview tests again.** (The real gate runs in the merge queue.)',
+                '',
+                `Latest commit: ${pr.head.sha.substring(0, 7)}`,
+              ].join('\n');
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
+
+  # Ordinary PR (not a label event): post a green stub so the required
+  # "Go Integration Tests" check is satisfied on the PR. The real run happens in
+  # the merge queue; the `integration-test` label previews it on the PR.
+  skip-integration-tests-pr:
+    if: github.event_name == 'pull_request' && github.event.action != 'labeled'
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: linux-ubuntu-latest
+    permissions:
+      checks: write
+    steps:
+      - name: Skip Go Integration Tests (stub)
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            await github.rest.checks.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              name: 'Go Integration Tests',
+              head_sha: context.payload.pull_request.head.sha,
+              status: 'completed',
+              conclusion: 'success',
+              completed_at: new Date().toISOString(),
+              output: {
+                title: 'Skipped on PR - runs in merge queue',
+                summary: 'Go integration tests are skipped on ordinary PR events and run as a required gate in the merge queue. Add the `integration-test` label to preview replay (or `integration-test-full` for the full passthrough suite) on this PR.',
+              },
+            });
+
+  # Labeled PR: preview on demand. `integration-test` → replay,
+  # `integration-test-full` → full passthrough.
+  trigger-tests-pr:
+    if: |
+      github.event_name == 'pull_request' &&
+      github.event.action == 'labeled' &&
+      (github.event.label.name == 'integration-test' ||
+       github.event.label.name == 'integration-test-full')
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: linux-ubuntu-latest
+    permissions:
+      # Commenting on a PR needs pull-requests:write (issues.createComment on a PR
+      # requires the PR scope); checks:write for the failure check. The dispatch
+      # itself uses the App token, not GITHUB_TOKEN.
+      issues: write
+      pull-requests: write
+      checks: write
+    steps:
+      - name: Resolve proxy mode from label
+        id: mode
+        run: |
+          if [ "${{ github.event.label.name }}" = "integration-test-full" ]; then
+            echo "proxy_mode=passthrough" >> "$GITHUB_OUTPUT"
+          else
+            echo "proxy_mode=replay" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Generate GitHub App token (driver-test repo)
+        id: app-token
+        uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3.0.0
+        with:
+          app-id: ${{ secrets.INTEGRATION_TEST_APP_ID }}
+          private-key: ${{ secrets.INTEGRATION_TEST_PRIVATE_KEY }}
+          owner: databricks
+          repositories: databricks-driver-test
+
+      - name: Dispatch go-pr-test to driver-test
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        env:
+          PROXY_MODE: ${{ steps.mode.outputs.proxy_mode }}
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          script: |
+            const pr = context.payload.pull_request;
+            await github.rest.repos.createDispatchEvent({
+              owner: 'databricks',
+              repo: 'databricks-driver-test',
+              event_type: 'go-pr-test',
+              client_payload: {
+                pr_number: `${pr.number}`,
+                commit_sha: pr.head.sha,
+                pr_repo: context.repo.owner + '/' + context.repo.repo,
+                pr_url: pr.html_url,
+                proxy_mode: process.env.PROXY_MODE,
+              },
+            });
+            core.info(`Dispatched go-pr-test (${process.env.PROXY_MODE}) for PR #${pr.number} @ ${pr.head.sha}`);
+
+      - name: Fail check on dispatch error
+        if: failure()
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            await github.rest.checks.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              name: 'Go Integration Tests',
+              head_sha: context.payload.pull_request.head.sha,
+              status: 'completed',
+              conclusion: 'failure',
+              completed_at: new Date().toISOString(),
+              output: {
+                title: 'Failed - error dispatching tests',
+                summary: 'An error occurred while dispatching Go integration tests. Check this workflow run for details.',
+              },
+            });
+
+      - name: Comment on PR
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        env:
+          PROXY_MODE: ${{ steps.mode.outputs.proxy_mode }}
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: `Go integration tests triggered (\`${process.env.PROXY_MODE}\`). [View workflow runs](https://github.com/databricks/databricks-driver-test/actions).`,
+            });
+
+  # Merge queue: the required gate. Runs replay once before merge.
+  merge-queue-go:
+    if: github.event_name == 'merge_group'
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: linux-ubuntu-latest
+    permissions:
+      contents: read
+      checks: write
+    steps:
+      - name: Extract PR number from merge queue ref
+        id: extract-pr
+        env:
+          MERGE_QUEUE_REF: ${{ github.event.merge_group.head_ref }}
+        run: |
+          # Merge-queue refs are refs/heads/gh-readonly-queue/<base>/pr-<n>-<sha>. Anchor
+          # to the trailing pr-<n>-<sha> so a base branch name that itself contains a
+          # "pr-<digits>" segment (e.g. feature/pr-123-fix) can't be matched instead of the
+          # real, last PR number. Requires the SHA suffix so the match is the queue segment.
+          if [[ "$MERGE_QUEUE_REF" =~ /pr-([0-9]+)-[0-9a-f]+$ ]]; then
+            echo "pr_number=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+          else
+            echo "Error: failed to extract PR number from merge group ref: '$MERGE_QUEUE_REF'" >&2
+            exit 1
+          fi
+
+      - name: Generate GitHub App token (driver-test repo)
+        id: app-token
+        uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3.0.0
+        with:
+          app-id: ${{ secrets.INTEGRATION_TEST_APP_ID }}
+          private-key: ${{ secrets.INTEGRATION_TEST_PRIVATE_KEY }}
+          owner: databricks
+          repositories: databricks-driver-test
+
+      - name: Dispatch go-pr-test (replay) for merge queue
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        env:
+          PR_NUMBER: ${{ steps.extract-pr.outputs.pr_number }}
+          HEAD_SHA: ${{ github.event.merge_group.head_sha }}
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          script: |
+            const prNumber = process.env.PR_NUMBER;
+            await github.rest.repos.createDispatchEvent({
+              owner: 'databricks',
+              repo: 'databricks-driver-test',
+              event_type: 'go-pr-test',
+              client_payload: {
+                pr_number: prNumber,
+                commit_sha: process.env.HEAD_SHA,
+                pr_repo: context.repo.owner + '/' + context.repo.repo,
+                pr_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/pull/${prNumber}`,
+                proxy_mode: 'replay',
+              },
+            });
+            core.info(`Merge-queue dispatch go-pr-test (replay) for PR #${prNumber} @ ${process.env.HEAD_SHA}`);
+
+      - name: Fail check on dispatch error
+        if: failure()
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        env:
+          HEAD_SHA: ${{ github.event.merge_group.head_sha }}
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            await github.rest.checks.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              name: 'Go Integration Tests',
+              head_sha: process.env.HEAD_SHA,
+              status: 'completed',
+              conclusion: 'failure',
+              completed_at: new Date().toISOString(),
+              output: {
+                title: 'Failed - error dispatching tests',
+                summary: 'An error occurred while dispatching Go integration tests. Check this workflow run for details.',
+              },
+            });

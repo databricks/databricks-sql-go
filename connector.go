@@ -4,9 +4,9 @@ import (
 	"context"
 	"crypto/tls"
 	"database/sql/driver"
-	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -15,11 +15,10 @@ import (
 	"github.com/databricks/databricks-sql-go/auth/pat"
 	"github.com/databricks/databricks-sql-go/auth/tokenprovider"
 	"github.com/databricks/databricks-sql-go/driverctx"
-	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
-	"github.com/databricks/databricks-sql-go/internal/cli_service"
+	"github.com/databricks/databricks-sql-go/internal/backend/thrift"
 	"github.com/databricks/databricks-sql-go/internal/client"
 	"github.com/databricks/databricks-sql-go/internal/config"
-	dbsqlerrint "github.com/databricks/databricks-sql-go/internal/errors"
+	"github.com/databricks/databricks-sql-go/internal/debuglog"
 	"github.com/databricks/databricks-sql-go/logger"
 	"github.com/databricks/databricks-sql-go/telemetry"
 )
@@ -31,61 +30,33 @@ type connector struct {
 
 // Connect returns a connection to the Databricks database from a connection pool.
 func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
-	var catalogName *cli_service.TIdentifier
-	var schemaName *cli_service.TIdentifier
-	if c.cfg.Catalog != "" {
-		catalogName = cli_service.TIdentifierPtr(cli_service.TIdentifier(c.cfg.Catalog))
-	}
-	if c.cfg.Schema != "" {
-		schemaName = cli_service.TIdentifierPtr(cli_service.TIdentifier(c.cfg.Schema))
-	}
+	defer debuglog.Track(ctx, "connector.Connect", "host=%s", c.cfg.Host)()
 
-	tclient, err := client.InitThriftClient(c.cfg, c.client)
+	// Build the execution backend. Currently always the Thrift backend; a second
+	// SEA-via-kernel backend will be selected here by a connect-time flag.
+	be, err := thrift.New(ctx, c.cfg, c.client)
 	if err != nil {
-		return nil, dbsqlerrint.NewDriverError(ctx, dbsqlerr.ErrThriftClient, err)
+		return nil, err
 	}
-
-	// Prepare session configuration
-	sessionParams := make(map[string]string)
-	for k, v := range c.cfg.SessionParams {
-		sessionParams[k] = v
-	}
-
-	if c.cfg.EnableMetricViewMetadata {
-		sessionParams["spark.sql.thriftserver.metadata.metricview.enabled"] = "true"
-	}
-
-	protocolVersion := int64(c.cfg.ThriftProtocolVersion)
 
 	sessionStart := time.Now()
-	session, err := tclient.OpenSession(ctx, &cli_service.TOpenSessionReq{
-		ClientProtocolI64: &protocolVersion,
-		Configuration:     sessionParams,
-		InitialNamespace: &cli_service.TNamespace{
-			CatalogName: catalogName,
-			SchemaName:  schemaName,
-		},
-		CanUseMultipleCatalogs: &c.cfg.CanUseMultipleCatalogs,
-	})
+	if err := be.OpenSession(ctx); err != nil {
+		return nil, err
+	}
 	sessionLatencyMs := time.Since(sessionStart).Milliseconds()
 
-	if err != nil {
-		return nil, dbsqlerrint.NewRequestError(ctx, fmt.Sprintf("error connecting: host=%s port=%d, httpPath=%s", c.cfg.Host, c.cfg.Port, c.cfg.HTTPPath), err)
-	}
-
 	conn := &conn{
-		id:      client.SprintGuid(session.SessionHandle.GetSessionId().GUID),
+		id:      be.SessionID(),
 		cfg:     c.cfg,
-		client:  tclient,
-		session: session,
+		backend: be,
 	}
 	log := logger.WithContext(conn.id, driverctx.CorrelationIdFromContext(ctx), "")
 
-	// Extract SPOG routing headers from ?o= in HTTPPath. When ?o=<workspaceId>
-	// is present (Custom URL / SPOG hosts), wrap the HTTP client used for
-	// telemetry + feature-flag calls with a transport that injects
-	// x-databricks-org-id. Thrift routes via the URL so its own c.client
-	// doesn't need wrapping.
+	// Extract SPOG routing headers from HTTPPath. When the workspace ID is
+	// available via ?o=<workspaceId> or a cluster /o/<workspaceId>/ path segment,
+	// wrap the HTTP client used for telemetry + feature-flag calls with a
+	// transport that injects x-databricks-org-id. Thrift routes via the URL so
+	// its own c.client doesn't need wrapping.
 	telemetryClient := c.client
 	if spogHeaders := extractSpogHeaders(c.cfg.HTTPPath); len(spogHeaders) > 0 {
 		telemetryClient = withSpogHeaders(c.client, spogHeaders)
@@ -106,7 +77,7 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 		conn.telemetry.RecordOperation(ctx, conn.id, "", telemetry.OperationTypeCreateSession, sessionLatencyMs, nil)
 	}
 
-	log.Info().Msgf("connect: host=%s port=%d httpPath=%s serverProtocolVersion=0x%X", c.cfg.Host, c.cfg.Port, c.cfg.HTTPPath, session.ServerProtocolVersion)
+	log.Info().Msgf("connect: host=%s port=%d httpPath=%s serverProtocolVersion=0x%X", c.cfg.Host, c.cfg.Port, c.cfg.HTTPPath, be.ServerProtocolVersion())
 
 	return conn, nil
 }
@@ -136,44 +107,67 @@ func NewConnector(options ...ConnOption) (driver.Connector, error) {
 	return &connector{cfg: cfg, client: client}, nil
 }
 
-// extractSpogHeaders extracts ?o=<workspaceId> from httpPath and returns
-// an x-databricks-org-id header for SPOG routing.
+// clusterPathOrgIDPattern matches the workspace ID inside an all-purpose-compute
+// Thrift path of the form [/]sql/protocolv1/o/<workspace-id>/<cluster-id>[/...].
+var (
+	orgIDPattern            = regexp.MustCompile(`^[0-9]+$`)
+	clusterPathOrgIDPattern = regexp.MustCompile(`^/?sql/protocolv1/o/([0-9]+)/[^/?]+`)
+)
+
+// extractSpogHeaders inspects httpPath for the workspace ID and returns it as an
+// x-databricks-org-id header dict for SPOG routing.
 //
-// On SPOG (Custom URL) workspaces, httpPath is of the form
-// /sql/1.0/warehouses/<id>?o=<workspaceId>. The ?o= parameter keeps Thrift
-// requests routed to the correct workspace via the URL itself, but other
-// endpoints (telemetry, feature flags) run on separate hosts and need the
-// x-databricks-org-id header. This function extracts ?o= from httpPath once
-// and returns it so those paths can inject it as an HTTP header.
+// Two sources are checked, in priority order:
+//  1. ?o=<workspace-id> query parameter (warehouse paths on SPOG typically use
+//     this form, e.g. /sql/1.0/warehouses/<id>?o=<workspace-id>).
+//  2. /sql/protocolv1/o/<workspace-id>/<cluster-id> path segment (all-purpose
+//     cluster paths embed the workspace in the path itself).
 //
-// Returns nil if:
-//   - httpPath has no query string ("?"), or
-//   - the query string is malformed and can't be parsed, or
-//   - the ?o= parameter is missing or empty.
+// Thrift requests are routed by the URL itself, but other endpoints
+// (telemetry, feature flags) run on separate paths that don't carry the
+// workspace ID — without this header, PoPP on SPOG hosts can't determine the
+// workspace and redirects the request to /login.
+//
+// Returns nil if no workspace ID can be determined.
 func extractSpogHeaders(httpPath string) map[string]string {
-	if !strings.Contains(httpPath, "?") {
+	if httpPath == "" {
 		return nil
 	}
-	// Parse query string from httpPath
-	parts := strings.SplitN(httpPath, "?", 2)
-	params, err := url.ParseQuery(parts[1])
-	if err != nil {
+
+	// 1) ?o=<wsid> query parameter.
+	if strings.Contains(httpPath, "?") {
+		parts := strings.SplitN(httpPath, "?", 2)
+		params, err := url.ParseQuery(parts[1])
+		if err != nil {
+			logger.Debug().Msgf(
+				"SPOG header extraction: malformed query string in httpPath, falling back to path inspection: %s",
+				err)
+		} else if orgID := params.Get("o"); orgID != "" {
+			if !orgIDPattern.MatchString(orgID) {
+				logger.Debug().Msg(
+					"SPOG header extraction: ignoring non-numeric ?o= value in httpPath, falling back to path inspection")
+			} else {
+				logger.Debug().Msgf(
+					"SPOG header extraction: injecting x-databricks-org-id=%s (extracted from ?o= in httpPath)",
+					orgID)
+				return map[string]string{"x-databricks-org-id": orgID}
+			}
+		}
+	}
+
+	// 2) /sql/protocolv1/o/<wsid>/<cluster> path segment.
+	if match := clusterPathOrgIDPattern.FindStringSubmatch(httpPath); match != nil {
+		orgID := match[1]
 		logger.Debug().Msgf(
-			"SPOG header extraction: malformed query string in httpPath, skipping org-id extraction: %s",
-			err)
-		return nil
+			"SPOG header extraction: injecting x-databricks-org-id=%s (extracted from cluster path segment)",
+			orgID)
+		return map[string]string{"x-databricks-org-id": orgID}
 	}
-	orgID := params.Get("o")
-	if orgID == "" {
-		logger.Debug().Msg(
-			"SPOG header extraction: httpPath has query string but no ?o= param, " +
-				"skipping x-databricks-org-id injection")
-		return nil
-	}
-	logger.Debug().Msgf(
-		"SPOG header extraction: injecting x-databricks-org-id=%s (extracted from ?o= in httpPath)",
-		orgID)
-	return map[string]string{"x-databricks-org-id": orgID}
+
+	logger.Debug().Msg(
+		"SPOG header extraction: no workspace ID found in httpPath, " +
+			"skipping x-databricks-org-id injection")
+	return nil
 }
 
 // withSpogHeaders returns a new *http.Client that reuses the transport of the
@@ -224,6 +218,10 @@ func (t *headerInjectingTransport) RoundTrip(req *http.Request) (*http.Response,
 func withUserConfig(ucfg config.UserConfig) ConnOption {
 	return func(c *config.Config) {
 		c.UserConfig = ucfg
+		// The useArrowNativeDecimal DSN parameter is carried on UserConfig (all
+		// ParseDSN can return) but is consumed from ArrowConfig. This is the one
+		// place that bridges the two.
+		c.ArrowConfig.UseArrowNativeDecimal = ucfg.UseArrowNativeDecimalDSN
 	}
 }
 
@@ -421,6 +419,22 @@ func WithMaxDownloadThreads(numThreads int) ConnOption {
 func WithEnableMetricViewMetadata(enable bool) ConnOption {
 	return func(c *config.Config) {
 		c.EnableMetricViewMetadata = enable
+	}
+}
+
+// WithArrowNativeDecimal controls whether DECIMAL columns are returned as native
+// Arrow decimal128 values. Default is false, in which case the server returns
+// DECIMAL columns as strings.
+//
+// When enabled, DECIMAL columns retrieved via GetArrowBatches carry the native
+// arrow.Decimal128 type. When scanned through the standard database/sql Rows
+// interface, DECIMAL values are returned as lossless, scale-applied strings to
+// avoid the precision loss that a float64 would introduce.
+//
+// See https://github.com/databricks/databricks-sql-go/issues/274.
+func WithArrowNativeDecimal(useNativeDecimal bool) ConnOption {
+	return func(c *config.Config) {
+		c.ArrowConfig.UseArrowNativeDecimal = useNativeDecimal
 	}
 }
 

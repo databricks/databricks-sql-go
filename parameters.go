@@ -9,7 +9,7 @@ import (
 	"time"
 
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
-	"github.com/databricks/databricks-sql-go/internal/cli_service"
+	"github.com/databricks/databricks-sql-go/internal/backend"
 	"github.com/pkg/errors"
 )
 
@@ -164,8 +164,13 @@ func inferType(param *Parameter) {
 	}
 }
 
-func convertNamedValuesToSparkParams(values []driver.NamedValue) ([]*cli_service.TSparkParameter, error) {
-	var sparkParams []*cli_service.TSparkParameter
+// convertNamedValuesToParams infers each parameter's SQL type and renders its
+// value to the string wire form, returning backend-neutral params. Inference and
+// stringification depend on the public Parameter/SqlType surface, so they live
+// here; each backend maps the neutral result onto its own wire type. A SqlVoid
+// parameter yields a nil Value (SQL NULL).
+func convertNamedValuesToParams(values []driver.NamedValue) ([]backend.Param, error) {
+	var params []backend.Param
 
 	sqlParams := valuesToParameters(values)
 
@@ -175,10 +180,9 @@ func convertNamedValuesToSparkParams(values []driver.NamedValue) ([]*cli_service
 	inferTypes(sqlParams)
 	for i := range sqlParams {
 		sqlParam := sqlParams[i]
-		sparkValue := new(cli_service.TSparkParameterValue)
-		if sqlParam.Type == SqlVoid {
-			sparkValue = nil
-		} else {
+
+		var value *string
+		if sqlParam.Type != SqlVoid {
 			var stringValue string
 			switch v := sqlParam.Value.(type) {
 			case string:
@@ -194,22 +198,26 @@ func convertNamedValuesToSparkParams(values []driver.NamedValue) ([]*cli_service
 			default:
 				stringValue = fmt.Sprintf("%v", sqlParam.Value)
 			}
-			sparkValue = &cli_service.TSparkParameterValue{StringValue: &stringValue}
+			value = &stringValue
 		}
 
-		var sparkParamType string
+		var paramType string
 		if sqlParam.Type == SqlDecimal {
-			sparkParamType = inferDecimalType(sparkValue.GetStringValue())
+			// The original derived the decimal type from the rendered string
+			// value; for a nil (VOID) value that string is empty, matching
+			// TSparkParameterValue.GetStringValue()'s zero value.
+			var s string
+			if value != nil {
+				s = *value
+			}
+			paramType = inferDecimalType(s)
 		} else {
-			sparkParamType = sqlParam.Type.String()
+			paramType = sqlParam.Type.String()
 		}
 
-		var sparkParamName *string
 		if sqlParam.Name != "" {
-			sparkParamName = &sqlParam.Name
 			hasNamedParams = true
 		} else {
-			sparkParamName = nil
 			hasPositionalParams = true
 		}
 
@@ -217,10 +225,13 @@ func convertNamedValuesToSparkParams(values []driver.NamedValue) ([]*cli_service
 			return nil, errors.New(dbsqlerr.ErrMixedNamedAndPositionalParameters)
 		}
 
-		sparkParam := cli_service.TSparkParameter{Name: sparkParamName, Type: &sparkParamType, Value: sparkValue}
-		sparkParams = append(sparkParams, &sparkParam)
+		params = append(params, backend.Param{
+			Name:  sqlParam.Name,
+			Type:  paramType,
+			Value: value,
+		})
 	}
-	return sparkParams, nil
+	return params, nil
 }
 
 func inferDecimalType(d string) (t string) {

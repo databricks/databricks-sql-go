@@ -114,10 +114,16 @@ func (s Sentinel) Watch(ctx context.Context, interval, timeout time.Duration) (W
 			if done() {
 				intervalTimer.Stop()
 				if s.OnDoneFn != nil {
+					// The operation has completed, so the OnDoneFn result is the
+					// authoritative outcome. Run the processor and drain its
+					// result without selecting on ctx.Done()/timeout: once we've
+					// observed completion, a concurrent cancellation or timeout
+					// must not race the success path and trigger an unnecessary
+					// cancel of a finished operation.
 					go processor(statusResp)
-				} else {
-					return WatchSuccess, statusResp, nil
+					return s.waitForDone(resCh, errCh)
 				}
+				return WatchSuccess, statusResp, nil
 			}
 		case err := <-errCh:
 			return WatchErr, nil, err
@@ -134,5 +140,18 @@ func (s Sentinel) Watch(ctx context.Context, interval, timeout time.Duration) (W
 			err := errors.New(msg)
 			return WatchTimeout, nil, err
 		}
+	}
+}
+
+// waitForDone blocks until the asynchronous OnDoneFn processor reports its
+// result. The operation has already been observed as complete by the time this
+// is called, so the outcome is determined solely by OnDoneFn and is no longer
+// subject to cancellation or timeout.
+func (s Sentinel) waitForDone(resCh chan any, errCh chan error) (WatchStatus, any, error) {
+	select {
+	case err := <-errCh:
+		return WatchErr, nil, err
+	case res := <-resCh:
+		return WatchSuccess, res, nil
 	}
 }

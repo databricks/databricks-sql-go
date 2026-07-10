@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/apache/thrift/lib/go/thrift"
+	thriftbackend "github.com/databricks/databricks-sql-go/internal/backend/thrift"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/client"
 	"github.com/databricks/databricks-sql-go/internal/config"
@@ -99,9 +100,8 @@ func TestStmt_ExecContext(t *testing.T) {
 			FnGetResultSetMetadata: getResultSetMetadata,
 		}
 		testConn := &conn{
-			session: getTestSession(),
-			client:  testClient,
 			cfg:     config.WithDefaults(),
+			backend: thriftbackend.NewForTest(testClient, getTestSession(), config.WithDefaults()),
 		}
 		testQuery := "insert 10"
 		testStmt := &stmt{
@@ -154,9 +154,8 @@ func TestStmt_QueryContext(t *testing.T) {
 			FnGetOperationStatus: getOperationStatus,
 		}
 		testConn := &conn{
-			session: getTestSession(),
-			client:  testClient,
 			cfg:     config.WithDefaults(),
+			backend: thriftbackend.NewForTest(testClient, getTestSession(), config.WithDefaults()),
 		}
 		testQuery := "select 1"
 		testStmt := &stmt{

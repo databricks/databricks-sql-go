@@ -13,6 +13,7 @@ import (
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	dbsqlclient "github.com/databricks/databricks-sql-go/internal/client"
+	context2 "github.com/databricks/databricks-sql-go/internal/compat/context"
 	"github.com/databricks/databricks-sql-go/internal/config"
 	dbsqlerr_int "github.com/databricks/databricks-sql-go/internal/errors"
 	"github.com/databricks/databricks-sql-go/internal/rows/arrowbased"
@@ -57,7 +58,16 @@ type rows struct {
 
 	logger_ *dbsqllog.DBSQLLogger
 
+	// ctx is the context used for all server-side result RPCs (FetchResults,
+	// GetResultSetMetadata, CloseOperation) and CloudFetch downloads. It is
+	// detached from the caller's QueryContext cancellation so that a deadline
+	// gating statement submission does not truncate result streaming, while
+	// preserving context values used for auth/logging. It remains abortable via
+	// Close() through resultsCancel.
 	ctx context.Context
+	// resultsCancel aborts in-flight result RPCs/downloads when Close() is
+	// called, so the detached ctx never leaves an operation uncancellable.
+	resultsCancel context.CancelFunc
 
 	// Telemetry tracking
 	// telemetryUpdate is called after each chunk is fetched with:
@@ -134,6 +144,15 @@ func NewRows(
 
 	logger.Debug().Msgf("databricks: creating Rows, pageSize: %d, location: %v", pageSize, location)
 
+	// QueryContext may use a short deadline to gate statement submission and
+	// status polling (see ES-1934053 / #295 / #371). Result handles can outlive
+	// that phase, especially for paginated CloudFetch streams, so detach
+	// server-side result RPCs from the caller's cancellation while preserving
+	// context values used for auth/logging. The detached context is still wired
+	// to a cancel func invoked from Close(), so the result handle remains
+	// abortable (no uncancellable in-flight FetchResults or CloudFetch download).
+	resultsCtx, resultsCancel := context.WithCancel(context2.WithoutCancel(ctx))
+
 	r := &rows{
 		client:          client,
 		opHandle:        opHandle,
@@ -142,7 +161,8 @@ func NewRows(
 		location:        location,
 		config:          config,
 		logger_:         logger,
-		ctx:             ctx,
+		ctx:             resultsCtx,
+		resultsCancel:   resultsCancel,
 		chunkCount:      0,
 		bytesDownloaded: 0,
 	}
@@ -201,7 +221,7 @@ func NewRows(
 	// the operations.
 	closedOnServer := directResults != nil && directResults.CloseOperation != nil
 	r.ResultPageIterator = rowscanner.NewResultPageIterator(
-		ctx,
+		resultsCtx,
 		d,
 		pageSize,
 		opHandle,
@@ -242,6 +262,12 @@ func (r *rows) Columns() []string {
 func (r *rows) Close() error {
 	if r == nil {
 		return nil
+	}
+
+	// Release the detached results context after the close RPC runs, aborting
+	// any in-flight FetchResults/CloudFetch downloads still referencing it.
+	if r.resultsCancel != nil {
+		defer r.resultsCancel()
 	}
 
 	if r.RowScanner != nil {
@@ -635,27 +661,34 @@ func (r *rows) logger() *dbsqllog.DBSQLLogger {
 }
 
 func (r *rows) GetArrowBatches(ctx context.Context) (dbsqlrows.ArrowBatchIterator, error) {
-	// update context with correlationId and connectionId which will be used in logging and errors
-	ctx = driverctx.NewContextWithCorrelationId(driverctx.NewContextWithConnId(ctx, r.connId), r.correlationId)
+	// Result fetching must outlive the caller's QueryContext deadline: both the
+	// inter-page FetchResults RPCs (via r.ResultPageIterator) AND the CloudFetch
+	// S3 downloads created from the iterator context. Build the iterator from the
+	// detached results context (abortable via Close) rather than the caller ctx,
+	// so passing a deadline-bound ctx here cannot truncate the stream. Driver
+	// values for logging/auth are already carried by r.ctx; re-apply the ids
+	// defensively. See ES-1934053 / #371.
+	iterCtx := driverctx.NewContextWithCorrelationId(driverctx.NewContextWithConnId(r.ctx, r.connId), r.correlationId)
 
 	// If a row scanner exists we use it to create the iterator, that way the iterator includes
 	// data returned as direct results
 	if r.RowScanner != nil {
-		return r.RowScanner.GetArrowBatches(ctx, *r.config, r.ResultPageIterator)
+		return r.RowScanner.GetArrowBatches(iterCtx, *r.config, r.ResultPageIterator)
 	}
 
-	return arrowbased.NewArrowRecordIterator(ctx, r.ResultPageIterator, nil, nil, *r.config), nil
+	return arrowbased.NewArrowRecordIterator(iterCtx, r.ResultPageIterator, nil, nil, *r.config), nil
 }
 
 func (r *rows) GetArrowIPCStreams(ctx context.Context) (dbsqlrows.ArrowIPCStreamIterator, error) {
-	// update context with correlationId and connectionId which will be used in logging and errors
-	ctx = driverctx.NewContextWithCorrelationId(driverctx.NewContextWithConnId(ctx, r.connId), r.correlationId)
+	// See GetArrowBatches: result fetching is detached from the caller ctx so a
+	// submit-gating deadline cannot truncate streaming; it stays abortable via Close.
+	iterCtx := driverctx.NewContextWithCorrelationId(driverctx.NewContextWithConnId(r.ctx, r.connId), r.correlationId)
 
 	// If a row scanner exists we use it to create the iterator, that way the iterator includes
 	// data returned as direct results
 	if r.RowScanner != nil {
-		return r.RowScanner.GetArrowIPCStreams(ctx, *r.config, r.ResultPageIterator)
+		return r.RowScanner.GetArrowIPCStreams(iterCtx, *r.config, r.ResultPageIterator)
 	}
 
-	return arrowbased.NewArrowIPCStreamIterator(ctx, r.ResultPageIterator, nil, nil, *r.config), nil
+	return arrowbased.NewArrowIPCStreamIterator(iterCtx, r.ResultPageIterator, nil, nil, *r.config), nil
 }
