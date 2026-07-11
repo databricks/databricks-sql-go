@@ -27,8 +27,7 @@ func baseKernelConfig() *config.Config {
 
 // validateKernelConfig enforces the kernel backend's "nothing silently ignored"
 // contract: unsupported options are rejected loudly and the PAT is resolved. This
-// is pure Go (no cgo), so these run in the default CGO_ENABLED=0 build — the
-// round-4 fix, since the guards previously lived only in tag-gated code.
+// is pure Go (no cgo), so these run in the default CGO_ENABLED=0 build.
 func TestValidateKernelConfig(t *testing.T) {
 	t.Run("supported config ok", func(t *testing.T) {
 		c := baseKernelConfig()
@@ -123,8 +122,8 @@ func TestValidateKernelConfig(t *testing.T) {
 // UserConfig are currently exposed to users"). Adding a field to config.UserConfig
 // without classifying it here fails TestKernelConfigFieldsClassified — forcing a
 // deliberate decision (forward it, reject it loudly, or accept it as inert) rather
-// than silently dropping it on the kernel path, the exact divergence rounds 2–4
-// closed. (TLSConfig and ArrowConfig live on the outer config.Config, not
+// than silently dropping it on the kernel path. (TLSConfig and ArrowConfig live on
+// the outer config.Config, not
 // UserConfig; newKernelBackend reads TLSConfig.InsecureSkipVerify explicitly, and
 // the kernel renders decimals exactly regardless of ArrowConfig.)
 var kernelConfigFieldDisposition = map[string]string{
@@ -162,25 +161,52 @@ var kernelConfigFieldDisposition = map[string]string{
 	"TelemetryBatchSize":       "inert",
 	"TelemetryFlushInterval":   "inert",
 	"UseArrowNativeDecimalDSN": "inert", // DSN carrier; kernel renders decimals exactly regardless
-	"CloudFetchConfig":         "inert", // kernel does CloudFetch internally
+
+	// Fields promoted from the embedded CloudFetchConfig. The kernel does
+	// CloudFetch internally (below the C ABI), so none is forwarded — but each is
+	// classified individually so a new CloudFetch option can't slip the guard.
+	"UseCloudFetch":                "inert",
+	"MaxDownloadThreads":           "inert",
+	"MaxFilesInMemory":             "inert",
+	"MinTimeToExpiry":              "inert",
+	"CloudFetchSpeedThresholdMbps": "inert",
+	"HTTPClient":                   "inert",
+}
+
+// kernelConfigClassifiedNames returns every UserConfig field name the kernel gate
+// must account for, flattening anonymous embedded structs (e.g. CloudFetchConfig)
+// into their promoted fields — reflect's NumField reports an embed as one field,
+// which would hide new sub-fields from the drop guard below.
+func kernelConfigClassifiedNames(t reflect.Type) []string {
+	var names []string
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+		if f.Anonymous && f.Type.Kind() == reflect.Struct {
+			names = append(names, kernelConfigClassifiedNames(f.Type)...)
+			continue
+		}
+		names = append(names, f.Name)
+	}
+	return names
 }
 
 func TestKernelConfigFieldsClassified(t *testing.T) {
-	ut := reflect.TypeOf(config.UserConfig{})
-	for i := 0; i < ut.NumField(); i++ {
-		name := ut.Field(i).Name
+	names := kernelConfigClassifiedNames(reflect.TypeOf(config.UserConfig{}))
+	classified := make(map[string]bool, len(names))
+	for _, name := range names {
+		classified[name] = true
 		if _, ok := kernelConfigFieldDisposition[name]; !ok {
-			t.Errorf("config.UserConfig field %q is not classified for the kernel backend. "+
-				"Add it to kernelConfigFieldDisposition as forwarded/rejected/inert (and wire it in "+
-				"validateKernelConfig / newKernelBackend if it must be honored) so it isn't silently "+
-				"dropped on the kernel path.", name)
+			t.Errorf("config.UserConfig field %q (incl. promoted embed fields) is not classified "+
+				"for the kernel backend. Add it to kernelConfigFieldDisposition as "+
+				"forwarded/rejected/inert (and wire it in validateKernelConfig / newKernelBackend if "+
+				"it must be honored) so it isn't silently dropped on the kernel path.", name)
 		}
 	}
 	// Guard the reverse too: a disposition entry for a field that no longer exists
 	// is stale.
 	for name := range kernelConfigFieldDisposition {
-		if _, ok := ut.FieldByName(name); !ok {
-			t.Errorf("kernelConfigFieldDisposition has %q but config.UserConfig no longer does; remove it", name)
+		if !classified[name] {
+			t.Errorf("kernelConfigFieldDisposition has %q but config.UserConfig (incl. embeds) no longer does; remove it", name)
 		}
 	}
 }
