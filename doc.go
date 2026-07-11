@@ -198,18 +198,26 @@ and complex-typed results (CloudFetch is handled transparently); context
 cancellation during execute (a cancelled ctx fires a real server-side cancel; on
 the read path cancellation is honored at result-batch boundaries, not mid-fetch);
 and the TLS, proxy, and session-conf (query tags, statement timeout, time zone)
-connection options. OAuth (M2M/U2M) and initial catalog/schema are not
-yet supported and return a clear error at connect time rather than being silently
-ignored; likewise WithTimeout (a server query timeout the kernel C ABI can't set)
-and WithRetries used to disable retries (the kernel retries internally). Bound
-query parameters are likewise not yet supported and return a clear error at
-execute time (they arrive per-query, not at connect). None of these is silently
-ignored. (Metadata is issued as ordinary SQL — SHOW/DESCRIBE/information_schema —
-and runs on this backend like any other query.)
+connection options. OAuth (M2M/U2M), initial catalog/schema, and
+WithEnableMetricViewMetadata are not yet supported and return a clear error at
+connect time rather than being silently ignored; likewise WithTimeout (a server
+query timeout the kernel C ABI can't set) and WithRetries used to disable retries
+(the kernel retries internally). Bound query parameters are likewise not yet
+supported and return a clear error at execute time (they arrive per-query, not at
+connect). None of these is silently ignored. (Metadata is issued as ordinary SQL
+— SHOW/DESCRIBE/information_schema — and runs on this backend like any other
+query.)
 
 WithMaxRows and retry tuning (WithRetries with a positive limit) are accepted but
 not applied on the kernel path: the kernel manages result fetching and retries
 internally, below the C ABI, with no user-facing knob.
+
+Two further kernel-backend caveats. The INTERVAL types (year-month / day-time)
+listed in the type table below are not yet handled by the kernel scanner and
+return a scan error; use the default (Thrift) backend for interval columns. And
+the kernel backend does not yet surface a per-statement server query id, so a
+QueryIdCallback (see below) fires with "" and no EXECUTE_STATEMENT telemetry is
+emitted for kernel queries.
 
 # Programmatically Retrieving Connection and Query Id
 

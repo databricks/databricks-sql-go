@@ -370,6 +370,9 @@ type structValueContainer struct {
 
 var _ columnValues = (*structValueContainer)(nil)
 
+// Value renders the struct at row i as a JSON object string. This grammar is
+// mirrored by internal/arrowscan (the kernel backend); the two must render
+// byte-identically — internal/rows/arrowbased/arrowscan_parity_test.go guards it.
 func (svc *structValueContainer) Value(i int) (any, error) {
 	if i < svc.structArray.Len() {
 		r := "{"
