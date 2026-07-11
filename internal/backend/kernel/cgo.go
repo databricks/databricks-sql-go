@@ -143,11 +143,13 @@ func lastError(code C.KernelStatusCode) *KernelError {
 	klog("kernel error: code=%d sqlstate=%q vendor=%d http=%d retryable=%v msg=%q",
 		ke.Code, ke.SQLState, ke.VendorCode, ke.HTTPStatus, ke.Retryable, ke.Message)
 	// Also emit at the driver's default (Warn) level — no SQL text or PII, just
-	// the status/sqlstate/http fields — so a kernel-path failure is visible
-	// without DBSQL_KERNEL_DEBUG. This is the error path only (never the hot
-	// per-row/per-batch path), so it does not perturb benchmarks.
-	logger.Logger.Warn().Msgf("databricks: kernel call failed: code=%d sqlstate=%q vendor=%d http=%d retryable=%v",
-		ke.Code, ke.SQLState, ke.VendorCode, ke.HTTPStatus, ke.Retryable)
+	// the status/sqlstate/http fields plus the server query id (a correlation
+	// token, not PII) so on-call can pivot to server-side query history — so a
+	// kernel-path failure is visible without DBSQL_KERNEL_DEBUG. This is the error
+	// path only (never the hot per-row/per-batch path), so it does not perturb
+	// benchmarks.
+	logger.Logger.Warn().Msgf("databricks: kernel call failed: code=%d sqlstate=%q vendor=%d http=%d retryable=%v queryId=%q",
+		ke.Code, ke.SQLState, ke.VendorCode, ke.HTTPStatus, ke.Retryable, ke.QueryID)
 	return ke
 }
 
@@ -165,10 +167,16 @@ type KernelError struct {
 }
 
 func (e *KernelError) Error() string {
-	if e.SQLState != "" {
-		return fmt.Sprintf("kernel: %s (sqlstate=%s, code=%d)", e.Message, e.SQLState, e.Code)
+	// Append the server query id when present — it is the one correlation handle
+	// to server-side query history, and StatementID() is "" on this backend.
+	q := ""
+	if e.QueryID != "" {
+		q = fmt.Sprintf(", queryId=%s", e.QueryID)
 	}
-	return fmt.Sprintf("kernel: %s (code=%d)", e.Message, e.Code)
+	if e.SQLState != "" {
+		return fmt.Sprintf("kernel: %s (sqlstate=%s, code=%d%s)", e.Message, e.SQLState, e.Code, q)
+	}
+	return fmt.Sprintf("kernel: %s (code=%d%s)", e.Message, e.Code, q)
 }
 
 // Status codes mirrored as Go ints so non-cgo code (tests, error mapping) can
