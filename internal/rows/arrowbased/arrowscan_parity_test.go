@@ -266,8 +266,8 @@ func TestArrowbasedKernelTopLevelScalarParity(t *testing.T) {
 	}
 }
 
-// TestTopLevelDecimalRendering documents the top-level DECIMAL story (review r5
-// M1-r5), which is subtler than "kernel string vs Thrift float64":
+// TestTopLevelDecimalRendering documents the top-level DECIMAL story, which is
+// subtler than "kernel string vs Thrift float64":
 //
 //   - The kernel path always delivers DECIMAL as a native arrow decimal128 and
 //     renders it as an exact scale-applied string (arrowscan.ScanCell).
@@ -312,7 +312,17 @@ func TestTopLevelDecimalRendering(t *testing.T) {
 	if s := holder.ValueString(0); s != "1234567890123456.7890" {
 		t.Errorf("Thrift DecimalStringValue = %q, want exact string", s)
 	}
-	if v, _ := holder.Value(0); v == "1234567890123456.7890" {
-		t.Errorf("Thrift container Value() unexpectedly exact; it is the documented lossy-float64 path")
+	// Value() is the lossy path: it returns a float64, and a 20-digit decimal
+	// cannot survive it — assert the actual rounded value, not just the type.
+	v, err := holder.Value(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, ok := v.(float64)
+	if !ok {
+		t.Fatalf("Thrift container Value() = %T, want the documented lossy float64", v)
+	}
+	if f != 1234567890123456.7890 {
+		t.Errorf("Thrift container Value() = %v, want the float64 rounding of the decimal", f)
 	}
 }

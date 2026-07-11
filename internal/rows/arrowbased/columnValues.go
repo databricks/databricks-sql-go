@@ -362,7 +362,6 @@ func (mvc *mapValueContainer) SetValueArray(colData arrow.ArrayData) error {
 
 type structValueContainer struct {
 	structArray     *array.Struct
-	fieldNames      []string
 	fieldKeys       []string // precomputed JSON-escaped `"name":` prefixes, one per field
 	complexValue    []bool
 	fieldValues     []columnValues
