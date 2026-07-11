@@ -59,7 +59,7 @@ func newKernelRows(ctx context.Context, op *kernelOp, stream *C.kernel_result_st
 		return C.kernel_result_stream_get_schema(stream, &csch)
 	}); err != nil {
 		r.Close()
-		return nil, fmt.Errorf("kernel: get_schema: %w", toDriverError(err))
+		return nil, fmt.Errorf("kernel: get_schema: %w", toStatementError(err))
 	}
 	sch, err := cdata.ImportCArrowSchema((*cdata.CArrowSchema)(unsafe.Pointer(&csch)))
 	if err != nil {
@@ -151,7 +151,7 @@ func (r *kernelRows) nextBatch() error {
 	if err := call(func() C.KernelStatusCode {
 		return C.kernel_result_stream_next_batch(r.stream, &carr, &csch)
 	}); err != nil {
-		return fmt.Errorf("kernel: next_batch: %w", toDriverError(err))
+		return fmt.Errorf("kernel: next_batch: %w", toStatementError(err))
 	}
 	if carr.release == nil {
 		r.eof = true

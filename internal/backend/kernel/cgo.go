@@ -202,12 +202,13 @@ func isBadConnection(code int) bool {
 	}
 }
 
-// toDriverError classifies a kernel error for the pool: a status that means the
-// session is unusable is wrapped as a bad-connection error (which identifies as
-// driver.ErrBadConn, so database/sql evicts the conn), matching how the Thrift
-// backend surfaces connection loss. Other kernel errors — and plain
-// (non-KernelError) errors — are returned unchanged, carrying their sqlstate.
-func toDriverError(err error) error {
+// toConnError classifies a kernel error on a SESSION-lifecycle path (open/close/
+// config, where nothing has executed): a status that means the session is unusable
+// is wrapped as a bad-connection error, which identifies as driver.ErrBadConn so
+// database/sql evicts the conn from the pool. Safe here because no statement ran,
+// so there is nothing for database/sql to unsafely re-run. Other kernel errors —
+// and plain (non-KernelError) errors — are returned unchanged, carrying sqlstate.
+func toConnError(err error) error {
 	if err == nil {
 		return nil
 	}
@@ -219,6 +220,28 @@ func toDriverError(err error) error {
 		return dbsqlerrint.NewBadConnectionError(ke)
 	}
 	return ke
+}
+
+// toStatementError classifies a kernel error on the STATEMENT path (execute and
+// result read). It NEVER returns driver.ErrBadConn: once a statement has been
+// sent, a network/unavailable failure surfaced afterward may have committed
+// server-side, and driver.ErrBadConn would make database/sql transparently
+// re-run the statement — a silent duplicate write for a non-idempotent
+// INSERT/UPDATE/MERGE. This mirrors the kernel's own retry contract
+// (ExecuteStatement is NonIdempotent, retried only on connect-phase failures) and
+// the Thrift backend (ExecuteStatement is non-retryable), and honors Go's
+// driver.ErrBadConn rule ("never return ErrBadConn if the server might have
+// performed the operation"). The kernel has already exhausted its safe internal
+// retries by the time we see the error. Returns the KernelError (or plain error)
+// unchanged, carrying sqlstate.
+func toStatementError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if ke, ok := err.(*KernelError); ok {
+		return ke
+	}
+	return err
 }
 
 // cStr wraps C.CString with a guaranteed free. The kernel copies strings into

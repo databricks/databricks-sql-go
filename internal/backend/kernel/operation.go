@@ -40,7 +40,7 @@ func (k *KernelBackend) execute(ctx context.Context, req backend.ExecRequest) (b
 	if err := call(func() C.KernelStatusCode {
 		return C.kernel_session_new_statement(k.session, &stmt)
 	}); err != nil {
-		return &kernelOp{}, fmt.Errorf("kernel: new_statement: %w", toDriverError(err))
+		return &kernelOp{}, fmt.Errorf("kernel: new_statement: %w", toStatementError(err))
 	}
 
 	sql := newCStr(req.Query)
@@ -49,7 +49,7 @@ func (k *KernelBackend) execute(ctx context.Context, req backend.ExecRequest) (b
 	}); err != nil {
 		sql.free()
 		C.kernel_statement_close(stmt)
-		return &kernelOp{}, fmt.Errorf("kernel: set_sql: %w", toDriverError(err))
+		return &kernelOp{}, fmt.Errorf("kernel: set_sql: %w", toStatementError(err))
 	}
 	sql.free()
 
@@ -131,7 +131,7 @@ func (k *KernelBackend) execute(ctx context.Context, req backend.ExecRequest) (b
 		}
 		klog("Execute failed: %v", execErr)
 		op.close()
-		return op, fmt.Errorf("kernel: execute: %w", toDriverError(execErr))
+		return op, fmt.Errorf("kernel: execute: %w", toStatementError(execErr))
 	}
 	op.exec = exec
 	// Capture the modified-row count now, while exec is live — the operation is
@@ -187,7 +187,7 @@ func (o *kernelOp) Results(ctx context.Context, callbacks *dbsqlrows.TelemetryCa
 		// Operation.Close on a Results error — so close the handles here to avoid
 		// leaking the statement / executed handle (and its server operation).
 		o.close()
-		return nil, fmt.Errorf("kernel: get_result_stream: %w", toDriverError(err))
+		return nil, fmt.Errorf("kernel: get_result_stream: %w", toStatementError(err))
 	}
 	return newKernelRows(ctx, o, stream, callbacks)
 }
@@ -235,5 +235,5 @@ func (o *kernelOp) close() bool {
 // already carries the sqlstate (see KernelError), so this returns cause as-is
 // (nil when cause is nil), matching the neutral contract.
 func (o *kernelOp) ExecutionError(ctx context.Context, cause error) error {
-	return toDriverError(cause)
+	return toStatementError(cause)
 }

@@ -83,7 +83,7 @@ func (k *KernelBackend) OpenSession(ctx context.Context) error {
 
 	var cfg *C.KernelSessionConfig
 	if err := call(func() C.KernelStatusCode { return C.kernel_session_config_new(&cfg) }); err != nil {
-		return fmt.Errorf("kernel: config_new: %w", toDriverError(err))
+		return fmt.Errorf("kernel: config_new: %w", toConnError(err))
 	}
 	// kernel_session_open consumes the config on EVERY path — success and
 	// failure alike (it reclaims the box up front). So we free the config
@@ -107,7 +107,7 @@ func (k *KernelBackend) OpenSession(ctx context.Context) error {
 		if err := call(func() C.KernelStatusCode {
 			return C.kernel_session_config_set_warehouse(cfg, host.c, wh.c)
 		}); err != nil {
-			return fmt.Errorf("kernel: set_warehouse: %w", toDriverError(err))
+			return fmt.Errorf("kernel: set_warehouse: %w", toConnError(err))
 		}
 	} else {
 		path := newCStr(k.cfg.HTTPPath)
@@ -115,7 +115,7 @@ func (k *KernelBackend) OpenSession(ctx context.Context) error {
 		if err := call(func() C.KernelStatusCode {
 			return C.kernel_session_config_set_http_path(cfg, host.c, path.c)
 		}); err != nil {
-			return fmt.Errorf("kernel: set_http_path: %w", toDriverError(err))
+			return fmt.Errorf("kernel: set_http_path: %w", toConnError(err))
 		}
 	}
 
@@ -124,7 +124,7 @@ func (k *KernelBackend) OpenSession(ctx context.Context) error {
 	if err := call(func() C.KernelStatusCode {
 		return C.kernel_session_config_set_auth_pat(cfg, tok.c)
 	}); err != nil {
-		return fmt.Errorf("kernel: set_auth_pat: %w", toDriverError(err))
+		return fmt.Errorf("kernel: set_auth_pat: %w", toConnError(err))
 	}
 
 	// TLS: crypto/tls's InsecureSkipVerify accepts any server cert, so relax both
@@ -135,12 +135,12 @@ func (k *KernelBackend) OpenSession(ctx context.Context) error {
 		if err := call(func() C.KernelStatusCode {
 			return C.kernel_session_config_set_tls_allow_self_signed(cfg, C.bool(true))
 		}); err != nil {
-			return fmt.Errorf("kernel: set_tls_allow_self_signed: %w", toDriverError(err))
+			return fmt.Errorf("kernel: set_tls_allow_self_signed: %w", toConnError(err))
 		}
 		if err := call(func() C.KernelStatusCode {
 			return C.kernel_session_config_set_tls_skip_hostname_verification(cfg, C.bool(true))
 		}); err != nil {
-			return fmt.Errorf("kernel: set_tls_skip_hostname_verification: %w", toDriverError(err))
+			return fmt.Errorf("kernel: set_tls_skip_hostname_verification: %w", toConnError(err))
 		}
 	}
 
@@ -154,7 +154,7 @@ func (k *KernelBackend) OpenSession(ctx context.Context) error {
 		if err := call(func() C.KernelStatusCode {
 			return C.kernel_session_config_set_proxy(cfg, url.c, nil, nil, nil)
 		}); err != nil {
-			return fmt.Errorf("kernel: set_proxy: %w", toDriverError(err))
+			return fmt.Errorf("kernel: set_proxy: %w", toConnError(err))
 		}
 	}
 
@@ -169,7 +169,7 @@ func (k *KernelBackend) OpenSession(ctx context.Context) error {
 		ck.free()
 		cv.free()
 		if errSet != nil {
-			return fmt.Errorf("kernel: set_session_conf[%s]: %w", key, toDriverError(errSet))
+			return fmt.Errorf("kernel: set_session_conf[%s]: %w", key, toConnError(errSet))
 		}
 	}
 
@@ -180,7 +180,7 @@ func (k *KernelBackend) OpenSession(ctx context.Context) error {
 	err := call(func() C.KernelStatusCode { return C.kernel_session_open(cfg, &sess) })
 	consumed = true
 	if err != nil {
-		return fmt.Errorf("kernel: session_open: %w", toDriverError(err))
+		return fmt.Errorf("kernel: session_open: %w", toConnError(err))
 	}
 	k.session = sess
 	k.valid = true
@@ -201,7 +201,7 @@ func (k *KernelBackend) CloseSession(ctx context.Context) error {
 	err := call(func() C.KernelStatusCode { return C.kernel_session_close(k.session) })
 	k.session = nil
 	k.valid = false
-	return toDriverError(err)
+	return toConnError(err)
 }
 
 // SessionValid backs conn.IsValid → pool eviction. No I/O; inspects state

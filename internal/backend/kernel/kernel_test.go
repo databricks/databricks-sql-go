@@ -28,24 +28,50 @@ func TestIsBadConnection(t *testing.T) {
 	}
 }
 
-// toDriverError wraps a session-unusable KernelError as driver.ErrBadConn (so
-// database/sql evicts the conn) and leaves other errors, and their sqlstate,
-// intact.
-func TestToDriverError(t *testing.T) {
-	if toDriverError(nil) != nil {
+// toConnError (session-lifecycle path) wraps a session-unusable KernelError as
+// driver.ErrBadConn so database/sql evicts the conn, and leaves other errors and
+// their sqlstate intact.
+func TestToConnError(t *testing.T) {
+	if toConnError(nil) != nil {
 		t.Fatal("nil should map to nil")
 	}
 
 	badConn := &KernelError{Code: statusUnavailable, Message: "gone"}
-	if !errors.Is(toDriverError(badConn), driver.ErrBadConn) {
-		t.Errorf("unavailable kernel error should identify as driver.ErrBadConn")
+	if !errors.Is(toConnError(badConn), driver.ErrBadConn) {
+		t.Errorf("unavailable kernel error on the session path should identify as driver.ErrBadConn")
 	}
 
 	sqlErr := &KernelError{Code: statusSqlError, Message: "boom", SQLState: "42703"}
-	got := toDriverError(sqlErr)
-	ke, ok := got.(*KernelError)
+	ke, ok := toConnError(sqlErr).(*KernelError)
 	if !ok {
-		t.Fatalf("sql error should remain a *KernelError, got %T", got)
+		t.Fatalf("sql error should remain a *KernelError, got %T", toConnError(sqlErr))
+	}
+	if ke.SQLState != "42703" {
+		t.Errorf("sqlstate lost: got %q", ke.SQLState)
+	}
+}
+
+// toStatementError (execute/read path) must NEVER return driver.ErrBadConn — even
+// for a network/unavailable status — so database/sql cannot transparently re-run a
+// statement that may have already executed server-side (silent duplicate write).
+func TestToStatementErrorNeverBadConn(t *testing.T) {
+	if toStatementError(nil) != nil {
+		t.Fatal("nil should map to nil")
+	}
+
+	for _, code := range []int{statusUnavailable, statusNetworkError, statusUnauthenticated} {
+		err := toStatementError(&KernelError{Code: code, Message: "post-execute failure"})
+		if errors.Is(err, driver.ErrBadConn) {
+			t.Errorf("statement-path error (code=%d) must NOT identify as driver.ErrBadConn "+
+				"(would let database/sql re-run a possibly-committed statement)", code)
+		}
+	}
+
+	// sqlstate still preserved.
+	sqlErr := &KernelError{Code: statusSqlError, Message: "boom", SQLState: "42703"}
+	ke, ok := toStatementError(sqlErr).(*KernelError)
+	if !ok {
+		t.Fatalf("sql error should remain a *KernelError, got %T", toStatementError(sqlErr))
 	}
 	if ke.SQLState != "42703" {
 		t.Errorf("sqlstate lost: got %q", ke.SQLState)
