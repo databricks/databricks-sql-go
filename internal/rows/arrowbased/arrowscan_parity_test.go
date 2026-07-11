@@ -24,10 +24,10 @@ import (
 // It lives in package arrowbased because the container factory
 // (makeColumnValueContainer) is package-private; arrowscan is a pure leaf import
 // (no cycle).
-func renderViaArrowbased(t *testing.T, arr arrow.Array, row int) any {
+func renderViaArrowbased(t *testing.T, arr arrow.Array, row int, loc *time.Location) any {
 	t.Helper()
 	maker := &arrowValueContainerMaker{}
-	holder, err := maker.makeColumnValueContainer(arr.DataType(), time.UTC, func(ts arrow.Timestamp) time.Time {
+	holder, err := maker.makeColumnValueContainer(arr.DataType(), loc, func(ts arrow.Timestamp) time.Time {
 		return ts.ToTime(arrow.Microsecond)
 	}, nil)
 	if err != nil {
@@ -126,6 +126,67 @@ func TestArrowbasedKernelRenderParity(t *testing.T) {
 			b.FieldBuilder(0).(*array.Decimal128Builder).Append(decimal128.FromU64(1999))
 			return b.NewArray()
 		}},
+		// Highest-drift shapes: recursive nesting, a nested timestamp leaf (the
+		// time.Time → quoted .String() special-case), and a null leaf inside a
+		// container (vs a null container, which is already covered).
+		{"array_of_struct", func() arrow.Array {
+			elem := arrow.StructOf(arrow.Field{Name: "a", Type: arrow.PrimitiveTypes.Int64})
+			b := array.NewListBuilder(pool, elem)
+			sb := b.ValueBuilder().(*array.StructBuilder)
+			b.Append(true)
+			sb.Append(true)
+			sb.FieldBuilder(0).(*array.Int64Builder).Append(1)
+			sb.Append(true)
+			sb.FieldBuilder(0).(*array.Int64Builder).Append(2)
+			return b.NewArray()
+		}},
+		{"struct_of_list", func() arrow.Array {
+			dt := arrow.StructOf(arrow.Field{Name: "xs", Type: arrow.ListOf(arrow.PrimitiveTypes.Int64)})
+			b := array.NewStructBuilder(pool, dt)
+			b.Append(true)
+			lb := b.FieldBuilder(0).(*array.ListBuilder)
+			lb.Append(true)
+			vb := lb.ValueBuilder().(*array.Int64Builder)
+			vb.Append(1)
+			vb.Append(2)
+			return b.NewArray()
+		}},
+		{"map_of_struct_value", func() arrow.Array {
+			valT := arrow.StructOf(arrow.Field{Name: "a", Type: arrow.PrimitiveTypes.Int64})
+			b := array.NewMapBuilder(pool, arrow.BinaryTypes.String, valT, false)
+			b.Append(true)
+			b.KeyBuilder().(*array.StringBuilder).Append("k")
+			sb := b.ItemBuilder().(*array.StructBuilder)
+			sb.Append(true)
+			sb.FieldBuilder(0).(*array.Int64Builder).Append(5)
+			return b.NewArray()
+		}},
+		{"nested_timestamp", func() arrow.Array {
+			dt := arrow.StructOf(arrow.Field{Name: "ts", Type: &arrow.TimestampType{Unit: arrow.Microsecond}})
+			b := array.NewStructBuilder(pool, dt)
+			b.Append(true)
+			ts := time.Date(2026, time.July, 9, 12, 34, 56, 0, time.UTC)
+			b.FieldBuilder(0).(*array.TimestampBuilder).Append(arrow.Timestamp(ts.UnixMicro()))
+			return b.NewArray()
+		}},
+		{"null_leaf_in_struct", func() arrow.Array {
+			dt := arrow.StructOf(
+				arrow.Field{Name: "a", Type: arrow.PrimitiveTypes.Int64},
+				arrow.Field{Name: "b", Type: arrow.PrimitiveTypes.Int64},
+			)
+			b := array.NewStructBuilder(pool, dt)
+			b.Append(true)
+			b.FieldBuilder(0).(*array.Int64Builder).Append(1)
+			b.FieldBuilder(1).(*array.Int64Builder).AppendNull()
+			return b.NewArray()
+		}},
+	}
+
+	// A non-UTC location, so the timestamp/date rendering path (both backends
+	// apply .In(loc)) is actually exercised rather than a UTC no-op.
+	loc, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Skipf("tz database unavailable: %v", err)
 	}
 
 	for _, tc := range cases {
@@ -133,11 +194,11 @@ func TestArrowbasedKernelRenderParity(t *testing.T) {
 			arr := tc.build()
 			defer arr.Release()
 
-			kernel, err := arrowscan.ScanCell(arr, 0, time.UTC)
+			kernel, err := arrowscan.ScanCell(arr, 0, loc)
 			if err != nil {
 				t.Fatalf("arrowscan.ScanCell: %v", err)
 			}
-			thrift := renderViaArrowbased(t, arr, 0)
+			thrift := renderViaArrowbased(t, arr, 0, loc)
 
 			if kernel != thrift {
 				t.Errorf("backend divergence for %s:\n  kernel  = %#v\n  thrift  = %#v", tc.name, kernel, thrift)
