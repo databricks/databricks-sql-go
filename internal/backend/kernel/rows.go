@@ -58,6 +58,7 @@ func newKernelRows(ctx context.Context, op *kernelOp, stream *C.kernel_result_st
 	if err := call(func() C.KernelStatusCode {
 		return C.kernel_result_stream_get_schema(stream, &csch)
 	}); err != nil {
+		op.backend.evictIfSessionFatal(err)
 		r.Close()
 		return nil, fmt.Errorf("kernel: get_schema: %w", toStatementError(err))
 	}
@@ -151,6 +152,7 @@ func (r *kernelRows) nextBatch() error {
 	if err := call(func() C.KernelStatusCode {
 		return C.kernel_result_stream_next_batch(r.stream, &carr, &csch)
 	}); err != nil {
+		r.op.backend.evictIfSessionFatal(err)
 		return fmt.Errorf("kernel: next_batch: %w", toStatementError(err))
 	}
 	if carr.release == nil {

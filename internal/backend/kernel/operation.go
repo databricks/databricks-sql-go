@@ -40,6 +40,7 @@ func (k *KernelBackend) execute(ctx context.Context, req backend.ExecRequest) (b
 	if err := call(func() C.KernelStatusCode {
 		return C.kernel_session_new_statement(k.session, &stmt)
 	}); err != nil {
+		k.evictIfSessionFatal(err)
 		return &kernelOp{}, fmt.Errorf("kernel: new_statement: %w", toStatementError(err))
 	}
 
@@ -49,6 +50,7 @@ func (k *KernelBackend) execute(ctx context.Context, req backend.ExecRequest) (b
 	}); err != nil {
 		sql.free()
 		C.kernel_statement_close(stmt)
+		k.evictIfSessionFatal(err)
 		return &kernelOp{}, fmt.Errorf("kernel: set_sql: %w", toStatementError(err))
 	}
 	sql.free()
@@ -120,7 +122,7 @@ func (k *KernelBackend) execute(ctx context.Context, req backend.ExecRequest) (b
 		C.kernel_statement_canceller_free(canceller)
 	}
 
-	op := &kernelOp{stmt: stmt, location: k.cfg.Location}
+	op := &kernelOp{backend: k, stmt: stmt, location: k.cfg.Location}
 	if execErr != nil {
 		// Prefer the caller's ctx error when the ctx was cancelled (database/sql
 		// convention), keeping the kernel error as the cause.
@@ -130,6 +132,11 @@ func (k *KernelBackend) execute(ctx context.Context, req backend.ExecRequest) (b
 			return op, fmt.Errorf("kernel: execute cancelled: %w", ctx.Err())
 		}
 		klog("Execute failed: %v", execErr)
+		// A session-fatal status (expired token, dropped/unavailable session) means
+		// this conn is unusable: evict it so the pool doesn't hand it out again. We
+		// still return the PLAIN error (toStatementError, never ErrBadConn), so the
+		// conn is discarded without database/sql re-running the statement (H1).
+		k.evictIfSessionFatal(execErr)
 		op.close()
 		return op, fmt.Errorf("kernel: execute: %w", toStatementError(execErr))
 	}
@@ -143,9 +150,13 @@ func (k *KernelBackend) execute(ctx context.Context, req backend.ExecRequest) (b
 
 // kernelOp implements backend.Operation over a sync executed statement.
 type kernelOp struct {
-	stmt   *C.kernel_statement_t
-	exec   *C.kernel_executed_statement_t
-	closed bool
+	// backend is the owning connection's backend, held so a session-fatal error on
+	// the result-read path can evict the conn (markSessionDead), mirroring how the
+	// Thrift thriftOperation holds its *Backend.
+	backend *KernelBackend
+	stmt    *C.kernel_statement_t
+	exec    *C.kernel_executed_statement_t
+	closed  bool
 	// affectedRows is the modified-row count captured at execute time. It is
 	// cached (not read live from exec) because the caller closes the operation —
 	// which nulls exec — before reading AffectedRows (see conn.ExecContext).
@@ -186,6 +197,7 @@ func (o *kernelOp) Results(ctx context.Context, callbacks *dbsqlrows.TelemetryCa
 		// No Rows is returned to own teardown, and the query path does not call
 		// Operation.Close on a Results error — so close the handles here to avoid
 		// leaking the statement / executed handle (and its server operation).
+		o.backend.evictIfSessionFatal(err)
 		o.close()
 		return nil, fmt.Errorf("kernel: get_result_stream: %w", toStatementError(err))
 	}

@@ -190,10 +190,32 @@ const (
 	statusSqlError        = int(C.KernelStatusCode_SqlError)
 )
 
-// isBadConnection reports whether a status code means the session is no longer
-// usable, so the driver evicts the conn from the pool (via driver.ErrBadConn's
-// surface) rather than reusing it.
+// isBadConnection reports whether a status code is a *transient* connection
+// failure — one where retrying on a fresh connection could succeed. On the
+// session-lifecycle path this is wrapped as driver.ErrBadConn so database/sql
+// retries connect. Unauthenticated is deliberately excluded: a wrong/expired PAT
+// is permanent, so retrying it just burns connect attempts (and can worsen
+// server-side auth rate-limiting) and fails identically — matching Thrift, which
+// only treats an invalid session handle (a liveness signal), not a 401, as
+// bad-conn. (Auth failure still marks the session dead for pool eviction — see
+// isSessionFatal.)
 func isBadConnection(code int) bool {
+	switch code {
+	case statusUnavailable, statusNetworkError:
+		return true
+	default:
+		return false
+	}
+}
+
+// isSessionFatal reports whether a status code means the server-side session is no
+// longer usable, so the conn must be evicted from the pool rather than reused for
+// the next query. Broader than isBadConnection: it also covers Unauthenticated (an
+// expired/revoked token kills the session) — but unlike isBadConnection it is NOT
+// used to produce driver.ErrBadConn on the statement path, so eviction happens
+// without database/sql replaying the statement (see toStatementError + the
+// KernelBackend.markSessionDead call sites).
+func isSessionFatal(code int) bool {
 	switch code {
 	case statusUnauthenticated, statusUnavailable, statusNetworkError:
 		return true

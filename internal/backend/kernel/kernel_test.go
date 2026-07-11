@@ -11,20 +11,66 @@ import (
 	"github.com/databricks/databricks-sql-go/internal/backend"
 )
 
-// isBadConnection maps the session-unusable status codes so the pool evicts the
-// conn; every other code stays a plain kernel error.
+// isBadConnection is the TRANSIENT-failure set (retrying a fresh connect could
+// succeed) — used to produce driver.ErrBadConn on the session-lifecycle path.
+// Unauthenticated is excluded: a wrong/expired PAT is permanent, not retryable.
 func TestIsBadConnection(t *testing.T) {
-	bad := []int{statusUnauthenticated, statusUnavailable, statusNetworkError}
-	for _, code := range bad {
+	transient := []int{statusUnavailable, statusNetworkError}
+	for _, code := range transient {
 		if !isBadConnection(code) {
-			t.Errorf("code %d should be a bad connection", code)
+			t.Errorf("code %d should be a (transient) bad connection", code)
 		}
 	}
-	notBad := []int{statusInvalidArgument, statusSqlError, statusTimeout}
+	// Unauthenticated is session-fatal but NOT retryable, so it is not bad-conn.
+	notBad := []int{statusUnauthenticated, statusInvalidArgument, statusSqlError, statusTimeout}
 	for _, code := range notBad {
 		if isBadConnection(code) {
 			t.Errorf("code %d should not be a bad connection", code)
 		}
+	}
+}
+
+// isSessionFatal is the broader "session is dead, evict the conn" set — it adds
+// Unauthenticated (an expired token kills the session) on top of the transient set.
+func TestIsSessionFatal(t *testing.T) {
+	fatal := []int{statusUnauthenticated, statusUnavailable, statusNetworkError}
+	for _, code := range fatal {
+		if !isSessionFatal(code) {
+			t.Errorf("code %d should be session-fatal", code)
+		}
+	}
+	notFatal := []int{statusInvalidArgument, statusSqlError, statusTimeout}
+	for _, code := range notFatal {
+		if isSessionFatal(code) {
+			t.Errorf("code %d should not be session-fatal", code)
+		}
+	}
+}
+
+// evictIfSessionFatal flips SessionValid()→false on a session-fatal error (so the
+// pool discards the conn) WITHOUT the error being driver.ErrBadConn (so the
+// statement is never transparently re-run — the H1 constraint).
+func TestEvictIfSessionFatal(t *testing.T) {
+	// valid tracks the session-dead flag SessionValid() gates on; the opaque
+	// session pointer is orthogonal here (can't construct the incomplete C type),
+	// so assert on k.valid directly.
+	k := &KernelBackend{valid: true}
+
+	// Non-fatal (e.g. a SQL error) leaves the session valid.
+	k.evictIfSessionFatal(&KernelError{Code: statusSqlError})
+	if !k.valid {
+		t.Error("a SQL error must not evict the session")
+	}
+
+	// A session-fatal error marks the session dead, and the surfaced statement-path
+	// error is NOT driver.ErrBadConn (so database/sql won't re-run the statement).
+	fatal := &KernelError{Code: statusUnavailable, Message: "session gone"}
+	k.evictIfSessionFatal(fatal)
+	if k.valid {
+		t.Error("a session-fatal error must evict the session (valid=false)")
+	}
+	if errors.Is(toStatementError(fatal), driver.ErrBadConn) {
+		t.Error("the statement-path error must not be driver.ErrBadConn (no replay)")
 	}
 }
 

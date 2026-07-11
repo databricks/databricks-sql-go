@@ -205,8 +205,26 @@ func (k *KernelBackend) CloseSession(ctx context.Context) error {
 }
 
 // SessionValid backs conn.IsValid → pool eviction. No I/O; inspects state
-// captured at OpenSession.
+// captured at OpenSession and updated by markSessionDead.
 func (k *KernelBackend) SessionValid() bool { return k.valid && k.session != nil }
+
+// markSessionDead marks the session unusable so SessionValid() → conn.IsValid()
+// returns false and database/sql discards this conn on return to the pool. Called
+// from the statement/read path when a kernel error is session-fatal (isSessionFatal):
+// it evicts the dead conn WITHOUT returning driver.ErrBadConn, so the statement is
+// never transparently re-run (no duplicate write — the H1 constraint). The backend
+// is single-owner per conn (only the cancel watcher shares state, and it touches
+// only the canceller's inflight slot), so this write is race-free.
+func (k *KernelBackend) markSessionDead() { k.valid = false }
+
+// evictIfSessionFatal marks the session dead when err is a session-fatal
+// KernelError, so a conn whose server session died mid-life is evicted from the
+// pool. A no-op for nil, non-KernelError, or non-fatal errors.
+func (k *KernelBackend) evictIfSessionFatal(err error) {
+	if ke, ok := err.(*KernelError); ok && isSessionFatal(ke.Code) {
+		k.markSessionDead()
+	}
+}
 
 // SessionID is the per-conn id (conn.id). Valid after OpenSession.
 func (k *KernelBackend) SessionID() string { return k.sessionID }
