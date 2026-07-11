@@ -81,3 +81,46 @@ build: linux darwin  ## Build the multi-arch binaries
 $(PLATFORMS):
 	mkdir -p bin
 	GOOS=$(os) GOARCH=amd64 $(GO) build $(GOBUILD_ARGS) -ldflags '$(LDFLAGS)' -o bin/$(BINARY)-$(os)-amd64 .
+
+# ── Kernel (SEA) backend ──────────────────────────────────────────────────────
+# Opt-in cgo build that links the Rust SQL kernel's C ABI, gated behind the
+# `databricks_kernel` build tag. These targets are wholly separate from the
+# pure-Go defaults above (which stay CGO_ENABLED=0 and never touch the kernel).
+KERNEL_REV        = $(shell cat KERNEL_REV)
+KERNEL_REPO      ?= https://github.com/databricks/databricks-sql-kernel.git
+KERNEL_SRC       ?= build/kernel-src
+# Target OS/arch (honors GOOS/GOARCH overrides) vs the actual host, so the build
+# step can reject a source cross-build that would drop a host .a into a foreign
+# target dir. Multi-OS support is via native per-OS runners (host == target) or
+# staging a prebuilt .a with KERNEL_LOCAL_A — not cross-compiling from source.
+KERNEL_GOOS       = $(shell go env GOOS)
+KERNEL_GOARCH     = $(shell go env GOARCH)
+KERNEL_GOHOSTOS   = $(shell go env GOHOSTOS)
+KERNEL_GOHOSTARCH = $(shell go env GOHOSTARCH)
+KERNEL_LIB_DIR    = internal/backend/kernel/lib/$(KERNEL_GOOS)_$(KERNEL_GOARCH)
+KERNEL_INC_DIR    = internal/backend/kernel/include
+KERNEL_GO         = CGO_ENABLED=1 go
+KERNEL_TAGS       = -tags databricks_kernel
+
+.PHONY: kernel-lib
+kernel-lib:  ## Build the pinned kernel static lib + header into the cgo link dir (source build).
+	KERNEL_REPO="$(KERNEL_REPO)" KERNEL_REV="$(KERNEL_REV)" KERNEL_SRC="$(KERNEL_SRC)" \
+	KERNEL_LIB_DIR="$(KERNEL_LIB_DIR)" KERNEL_INC_DIR="$(KERNEL_INC_DIR)" \
+	KERNEL_GOOS="$(KERNEL_GOOS)" KERNEL_GOARCH="$(KERNEL_GOARCH)" \
+	KERNEL_GOHOSTOS="$(KERNEL_GOHOSTOS)" KERNEL_GOHOSTARCH="$(KERNEL_GOHOSTARCH)" \
+	KERNEL_LOCAL_A="$(KERNEL_LOCAL_A)" KERNEL_LOCAL_HEADER="$(KERNEL_LOCAL_HEADER)" \
+	./build/kernel-lib.sh
+
+.PHONY: build-kernel
+build-kernel: kernel-lib  ## Build the driver with the kernel backend linked.
+	$(KERNEL_GO) build $(KERNEL_TAGS) ./...
+
+.PHONY: test-kernel
+test-kernel: kernel-lib  ## Run the kernel-tagged unit tests (no warehouse needed).
+	$(KERNEL_GO) test $(KERNEL_TAGS) ./...
+
+.PHONY: kernel-lib-download
+kernel-lib-download:  ## Prod mode (download prebuilt .a): blocked until the kernel publishes release artifacts.
+	@echo "kernel-lib-download: blocked — the kernel does not yet publish per-platform .a release artifacts."
+	@echo "Use 'make kernel-lib' (source build) meanwhile. See the distribution design doc."
+	@false
