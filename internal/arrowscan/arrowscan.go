@@ -65,7 +65,11 @@ func ScanCell(col arrow.Array, row int, loc *time.Location) (driver.Value, error
 	case *array.Uint32:
 		return int64(c.Value(row)), nil
 	case *array.Uint64:
-		return int64(c.Value(row)), nil
+		// Databricks SQL has no unsigned types, so a Uint64 column does not occur
+		// in practice; this arm is defensive. driver.Value has no uint64 and the
+		// driver convention is int64 for integers, so a value above MaxInt64 would
+		// wrap — acceptable for an unreachable path.
+		return int64(c.Value(row)), nil // #nosec G115 -- see above; unreachable for Databricks types
 	case *array.Float32:
 		// Return the native float32, NOT a widened float64: the Thrift path returns
 		// a float32 driver.Value for a bare FLOAT column, and database/sql's
