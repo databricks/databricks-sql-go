@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql/driver"
+	"encoding/json"
 	"io"
 	"time"
 
@@ -687,10 +688,17 @@ func (vcm *arrowValueContainerMaker) makeColumnValueContainer(t arrow.DataType, 
 	case *arrow.StructType:
 		svc := &structValueContainer{structArrayType: t}
 		svc.fieldNames = make([]string, len(t.Fields()))
+		svc.fieldKeys = make([]string, len(t.Fields()))
 		svc.fieldValues = make([]columnValues, len(t.Fields()))
 		svc.complexValue = make([]bool, len(t.Fields()))
 		for i, f := range t.Fields() {
 			svc.fieldNames[i] = f.Name
+			// Precompute the JSON-escaped `"name":` key once — field names are
+			// invariant across rows, so escaping them per row (structValueContainer
+			// .Value runs per row) would re-marshal constant strings. json.Marshal a
+			// string never errors.
+			keyBytes, _ := json.Marshal(f.Name)
+			svc.fieldKeys[i] = string(keyBytes) + ":"
 			c, err := vcm.makeColumnValueContainer(f.Type, location, toTimestampFn, nil)
 			if err != nil {
 				return nil, err

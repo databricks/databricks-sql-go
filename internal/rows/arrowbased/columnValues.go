@@ -363,6 +363,7 @@ func (mvc *mapValueContainer) SetValueArray(colData arrow.ArrayData) error {
 type structValueContainer struct {
 	structArray     *array.Struct
 	fieldNames      []string
+	fieldKeys       []string // precomputed JSON-escaped `"name":` prefixes, one per field
 	complexValue    []bool
 	fieldValues     []columnValues
 	structArrayType *arrow.StructType
@@ -377,11 +378,12 @@ func (svc *structValueContainer) Value(i int) (any, error) {
 	if i < svc.structArray.Len() {
 		r := "{"
 		for j := range svc.fieldValues {
-			// JSON-escape the field name — a raw `"` + name + `"` concat produces
-			// invalid JSON for a name containing a quote/backslash/control char
-			// (e.g. `a"b` → `{"a"b":...}`). json.Marshal a string never errors.
-			keyBytes, _ := json.Marshal(svc.fieldNames[j])
-			r = r + string(keyBytes) + ":"
+			// fieldKeys[j] is the precomputed JSON-escaped `"name":` prefix (built
+			// once at construction). Escaping matters — a raw `"` + name + `"` concat
+			// produces invalid JSON for a name with a quote/backslash/control char
+			// (`a"b` → `{"a"b":...}`) — but doing it per row would re-marshal the same
+			// constant strings N_rows × N_fields times on this hot path.
+			r = r + svc.fieldKeys[j]
 
 			if svc.fieldValues[j].IsNull(int(i)) {
 				r = r + "null"
