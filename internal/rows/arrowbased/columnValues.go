@@ -374,7 +374,11 @@ func (svc *structValueContainer) Value(i int) (any, error) {
 	if i < svc.structArray.Len() {
 		r := "{"
 		for j := range svc.fieldValues {
-			r = r + "\"" + svc.fieldNames[j] + "\":"
+			// JSON-escape the field name — a raw `"` + name + `"` concat produces
+			// invalid JSON for a name containing a quote/backslash/control char
+			// (e.g. `a"b` → `{"a"b":...}`). json.Marshal a string never errors.
+			keyBytes, _ := json.Marshal(svc.fieldNames[j])
+			r = r + string(keyBytes) + ":"
 
 			if svc.fieldValues[j].IsNull(int(i)) {
 				r = r + "null"
