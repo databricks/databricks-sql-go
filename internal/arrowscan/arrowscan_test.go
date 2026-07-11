@@ -274,3 +274,38 @@ func TestScanCellNested(t *testing.T) {
 		}
 	})
 }
+
+// A StructKeyCache must produce byte-identical output to the nil (recompute-inline)
+// path, and reused across rows of the same struct type — so the round-trip
+// through the cache can never silently diverge from the one-shot rendering.
+func TestScanCellCachedMatchesUncached(t *testing.T) {
+	pool := memory.NewGoAllocator()
+	dt := arrow.StructOf(
+		arrow.Field{Name: "a", Type: arrow.PrimitiveTypes.Int64},
+		arrow.Field{Name: `q"x`, Type: arrow.BinaryTypes.String}, // needs escaping
+	)
+	b := array.NewStructBuilder(pool, dt)
+	defer b.Release()
+	for i := 0; i < 3; i++ { // multiple rows: exercises the memoized second+ hit
+		b.Append(true)
+		b.FieldBuilder(0).(*array.Int64Builder).Append(int64(i))
+		b.FieldBuilder(1).(*array.StringBuilder).Append("v")
+	}
+	arr := b.NewArray()
+	defer arr.Release()
+
+	cache := NewStructKeyCache()
+	for row := 0; row < 3; row++ {
+		uncached, err := ScanCell(arr, row, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cached, err := ScanCellCached(arr, row, nil, cache)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cached != uncached {
+			t.Errorf("row %d: cached %q != uncached %q", row, cached, uncached)
+		}
+	}
+}

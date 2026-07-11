@@ -42,6 +42,48 @@ import (
 // error rather than a silently wrong value. loc renders DATE / TIMESTAMP in the
 // session time zone (nil = UTC, arrow's ToTime default).
 func ScanCell(col arrow.Array, row int, loc *time.Location) (driver.Value, error) {
+	return ScanCellCached(col, row, loc, nil)
+}
+
+// StructKeyCache memoizes the JSON-escaped `"name":` prefixes for a struct type,
+// so writeStructJSON doesn't re-marshal constant field names on every row. It is
+// caller-owned and must be scoped to a single result set (e.g. one driver.Rows)
+// and discarded with it — NOT a process-global, which would leak because the Arrow
+// C Data import allocates a fresh *StructType per batch (see databricks-sql-go
+// round-2 N1). A nil cache is valid: rendering just recomputes the keys inline.
+type StructKeyCache struct {
+	m map[*arrow.StructType][]string
+}
+
+// NewStructKeyCache returns a cache ready to pass to ScanCellCached.
+func NewStructKeyCache() *StructKeyCache {
+	return &StructKeyCache{m: make(map[*arrow.StructType][]string)}
+}
+
+// keyPrefixes returns the escaped `"name":` prefix for each field of st,
+// memoized. Safe on a nil receiver (computes without caching).
+func (c *StructKeyCache) keyPrefixes(st *arrow.StructType) []string {
+	if c != nil {
+		if p, ok := c.m[st]; ok {
+			return p
+		}
+	}
+	fields := st.Fields()
+	prefixes := make([]string, len(fields))
+	for i := range fields {
+		name, _ := json.Marshal(fields[i].Name) // JSON-escapes the field name
+		prefixes[i] = string(name) + ":"
+	}
+	if c != nil {
+		c.m[st] = prefixes
+	}
+	return prefixes
+}
+
+// ScanCellCached is ScanCell with a caller-owned StructKeyCache (see
+// StructKeyCache) so struct field-name keys are escaped once per result set
+// rather than once per row. Pass nil for the un-memoized one-shot behavior.
+func ScanCellCached(col arrow.Array, row int, loc *time.Location, keys *StructKeyCache) (driver.Value, error) {
 	if col.IsNull(row) {
 		return nil, nil
 	}
@@ -100,7 +142,7 @@ func ScanCell(col arrow.Array, row int, loc *time.Location) (driver.Value, error
 	case *array.List, *array.LargeList, *array.FixedSizeList, *array.Map, *array.Struct:
 		// Nested types (and VARIANT, which arrives as a nested value) render to a
 		// JSON string matching the Thrift path.
-		return renderJSONString(col, row, loc)
+		return renderJSONString(col, row, loc, keys)
 	default:
 		return nil, fmt.Errorf("scanning arrow type %s is not supported "+
 			"(intervals are not yet handled)", col.DataType())
@@ -119,35 +161,35 @@ func inLocation(t time.Time, loc *time.Location) time.Time {
 // renderJSONString renders one nested cell as a JSON string (nil for a NULL
 // cell). loc is applied to any timestamp/date leaves, matching the top-level
 // scan and the Thrift path.
-func renderJSONString(col arrow.Array, row int, loc *time.Location) (driver.Value, error) {
+func renderJSONString(col arrow.Array, row int, loc *time.Location, keys *StructKeyCache) (driver.Value, error) {
 	if col.IsNull(row) {
 		return nil, nil
 	}
 	var b strings.Builder
-	if err := writeJSON(&b, col, row, loc); err != nil {
+	if err := writeJSON(&b, col, row, loc, keys); err != nil {
 		return nil, err
 	}
 	return b.String(), nil
 }
 
 // writeJSON writes the JSON form of col[row] into b, recursing for nested types.
-func writeJSON(b *strings.Builder, col arrow.Array, row int, loc *time.Location) error {
+func writeJSON(b *strings.Builder, col arrow.Array, row int, loc *time.Location, keys *StructKeyCache) error {
 	if col.IsNull(row) {
 		b.WriteString("null")
 		return nil
 	}
 	switch c := col.(type) {
 	case *array.List:
-		return writeListJSON(b, c.ListValues(), int(c.Offsets()[row]), int(c.Offsets()[row+1]), loc)
+		return writeListJSON(b, c.ListValues(), int(c.Offsets()[row]), int(c.Offsets()[row+1]), loc, keys)
 	case *array.LargeList:
-		return writeListJSON(b, c.ListValues(), int(c.Offsets()[row]), int(c.Offsets()[row+1]), loc)
+		return writeListJSON(b, c.ListValues(), int(c.Offsets()[row]), int(c.Offsets()[row+1]), loc, keys)
 	case *array.FixedSizeList:
 		n := int(c.DataType().(*arrow.FixedSizeListType).Len())
-		return writeListJSON(b, c.ListValues(), row*n, row*n+n, loc)
+		return writeListJSON(b, c.ListValues(), row*n, row*n+n, loc, keys)
 	case *array.Map:
-		return writeMapJSON(b, c, row, loc)
+		return writeMapJSON(b, c, row, loc, keys)
 	case *array.Struct:
-		return writeStructJSON(b, c, row, loc)
+		return writeStructJSON(b, c, row, loc, keys)
 	case *array.Decimal128:
 		// Emit the exact scale-applied decimal as a raw JSON number literal, not a
 		// float64 — a float64 would render DECIMAL(5,2) 19.99 as 19.990000000000002
@@ -170,13 +212,13 @@ func writeJSON(b *strings.Builder, col arrow.Array, row int, loc *time.Location)
 	}
 }
 
-func writeListJSON(b *strings.Builder, values arrow.Array, start, end int, loc *time.Location) error {
+func writeListJSON(b *strings.Builder, values arrow.Array, start, end int, loc *time.Location, keys *StructKeyCache) error {
 	b.WriteByte('[')
 	for i := start; i < end; i++ {
 		if i > start {
 			b.WriteByte(',')
 		}
-		if err := writeJSON(b, values, i, loc); err != nil {
+		if err := writeJSON(b, values, i, loc, keys); err != nil {
 			return err
 		}
 	}
@@ -184,9 +226,9 @@ func writeListJSON(b *strings.Builder, values arrow.Array, start, end int, loc *
 	return nil
 }
 
-func writeMapJSON(b *strings.Builder, m *array.Map, row int, loc *time.Location) error {
+func writeMapJSON(b *strings.Builder, m *array.Map, row int, loc *time.Location, keys *StructKeyCache) error {
 	start, end := int(m.Offsets()[row]), int(m.Offsets()[row+1])
-	keys := m.Keys()
+	mapKeys := m.Keys()
 	items := m.Items()
 	b.WriteByte('{')
 	for i := start; i < end; i++ {
@@ -194,13 +236,13 @@ func writeMapJSON(b *strings.Builder, m *array.Map, row int, loc *time.Location)
 			b.WriteByte(',')
 		}
 		// JSON object keys must be strings; stringify the key value.
-		kv, err := scalarForJSON(keys, i, loc)
+		kv, err := scalarForJSON(mapKeys, i, loc)
 		if err != nil {
 			return err
 		}
 		writeJSONKey(b, kv)
 		b.WriteByte(':')
-		if err := writeJSON(b, items, i, loc); err != nil {
+		if err := writeJSON(b, items, i, loc, keys); err != nil {
 			return err
 		}
 	}
@@ -208,22 +250,18 @@ func writeMapJSON(b *strings.Builder, m *array.Map, row int, loc *time.Location)
 	return nil
 }
 
-func writeStructJSON(b *strings.Builder, s *array.Struct, row int, loc *time.Location) error {
-	st := s.DataType().(*arrow.StructType)
+func writeStructJSON(b *strings.Builder, s *array.Struct, row int, loc *time.Location, keys *StructKeyCache) error {
+	// Field-name keys are constant across rows; keys.keyPrefixes memoizes them per
+	// result set so this per-row/per-cell path doesn't re-marshal them (a nil cache
+	// recomputes inline — correct, just not memoized).
+	prefixes := keys.keyPrefixes(s.DataType().(*arrow.StructType))
 	b.WriteByte('{')
 	for f := 0; f < s.NumField(); f++ {
 		if f > 0 {
 			b.WriteByte(',')
 		}
-		// Marshal the field name to JSON-escape it. Not memoized per struct type: a
-		// process-global cache keyed by *arrow.StructType leaks, because the Arrow C
-		// Data Interface import allocates a fresh *StructType every batch (no
-		// interning), so the key never repeats across batches. Recomputing here is
-		// cheap relative to the once-per-batch cost.
-		keyBytes, _ := json.Marshal(st.Field(f).Name)
-		b.Write(keyBytes)
-		b.WriteByte(':')
-		if err := writeJSON(b, s.Field(f), row, loc); err != nil {
+		b.WriteString(prefixes[f]) // pre-escaped `"name":`
+		if err := writeJSON(b, s.Field(f), row, loc, keys); err != nil {
 			return err
 		}
 	}

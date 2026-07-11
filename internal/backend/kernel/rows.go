@@ -47,12 +47,16 @@ type kernelRows struct {
 	chunkCount int          // cumulative batches fetched, for OnChunkFetched
 	closed     bool
 	eof        bool
+	// keyCache memoizes struct field-name JSON keys for this result set so
+	// per-row rendering doesn't re-marshal constant names. Scoped to this Rows
+	// (freed with it) — not a process-global, which would leak (round-2 N1).
+	keyCache *arrowscan.StructKeyCache
 }
 
 // newKernelRows fetches the schema up front (for Columns()) and returns the row
 // iterator; batches are pulled lazily on Next.
 func newKernelRows(ctx context.Context, op *kernelOp, stream *C.kernel_result_stream_t, cb *dbsqlrows.TelemetryCallbacks) (driver.Rows, error) {
-	r := &kernelRows{ctx: ctx, op: op, stream: stream, callbacks: cb}
+	r := &kernelRows{ctx: ctx, op: op, stream: stream, callbacks: cb, keyCache: arrowscan.NewStructKeyCache()}
 
 	var csch C.struct_ArrowSchema
 	if err := call(func() C.KernelStatusCode {
@@ -117,7 +121,7 @@ func (r *kernelRows) Next(dest []driver.Value) error {
 	}
 	rec := r.cur
 	for c := 0; c < len(dest); c++ {
-		v, err := arrowscan.ScanCell(rec.Column(c), r.rowInCur, r.op.location)
+		v, err := arrowscan.ScanCellCached(rec.Column(c), r.rowInCur, r.op.location, r.keyCache)
 		if err != nil {
 			return fmt.Errorf("kernel: scan col %d (%s): %w", c, r.cols[c], err)
 		}
