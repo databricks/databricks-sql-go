@@ -93,11 +93,20 @@ func ScanCellCached(col arrow.Array, row int, loc *time.Location, keys *StructKe
 	case *array.Boolean:
 		return c.Value(row), nil
 	case *array.Int8:
-		return int64(c.Value(row)), nil
+		// Return the native width (int8/16/32), NOT a widened int64, to match the
+		// Thrift path — its columnValuesTyped[*array.Int8, int8] returns a raw int8,
+		// so a top-level TINYINT scanned into `any` is int8 on both backends.
+		// (database/sql's convertAssign still coerces these into a typed *int64.)
+		// NOTE: the driver.Value spec names only int64 for integers, so both
+		// backends are technically off-spec here; unifying on int64 across Thrift +
+		// kernel is a deliberate driver-wide follow-up (needs maintainer sign-off,
+		// as it changes the prod Thrift path's observable type) — matching Thrift is
+		// the correct choice until then, so the two backends stay identical.
+		return c.Value(row), nil
 	case *array.Int16:
-		return int64(c.Value(row)), nil
+		return c.Value(row), nil
 	case *array.Int32:
-		return int64(c.Value(row)), nil
+		return c.Value(row), nil
 	case *array.Int64:
 		return c.Value(row), nil
 	case *array.Uint8:

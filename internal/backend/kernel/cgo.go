@@ -38,7 +38,6 @@ import (
 	"sync"
 	"unsafe"
 
-	dbsqlerrint "github.com/databricks/databricks-sql-go/internal/errors"
 	"github.com/databricks/databricks-sql-go/logger"
 )
 
@@ -153,118 +152,19 @@ func lastError(code C.KernelStatusCode) *KernelError {
 	return ke
 }
 
-// KernelError is the Go-side structured error mapped from the kernel's
-// KernelError struct. It carries the sqlstate so the backend's ExecutionError
-// can attach it, matching the Thrift error surface.
-type KernelError struct {
-	Code       int
-	Message    string
-	SQLState   string
-	VendorCode int32
-	HTTPStatus uint16
-	Retryable  bool
-	QueryID    string
-}
-
-func (e *KernelError) Error() string {
-	// Append the server query id when present — it is the one correlation handle
-	// to server-side query history, and StatementID() is "" on this backend.
-	q := ""
-	if e.QueryID != "" {
-		q = fmt.Sprintf(", queryId=%s", e.QueryID)
-	}
-	if e.SQLState != "" {
-		return fmt.Sprintf("kernel: %s (sqlstate=%s, code=%d%s)", e.Message, e.SQLState, e.Code, q)
-	}
-	return fmt.Sprintf("kernel: %s (code=%d%s)", e.Message, e.Code, q)
-}
-
-// Status codes mirrored as Go ints so non-cgo code (tests, error mapping) can
-// reference them without the C import. Kept in lockstep with the C enum.
-const (
-	statusInvalidArgument = int(C.KernelStatusCode_InvalidArgument)
-	statusUnauthenticated = int(C.KernelStatusCode_Unauthenticated)
-	statusUnavailable     = int(C.KernelStatusCode_Unavailable)
-	statusTimeout         = int(C.KernelStatusCode_Timeout)
-	statusNetworkError    = int(C.KernelStatusCode_NetworkError)
-	statusSqlError        = int(C.KernelStatusCode_SqlError)
+// The plain-int status constants used by the untagged classifier logic
+// (errors_classify.go) must stay in lockstep with the C enum in
+// databricks_kernel.h. These compile-time assertions make a drift a build error
+// under -tags databricks_kernel: the array length is 0 when the values match and
+// negative (illegal) otherwise, so the file won't compile if the header changes.
+var (
+	_ [statusInvalidArgument - int(C.KernelStatusCode_InvalidArgument)]struct{}
+	_ [statusUnauthenticated - int(C.KernelStatusCode_Unauthenticated)]struct{}
+	_ [statusUnavailable - int(C.KernelStatusCode_Unavailable)]struct{}
+	_ [statusTimeout - int(C.KernelStatusCode_Timeout)]struct{}
+	_ [statusNetworkError - int(C.KernelStatusCode_NetworkError)]struct{}
+	_ [statusSqlError - int(C.KernelStatusCode_SqlError)]struct{}
 )
-
-// isBadConnection reports whether a status code is a *transient* connection
-// failure — one where retrying on a fresh connection could succeed. On the
-// session-lifecycle path this is wrapped as driver.ErrBadConn so database/sql
-// retries connect. Unauthenticated is deliberately excluded: a wrong/expired PAT
-// is permanent, so retrying it just burns connect attempts (and can worsen
-// server-side auth rate-limiting) and fails identically — matching Thrift, which
-// only treats an invalid session handle (a liveness signal), not a 401, as
-// bad-conn. (Auth failure still marks the session dead for pool eviction — see
-// isSessionFatal.)
-func isBadConnection(code int) bool {
-	switch code {
-	case statusUnavailable, statusNetworkError:
-		return true
-	default:
-		return false
-	}
-}
-
-// isSessionFatal reports whether a status code means the server-side session is no
-// longer usable, so the conn must be evicted from the pool rather than reused for
-// the next query. Broader than isBadConnection: it also covers Unauthenticated (an
-// expired/revoked token kills the session) — but unlike isBadConnection it is NOT
-// used to produce driver.ErrBadConn on the statement path, so eviction happens
-// without database/sql replaying the statement (see toStatementError + the
-// KernelBackend.markSessionDead call sites).
-func isSessionFatal(code int) bool {
-	switch code {
-	case statusUnauthenticated, statusUnavailable, statusNetworkError:
-		return true
-	default:
-		return false
-	}
-}
-
-// toConnError classifies a kernel error on a SESSION-lifecycle path (open/close/
-// config, where nothing has executed): a status that means the session is unusable
-// is wrapped as a bad-connection error, which identifies as driver.ErrBadConn so
-// database/sql evicts the conn from the pool. Safe here because no statement ran,
-// so there is nothing for database/sql to unsafely re-run. Other kernel errors —
-// and plain (non-KernelError) errors — are returned unchanged, carrying sqlstate.
-func toConnError(err error) error {
-	if err == nil {
-		return nil
-	}
-	ke, ok := err.(*KernelError)
-	if !ok {
-		return err
-	}
-	if isBadConnection(ke.Code) {
-		return dbsqlerrint.NewBadConnectionError(ke)
-	}
-	return ke
-}
-
-// toStatementError classifies a kernel error on the STATEMENT path (execute and
-// result read). It NEVER returns driver.ErrBadConn: once a statement has been
-// sent, a network/unavailable failure surfaced afterward may have committed
-// server-side, and driver.ErrBadConn would make database/sql transparently
-// re-run the statement — a silent duplicate write for a non-idempotent
-// INSERT/UPDATE/MERGE. This mirrors the kernel's own retry contract
-// (ExecuteStatement is NonIdempotent, retried only on connect-phase failures) and
-// the Thrift backend (ExecuteStatement is non-retryable), and honors Go's
-// driver.ErrBadConn rule ("never return ErrBadConn if the server might have
-// performed the operation"). The kernel has already exhausted its safe internal
-// retries by the time we see the error. Returns the KernelError (or plain error)
-// unchanged, carrying sqlstate.
-func toStatementError(err error) error {
-	if err == nil {
-		return nil
-	}
-	if ke, ok := err.(*KernelError); ok {
-		return ke
-	}
-	return err
-}
 
 // cStr wraps C.CString with a guaranteed free. The kernel copies strings into
 // owned Rust memory on receipt, so freeing immediately after the call is safe.

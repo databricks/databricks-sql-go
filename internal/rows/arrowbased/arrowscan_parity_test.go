@@ -219,6 +219,21 @@ func TestArrowbasedKernelTopLevelScalarParity(t *testing.T) {
 		name  string
 		build func() arrow.Array
 	}{
+		{"tinyint", func() arrow.Array {
+			b := array.NewInt8Builder(pool)
+			b.Append(1)
+			return b.NewArray()
+		}},
+		{"smallint", func() arrow.Array {
+			b := array.NewInt16Builder(pool)
+			b.Append(2)
+			return b.NewArray()
+		}},
+		{"int", func() arrow.Array {
+			b := array.NewInt32Builder(pool)
+			b.Append(3)
+			return b.NewArray()
+		}},
 		{"int64", func() arrow.Array {
 			b := array.NewInt64Builder(pool)
 			b.Append(42)

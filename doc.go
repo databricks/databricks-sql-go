@@ -44,6 +44,8 @@ Supported optional connection parameters can be specified in param=value and inc
   - accessToken: Personal access token. Required if authType set to Pat
   - clientID: Specifies the client ID to use with OauthM2M
   - clientSecret: Specifies the client secret to use with OauthM2M
+  - useKernel: Routes execution through the SEA-via-kernel backend instead of Thrift. Requires a build with -tags databricks_kernel (CGO_ENABLED=1); the default pure-Go build returns a clear error. Default is false. See the kernel-backend section below
+  - warehouseId: The bare SQL warehouse id, used by the kernel backend (which addresses a warehouse by id) in preference to the http path. Ignored by the Thrift backend
 
 Supported optional session parameters can be specified in param=value and include:
 
@@ -90,6 +92,8 @@ Supported functional options include:
   - WithMaxDownloadThreads (<num_threads> int). Sets up the max number of concurrent workers for cloud fetch. Default is 10. Optional
   - WithAuthenticator (<authenticator> auth.Authenticator). Sets up authentication. Required if neither access token or client credentials are provided.
   - WithClientCredentials(<clientID> string, <clientSecret> string). Sets up Oauth M2M authentication.
+  - WithUseKernel(<useKernel> bool). Routes execution through the SEA-via-kernel backend instead of Thrift. Requires a build with -tags databricks_kernel (CGO_ENABLED=1); the default build returns a clear error. Default is false. See the kernel-backend section below. Optional
+  - WithWarehouseID(<id> string). The bare SQL warehouse id used by the kernel backend in preference to the http path; ignored by the Thrift backend. Optional
 
 # Query cancellation and timeout
 

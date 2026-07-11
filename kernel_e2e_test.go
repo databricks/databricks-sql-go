@@ -139,10 +139,13 @@ func TestKernelE2EDataTypes(t *testing.T) {
 		expr string       // the single SELECT expression
 		want driver.Value // expected scanned value (nil for SQL NULL)
 	}{
+		// Integer widths scan to their native Go type (int8/16/32/64), matching the
+		// Thrift backend. (Both are technically off the driver.Value spec, which
+		// names only int64; unifying both backends on int64 is a tracked follow-up.)
 		{"bigint", "CAST(42 AS BIGINT)", int64(42)},
-		{"int", "CAST(7 AS INT)", int64(7)},
-		{"smallint", "CAST(3 AS SMALLINT)", int64(3)},
-		{"tinyint", "CAST(1 AS TINYINT)", int64(1)},
+		{"int", "CAST(7 AS INT)", int32(7)},
+		{"smallint", "CAST(3 AS SMALLINT)", int16(3)},
+		{"tinyint", "CAST(1 AS TINYINT)", int8(1)},
 		{"double", "CAST(3.5 AS DOUBLE)", float64(3.5)},
 		// 0.1 is NOT exactly representable, so a float32-vs-float64 mismatch would
 		// surface here (float64(float32(0.1)) != float32(0.1)); a bare FLOAT must

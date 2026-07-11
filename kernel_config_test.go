@@ -115,6 +115,29 @@ func TestValidateKernelConfig(t *testing.T) {
 			t.Errorf("positive retry/maxrows tuning should validate, got %v", err)
 		}
 	})
+
+	t.Run("default https/443 accepted", func(t *testing.T) {
+		c := baseKernelConfig() // WithDefaults sets Protocol=https, Port=443
+		if _, err := validateKernelConfig(c); err != nil {
+			t.Errorf("the default https/443 endpoint should validate, got %v", err)
+		}
+	})
+
+	t.Run("non-https protocol rejected", func(t *testing.T) {
+		c := baseKernelConfig()
+		c.Protocol = "http"
+		if _, err := validateKernelConfig(c); err == nil {
+			t.Error("expected an error for a non-https protocol on the kernel backend")
+		}
+	})
+
+	t.Run("non-default port rejected", func(t *testing.T) {
+		c := baseKernelConfig()
+		c.Port = 8443
+		if _, err := validateKernelConfig(c); err == nil {
+			t.Error("expected an error for a non-default port on the kernel backend")
+		}
+	})
 }
 
 // kernelConfigFieldDisposition records, for every UserConfig field, how the kernel
@@ -135,8 +158,6 @@ var kernelConfigFieldDisposition = map[string]string{
 	"Authenticator": "forwarded", // PAT authenticator resolved to the token
 	"Location":      "forwarded",
 	"SessionParams": "forwarded",
-	"Port":          "forwarded", // part of the endpoint URL (host:port)
-	"Protocol":      "forwarded", // part of the endpoint URL (scheme)
 	"UseKernel":     "forwarded", // the routing flag itself
 
 	// Rejected loudly by validateKernelConfig.
@@ -145,6 +166,8 @@ var kernelConfigFieldDisposition = map[string]string{
 	"EnableMetricViewMetadata": "rejected",
 	"QueryTimeout":             "rejected", // when > 0 (WithTimeout)
 	"RetryMax":                 "rejected", // when < 0 (disable retries)
+	"Protocol":                 "rejected", // kernel is https-only; non-default rejected
+	"Port":                     "rejected", // kernel connects on 443; non-default rejected
 
 	// Accepted but intentionally inert on the kernel path (documented in doc.go):
 	// the kernel manages these internally, below the C ABI, with no user knob.

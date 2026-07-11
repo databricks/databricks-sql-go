@@ -11,41 +11,10 @@ import (
 	"github.com/databricks/databricks-sql-go/internal/backend"
 )
 
-// isBadConnection is the TRANSIENT-failure set (retrying a fresh connect could
-// succeed) — used to produce driver.ErrBadConn on the session-lifecycle path.
-// Unauthenticated is excluded: a wrong/expired PAT is permanent, not retryable.
-func TestIsBadConnection(t *testing.T) {
-	transient := []int{statusUnavailable, statusNetworkError}
-	for _, code := range transient {
-		if !isBadConnection(code) {
-			t.Errorf("code %d should be a (transient) bad connection", code)
-		}
-	}
-	// Unauthenticated is session-fatal but NOT retryable, so it is not bad-conn.
-	notBad := []int{statusUnauthenticated, statusInvalidArgument, statusSqlError, statusTimeout}
-	for _, code := range notBad {
-		if isBadConnection(code) {
-			t.Errorf("code %d should not be a bad connection", code)
-		}
-	}
-}
-
-// isSessionFatal is the broader "session is dead, evict the conn" set — it adds
-// Unauthenticated (an expired token kills the session) on top of the transient set.
-func TestIsSessionFatal(t *testing.T) {
-	fatal := []int{statusUnauthenticated, statusUnavailable, statusNetworkError}
-	for _, code := range fatal {
-		if !isSessionFatal(code) {
-			t.Errorf("code %d should be session-fatal", code)
-		}
-	}
-	notFatal := []int{statusInvalidArgument, statusSqlError, statusTimeout}
-	for _, code := range notFatal {
-		if isSessionFatal(code) {
-			t.Errorf("code %d should not be session-fatal", code)
-		}
-	}
-}
+// The pure error-classifier tests (TestIsBadConnection, TestIsSessionFatal,
+// TestToConnError, TestToStatementErrorNeverBadConn) live in the untagged
+// errors_classify_test.go so they run under CGO_ENABLED=0. The tests below need a
+// *KernelBackend, so they stay tagged.
 
 // evictIfSessionFatal flips SessionValid()→false on a session-fatal error (so the
 // pool discards the conn) WITHOUT the error being driver.ErrBadConn (so the
@@ -71,56 +40,6 @@ func TestEvictIfSessionFatal(t *testing.T) {
 	}
 	if errors.Is(toStatementError(fatal), driver.ErrBadConn) {
 		t.Error("the statement-path error must not be driver.ErrBadConn (no replay)")
-	}
-}
-
-// toConnError (session-lifecycle path) wraps a session-unusable KernelError as
-// driver.ErrBadConn so database/sql evicts the conn, and leaves other errors and
-// their sqlstate intact.
-func TestToConnError(t *testing.T) {
-	if toConnError(nil) != nil {
-		t.Fatal("nil should map to nil")
-	}
-
-	badConn := &KernelError{Code: statusUnavailable, Message: "gone"}
-	if !errors.Is(toConnError(badConn), driver.ErrBadConn) {
-		t.Errorf("unavailable kernel error on the session path should identify as driver.ErrBadConn")
-	}
-
-	sqlErr := &KernelError{Code: statusSqlError, Message: "boom", SQLState: "42703"}
-	ke, ok := toConnError(sqlErr).(*KernelError)
-	if !ok {
-		t.Fatalf("sql error should remain a *KernelError, got %T", toConnError(sqlErr))
-	}
-	if ke.SQLState != "42703" {
-		t.Errorf("sqlstate lost: got %q", ke.SQLState)
-	}
-}
-
-// toStatementError (execute/read path) must NEVER return driver.ErrBadConn — even
-// for a network/unavailable status — so database/sql cannot transparently re-run a
-// statement that may have already executed server-side (silent duplicate write).
-func TestToStatementErrorNeverBadConn(t *testing.T) {
-	if toStatementError(nil) != nil {
-		t.Fatal("nil should map to nil")
-	}
-
-	for _, code := range []int{statusUnavailable, statusNetworkError, statusUnauthenticated} {
-		err := toStatementError(&KernelError{Code: code, Message: "post-execute failure"})
-		if errors.Is(err, driver.ErrBadConn) {
-			t.Errorf("statement-path error (code=%d) must NOT identify as driver.ErrBadConn "+
-				"(would let database/sql re-run a possibly-committed statement)", code)
-		}
-	}
-
-	// sqlstate still preserved.
-	sqlErr := &KernelError{Code: statusSqlError, Message: "boom", SQLState: "42703"}
-	ke, ok := toStatementError(sqlErr).(*KernelError)
-	if !ok {
-		t.Fatalf("sql error should remain a *KernelError, got %T", toStatementError(sqlErr))
-	}
-	if ke.SQLState != "42703" {
-		t.Errorf("sqlstate lost: got %q", ke.SQLState)
 	}
 }
 

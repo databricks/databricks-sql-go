@@ -36,6 +36,19 @@ func validateKernelConfig(cfg *config.Config) (token string, err error) {
 		return "", errors.New("databricks: WithEnableMetricViewMetadata is not yet supported by the kernel backend; " +
 			"omit it or use the default (Thrift) backend")
 	}
+	// Port / Protocol: the kernel C ABI takes only a bare host and connects over
+	// https:443; it has no port or scheme setter. The Thrift path honors a custom
+	// port/scheme via ToEndpointURL, so a non-default value here would be silently
+	// ignored on the kernel path (it would just hit 443) — reject it instead, per
+	// the "nothing silently ignored" contract. Defaults (https/443) are fine.
+	if cfg.Protocol != "" && cfg.Protocol != "https" {
+		return "", errors.New("databricks: a non-https protocol is not supported by the kernel backend " +
+			"(it connects over https); use the default (Thrift) backend")
+	}
+	if cfg.Port != 0 && cfg.Port != 443 {
+		return "", errors.New("databricks: a non-default port (WithPort) is not supported by the kernel backend " +
+			"(it connects on 443); omit it or use the default (Thrift) backend")
+	}
 	// Auth: the kernel backend authenticates with a PAT only. Any other
 	// authenticator sets cfg.Authenticator but leaves cfg.AccessToken empty, so an
 	// empty PAT would reach the kernel and fail with an opaque Unauthenticated
