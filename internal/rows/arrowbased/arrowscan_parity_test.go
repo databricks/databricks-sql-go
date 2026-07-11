@@ -206,3 +206,113 @@ func TestArrowbasedKernelRenderParity(t *testing.T) {
 		})
 	}
 }
+
+// Top-level (non-nested) scalars: assert the kernel ScanCell and the Thrift
+// container render the same Go value. DECIMAL is deliberately excluded here — see
+// TestTopLevelDecimalRendering for why the two *container-level* paths differ by
+// arrow type while the actual driver results agree.
+func TestArrowbasedKernelTopLevelScalarParity(t *testing.T) {
+	pool := memory.NewGoAllocator()
+	loc := time.UTC
+
+	cases := []struct {
+		name  string
+		build func() arrow.Array
+	}{
+		{"int64", func() arrow.Array {
+			b := array.NewInt64Builder(pool)
+			b.Append(42)
+			return b.NewArray()
+		}},
+		{"float32", func() arrow.Array {
+			b := array.NewFloat32Builder(pool)
+			b.Append(0.1)
+			return b.NewArray()
+		}},
+		{"float64", func() arrow.Array {
+			b := array.NewFloat64Builder(pool)
+			b.Append(3.5)
+			return b.NewArray()
+		}},
+		{"string", func() arrow.Array {
+			b := array.NewStringBuilder(pool)
+			b.Append("hi")
+			return b.NewArray()
+		}},
+		{"timestamp", func() arrow.Array {
+			b := array.NewTimestampBuilder(pool, &arrow.TimestampType{Unit: arrow.Microsecond})
+			b.Append(arrow.Timestamp(time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC).UnixMicro()))
+			return b.NewArray()
+		}},
+		{"date32", func() arrow.Array {
+			b := array.NewDate32Builder(pool)
+			b.Append(arrow.Date32FromTime(time.Date(2026, 7, 9, 0, 0, 0, 0, time.UTC)))
+			return b.NewArray()
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			arr := tc.build()
+			defer arr.Release()
+			kernel, err := arrowscan.ScanCell(arr, 0, loc)
+			if err != nil {
+				t.Fatalf("arrowscan.ScanCell: %v", err)
+			}
+			thrift := renderViaArrowbased(t, arr, 0, loc)
+			if kernel != thrift {
+				t.Errorf("top-level %s divergence:\n  kernel = %#v (%T)\n  thrift = %#v (%T)", tc.name, kernel, kernel, thrift, thrift)
+			}
+		})
+	}
+}
+
+// TestTopLevelDecimalRendering documents the top-level DECIMAL story (review r5
+// M1-r5), which is subtler than "kernel string vs Thrift float64":
+//
+//   - The kernel path always delivers DECIMAL as a native arrow decimal128 and
+//     renders it as an exact scale-applied string (arrowscan.ScanCell).
+//   - The Thrift *container* (decimal128Container.Value) converts a decimal128 to
+//     a lossy float64 — but that path is only reached when UseArrowNativeDecimal
+//     is on AND the value is read as a nested leaf. For a top-level column the
+//     scan uses DecimalStringValue (exact string) when the flag is on.
+//   - In the DEFAULT config the flag is off, so the server sends DECIMAL as a
+//     string column (DecimalAsArrow=false) — no decimal128 arrives at all, and the
+//     user gets the exact string.
+//
+// So across every real driver configuration a top-level DECIMAL comes back as the
+// exact string on both backends (verified live). This test pins the kernel side
+// (exact string) and the two Thrift container behaviors so the distinction can't
+// silently drift into an actual result divergence.
+func TestTopLevelDecimalRendering(t *testing.T) {
+	pool := memory.NewGoAllocator()
+	dt := &arrow.Decimal128Type{Precision: 38, Scale: 4}
+	b := array.NewDecimal128Builder(pool, dt)
+	defer b.Release()
+	n, _ := decimal128.FromString("1234567890123456.7890", dt.Precision, dt.Scale)
+	b.Append(n)
+	arr := b.NewArray()
+	defer arr.Release()
+
+	// Kernel: exact string.
+	got, err := arrowscan.ScanCell(arr, 0, time.UTC)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "1234567890123456.7890" {
+		t.Errorf("kernel top-level decimal = %#v, want exact string", got)
+	}
+
+	// Thrift container Value() is the lossy-float64 path (reached only with native
+	// decimal + nested read); DecimalStringValue is the exact top-level scan path.
+	// Assert both so a change to either is caught.
+	holder := &decimal128Container{scale: dt.Scale}
+	if err := holder.SetValueArray(arr.Data()); err != nil {
+		t.Fatal(err)
+	}
+	if s := holder.ValueString(0); s != "1234567890123456.7890" {
+		t.Errorf("Thrift DecimalStringValue = %q, want exact string", s)
+	}
+	if v, _ := holder.Value(0); v == "1234567890123456.7890" {
+		t.Errorf("Thrift container Value() unexpectedly exact; it is the documented lossy-float64 path")
+	}
+}
