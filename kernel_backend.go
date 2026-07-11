@@ -42,20 +42,50 @@ func newKernelBackend(_ context.Context, cfg *config.Config) (backend.Backend, e
 	// so an empty PAT would reach the kernel and fail with an opaque
 	// Unauthenticated error. Reject it here so the failure names the cause, per
 	// the doc.go contract. nil / NoopAuth / PATAuth are the PAT-or-none cases.
-	switch cfg.Authenticator.(type) {
-	case nil, *noop.NoopAuth, *pat.PATAuth:
-		// PAT (or no explicit authenticator) — supported.
+	token := cfg.AccessToken
+	switch a := cfg.Authenticator.(type) {
+	case nil, *noop.NoopAuth:
+		// No explicit authenticator — token comes from cfg.AccessToken (may be
+		// empty; caught below).
+	case *pat.PATAuth:
+		// WithAccessToken sets both cfg.AccessToken and this authenticator, but
+		// WithAuthenticator(&pat.PATAuth{...}) sets only the authenticator and
+		// leaves cfg.AccessToken empty. Take the token from the authenticator when
+		// cfg.AccessToken didn't carry it, so both PAT paths work.
+		if token == "" {
+			token = a.AccessToken
+		}
 	default:
 		return nil, errors.New("databricks: only personal access token (WithAccessToken) auth is supported by the kernel backend; " +
 			"OAuth (M2M/U2M), token-provider, external/static, and federated authenticators are not yet supported — " +
 			"use PAT or the default (Thrift) backend")
+	}
+	if token == "" {
+		return nil, errors.New("databricks: the kernel backend requires a personal access token; " +
+			"set one with WithAccessToken (or a *pat.PATAuth via WithAuthenticator)")
+	}
+	// WithTimeout maps to a per-statement server timeout on Thrift
+	// (TExecuteStatementReq.QueryTimeout); the kernel C ABI exposes no equivalent,
+	// so honor the "nothing silently ignored" contract by rejecting it rather than
+	// running the query with no server-side timeout. (Default 0 = unset.)
+	if cfg.QueryTimeout > 0 {
+		return nil, errors.New("databricks: WithTimeout (server query timeout) is not yet supported by the kernel backend; " +
+			"omit it or use the default (Thrift) backend")
+	}
+	// WithRetries(-1) explicitly disables retries, but the kernel retries
+	// internally below the C ABI with no user-facing toggle — so a disable request
+	// would be silently violated. Reject it. Positive/default RetryMax is fine:
+	// the kernel provides retries (just not user-tunable), documented in doc.go.
+	if cfg.RetryMax < 0 {
+		return nil, errors.New("databricks: disabling retries via WithRetries is not supported by the kernel backend " +
+			"(the kernel retries internally); omit it or use the default (Thrift) backend")
 	}
 
 	kc := kernel.Config{
 		Host:        cfg.Host,
 		HTTPPath:    cfg.HTTPPath,
 		WarehouseID: cfg.WarehouseID,
-		Token:       cfg.AccessToken,
+		Token:       token,
 		Location:    cfg.Location,
 		// Session confs (STATEMENT_TIMEOUT, QUERY_TAGS, TIMEZONE, …) — the same
 		// SessionParams map the Thrift backend forwards, so they flow to the

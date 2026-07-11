@@ -200,10 +200,16 @@ the read path cancellation is honored at result-batch boundaries, not mid-fetch)
 and the TLS, proxy, and session-conf (query tags, statement timeout, time zone)
 connection options. OAuth (M2M/U2M) and initial catalog/schema are not
 yet supported and return a clear error at connect time rather than being silently
-ignored. Bound query parameters are likewise not yet supported and return a clear
-error at execute time (they arrive per-query, not at connect). None of these is
-silently ignored. (Metadata is issued as ordinary SQL — SHOW/DESCRIBE/
-information_schema — and runs on this backend like any other query.)
+ignored; likewise WithTimeout (a server query timeout the kernel C ABI can't set)
+and WithRetries used to disable retries (the kernel retries internally). Bound
+query parameters are likewise not yet supported and return a clear error at
+execute time (they arrive per-query, not at connect). None of these is silently
+ignored. (Metadata is issued as ordinary SQL — SHOW/DESCRIBE/information_schema —
+and runs on this backend like any other query.)
+
+WithMaxRows and retry tuning (WithRetries with a positive limit) are accepted but
+not applied on the kernel path: the kernel manages result fetching and retries
+internally, below the C ABI, with no user-facing knob.
 
 # Programmatically Retrieving Connection and Query Id
 
