@@ -231,16 +231,31 @@ func writeStructJSON(b *strings.Builder, s *array.Struct, row int, loc *time.Loc
 	return nil
 }
 
-// writeJSONKey writes a value as a JSON object key (always a quoted string).
+// writeJSONKey writes a value as a JSON object key (always a quoted string),
+// matching the Thrift path's mapValueContainer: marshal the value the same way a
+// leaf is marshaled (marshalScalar → json.Marshal, so a []byte key renders as
+// base64 "YWJj", NOT fmt "%v" [97 98 99]), then quote-wrap the result if it is
+// not already a JSON string (numbers/bools become "7"/"true" keys).
 func writeJSONKey(b *strings.Builder, v any) {
-	switch k := v.(type) {
-	case string:
-		kb, _ := json.Marshal(k)
+	// A time.Time key renders as its quoted .String() (same special-case as
+	// writeScalarJSON / the Thrift marshal()), not RFC3339.
+	if t, ok := v.(time.Time); ok {
+		kb, _ := json.Marshal(t.String())
 		b.Write(kb)
-	default:
-		kb, _ := json.Marshal(fmt.Sprintf("%v", k))
-		b.Write(kb)
+		return
 	}
+	kb, err := json.Marshal(v)
+	if err != nil {
+		// Unmarshalable key value — fall back to its stringified form, quoted.
+		kb, _ = json.Marshal(fmt.Sprintf("%v", v))
+	}
+	if len(kb) > 0 && kb[0] == '"' {
+		b.Write(kb) // already a JSON string (string / []byte via marshal)
+		return
+	}
+	b.WriteByte('"')
+	b.Write(kb)
+	b.WriteByte('"')
 }
 
 // writeScalarJSON writes a scalar leaf, mirroring the Thrift marshal(): a

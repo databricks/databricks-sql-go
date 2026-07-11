@@ -97,6 +97,21 @@ func TestArrowbasedKernelRenderParity(t *testing.T) {
 			b.ItemBuilder().(*array.Int64Builder).Append(9)
 			return b.NewArray()
 		}},
+		{"map_binary_key", func() arrow.Array {
+			// []byte key: json.Marshal → base64 "YWJj", NOT fmt "%v" [97 98 99].
+			b := array.NewMapBuilder(pool, arrow.BinaryTypes.Binary, arrow.PrimitiveTypes.Int64, false)
+			b.Append(true)
+			b.KeyBuilder().(*array.BinaryBuilder).Append([]byte("abc"))
+			b.ItemBuilder().(*array.Int64Builder).Append(9)
+			return b.NewArray()
+		}},
+		{"map_date_key", func() arrow.Array {
+			b := array.NewMapBuilder(pool, arrow.FixedWidthTypes.Date32, arrow.PrimitiveTypes.Int64, false)
+			b.Append(true)
+			b.KeyBuilder().(*array.Date32Builder).Append(arrow.Date32FromTime(time.Date(2026, time.July, 9, 0, 0, 0, 0, time.UTC)))
+			b.ItemBuilder().(*array.Int64Builder).Append(9)
+			return b.NewArray()
+		}},
 		{"nested_float32", func() arrow.Array {
 			dt := arrow.StructOf(arrow.Field{Name: "f", Type: arrow.PrimitiveTypes.Float32})
 			b := array.NewStructBuilder(pool, dt)
