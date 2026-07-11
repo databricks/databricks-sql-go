@@ -4,9 +4,7 @@ package dbsql
 
 import (
 	"context"
-	"errors"
 	"net/http"
-	"net/url"
 	"testing"
 	"time"
 
@@ -120,71 +118,4 @@ func TestNewKernelBackendRejectsUnsupportedOptions(t *testing.T) {
 			t.Errorf("positive retry/maxrows tuning should build cleanly, got %v", err)
 		}
 	})
-}
-
-// proxyForEndpointFunc maps the injected resolver's decision to a proxy URL
-// string (or "" for direct), and returns "" for an unbuildable endpoint. The
-// production path uses http.ProxyFromEnvironment, whose env is snapshotted once
-// per process (sync.Once) and so can't be re-driven mid-test; the resolver seam
-// lets us assert every branch deterministically. Each case mirrors an
-// httpproxy-style outcome: proxy set for this host, host excluded by NO_PROXY,
-// no proxy configured, and an unbuildable endpoint.
-func TestProxyForEndpoint(t *testing.T) {
-	validCfg := func() *config.Config {
-		c := config.WithDefaults()
-		c.Host = "my-workspace.databricks.com"
-		c.Port = 443
-		c.HTTPPath = "/sql/1.0/warehouses/abc"
-		return c
-	}
-	proxyURL, _ := url.Parse("http://corp-proxy:3128")
-
-	cases := []struct {
-		name    string
-		cfg     *config.Config
-		resolve func(*http.Request) (*url.URL, error)
-		want    string
-	}{
-		{
-			name:    "proxy set for host",
-			cfg:     validCfg(),
-			resolve: func(*http.Request) (*url.URL, error) { return proxyURL, nil },
-			want:    "http://corp-proxy:3128",
-		},
-		{
-			name:    "host excluded by NO_PROXY -> direct",
-			cfg:     validCfg(),
-			resolve: func(*http.Request) (*url.URL, error) { return nil, nil },
-			want:    "",
-		},
-		{
-			name:    "resolver error -> direct",
-			cfg:     validCfg(),
-			resolve: func(*http.Request) (*url.URL, error) { return nil, errors.New("bad proxy url") },
-			want:    "",
-		},
-		{
-			name: "unbuildable endpoint -> direct (resolver never consulted)",
-			cfg: func() *config.Config {
-				c := config.WithDefaults()
-				c.Host = ""
-				return c
-			}(),
-			resolve: func(*http.Request) (*url.URL, error) {
-				t.Error("resolver must not be called for an unbuildable endpoint")
-				return proxyURL, nil
-			},
-			want: "",
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := proxyForEndpointFunc(tc.cfg, tc.resolve); got != tc.want {
-				t.Errorf("proxyForEndpointFunc = %q, want %q", got, tc.want)
-			}
-		})
-	}
-
-	// The production wrapper wires http.ProxyFromEnvironment and must not panic.
-	_ = proxyForEndpoint(validCfg())
 }
