@@ -281,6 +281,53 @@ func TestArrowbasedKernelTopLevelScalarParity(t *testing.T) {
 	}
 }
 
+// TestArrowbasedKernelTimestampTZParity pins the TIMESTAMP vs TIMESTAMP_NTZ
+// rendering contract: over Arrow, a TIMESTAMP arrives with TimeZone "UTC" and a
+// TIMESTAMP_NTZ with an empty TimeZone (kernel json.rs:171 — "TIMESTAMP carries a
+// tz on the Arrow side; TIMESTAMP_NTZ does not"). Both backends deliberately IGNORE
+// that tz field: each renders via ToTime + .In(loc), so the LTZ-vs-NTZ difference is
+// carried entirely by the instant value the server sends, NOT by the client
+// inspecting the tz. Verified live on both backends (NY + Kolkata, incl. a DST-gap
+// literal): kernel == Thrift byte-for-byte for both types.
+//
+// This test locks that in so a future "semantically-correct" change that skips
+// .In(loc) for TimeZone=="" (which would look right in isolation) fails CI — it
+// would make the kernel diverge from the Thrift path, which shifts NTZ too.
+func TestArrowbasedKernelTimestampTZParity(t *testing.T) {
+	pool := memory.NewGoAllocator()
+	loc, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Skipf("tz database unavailable: %v", err)
+	}
+	// Same instant for both; only the arrow TimeZone field differs (UTC vs "").
+	instant := time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC)
+	build := func(tz string) arrow.Array {
+		b := array.NewTimestampBuilder(pool, &arrow.TimestampType{Unit: arrow.Microsecond, TimeZone: tz})
+		b.Append(arrow.Timestamp(instant.UnixMicro()))
+		return b.NewArray()
+	}
+	for _, tc := range []struct {
+		name string
+		tz   string
+	}{
+		{"timestamp_ltz_utc_zone", "UTC"},
+		{"timestamp_ntz_empty_zone", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			arr := build(tc.tz)
+			defer arr.Release()
+			kernel, err := arrowscan.ScanCell(arr, 0, loc)
+			if err != nil {
+				t.Fatalf("arrowscan.ScanCell: %v", err)
+			}
+			thrift := renderViaArrowbased(t, arr, 0, loc)
+			if kernel != thrift {
+				t.Errorf("TimeZone=%q divergence:\n  kernel = %#v\n  thrift = %#v", tc.tz, kernel, thrift)
+			}
+		})
+	}
+}
+
 // TestTopLevelDecimalRendering documents the top-level DECIMAL story, which is
 // subtler than "kernel string vs Thrift float64":
 //
