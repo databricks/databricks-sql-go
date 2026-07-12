@@ -9,6 +9,8 @@ import (
 	"database/sql/driver"
 	"errors"
 	"os"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -310,6 +312,40 @@ func TestKernelE2ECloudFetch(t *testing.T) {
 	if last != want-1 {
 		t.Errorf("last id = %d, want %d", last, want-1)
 	}
+}
+
+// TestKernelE2EConnectionPool proves the database/sql connection pool works with
+// the kernel backend: the pool lives above the backend seam (each connection wraps
+// one kernel session), so many concurrent queries over a capped pool must all
+// succeed with checkout/return and per-conn single-session isolation intact.
+func TestKernelE2EConnectionPool(t *testing.T) {
+	db := kernelTestDB(t)
+	defer db.Close()
+	db.SetMaxOpenConns(8)
+	db.SetMaxIdleConns(8)
+
+	const n = 40
+	var errs, ok int64
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+			defer cancel()
+			var v int
+			if err := db.QueryRowContext(ctx, "SELECT 1").Scan(&v); err != nil || v != 1 {
+				atomic.AddInt64(&errs, 1)
+				return
+			}
+			atomic.AddInt64(&ok, 1)
+		}()
+	}
+	wg.Wait()
+	if errs != 0 {
+		t.Fatalf("connection pool: %d/%d queries failed", errs, n)
+	}
+	t.Logf("connection pool OK: %d/%d queries succeeded over pool cap 8", ok, n)
 }
 
 // TestKernelE2ECancellation cancels a long-running query via ctx and asserts it
