@@ -58,6 +58,17 @@ func (k *KernelBackend) execute(ctx context.Context, req backend.ExecRequest) (b
 	}
 	sql.free()
 
+	// Bind parameters. The driver hands us backend.Param{Name, Type, Value}: the
+	// value is already stringified, Type is the Databricks SQL type name, and a nil
+	// Value is SQL NULL (Type "VOID"). Each maps 1:1 onto
+	// kernel_statement_bind_parameter, which builds the SEA wire parameter directly
+	// (name/ordinal + type + string), matching the Thrift path's toSparkParameters.
+	if err := bindParams(stmt, req.Params); err != nil {
+		C.kernel_statement_close(stmt)
+		k.evictIfSessionFatal(err)
+		return &kernelOp{}, fmt.Errorf("kernel: bind params: %w", toStatementError(err))
+	}
+
 	// Detached canceller, obtained before execute so it observes the server
 	// statement id the moment execute publishes it. Non-fatal on failure: proceed
 	// without cancellation rather than failing the query.
@@ -149,6 +160,33 @@ func (k *KernelBackend) execute(ctx context.Context, req backend.ExecRequest) (b
 	op.affectedRows = int64(C.kernel_executed_statement_num_modified_rows(exec))
 	klog("Execute OK stmt=%p exec=%p affectedRows=%d", stmt, exec, op.affectedRows)
 	return op, nil
+}
+
+// bindParams binds the driver's backend.Param list onto the statement via the
+// kernel's raw-param bind. Each Param is already stringified with its Databricks
+// SQL type name; an empty Name is a positional param (ordinal assigned kernel-side
+// in push order) and a nil Value is SQL NULL (Type "VOID"). Runs before execute,
+// so the params are set on the fresh statement (set_sql clears any prior binds).
+func bindParams(stmt *C.kernel_statement_t, params []backend.Param) error {
+	for i, p := range params {
+		name := newCStrOrNull(p.Name) // empty Name → NULL → positional
+		typ := newCStr(p.Type)
+		val := newCStrOrNull("")
+		if p.Value != nil {
+			val = newCStr(*p.Value) // non-nil, possibly empty string, is a real value
+		}
+		err := call(func() C.KernelStatusCode {
+			return C.kernel_statement_bind_parameter(stmt, name.c, typ.c, val.c)
+		})
+		name.free()
+		typ.free()
+		val.free()
+		if err != nil {
+			return fmt.Errorf("param %d (name=%q type=%q): %w", i, p.Name, p.Type, err)
+		}
+		klog("bound param %d name=%q type=%q null=%v", i, p.Name, p.Type, p.Value == nil)
+	}
+	return nil
 }
 
 // kernelOp implements backend.Operation over a sync executed statement.
