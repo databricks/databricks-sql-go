@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/databricks/databricks-sql-go/driverctx"
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 )
 
@@ -311,6 +312,34 @@ func TestKernelE2ECloudFetch(t *testing.T) {
 	}
 	if last != want-1 {
 		t.Errorf("last id = %d, want %d", last, want-1)
+	}
+}
+
+// TestKernelE2EStatementID proves the kernel backend surfaces the server query id
+// on the success path: a registered QueryIdCallback fires with a non-empty id
+// (driven by kernelOp.StatementID() → kernel_executed_statement_query_id). This is
+// the observable end of the EXECUTE_STATEMENT telemetry / query-history path that
+// was previously dark on the kernel backend (StatementID() returned "").
+func TestKernelE2EStatementID(t *testing.T) {
+	db := kernelTestDB(t)
+	defer db.Close()
+
+	var gotID string
+	var fired bool
+	ctx := driverctx.NewContextWithQueryIdCallback(context.Background(), func(id string) {
+		fired = true
+		gotID = id
+	})
+
+	var v int64
+	if err := db.QueryRowContext(ctx, "SELECT 1").Scan(&v); err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if !fired {
+		t.Fatal("QueryIdCallback did not fire")
+	}
+	if gotID == "" {
+		t.Error("kernel backend surfaced an empty query id; want the server statement id")
 	}
 }
 
