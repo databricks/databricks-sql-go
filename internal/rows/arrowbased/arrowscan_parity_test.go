@@ -169,6 +169,25 @@ func TestArrowbasedKernelRenderParity(t *testing.T) {
 			b.FieldBuilder(0).(*array.TimestampBuilder).Append(arrow.Timestamp(ts.UnixMicro()))
 			return b.NewArray()
 		}},
+		// VARIANT and GEOMETRY arrive over Arrow as plain STRING columns (verified
+		// live: a top-level VARIANT is the JSON *string* "{\"a\":1}", GEOMETRY is the
+		// WKT string "POINT(1 2)"). Nested inside a container they are string leaves,
+		// so they must render as a quoted, JSON-escaped string on both backends — the
+		// variant's own JSON is NOT re-parsed, it is escaped as text.
+		{"variant_string_leaf_in_array", func() arrow.Array {
+			b := array.NewListBuilder(pool, arrow.BinaryTypes.String)
+			vb := b.ValueBuilder().(*array.StringBuilder)
+			b.Append(true)
+			vb.Append(`{"a":1,"b":[2,3]}`) // a VARIANT element, delivered as a string
+			return b.NewArray()
+		}},
+		{"geometry_wkt_leaf_in_array", func() arrow.Array {
+			b := array.NewListBuilder(pool, arrow.BinaryTypes.String)
+			vb := b.ValueBuilder().(*array.StringBuilder)
+			b.Append(true)
+			vb.Append("POINT(1 2)") // GEOMETRY delivered as a WKT string
+			return b.NewArray()
+		}},
 		{"null_leaf_in_struct", func() arrow.Array {
 			dt := arrow.StructOf(
 				arrow.Field{Name: "a", Type: arrow.PrimitiveTypes.Int64},
@@ -425,6 +444,40 @@ func TestArrowbasedKernelTimestampTZParity(t *testing.T) {
 			thrift := renderViaArrowbased(t, arr, 0, loc)
 			if kernel != thrift {
 				t.Errorf("TimeZone=%q divergence:\n  kernel = %#v\n  thrift = %#v", tc.tz, kernel, thrift)
+			}
+		})
+	}
+}
+
+// TestArrowbasedKernelVariantGeometryParity documents that VARIANT and GEOMETRY
+// need no special rendering: over Arrow both arrive as plain STRING columns (a
+// top-level VARIANT is its JSON text "{\"a\":1}", GEOMETRY is its WKT "POINT(1 2)"),
+// so the existing string arm on both backends already produces identical output.
+// Verified live on both backends. (GEOGRAPHY is intentionally not covered — it is
+// not enabled on the benchmark warehouse and no consumer has asked for it.)
+func TestArrowbasedKernelVariantGeometryParity(t *testing.T) {
+	pool := memory.NewGoAllocator()
+	loc := time.UTC
+	cases := []struct {
+		name, val string
+	}{
+		{"variant_object", `{"a":1,"b":[2,3]}`},
+		{"variant_scalar", "42"},
+		{"geometry_wkt", "POINT(1 2)"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			b := array.NewStringBuilder(pool)
+			b.Append(tc.val)
+			arr := b.NewArray()
+			defer arr.Release()
+			kernel, err := arrowscan.ScanCell(arr, 0, loc)
+			if err != nil {
+				t.Fatalf("arrowscan.ScanCell: %v", err)
+			}
+			thrift := renderViaArrowbased(t, arr, 0, loc)
+			if kernel != thrift || kernel != tc.val {
+				t.Errorf("%s divergence:\n  kernel = %#v\n  thrift = %#v\n  want   = %#v", tc.name, kernel, thrift, tc.val)
 			}
 		})
 	}
