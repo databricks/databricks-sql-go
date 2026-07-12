@@ -155,10 +155,14 @@ func (k *KernelBackend) execute(ctx context.Context, req backend.ExecRequest) (b
 		return op, fmt.Errorf("kernel: execute: %w", toStatementError(execErr))
 	}
 	op.exec = exec
-	// Capture the modified-row count now, while exec is live — the operation is
-	// closed (nulling exec) before AffectedRows is read on the ExecContext path.
+	// Capture the modified-row count and server query id now, while exec is live —
+	// the operation is closed (nulling exec) before these are read on the
+	// ExecContext path, and the query-id pointer is only valid while exec lives.
 	op.affectedRows = int64(C.kernel_executed_statement_num_modified_rows(exec))
-	klog("Execute OK stmt=%p exec=%p affectedRows=%d", stmt, exec, op.affectedRows)
+	if qid := C.kernel_executed_statement_query_id(exec); qid != nil {
+		op.statementID = C.GoString(qid) // deep-copies out of the borrowed C string
+	}
+	klog("Execute OK stmt=%p exec=%p affectedRows=%d statementID=%q", stmt, exec, op.affectedRows, op.statementID)
 	return op, nil
 }
 
@@ -202,6 +206,11 @@ type kernelOp struct {
 	// cached (not read live from exec) because the caller closes the operation —
 	// which nulls exec — before reading AffectedRows (see conn.ExecContext).
 	affectedRows int64
+	// statementID is the server query id, captured at execute time. Cached (not
+	// read live) because kernel_executed_statement_query_id returns a pointer
+	// borrowed from the exec handle, valid only while exec is alive — the same
+	// lifetime discipline as affectedRows.
+	statementID string
 	// location renders DATE / TIMESTAMP values in the session time zone, matching
 	// the Thrift path; nil means UTC. Carried onto the rows built by Results.
 	location *time.Location
@@ -209,14 +218,10 @@ type kernelOp struct {
 
 var _ backend.Operation = (*kernelOp)(nil)
 
-// StatementID returns "": the kernel C ABI exposes no success-path statement/query
-// id accessor (only the error path carries a query_id, on KernelError). Because
-// conn.ExecContext/QueryContext gate per-statement telemetry on
-// StatementID() != "", kernel queries currently emit no EXECUTE_STATEMENT metric
-// and their query-id log field is empty — there is no session-id fallback on that
-// gate. Surfacing an id needs a kernel accessor (e.g.
-// kernel_executed_statement_query_id); tracked as a follow-up.
-func (o *kernelOp) StatementID() string { return "" }
+// StatementID returns the server query id captured at execute time (empty on a
+// handle-less op that never executed). A non-empty id ungates EXECUTE_STATEMENT
+// telemetry and drives QueryIdCallback, matching the Thrift path.
+func (o *kernelOp) StatementID() string { return o.statementID }
 
 // AffectedRows is the modified-row count for ExecContext. It returns the value
 // cached at execute time, so it is correct even after the operation is closed

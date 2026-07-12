@@ -211,10 +211,10 @@ time zone) connection options. WithTimeout (a server query timeout the kernel C 
 can't set) and WithRetries used to disable retries (the kernel retries internally)
 return a clear error at connect time rather than being silently ignored; token-
 provider, external/static, and federated authenticators are likewise not supported
-and rejected loudly. Bound query parameters are not yet supported and return a clear
-error at execute time (they arrive per-query, not at connect). None of these is
-silently ignored. (Metadata is issued as ordinary SQL — SHOW/DESCRIBE/
-information_schema — and runs on this backend like any other query.)
+and rejected loudly. None of these is silently ignored. Bound query parameters
+(positional and named) are supported — bound over the C ABI to match the Thrift
+path. (Metadata is issued as ordinary SQL — SHOW/DESCRIBE/information_schema — and
+runs on this backend like any other query.)
 
 OAuth U2M is interactive. On a cache miss (no valid cached refresh token) opening a
 connection launches the system browser and blocks until the user completes login or
@@ -230,18 +230,19 @@ internally, below the C ABI, with no user-facing knob.
 
 Features that live above the backend seam are inherited unchanged: the
 database/sql connection pool (each connection wraps one kernel session),
-per-connection telemetry (CREATE_SESSION and DELETE_SESSION are recorded for
-kernel connections just like Thrift), and the telemetry exporter's circuit
-breaker are all backend-agnostic. Result types are rendered to match the Thrift
-backend byte-for-byte: scalars, DECIMAL (exact string), TIMESTAMP / TIMESTAMP_NTZ
-(both shifted into the session time zone, as Thrift does), INTERVAL year-month
-and day-time, nested Array/Map/Struct and VARIANT (as JSON), and GEOMETRY (WKT).
+per-connection telemetry (CREATE_SESSION, EXECUTE_STATEMENT, and DELETE_SESSION
+are recorded for kernel connections just like Thrift), and the telemetry
+exporter's circuit breaker are all backend-agnostic. Result types are rendered to
+match the Thrift backend byte-for-byte: scalars, DECIMAL (exact string),
+TIMESTAMP / TIMESTAMP_NTZ (both shifted into the session time zone, as Thrift
+does), INTERVAL year-month and day-time, nested Array/Map/Struct and VARIANT (as
+JSON), and GEOMETRY (WKT). The per-statement server query id is surfaced on the
+success path, so a QueryIdCallback (see below) fires with the real id and
+EXECUTE_STATEMENT telemetry carries it.
 
-Two current kernel-backend limitations. Bound query parameters are not yet wired
-and return a clear error at execute time (see above). And the kernel backend does
-not yet surface a per-statement server query id, so a QueryIdCallback (see below)
-fires with "" and no EXECUTE_STATEMENT telemetry is emitted for kernel queries
-(CREATE_SESSION / DELETE_SESSION telemetry is unaffected).
+One kernel-backend limitation remains on the read path: context cancellation is
+honored at result-batch boundaries, not mid-fetch (an in-flight CloudFetch batch
+runs to completion before the cancel takes effect).
 
 # Programmatically Retrieving Connection and Query Id
 
