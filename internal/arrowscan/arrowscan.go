@@ -37,10 +37,12 @@ import (
 // matching the Thrift path — a float64 would lose precision beyond ~17 digits;
 // see databricks-sql-go#274). Nested types (List/Map/Struct, and VARIANT which
 // arrives nested) render to a JSON string byte-identical to the Thrift path;
-// GEOMETRY arrives as a WKB/WKT string and is handled by the string arm. NULLs
-// map to nil. A genuinely unhandled type (e.g. interval/duration) returns an
-// error rather than a silently wrong value. loc renders DATE / TIMESTAMP in the
-// session time zone (nil = UTC, arrow's ToTime default).
+// GEOMETRY arrives as a WKB/WKT string and is handled by the string arm. INTERVAL
+// day-time/year-month arrive as native arrow duration/month-interval and format to
+// the same string the Thrift path receives pre-formatted from the server. NULLs
+// map to nil. A genuinely unhandled type returns an error rather than a silently
+// wrong value. loc renders DATE / TIMESTAMP in the session time zone (nil = UTC,
+// arrow's ToTime default).
 func ScanCell(col arrow.Array, row int, loc *time.Location) (driver.Value, error) {
 	return ScanCellCached(col, row, loc, nil)
 }
@@ -175,14 +177,82 @@ func ScanCellCached(col arrow.Array, row int, loc *time.Location, keys *StructKe
 	case *array.Decimal128:
 		dt := col.DataType().(*arrow.Decimal128Type)
 		return decimalfmt.ExactString(c.Value(row), dt.Scale), nil
+	case *array.Duration:
+		// INTERVAL DAY TO SECOND arrives as an arrow duration. The kernel returns the
+		// native arrow value, so we format it Go-side to the same "D HH:MM:SS.nnnnnnnnn"
+		// string the Thrift path gets pre-formatted from the server (its native-interval
+		// config is off in prod, so it never scans a duration array — hence there is no
+		// shared renderer to reuse, and this stays kernel-side).
+		dt := col.DataType().(*arrow.DurationType)
+		return formatDayTimeInterval(int64(c.Value(row)), dt.Unit), nil
+	case *array.MonthInterval:
+		// INTERVAL YEAR TO MONTH arrives as a month count; Thrift's server string is
+		// "years-months".
+		return formatYearMonthInterval(int32(c.Value(row))), nil
 	case *array.List, *array.LargeList, *array.FixedSizeList, *array.Map, *array.Struct:
 		// Nested types (and VARIANT, which arrives as a nested value) render to a
 		// JSON string matching the Thrift path.
 		return renderJSONString(col, row, loc, keys)
 	default:
-		return nil, fmt.Errorf("scanning arrow type %s is not supported "+
-			"(intervals are not yet handled)", col.DataType())
+		return nil, fmt.Errorf("scanning arrow type %s is not supported", col.DataType())
 	}
+}
+
+// formatDayTimeInterval renders an arrow duration (in the given time unit) as the
+// Thrift path's "D HH:MM:SS.nnnnnnnnn" — days, then zero-padded hours:minutes:seconds
+// with 9 fractional digits, negated with a leading '-'.
+func formatDayTimeInterval(v int64, unit arrow.TimeUnit) string {
+	neg := v < 0
+	if neg {
+		v = -v
+	}
+	// Split into whole seconds + a sub-second nanosecond remainder working in the
+	// native unit. We must NOT scale the full magnitude up to nanoseconds first:
+	// Spark day-time intervals run up to ~Long.MaxValue microseconds (~292 years),
+	// so v*1e3 (or *1e6/*1e9) would overflow int64 and silently produce a wrong
+	// (often negative) string. Deriving seconds by dividing keeps every
+	// intermediate in range; only the bounded sub-second remainder is scaled up.
+	var secs, frac int64
+	switch unit {
+	case arrow.Second:
+		secs = v
+	case arrow.Millisecond:
+		secs = v / 1e3
+		frac = (v % 1e3) * 1e6
+	case arrow.Microsecond:
+		secs = v / 1e6
+		frac = (v % 1e6) * 1e3
+	default: // Nanosecond
+		secs = v / 1e9
+		frac = v % 1e9
+	}
+	days := secs / 86400
+	rem := secs % 86400
+	h := rem / 3600
+	rem %= 3600
+	m := rem / 60
+	s := rem % 60
+	sign := ""
+	if neg {
+		sign = "-"
+	}
+	return fmt.Sprintf("%s%d %02d:%02d:%02d.%09d", sign, days, h, m, s, frac)
+}
+
+// formatYearMonthInterval renders a month count as the Thrift path's "years-months",
+// negated with a leading '-'.
+func formatYearMonthInterval(months int32) string {
+	neg := months < 0
+	if neg {
+		months = -months
+	}
+	y := months / 12
+	mo := months % 12
+	sign := ""
+	if neg {
+		sign = "-"
+	}
+	return fmt.Sprintf("%s%d-%d", sign, y, mo)
 }
 
 // inLocation renders t in loc, matching the Thrift path's .In(location); a nil
