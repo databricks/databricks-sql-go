@@ -228,12 +228,20 @@ WithMaxRows and retry tuning (WithRetries with a positive limit) are accepted bu
 not applied on the kernel path: the kernel manages result fetching and retries
 internally, below the C ABI, with no user-facing knob.
 
-Two further kernel-backend caveats. The INTERVAL types (year-month / day-time)
-listed in the type table below are not yet handled by the kernel scanner and
-return a scan error; use the default (Thrift) backend for interval columns. And
-the kernel backend does not yet surface a per-statement server query id, so a
-QueryIdCallback (see below) fires with "" and no EXECUTE_STATEMENT telemetry is
-emitted for kernel queries.
+Features that live above the backend seam are inherited unchanged: the
+database/sql connection pool (each connection wraps one kernel session),
+per-connection telemetry (CREATE_SESSION and DELETE_SESSION are recorded for
+kernel connections just like Thrift), and the telemetry exporter's circuit
+breaker are all backend-agnostic. Result types are rendered to match the Thrift
+backend byte-for-byte: scalars, DECIMAL (exact string), TIMESTAMP / TIMESTAMP_NTZ
+(both shifted into the session time zone, as Thrift does), INTERVAL year-month
+and day-time, nested Array/Map/Struct and VARIANT (as JSON), and GEOMETRY (WKT).
+
+Two current kernel-backend limitations. Bound query parameters are not yet wired
+and return a clear error at execute time (see above). And the kernel backend does
+not yet surface a per-statement server query id, so a QueryIdCallback (see below)
+fires with "" and no EXECUTE_STATEMENT telemetry is emitted for kernel queries
+(CREATE_SESSION / DELETE_SESSION telemetry is unaffected).
 
 # Programmatically Retrieving Connection and Query Id
 
