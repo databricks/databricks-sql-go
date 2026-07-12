@@ -64,12 +64,67 @@ func TestKernelThriftParity(t *testing.T) {
 	}
 }
 
+// paramCase is one parameterized-query parity case: the same SQL + args run on
+// both backends must yield byte-identical output.
+type paramCase struct {
+	name string
+	sql  string
+	args []any
+}
+
+// The kernel binds these via kernel_statement_bind_parameter (the driver's
+// backend.Param{Name, Type, Value}); Thrift binds via toSparkParameters. Covers
+// positional (?) and named (:n) markers, each scalar type, SQL NULL, multi-param,
+// and a predicate — mirroring the C2 POC gate.
+var paramCases = []paramCase{
+	{"pos_int", "SELECT ? AS v", []any{int64(42)}},
+	{"pos_string", "SELECT ? AS v", []any{"hello"}},
+	{"pos_double", "SELECT ? AS v", []any{3.5}},
+	{"pos_bool", "SELECT ? AS v", []any{true}},
+	{"pos_null", "SELECT ? AS v", []any{nil}},
+	{"pos_two", "SELECT ? + ? AS v", []any{int64(2), int64(40)}},
+	{"pos_in_predicate", "SELECT count(*) AS v FROM range(100) WHERE id < ?", []any{int64(10)}},
+	{"named_int", "SELECT :n AS v", []any{sql.Named("n", int64(7))}},
+	{"named_string", "SELECT :s AS v", []any{sql.Named("s", "world")}},
+	{"named_two", "SELECT :a AS a, :b AS b", []any{sql.Named("a", int64(1)), sql.Named("b", "x")}},
+}
+
+// TestKernelParamsVsThrift asserts parameterized queries produce byte-identical
+// output on the kernel and Thrift backends — the bound-parameter acceptance gate.
+func TestKernelParamsVsThrift(t *testing.T) {
+	kernelDB := kernelTestDB(t)
+	defer kernelDB.Close()
+	thriftDB := thriftTestDB(t)
+	defer thriftDB.Close()
+
+	for _, c := range paramCases {
+		t.Run(c.name, func(t *testing.T) {
+			kernelRow := scanOneRowAsStringsArgs(t, kernelDB, c.sql, c.args...)
+			thriftRow := scanOneRowAsStringsArgs(t, thriftDB, c.sql, c.args...)
+			if len(kernelRow) != len(thriftRow) {
+				t.Fatalf("column count differs: kernel=%d thrift=%d", len(kernelRow), len(thriftRow))
+			}
+			for i := range kernelRow {
+				if kernelRow[i] != thriftRow[i] {
+					t.Errorf("col %d differs: kernel=%q thrift=%q (sql=%q args=%v)", i, kernelRow[i], thriftRow[i], c.sql, c.args)
+				}
+			}
+		})
+	}
+}
+
 // scanOneRowAsStrings scans the first row into a []string via sql.RawBytes, so a
 // NULL renders as "<nil>" and every value is compared in its wire form,
 // independent of Go-type coercion differences between the backends.
 func scanOneRowAsStrings(t *testing.T, db *sql.DB, query string) []string {
+	return scanOneRowAsStringsArgs(t, db, query)
+}
+
+// scanOneRowAsStringsArgs is scanOneRowAsStrings with query arguments (bound
+// parameters). Same wire-form comparison contract.
+func scanOneRowAsStringsArgs(t *testing.T, db *sql.DB, query string, args ...any) []string {
 	t.Helper()
-	rows, err := db.QueryContext(context.Background(), query)
+	rows, err := db.QueryContext(context.Background(), query, args...)
 	if err != nil {
 		t.Fatalf("query: %v", err)
 	}

@@ -382,21 +382,16 @@ func (k *KernelBackend) SessionID() string { return k.sessionID }
 
 // Execute runs a statement to a terminal state via the blocking execute path.
 // Per the Backend contract it returns a non-nil Operation even on error so the
-// caller can read StatementID / wrap the error / Close uniformly.
+// caller can read StatementID / wrap the error / Close uniformly. Bound
+// parameters (req.Params) are bound onto the statement in execute (see
+// bindParams).
 func (k *KernelBackend) Execute(ctx context.Context, req backend.ExecRequest) (backend.Operation, error) {
-	// Bound parameters are not yet wired for the kernel backend. Reject them with
-	// a clear error rather than silently shipping the query with unbound
-	// placeholders (which would behave differently than Thrift). Parameters arrive
-	// per-query, so this is an execute-time error, not a connect-time one. Return a
-	// non-nil Operation per the Backend contract.
-	if len(req.Params) > 0 {
-		return &kernelOp{}, fmt.Errorf("databricks: query parameters are %w; "+
-			"inline the values or use the default (Thrift) backend", dbsqlerr.ErrNotSupportedByKernel)
-	}
 	// Staging (Unity Catalog volume PUT/GET/REMOVE) needs a local file transfer the
 	// kernel path can't perform, and the kernel C ABI surfaces no IsStagingOperation
 	// signal to drive conn.execStagingOperation. Reject it here rather than let
 	// IsStaging return false and report success with no file moved (silent data loss).
+	// (Bound parameters, by contrast, ARE now supported — bound in execute via the
+	// kernel's raw-param C ABI.)
 	if isStagingStatement(req.Query) {
 		return &kernelOp{}, fmt.Errorf("databricks: staging operations (PUT/GET/REMOVE on a volume) are %w; "+
 			"use the default (Thrift) backend", dbsqlerr.ErrNotSupportedByKernel)
