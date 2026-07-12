@@ -82,14 +82,19 @@ func TestEvictIfSessionFatal(t *testing.T) {
 // Operation must be non-nil (Backend contract) and its Close must report
 // closed=false, since no server statement was ever created (a phantom
 // CLOSE_STATEMENT would otherwise be recorded for it).
-func TestExecuteRejectsParams(t *testing.T) {
-	k := &KernelBackend{}
+// When Execute fails before it acquires a statement handle (here: a nil session
+// makes new_statement fail), it must still honor the Backend contract — a non-nil,
+// handle-less Operation that Closes as a no-op (closed=false, no CLOSE_STATEMENT)
+// and reports zero AffectedRows. (Parameter binding is exercised live in
+// TestKernelE2EParams; a nil-session unit test can't reach the bind path.)
+func TestExecuteHandleLessOpContract(t *testing.T) {
+	k := &KernelBackend{} // nil session → new_statement fails
 	op, err := k.Execute(context.Background(), backend.ExecRequest{
 		Query:  "SELECT ?",
-		Params: []backend.Param{{Name: "x"}},
+		Params: []backend.Param{{Name: "x", Type: "STRING", Value: strPtr("v")}},
 	})
 	if err == nil {
-		t.Fatal("expected an error for bound parameters, got nil")
+		t.Fatal("expected an error from Execute on a nil-session backend, got nil")
 	}
 	if op == nil {
 		t.Fatal("Execute must return a non-nil Operation per the Backend contract")
@@ -171,6 +176,8 @@ func TestExecutionErrorContract(t *testing.T) {
 		t.Error("the *KernelError cause should remain reachable via errors.As")
 	}
 }
+
+func strPtr(s string) *string { return &s }
 
 // The cell/nested rendering (ScanCell and the JSON grammar) now lives in the
 // untagged internal/arrowscan package, where its tests run in the default
