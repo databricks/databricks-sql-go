@@ -36,6 +36,13 @@ type authClient struct {
 	mx           sync.Mutex
 }
 
+// M2MCredentials exposes the raw client-credentials so the SEA-via-kernel backend
+// can drive the kernel's own M2M flow. Implements auth.M2MCredentialsProvider,
+// which keeps cfg.Authenticator the single source of truth for auth mode.
+func (c *authClient) M2MCredentials() (clientID, clientSecret string) {
+	return c.clientID, c.clientSecret
+}
+
 // Auth will start the OAuth Authorization Flow to authenticate the cli client
 // using the users credentials in the browser. Compatible with SSO.
 func (c *authClient) Authenticate(r *http.Request) error {

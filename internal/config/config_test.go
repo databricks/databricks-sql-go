@@ -645,6 +645,48 @@ func TestParseConfig(t *testing.T) {
 	}
 }
 
+func TestEffectiveSessionParams(t *testing.T) {
+	t.Run("no metric view leaves params unchanged", func(t *testing.T) {
+		c := &Config{UserConfig: UserConfig{SessionParams: map[string]string{"QUERY_TAGS": "a:1"}}}
+		got := c.EffectiveSessionParams()
+		if len(got) != 1 || got["QUERY_TAGS"] != "a:1" {
+			t.Errorf("EffectiveSessionParams() = %v, want only QUERY_TAGS", got)
+		}
+		if _, ok := got[MetricViewMetadataConfKey]; ok {
+			t.Errorf("metric-view conf must not be set when EnableMetricViewMetadata is false")
+		}
+	})
+	t.Run("metric view adds the derived conf", func(t *testing.T) {
+		c := &Config{UserConfig: UserConfig{
+			SessionParams:            map[string]string{"QUERY_TAGS": "a:1"},
+			EnableMetricViewMetadata: true,
+		}}
+		got := c.EffectiveSessionParams()
+		if got[MetricViewMetadataConfKey] != "true" {
+			t.Errorf("metric-view conf = %q, want \"true\"", got[MetricViewMetadataConfKey])
+		}
+		if got["QUERY_TAGS"] != "a:1" {
+			t.Errorf("user SessionParams must be preserved, got %v", got)
+		}
+	})
+	t.Run("returns a fresh copy the caller may mutate", func(t *testing.T) {
+		orig := map[string]string{"QUERY_TAGS": "a:1"}
+		c := &Config{UserConfig: UserConfig{SessionParams: orig}}
+		got := c.EffectiveSessionParams()
+		got["QUERY_TAGS"] = "mutated"
+		if orig["QUERY_TAGS"] != "a:1" {
+			t.Errorf("mutating the result mutated the source SessionParams: %v", orig)
+		}
+	})
+	t.Run("nil SessionParams with metric view", func(t *testing.T) {
+		c := &Config{UserConfig: UserConfig{EnableMetricViewMetadata: true}}
+		got := c.EffectiveSessionParams()
+		if got[MetricViewMetadataConfKey] != "true" {
+			t.Errorf("metric-view conf must be set even with nil SessionParams, got %v", got)
+		}
+	})
+}
+
 func TestUserConfig_DeepCopy(t *testing.T) {
 	t.Run("copy empty config", func(t *testing.T) {
 		cfg := UserConfig{}

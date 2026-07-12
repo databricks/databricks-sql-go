@@ -175,6 +175,18 @@ type cStr struct{ c *C.char }
 
 func newCStr(s string) cStr { return cStr{c: C.CString(s)} }
 
+// newCStrOrNull is like newCStr but yields a NULL C pointer for an empty string,
+// for kernel args whose "unset" sentinel is NULL (e.g. the optional U2M client id /
+// scopes, where NULL selects the kernel's own default). C.CString("") would instead
+// pass a non-NULL pointer to an empty string, which the kernel treats as a real
+// (empty) value rather than "use the default".
+func newCStrOrNull(s string) cStr {
+	if s == "" {
+		return cStr{c: nil}
+	}
+	return cStr{c: C.CString(s)}
+}
+
 func (s cStr) free() {
 	if s.c != nil {
 		C.free(unsafe.Pointer(s.c))

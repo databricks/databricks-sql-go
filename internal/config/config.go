@@ -50,6 +50,30 @@ type Config struct {
 	ThriftDebugClientProtocol bool
 }
 
+// MetricViewMetadataConfKey is the server session conf that enables metric-view
+// metadata (WithEnableMetricViewMetadata). Despite the "thriftserver" in its name
+// — a historical server-side name — it is an ordinary Spark SQL session conf the
+// server honors regardless of client transport, so both the Thrift and kernel
+// backends send the identical key/value. Defined once here so no backend hardcodes
+// the literal (see EffectiveSessionParams).
+const MetricViewMetadataConfKey = "spark.sql.thriftserver.metadata.metricview.enabled"
+
+// EffectiveSessionParams returns the session confs to send to the server: the
+// user-supplied SessionParams plus any conf derived from a higher-level option
+// (currently metric-view metadata). Both backends call this, so the derivation is
+// backend-neutral — neither special-cases the option nor hardcodes the conf
+// literal. The returned map is always a fresh copy the caller may mutate freely.
+func (c *Config) EffectiveSessionParams() map[string]string {
+	params := make(map[string]string, len(c.SessionParams)+1)
+	for k, v := range c.SessionParams {
+		params[k] = v
+	}
+	if c.EnableMetricViewMetadata {
+		params[MetricViewMetadataConfKey] = "true"
+	}
+	return params
+}
+
 // ToEndpointURL generates the endpoint URL from Config that a Thrift client will connect to
 func (c *Config) ToEndpointURL() (string, error) {
 	var userInfo string
