@@ -200,24 +200,26 @@ path databricks_sql_kernel, which would match nothing):
 	# kernel logs plus its HTTP stack (hyper/reqwest):
 	DBSQL_KERNEL_DEBUG=1 RUST_LOG=debug ./your_app 2>&1
 
-The kernel backend currently supports PAT authentication; reading scalar, nested,
-and complex-typed results (CloudFetch is handled transparently); context
-cancellation during execute (a cancelled ctx fires a real server-side cancel; on
-the read path cancellation is honored at result-batch boundaries, not mid-fetch);
-and the TLS, proxy, and session-conf (query tags, statement timeout, time zone)
-connection options. OAuth (M2M/U2M), initial catalog/schema,
-WithEnableMetricViewMetadata, a non-default WithPort, and a non-https protocol
-are not yet supported and return a clear error at connect time rather than being
-silently ignored (the kernel backend connects over https:443 and has no port or
-scheme setter); likewise WithTimeout (a server query timeout the kernel C ABI
-can't set) and WithRetries used to disable retries (the kernel retries
-internally). Bound query parameters and staging operations
-(PUT/GET/REMOVE on a Unity Catalog volume, which need a local file transfer this
-backend cannot perform) are likewise not yet supported and return a clear error
-at execute time (they are per-statement, not connect-time). None of these is
-silently ignored. (Metadata is issued as ordinary SQL —
-SHOW/DESCRIBE/information_schema — and runs on this backend like any other
-query.)
+The kernel backend currently supports PAT and OAuth (M2M via WithClientCredentials,
+and U2M via the authType=oauthU2M DSN param — the interactive browser/PKCE flow is
+owned by the kernel) authentication; reading scalar, nested, and complex-typed
+results (CloudFetch is handled transparently); context cancellation during execute
+(a cancelled ctx fires a real server-side cancel; on the read path cancellation is
+honored at result-batch boundaries, not mid-fetch); the initial namespace
+(WithInitialNamespace catalog/schema, applied post-connect via USE CATALOG / USE
+SCHEMA since the kernel C ABI has no namespace setter); metric-view metadata
+(WithEnableMetricViewMetadata, sent as the same server session conf the Thrift
+backend uses); and the TLS, proxy, and session-conf (query tags, statement timeout,
+time zone) connection options. WithTimeout (a server query timeout the kernel C ABI
+can't set) and WithRetries used to disable retries (the kernel retries internally)
+return a clear error at connect time rather than being silently ignored; token-
+provider, external/static, and federated authenticators are likewise not supported
+and rejected loudly. Bound query parameters and staging operations (PUT/GET/REMOVE
+on a Unity Catalog volume, which need a local file transfer this backend cannot
+perform) are not yet supported and return a clear error at execute time (they are
+per-statement, not connect-time). None of these is silently ignored. (Metadata is
+issued as ordinary SQL — SHOW/DESCRIBE/information_schema — and runs on this backend
+like any other query.)
 
 WithMaxRows and retry tuning (WithRetries with a positive limit) are accepted but
 not applied on the kernel path: the kernel manages result fetching and retries

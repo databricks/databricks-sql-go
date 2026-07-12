@@ -265,3 +265,50 @@ func TestKernelE2ECancellation(t *testing.T) {
 	}
 	t.Logf("cancelled after %v with err=%v", elapsed, err)
 }
+
+// TestKernelE2EInitialNamespace proves WithInitialNamespace selects the initial
+// catalog/schema on the kernel session — applied post-connect via USE CATALOG /
+// USE SCHEMA, since the kernel C ABI has no namespace setter. current_catalog() /
+// current_schema() must return the configured values. Uses system.information_schema,
+// which every workspace has, so the test is workspace-agnostic.
+func TestKernelE2EInitialNamespace(t *testing.T) {
+	const catalog, schema = "system", "information_schema"
+	db := kernelTestDBWith(t, WithInitialNamespace(catalog, schema))
+	defer db.Close()
+
+	var gotCatalog, gotSchema string
+	if err := db.QueryRowContext(context.Background(),
+		"SELECT current_catalog(), current_schema()").Scan(&gotCatalog, &gotSchema); err != nil {
+		t.Fatalf("query current namespace: %v", err)
+	}
+	if gotCatalog != catalog {
+		t.Errorf("current_catalog() = %q, want %q", gotCatalog, catalog)
+	}
+	if gotSchema != schema {
+		t.Errorf("current_schema() = %q, want %q", gotSchema, schema)
+	}
+}
+
+// TestKernelE2EMetricViewMetadata proves WithEnableMetricViewMetadata is accepted
+// by the kernel session — the option is routed as the same server session conf the
+// Thrift path sends (spark.sql.thriftserver.metadata.metricview.enabled), folded in
+// backend-neutrally by config.EffectiveSessionParams.
+//
+// The assertion is "session opens and queries succeed with the conf set", not a SET
+// read-back: this conf is not SET-introspectable on the warehouse — `SET <conf>`
+// errors with CONFIG_NOT_AVAILABLE on BOTH backends (verified against Thrift), so a
+// read-back would be testing the warehouse's SET behavior, not our routing. A
+// successful connect+query with the flag on is the parity bar (the Thrift path sends
+// the identical conf at OpenSession and likewise never reads it back via SET).
+func TestKernelE2EMetricViewMetadata(t *testing.T) {
+	db := kernelTestDBWith(t, WithEnableMetricViewMetadata(true))
+	defer db.Close()
+
+	var got int64
+	if err := db.QueryRowContext(context.Background(), "SELECT 1").Scan(&got); err != nil {
+		t.Fatalf("kernel session with metric-view metadata enabled failed to query: %v", err)
+	}
+	if got != 1 {
+		t.Errorf("SELECT 1 = %d, want 1", got)
+	}
+}

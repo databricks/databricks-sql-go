@@ -74,13 +74,10 @@ func (b *Backend) OpenSession(ctx context.Context) error {
 		schemaName = cli_service.TIdentifierPtr(cli_service.TIdentifier(b.cfg.Schema))
 	}
 
-	sessionParams := make(map[string]string)
-	for k, v := range b.cfg.SessionParams {
-		sessionParams[k] = v
-	}
-	if b.cfg.EnableMetricViewMetadata {
-		sessionParams["spark.sql.thriftserver.metadata.metricview.enabled"] = "true"
-	}
+	// EffectiveSessionParams folds any option-derived confs (e.g. metric-view
+	// metadata) into the user's SessionParams, backend-neutrally, so the kernel
+	// backend sends the identical confs without duplicating the derivation.
+	sessionParams := b.cfg.EffectiveSessionParams()
 
 	protocolVersion := int64(b.cfg.ThriftProtocolVersion)
 

@@ -16,11 +16,11 @@ import (
 // connection config, so the user-facing options are unchanged — only the routing
 // differs. The public API adds nothing beyond WithUseKernel.
 func newKernelBackend(_ context.Context, cfg *config.Config) (backend.Backend, error) {
-	// Reject options the kernel path can't honor yet + resolve the PAT. The
+	// Reject options the kernel path can't honor yet + resolve the auth form. The
 	// validation is pure Go and lives in kernel_config.go (untagged) so its tests —
 	// including the exhaustiveness guard against a dropped Config field — run in the
 	// default CGO_ENABLED=0 build.
-	token, err := validateKernelConfig(cfg)
+	auth, err := validateKernelConfig(cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -29,13 +29,18 @@ func newKernelBackend(_ context.Context, cfg *config.Config) (backend.Backend, e
 		Host:        cfg.Host,
 		HTTPPath:    cfg.HTTPPath,
 		WarehouseID: cfg.WarehouseID,
-		Token:       token,
+		Auth:        toKernelAuth(auth),
 		Location:    cfg.Location,
-		// Session confs (STATEMENT_TIMEOUT, QUERY_TAGS, TIMEZONE, …) — the same
-		// SessionParams map the Thrift backend forwards, so they flow to the
-		// server identically with no per-backend translation. SPOG org routing
+		// Initial namespace: no kernel config setter, so the kernel backend applies
+		// these post-connect via USE CATALOG / USE SCHEMA.
+		Catalog: cfg.Catalog,
+		Schema:  cfg.Schema,
+		// Session confs (STATEMENT_TIMEOUT, QUERY_TAGS, TIMEZONE, metric-view, …) —
+		// the same effective params the Thrift backend forwards (user SessionParams
+		// plus any option-derived conf like metric-view metadata), so they flow to
+		// the server identically with no per-backend translation. SPOG org routing
 		// rides in HTTPPath's ?o= and is parsed kernel-side.
-		SessionConf: cfg.SessionParams,
+		SessionConf: cfg.EffectiveSessionParams(),
 	}
 	// TLS: the driver honors TLSConfig only for InsecureSkipVerify (see
 	// internal/client), so map exactly that knob to the kernel.
@@ -46,6 +51,24 @@ func newKernelBackend(_ context.Context, cfg *config.Config) (backend.Backend, e
 	// the same HTTP(S)_PROXY / NO_PROXY environment for the kernel.
 	kc.ProxyURL = proxyForEndpoint(cfg)
 	return kernel.New(kc), nil
+}
+
+// toKernelAuth maps the untagged auth descriptor (resolved by validateKernelConfig
+// in the default build) to the kernel package's cgo-side auth struct. Kept here
+// (tagged) because kernel.Auth is defined in the cgo-tagged kernel package; the
+// resolution/validation itself stays untagged in kernel_config.go.
+func toKernelAuth(a *kernelAuth) kernel.Auth {
+	switch a.mode {
+	case kernelAuthM2M:
+		return kernel.Auth{Mode: kernel.AuthM2M, ClientID: a.clientID, ClientSecret: a.clientSecret}
+	case kernelAuthU2M:
+		// Only the client id is sourced from Go; scopes and redirect port use the
+		// kernel's defaults (the Go U2M authenticator carries neither, and the kernel
+		// M2M/U2M defaults match Go's — see auth.U2MCredentialsProvider).
+		return kernel.Auth{Mode: kernel.AuthU2M, ClientID: a.clientID}
+	default:
+		return kernel.Auth{Mode: kernel.AuthPAT, Token: a.token}
+	}
 }
 
 // proxyForEndpoint (pure Go, no kernel dependency) lives in kernel_proxy.go so
