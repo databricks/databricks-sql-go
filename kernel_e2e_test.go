@@ -11,6 +11,8 @@ import (
 	"os"
 	"testing"
 	"time"
+
+	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 )
 
 // kernelTestDB opens a kernel-backed *sql.DB from DATABRICKS_HOST /
@@ -240,6 +242,38 @@ func dataTypeEqual(got, want driver.Value) bool {
 		return ok && g.Equal(w)
 	default:
 		return got == want
+	}
+}
+
+// TestKernelE2EErrorSurface proves a failed query surfaces as a DBExecutionError
+// carrying a SqlState, the same error shape as the Thrift path (consumers rely on
+// errors.As(err, &DBExecutionError) + SqlState()). Verified live: unknown table →
+// 42P01, unknown column → 42703 — byte-identical sqlstate to Thrift, though the
+// kernel's message is richer (it includes the SQL error class + suggestions).
+func TestKernelE2EErrorSurface(t *testing.T) {
+	db := kernelTestDB(t)
+	defer db.Close()
+
+	cases := []struct {
+		name, query, wantState string
+	}{
+		{"unknown_table", "SELECT * FROM this_table_does_not_exist_xyz", "42P01"},
+		{"unknown_column", "SELECT no_such_col FROM range(1)", "42703"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := db.QueryContext(context.Background(), c.query)
+			if err == nil {
+				t.Fatalf("expected an error for %q, got none", c.query)
+			}
+			var de dbsqlerr.DBExecutionError
+			if !errors.As(err, &de) {
+				t.Fatalf("error is not a DBExecutionError: %v", err)
+			}
+			if de.SqlState() != c.wantState {
+				t.Errorf("sqlState = %q, want %q (err: %v)", de.SqlState(), c.wantState, err)
+			}
+		})
 	}
 }
 

@@ -185,6 +185,16 @@ func NewExecutionError(ctx context.Context, msg string, err error, opStatusResp 
 	return &executionError{databricksError: dbErr, queryId: driverctx.QueryIdFromContext(ctx), sqlState: sqlState}
 }
 
+// NewExecutionErrorWithState builds an execution error from an already-extracted
+// sqlState string, for backends that don't have a Thrift TGetOperationStatusResp
+// (e.g. the kernel backend, which carries sqlState in its own KernelError). Same
+// shape as NewExecutionError otherwise; queryId still comes from ctx.
+func NewExecutionErrorWithState(ctx context.Context, msg string, err error, sqlState string) *executionError {
+	dbErr := newDatabricksError(ctx, msg, err)
+	dbErr.errType = "execution error"
+	return &executionError{databricksError: dbErr, queryId: driverctx.QueryIdFromContext(ctx), sqlState: sqlState}
+}
+
 // wraps an error and adds trace if not already present
 func WrapErr(err error, msg string) error {
 	var st stackTracer

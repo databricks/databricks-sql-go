@@ -11,11 +11,14 @@ import "C"
 import (
 	"context"
 	"database/sql/driver"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
 
+	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 	"github.com/databricks/databricks-sql-go/internal/backend"
+	dbsqlerrint "github.com/databricks/databricks-sql-go/internal/errors"
 	dbsqlrows "github.com/databricks/databricks-sql-go/internal/rows"
 )
 
@@ -243,9 +246,21 @@ func (o *kernelOp) close() bool {
 	return didClose
 }
 
-// ExecutionError wraps cause as the driver's execution error. The kernel error
-// already carries the sqlstate (see KernelError), so this returns cause as-is
-// (nil when cause is nil), matching the neutral contract.
+// ExecutionError wraps cause as the driver's execution error, attaching the
+// kernel's sqlstate so kernel query failures surface with the same
+// DBExecutionError shape (SqlState(), QueryId(), IsRetryable()) as the Thrift
+// path — the parity property consumers rely on via errors.As. The sqlstate is
+// dug out of the underlying *KernelError when present; the query id still comes
+// from ctx (StatementID() is "" on this backend until the kernel exposes a
+// success-path accessor). Returns nil when cause is nil.
 func (o *kernelOp) ExecutionError(ctx context.Context, cause error) error {
-	return toStatementError(cause)
+	if cause == nil {
+		return nil
+	}
+	sqlState := ""
+	var ke *KernelError
+	if errors.As(cause, &ke) {
+		sqlState = ke.SQLState
+	}
+	return dbsqlerrint.NewExecutionErrorWithState(ctx, dbsqlerr.ErrQueryExecution, cause, sqlState)
 }
