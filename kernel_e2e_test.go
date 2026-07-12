@@ -110,6 +110,50 @@ func TestKernelE2ETimeZone(t *testing.T) {
 	}
 }
 
+// TestKernelE2ETimestampNTZ proves TIMESTAMP and TIMESTAMP_NTZ round-trip
+// byte-identically to the Thrift path at a non-UTC session tz. The kernel delivers
+// TIMESTAMP with an Arrow tz and TIMESTAMP_NTZ without one, but — like the Thrift
+// path — the driver ignores that field and renders via .In(loc). So the naive
+// wall-clock of an NTZ literal is treated as a UTC instant and shifted into the
+// session tz (12:00 NTZ in America/New_York → the -04:00 local of 12:00Z = 08:00),
+// exactly as Thrift does. Verified live on both backends; this pins the round-trip
+// so a one-sided "don't shift NTZ" change is caught.
+func TestKernelE2ETimestampNTZ(t *testing.T) {
+	const tz = "America/New_York"
+	db := kernelTestDBWith(t, WithSessionParams(map[string]string{"timezone": tz}))
+	defer db.Close()
+
+	loc, err := time.LoadLocation(tz)
+	if err != nil {
+		t.Skipf("tz database unavailable: %v", err)
+	}
+	ctx := context.Background()
+
+	var ltz time.Time
+	if err := db.QueryRowContext(ctx,
+		"SELECT CAST('2026-07-09 12:00:00' AS TIMESTAMP)").Scan(&ltz); err != nil {
+		t.Fatalf("TIMESTAMP query: %v", err)
+	}
+	// A zoned TIMESTAMP literal is the wall-clock in the session tz.
+	if want := time.Date(2026, 7, 9, 12, 0, 0, 0, loc); !ltz.Equal(want) {
+		t.Errorf("TIMESTAMP = %s, want %s", ltz, want)
+	}
+
+	var ntz time.Time
+	if err := db.QueryRowContext(ctx,
+		"SELECT CAST('2026-07-09 12:00:00' AS TIMESTAMP_NTZ)").Scan(&ntz); err != nil {
+		t.Fatalf("TIMESTAMP_NTZ query: %v", err)
+	}
+	// The NTZ wall-clock is treated as a UTC instant then shifted into the session
+	// tz: 12:00Z == 08:00 in America/New_York (-04:00 in July).
+	if want := time.Date(2026, 7, 9, 8, 0, 0, 0, loc); !ntz.Equal(want) {
+		t.Errorf("TIMESTAMP_NTZ = %s, want %s (UTC instant %s)", ntz, want, ntz.UTC())
+	}
+	if ntz.Location().String() != tz {
+		t.Errorf("TIMESTAMP_NTZ location = %q, want %q", ntz.Location(), tz)
+	}
+}
+
 // TestKernelE2ETLSSkipVerify checks that WithSkipTLSHostVerify (a relaxation
 // knob) is accepted on the kernel path; the connection must still succeed
 // against the warehouse's valid certificate.
