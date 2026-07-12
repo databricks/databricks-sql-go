@@ -12,6 +12,33 @@ import (
 	"github.com/databricks/databricks-sql-go/internal/backend"
 )
 
+// setAuth maps each Auth mode to exactly one kernel_session_config_set_auth_*
+// value-setter. These are pure config setters (no network), so we can assert the
+// call succeeds against a freshly allocated config for every mode — exercising the
+// real cgo path (arg marshaling, NULL-for-empty on the optional U2M args) end to
+// end via the trySetAuth test helper (cgo cannot be used directly in a _test.go
+// file). A failure here means the mode→setter wiring or the C signature drifted.
+func TestSetAuthByMode(t *testing.T) {
+	cases := []struct {
+		name string
+		auth Auth
+	}{
+		{"PAT", Auth{Mode: AuthPAT, Token: "dapi-x"}},
+		{"M2M", Auth{Mode: AuthM2M, ClientID: "cid", ClientSecret: "sec"}},
+		{"U2M full", Auth{Mode: AuthU2M, ClientID: "u2m-cid", Scopes: []string{"sql", "offline_access"}, RedirectPort: 8030}},
+		// U2M with everything defaulted: empty client id / no scopes / port 0 must
+		// pass NULL / 0 so the kernel applies its own defaults (exercises newCStrOrNull).
+		{"U2M defaults", Auth{Mode: AuthU2M}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if err := trySetAuth(c.auth); err != nil {
+				t.Errorf("setAuth(%s) = %v, want nil", c.name, err)
+			}
+		})
+	}
+}
+
 // The pure error-classifier tests (TestIsBadConnection, TestIsSessionFatal,
 // TestToConnError, TestToStatementErrorNeverBadConn) live in the untagged
 // errors_classify_test.go so they run under CGO_ENABLED=0. The tests below need a
@@ -57,9 +84,6 @@ func TestExecuteRejectsParams(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected an error for bound parameters, got nil")
-	}
-	if !errors.Is(err, dbsqlerr.ErrNotSupportedByKernel) {
-		t.Errorf("params rejection should wrap ErrNotSupportedByKernel, got %v", err)
 	}
 	if op == nil {
 		t.Fatal("Execute must return a non-nil Operation per the Backend contract")

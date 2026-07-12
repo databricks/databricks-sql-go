@@ -12,6 +12,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -34,7 +35,7 @@ type Config struct {
 	Host        string // workspace hostname, no scheme
 	HTTPPath    string // e.g. /sql/1.0/warehouses/abc123 (carries ?o= org routing)
 	WarehouseID string // bare warehouse id; preferred over HTTPPath when set
-	Token       string // PAT (dapi...)
+	Auth        Auth   // PAT / OAuth M2M / OAuth U2M
 
 	// SessionConf carries server-bound session confs verbatim — the same map the
 	// Thrift backend forwards (STATEMENT_TIMEOUT, QUERY_TAGS, TIMEZONE, …).
@@ -55,6 +56,13 @@ type Config struct {
 	// Location is the session time zone used to render DATE / TIMESTAMP values,
 	// matching the Thrift path which returns them in this location. nil means UTC.
 	Location *time.Location
+
+	// Catalog / Schema select the initial namespace. The kernel C ABI has no
+	// catalog/schema config setter, so OpenSession applies them post-connect by
+	// running USE CATALOG / USE SCHEMA (the OSS ODBC driver's workaround). Empty
+	// leaves the session in the server default namespace.
+	Catalog string
+	Schema  string
 }
 
 // KernelBackend implements backend.Backend over the kernel C ABI. One backend
@@ -137,12 +145,8 @@ func (k *KernelBackend) OpenSession(ctx context.Context) error {
 		}
 	}
 
-	tok := newCStr(k.cfg.Token)
-	defer tok.free()
-	if err := call(func() C.KernelStatusCode {
-		return C.kernel_session_config_set_auth_pat(cfg, tok.c)
-	}); err != nil {
-		return fmt.Errorf("kernel: set_auth_pat: %w", toConnError(err))
+	if err := k.setAuth(cfg); err != nil {
+		return err
 	}
 
 	// TLS: crypto/tls's InsecureSkipVerify accepts any server cert, so relax both
@@ -211,8 +215,116 @@ func (k *KernelBackend) OpenSession(ctx context.Context) error {
 	// for logging / telemetry correlation. NOT derived from the handle pointer —
 	// a freed pointer's address can be reused and collide across connections.
 	k.sessionID = fmt.Sprintf("kernel-%d", kernelSessionSeq.Add(1))
+
+	// Initial namespace: the kernel C ABI has no catalog/schema config setter, so
+	// select it post-connect with USE CATALOG / USE SCHEMA (the OSS ODBC driver's
+	// approach). A failure here means the session is not in the requested namespace
+	// — a correctness precondition, like Thrift's InitialNamespace — so fail the
+	// connect and close the session we just opened (the connector does not call
+	// CloseSession on an OpenSession error).
+	if err := k.applyInitialNamespace(ctx); err != nil {
+		C.kernel_session_close(sess)
+		k.session = nil
+		k.valid = false
+		return err
+	}
+
 	klog("OpenSession OK session=%s", k.sessionID)
 	return nil
+}
+
+// setAuth applies the resolved auth form to the session config via exactly one
+// kernel_session_config_set_auth_* call. PAT and M2M are plain value setters; U2M
+// records the client id / redirect port / scopes and the kernel owns the browser
+// (PKCE) flow, started when the session opens. Empty string args are passed as NULL
+// so the kernel applies its own defaults (e.g. U2M's public client / default port).
+func (k *KernelBackend) setAuth(cfg *C.KernelSessionConfig) error {
+	switch k.cfg.Auth.Mode {
+	case AuthM2M:
+		clientID := newCStr(k.cfg.Auth.ClientID)
+		defer clientID.free()
+		secret := newCStr(k.cfg.Auth.ClientSecret)
+		defer secret.free()
+		if err := call(func() C.KernelStatusCode {
+			return C.kernel_session_config_set_auth_m2m(cfg, clientID.c, secret.c)
+		}); err != nil {
+			return fmt.Errorf("kernel: set_auth_m2m: %w", toConnError(err))
+		}
+	case AuthU2M:
+		// client id / scopes are optional: NULL when empty lets the kernel use its
+		// public client / default scopes. We pass Go's cloud-inferred client id when
+		// set, so the kernel uses the same client id the Thrift path would.
+		clientID := newCStrOrNull(k.cfg.Auth.ClientID)
+		defer clientID.free()
+		scopes := newCStrOrNull(joinScopes(k.cfg.Auth.Scopes))
+		defer scopes.free()
+		if err := call(func() C.KernelStatusCode {
+			return C.kernel_session_config_set_auth_u2m(cfg, clientID.c, C.uint16_t(k.cfg.Auth.RedirectPort), scopes.c)
+		}); err != nil {
+			return fmt.Errorf("kernel: set_auth_u2m: %w", toConnError(err))
+		}
+	default: // AuthPAT
+		tok := newCStr(k.cfg.Auth.Token)
+		defer tok.free()
+		if err := call(func() C.KernelStatusCode {
+			return C.kernel_session_config_set_auth_pat(cfg, tok.c)
+		}); err != nil {
+			return fmt.Errorf("kernel: set_auth_pat: %w", toConnError(err))
+		}
+	}
+	return nil
+}
+
+// joinScopes renders U2M scopes as the comma-separated form the kernel U2M setter
+// expects. Empty (no scopes) yields "" so setAuth passes NULL and the kernel
+// applies its default scope set.
+func joinScopes(scopes []string) string {
+	return strings.Join(scopes, ",")
+}
+
+// trySetAuth allocates a throwaway session config, applies auth to it, and frees
+// it — a test seam so TestSetAuthByMode can exercise the real cgo setter path
+// without putting cgo in a _test.go file (which Go forbids). Not used in
+// production. Returns the setter error (nil on success).
+func trySetAuth(auth Auth) error {
+	var cfg *C.KernelSessionConfig
+	if err := call(func() C.KernelStatusCode { return C.kernel_session_config_new(&cfg) }); err != nil {
+		return fmt.Errorf("config_new: %w", err)
+	}
+	defer C.kernel_session_config_free(cfg)
+	k := &KernelBackend{cfg: Config{Auth: auth}}
+	return k.setAuth(cfg)
+}
+
+// applyInitialNamespace runs USE CATALOG / USE SCHEMA to select the configured
+// initial namespace, since the kernel C ABI exposes no catalog/schema setter.
+// Identifiers are backtick-quoted (quoteIdent) so arbitrary names are safe. A
+// no-op when neither is set.
+func (k *KernelBackend) applyInitialNamespace(ctx context.Context) error {
+	if k.cfg.Catalog != "" {
+		if err := k.runNamespaceStmt(ctx, "USE CATALOG "+quoteIdent(k.cfg.Catalog)); err != nil {
+			return fmt.Errorf("kernel: set initial catalog %q: %w", k.cfg.Catalog, err)
+		}
+	}
+	if k.cfg.Schema != "" {
+		if err := k.runNamespaceStmt(ctx, "USE SCHEMA "+quoteIdent(k.cfg.Schema)); err != nil {
+			return fmt.Errorf("kernel: set initial schema %q: %w", k.cfg.Schema, err)
+		}
+	}
+	return nil
+}
+
+// runNamespaceStmt executes a single side-effecting statement (USE …) and closes
+// the operation. USE produces no rows, so the result stream is not read. execute
+// always returns a non-nil Operation (the Backend contract), so it is closed on
+// both the success and error paths; the execute error is authoritative.
+func (k *KernelBackend) runNamespaceStmt(ctx context.Context, sql string) error {
+	op, err := k.execute(ctx, backend.ExecRequest{Query: sql})
+	_, closeErr := op.Close(ctx)
+	if err != nil {
+		return err
+	}
+	return closeErr
 }
 
 // CloseSession tears down the server-side session. Best-effort: the kernel's

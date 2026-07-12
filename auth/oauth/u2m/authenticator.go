@@ -78,6 +78,12 @@ type u2mAuthenticator struct {
 	mx          sync.Mutex
 }
 
+// U2MClientID exposes the cloud-inferred OAuth client id so the SEA-via-kernel
+// backend uses the same client id for the kernel's browser/PKCE flow that the
+// Thrift path would. Implements auth.U2MCredentialsProvider, keeping
+// cfg.Authenticator the single source of truth for auth mode.
+func (c *u2mAuthenticator) U2MClientID() string { return c.clientID }
+
 // Auth will start the OAuth Authorization Flow to authenticate the cli client
 // using the users credentials in the browser. Compatible with SSO.
 func (c *u2mAuthenticator) Authenticate(r *http.Request) error {
