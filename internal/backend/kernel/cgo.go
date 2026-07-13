@@ -77,6 +77,17 @@ var initLoggingOnce sync.Once
 // file_path=NULL sends kernel logs to stderr so they interleave with klog on one
 // stream. Best-effort: Internal (e.g. the host already installed a global
 // subscriber) is a documented, benign outcome — logged, never fatal to connect.
+//
+// Scope caveat: the kernel subscriber is PROCESS-WIDE, first-call-wins, and never
+// uninstalled. Because kdebug is read once from DBSQL_KERNEL_DEBUG at package
+// init, the switch is process-global, not per-connection: in a long-lived
+// multi-tenant process, the first kernel session opened with the flag set
+// installs the subscriber (and its stderr output) for ALL subsequent kernel
+// sessions in that process, and there is no way to scope it to one connection or
+// turn it off afterward. The "off during benchmarks" guarantee therefore depends
+// on DBSQL_KERNEL_DEBUG being unset before package init. Making this a
+// per-process runtime knob (rather than an init-time env read) is tracked with
+// the logging-unification follow-up.
 func initKernelLogging() {
 	if !kdebug {
 		return
@@ -143,14 +154,19 @@ func lastError(code C.KernelStatusCode) *KernelError {
 	}
 	klog("kernel error: code=%d sqlstate=%q vendor=%d http=%d retryable=%v msg=%q",
 		ke.Code, ke.SQLState, ke.VendorCode, ke.HTTPStatus, ke.Retryable, ke.Message)
-	// Also emit at the driver's default (Warn) level — no SQL text or PII, just
-	// the status/sqlstate/http fields plus the server query id (a correlation
-	// token, not PII) so on-call can pivot to server-side query history — so a
-	// kernel-path failure is visible without DBSQL_KERNEL_DEBUG. This is the error
-	// path only (never the hot per-row/per-batch path), so it does not perturb
-	// benchmarks.
-	logger.Logger.Warn().Msgf("databricks: kernel call failed: code=%d sqlstate=%q vendor=%d http=%d retryable=%v queryId=%q",
-		ke.Code, ke.SQLState, ke.VendorCode, ke.HTTPStatus, ke.Retryable, ke.QueryID)
+	// Also emit through the driver's logger — no SQL text or PII, just the
+	// status/sqlstate/http fields plus the server query id (a correlation token,
+	// not PII) so on-call can pivot to server-side query history — so a kernel-path
+	// failure is visible without DBSQL_KERNEL_DEBUG. This is the error path only
+	// (never the hot per-row/per-batch path), so it does not perturb benchmarks.
+	// User/query faults (bad SQL, bad argument) are routine and log at Debug so they
+	// don't inflate the WARN rate on-call alerts key on; infra codes stay at Warn.
+	msg := "databricks: kernel call failed: code=%d sqlstate=%q vendor=%d http=%d retryable=%v queryId=%q"
+	if isUserFault(ke.Code) {
+		logger.Logger.Debug().Msgf(msg, ke.Code, ke.SQLState, ke.VendorCode, ke.HTTPStatus, ke.Retryable, ke.QueryID)
+	} else {
+		logger.Logger.Warn().Msgf(msg, ke.Code, ke.SQLState, ke.VendorCode, ke.HTTPStatus, ke.Retryable, ke.QueryID)
+	}
 	return ke
 }
 

@@ -1,6 +1,7 @@
 package arrowscan
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -306,6 +307,14 @@ func TestScanCellCachedMatchesUncached(t *testing.T) {
 		}
 		if cached != uncached {
 			t.Errorf("row %d: cached %q != uncached %q", row, cached, uncached)
+		}
+		// Pin the escaped output to an independent expected value, not just
+		// cached==uncached: a wrong-but-consistent escaping rule would satisfy the
+		// equality check but fail here. The `q"x` field name must be JSON-escaped
+		// to q\"x in the key.
+		want := fmt.Sprintf(`{"a":%d,"q\"x":"v"}`, row)
+		if cached != want {
+			t.Errorf("row %d: got %q, want %q", row, cached, want)
 		}
 	}
 }

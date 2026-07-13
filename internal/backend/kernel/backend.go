@@ -182,9 +182,14 @@ func (k *KernelBackend) OpenSession(ctx context.Context) error {
 		}
 	}
 
-	// kernel_session_open takes ownership of cfg here, on both success and
-	// failure — mark consumed before checking the error so the deferred free
-	// never runs on the already-consumed config.
+	// kernel_session_open takes ownership of cfg here. Its documented C-ABI
+	// contract (databricks_kernel.h: "CONSUMES config on both success and failure
+	// — do not use or free config afterwards") is what makes the unconditional
+	// consumed=true correct: mark it before checking the error so the deferred
+	// free never double-frees the already-consumed config. This rests on that
+	// header guarantee, NOT an assumption — if a future kernel revision validated
+	// args and returned before consuming, this would leak, so the contract must be
+	// re-verified against the header when KERNEL_REV is bumped.
 	var sess *C.kernel_session_t
 	err := call(func() C.KernelStatusCode { return C.kernel_session_open(cfg, &sess) })
 	consumed = true

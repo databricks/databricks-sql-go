@@ -329,9 +329,10 @@ func WithUseKernel(useKernel bool) ConnOption {
 	}
 }
 
-// WithWarehouseID sets the bare SQL warehouse id. The kernel backend addresses a
-// warehouse by id; when set it is preferred over the http path. The Thrift
-// backend ignores it and continues to route by http path.
+// WithWarehouseID sets the bare SQL warehouse id. It has no effect unless
+// WithUseKernel(true) is also set: the kernel backend addresses a warehouse by id
+// (preferred over the http path when set), while the default Thrift backend
+// ignores it entirely and continues to route by http path.
 func WithWarehouseID(id string) ConnOption {
 	return func(c *config.Config) {
 		c.WarehouseID = id

@@ -202,11 +202,13 @@ and complex-typed results (CloudFetch is handled transparently); context
 cancellation during execute (a cancelled ctx fires a real server-side cancel; on
 the read path cancellation is honored at result-batch boundaries, not mid-fetch);
 and the TLS, proxy, and session-conf (query tags, statement timeout, time zone)
-connection options. OAuth (M2M/U2M), initial catalog/schema, and
-WithEnableMetricViewMetadata are not yet supported and return a clear error at
-connect time rather than being silently ignored; likewise WithTimeout (a server
-query timeout the kernel C ABI can't set) and WithRetries used to disable retries
-(the kernel retries internally). Bound query parameters and staging operations
+connection options. OAuth (M2M/U2M), initial catalog/schema,
+WithEnableMetricViewMetadata, a non-default WithPort, and a non-https protocol
+are not yet supported and return a clear error at connect time rather than being
+silently ignored (the kernel backend connects over https:443 and has no port or
+scheme setter); likewise WithTimeout (a server query timeout the kernel C ABI
+can't set) and WithRetries used to disable retries (the kernel retries
+internally). Bound query parameters and staging operations
 (PUT/GET/REMOVE on a Unity Catalog volume, which need a local file transfer this
 backend cannot perform) are likewise not yet supported and return a clear error
 at execute time (they are per-statement, not connect-time). None of these is

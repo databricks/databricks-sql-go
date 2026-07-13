@@ -48,6 +48,24 @@ func TestIsSessionFatal(t *testing.T) {
 	}
 }
 
+// isUserFault picks the log level for a kernel-call failure: user/query faults
+// (bad SQL, bad argument) log at Debug so they don't inflate the WARN rate;
+// infra codes stay at Warn.
+func TestIsUserFault(t *testing.T) {
+	faults := []int{statusSqlError, statusInvalidArgument}
+	for _, code := range faults {
+		if !isUserFault(code) {
+			t.Errorf("code %d should be a user fault (log at Debug)", code)
+		}
+	}
+	infra := []int{statusUnavailable, statusNetworkError, statusTimeout, statusUnauthenticated}
+	for _, code := range infra {
+		if isUserFault(code) {
+			t.Errorf("code %d is infra-side and should NOT be a user fault (stays Warn)", code)
+		}
+	}
+}
+
 // toConnError (session-lifecycle path) wraps a session-unusable KernelError as
 // driver.ErrBadConn so database/sql evicts the conn, and leaves other errors and
 // their sqlstate intact.

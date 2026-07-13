@@ -189,12 +189,22 @@ func writeJSON(b *strings.Builder, col arrow.Array, row int, loc *time.Location,
 	}
 	switch c := col.(type) {
 	case *array.List:
-		return writeListJSON(b, c.ListValues(), int(c.Offsets()[row]), int(c.Offsets()[row+1]), loc, keys)
+		// Use the offset-aware ValueOffsets, NOT Offsets()[row]: arrow-go's
+		// Offsets() returns the full un-sliced buffer, so a List with a non-zero
+		// logical offset (a sliced array, or a List field of a struct — Struct.Field
+		// re-slices preserving data.offset) must index offsets[row+data.offset].
+		// ValueOffsets does that; this mirrors the Thrift path's ValueOffsets use.
+		s, e := c.ValueOffsets(row)
+		return writeListJSON(b, c.ListValues(), int(s), int(e), loc, keys)
 	case *array.LargeList:
-		return writeListJSON(b, c.ListValues(), int(c.Offsets()[row]), int(c.Offsets()[row+1]), loc, keys)
+		// arrow-go's LargeList.ValueOffsets (unlike List's) does NOT add data.offset,
+		// so add it by hand to stay offset-correct.
+		off := c.Data().Offset()
+		return writeListJSON(b, c.ListValues(), int(c.Offsets()[row+off]), int(c.Offsets()[row+off+1]), loc, keys)
 	case *array.FixedSizeList:
 		n := int(c.DataType().(*arrow.FixedSizeListType).Len())
-		return writeListJSON(b, c.ListValues(), row*n, row*n+n, loc, keys)
+		base := (row + c.Data().Offset()) * n
+		return writeListJSON(b, c.ListValues(), base, base+n, loc, keys)
 	case *array.Map:
 		return writeMapJSON(b, c, row, loc, keys)
 	case *array.Struct:
@@ -236,7 +246,10 @@ func writeListJSON(b *strings.Builder, values arrow.Array, start, end int, loc *
 }
 
 func writeMapJSON(b *strings.Builder, m *array.Map, row int, loc *time.Location, keys *StructKeyCache) error {
-	start, end := int(m.Offsets()[row]), int(m.Offsets()[row+1])
+	// Map embeds *List, so ValueOffsets is offset-aware (adds data.offset); use it
+	// rather than Offsets()[row] for the same reason as writeJSON's List case.
+	s, e := m.ValueOffsets(row)
+	start, end := int(s), int(e)
 	mapKeys := m.Keys()
 	items := m.Items()
 	b.WriteByte('{')

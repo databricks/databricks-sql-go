@@ -86,6 +86,17 @@ func (k *KernelBackend) execute(ctx context.Context, req backend.ExecRequest) (b
 			case <-done:
 				return
 			}
+			// Both ctx.Done() and done can be ready at once — execute just returned
+			// and the ctx was cancelled in the same window — and select picks
+			// randomly. If done is (also) closed, execute already completed, so skip
+			// firing: a cancel here would be a spurious RPC against a terminal
+			// statement (server no-op, but a wasted call + a misleading "cancelled"
+			// entry in query history for a query that actually returned).
+			select {
+			case <-done:
+				return
+			default:
+			}
 			klog("ctx.Done (%v) → firing canceller (with retry until dispatched)", ctx.Err())
 			ticker := time.NewTicker(250 * time.Millisecond)
 			defer ticker.Stop()

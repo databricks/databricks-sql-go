@@ -90,6 +90,22 @@ func isSessionFatal(code int) bool {
 	}
 }
 
+// isUserFault reports whether a status code is a user/query fault (a bad SQL
+// statement or a bad argument) rather than an infrastructure problem. Used to
+// pick the log level for a kernel-call failure: user faults are routine — a
+// fat-fingered query should not raise the driver's WARN rate and page on-call —
+// so they log at Debug, while infra codes (Unavailable / NetworkError / Timeout /
+// Unauthenticated) stay at Warn. Mirrors the Thrift path, which keeps user SQL
+// errors out of operational-noise logging.
+func isUserFault(code int) bool {
+	switch code {
+	case statusSqlError, statusInvalidArgument:
+		return true
+	default:
+		return false
+	}
+}
+
 // toConnError classifies a kernel error on a SESSION-lifecycle path (open/close/
 // config, where nothing has executed): a status that means the session is unusable
 // is wrapped as a bad-connection error, which identifies as driver.ErrBadConn so

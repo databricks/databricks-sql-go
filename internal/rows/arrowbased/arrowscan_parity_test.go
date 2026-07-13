@@ -180,7 +180,92 @@ func TestArrowbasedKernelRenderParity(t *testing.T) {
 			b.FieldBuilder(1).(*array.Int64Builder).AppendNull()
 			return b.NewArray()
 		}},
+		// Multi-entry map: with only one entry the leading-comma (kernel) and
+		// trailing-comma (Thrift) separators coincide by accident; 2+ entries is what
+		// actually exercises the separator, and the per-row loop covers rows 1+.
+		{"map_multi_entry", func() arrow.Array {
+			b := array.NewMapBuilder(pool, arrow.BinaryTypes.String, arrow.PrimitiveTypes.Int64, false)
+			b.Append(true)
+			kb := b.KeyBuilder().(*array.StringBuilder)
+			ib := b.ItemBuilder().(*array.Int64Builder)
+			kb.Append("a")
+			ib.Append(1)
+			kb.Append("b")
+			ib.Append(2)
+			kb.Append("c")
+			ib.Append(3)
+			return b.NewArray()
+		}},
+		// Multi-row list: rows 1+ must be indexed via the per-row value offsets, not
+		// offsets[0]. Different lengths per row so a wrong index is visible.
+		{"list_multi_row", func() arrow.Array {
+			b := array.NewListBuilder(pool, arrow.PrimitiveTypes.Int64)
+			vb := b.ValueBuilder().(*array.Int64Builder)
+			b.Append(true)
+			vb.Append(1)
+			vb.Append(2)
+			b.Append(true)
+			vb.Append(3)
+			b.Append(true)
+			vb.Append(4)
+			vb.Append(5)
+			vb.Append(6)
+			return b.NewArray()
+		}},
 	}
+
+	// Sliced-array cases: a slice sets a non-zero logical offset, so an
+	// offset-unaware Offsets()[row] reads the wrong element range or panics. Build a
+	// 3-row array, then slice off the head so row 0 of the slice sits at a non-zero
+	// underlying offset — the direct regression guard for the ValueOffsets fix.
+	slicedCases := []struct {
+		name  string
+		build func() arrow.Array
+	}{
+		{"sliced_list", func() arrow.Array {
+			b := array.NewListBuilder(pool, arrow.PrimitiveTypes.Int64)
+			vb := b.ValueBuilder().(*array.Int64Builder)
+			for r := 0; r < 3; r++ {
+				b.Append(true)
+				vb.Append(int64(r * 10))
+				vb.Append(int64(r*10 + 1))
+			}
+			full := b.NewArray()
+			defer full.Release()
+			return array.NewSlice(full, 1, 3) // drop row 0 → offset != 0
+		}},
+		{"sliced_map", func() arrow.Array {
+			b := array.NewMapBuilder(pool, arrow.BinaryTypes.String, arrow.PrimitiveTypes.Int64, false)
+			kb := b.KeyBuilder().(*array.StringBuilder)
+			ib := b.ItemBuilder().(*array.Int64Builder)
+			for r := 0; r < 3; r++ {
+				b.Append(true)
+				kb.Append("k")
+				ib.Append(int64(r))
+				kb.Append("j")
+				ib.Append(int64(r + 100))
+			}
+			full := b.NewArray()
+			defer full.Release()
+			return array.NewSlice(full, 1, 3)
+		}},
+		{"sliced_struct_of_list", func() arrow.Array {
+			dt := arrow.StructOf(arrow.Field{Name: "xs", Type: arrow.ListOf(arrow.PrimitiveTypes.Int64)})
+			b := array.NewStructBuilder(pool, dt)
+			for r := 0; r < 3; r++ {
+				b.Append(true)
+				lb := b.FieldBuilder(0).(*array.ListBuilder)
+				lb.Append(true)
+				vb := lb.ValueBuilder().(*array.Int64Builder)
+				vb.Append(int64(r))
+				vb.Append(int64(r + 1))
+			}
+			full := b.NewArray()
+			defer full.Release()
+			return array.NewSlice(full, 1, 3) // struct offset propagates to the list field
+		}},
+	}
+	cases = append(cases, slicedCases...)
 
 	// A non-UTC location, so the timestamp/date rendering path (both backends
 	// apply .In(loc)) is actually exercised rather than a UTC no-op.
@@ -194,14 +279,19 @@ func TestArrowbasedKernelRenderParity(t *testing.T) {
 			arr := tc.build()
 			defer arr.Release()
 
-			kernel, err := arrowscan.ScanCell(arr, 0, loc)
-			if err != nil {
-				t.Fatalf("arrowscan.ScanCell: %v", err)
-			}
-			thrift := renderViaArrowbased(t, arr, 0, loc)
+			// Render EVERY row, not just row 0: multi-row cases exercise per-row
+			// offset indexing (rows 1+), which a single-row check can't reach — the
+			// exact gap that let the un-offset List/Map indexing bug through.
+			for row := 0; row < arr.Len(); row++ {
+				kernel, err := arrowscan.ScanCell(arr, row, loc)
+				if err != nil {
+					t.Fatalf("arrowscan.ScanCell row %d: %v", row, err)
+				}
+				thrift := renderViaArrowbased(t, arr, row, loc)
 
-			if kernel != thrift {
-				t.Errorf("backend divergence for %s:\n  kernel  = %#v\n  thrift  = %#v", tc.name, kernel, thrift)
+				if kernel != thrift {
+					t.Errorf("backend divergence for %s row %d:\n  kernel  = %#v\n  thrift  = %#v", tc.name, row, kernel, thrift)
+				}
 			}
 		})
 	}
