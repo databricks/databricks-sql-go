@@ -1,10 +1,11 @@
 package dbsql
 
 import (
-	"errors"
+	"fmt"
 
 	"github.com/databricks/databricks-sql-go/auth/noop"
 	"github.com/databricks/databricks-sql-go/auth/pat"
+	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 	"github.com/databricks/databricks-sql-go/internal/config"
 )
 
@@ -22,19 +23,23 @@ import (
 // to use. Options it does NOT reject are either forwarded by newKernelBackend or
 // intentionally accepted-but-inert (documented in doc.go and asserted by
 // TestKernelConfigFieldsClassified).
+//
+// Every rejection wraps errors.ErrNotSupportedByKernel so a caller can detect the
+// "kernel can't honor this option" case with errors.Is (e.g. to fall back to the
+// default backend) instead of matching on message text.
 func validateKernelConfig(cfg *config.Config) (token string, err error) {
 	// Initial namespace (WithInitialNamespace): no kernel C-ABI setter yet, so the
 	// session would run in the default namespace and unqualified names would
 	// resolve differently than Thrift.
 	if cfg.Catalog != "" || cfg.Schema != "" {
-		return "", errors.New("databricks: WithInitialNamespace (catalog/schema) is not yet supported by the kernel backend; " +
-			"omit it or use the default (Thrift) backend")
+		return "", fmt.Errorf("databricks: WithInitialNamespace (catalog/schema) is not yet %w; "+
+			"omit it or use the default (Thrift) backend", dbsqlerr.ErrNotSupportedByKernel)
 	}
 	// EnableMetricViewMetadata: maps to a server session conf we want to route
 	// backend-neutrally rather than duplicate here.
 	if cfg.EnableMetricViewMetadata {
-		return "", errors.New("databricks: WithEnableMetricViewMetadata is not yet supported by the kernel backend; " +
-			"omit it or use the default (Thrift) backend")
+		return "", fmt.Errorf("databricks: WithEnableMetricViewMetadata is not yet %w; "+
+			"omit it or use the default (Thrift) backend", dbsqlerr.ErrNotSupportedByKernel)
 	}
 	// Port / Protocol: the kernel C ABI takes only a bare host and connects over
 	// https:443; it has no port or scheme setter. The Thrift path honors a custom
@@ -42,12 +47,12 @@ func validateKernelConfig(cfg *config.Config) (token string, err error) {
 	// ignored on the kernel path (it would just hit 443) — reject it instead, per
 	// the "nothing silently ignored" contract. Defaults (https/443) are fine.
 	if cfg.Protocol != "" && cfg.Protocol != "https" {
-		return "", errors.New("databricks: a non-https protocol is not supported by the kernel backend " +
-			"(it connects over https); use the default (Thrift) backend")
+		return "", fmt.Errorf("databricks: a non-https protocol is %w "+
+			"(it connects over https); use the default (Thrift) backend", dbsqlerr.ErrNotSupportedByKernel)
 	}
 	if cfg.Port != 0 && cfg.Port != 443 {
-		return "", errors.New("databricks: a non-default port (WithPort) is not supported by the kernel backend " +
-			"(it connects on 443); omit it or use the default (Thrift) backend")
+		return "", fmt.Errorf("databricks: a non-default port (WithPort) is %w "+
+			"(it connects on 443); omit it or use the default (Thrift) backend", dbsqlerr.ErrNotSupportedByKernel)
 	}
 	// Auth: the kernel backend authenticates with a PAT only. Any other
 	// authenticator sets cfg.Authenticator but leaves cfg.AccessToken empty, so an
@@ -67,28 +72,30 @@ func validateKernelConfig(cfg *config.Config) (token string, err error) {
 			token = a.AccessToken
 		}
 	default:
-		return "", errors.New("databricks: only personal access token (WithAccessToken) auth is supported by the kernel backend; " +
-			"OAuth (M2M/U2M), token-provider, external/static, and federated authenticators are not yet supported — " +
-			"use PAT or the default (Thrift) backend")
+		return "", fmt.Errorf("databricks: only personal access token (WithAccessToken) auth is supported by the kernel backend; "+
+			"OAuth (M2M/U2M), token-provider, external/static, and federated authenticators are %w — "+
+			"use PAT or the default (Thrift) backend", dbsqlerr.ErrNotSupportedByKernel)
 	}
 	if token == "" {
-		return "", errors.New("databricks: the kernel backend requires a personal access token; " +
+		// Missing required config (not an unsupported-feature rejection), so this is
+		// intentionally NOT wrapped with ErrNotSupportedByKernel.
+		return "", fmt.Errorf("databricks: the kernel backend requires a personal access token; " +
 			"set one with WithAccessToken (or a *pat.PATAuth via WithAuthenticator)")
 	}
 	// WithTimeout maps to a per-statement server timeout on Thrift
 	// (TExecuteStatementReq.QueryTimeout); the kernel C ABI exposes no equivalent,
 	// so reject it rather than run the query with no server-side timeout.
 	if cfg.QueryTimeout > 0 {
-		return "", errors.New("databricks: WithTimeout (server query timeout) is not yet supported by the kernel backend; " +
-			"omit it or use the default (Thrift) backend")
+		return "", fmt.Errorf("databricks: WithTimeout (server query timeout) is not yet %w; "+
+			"omit it or use the default (Thrift) backend", dbsqlerr.ErrNotSupportedByKernel)
 	}
 	// WithRetries(-1) explicitly disables retries, but the kernel retries
 	// internally below the C ABI with no user-facing toggle — so a disable request
 	// would be silently violated. Reject it. Positive/default RetryMax is fine: the
 	// kernel provides retries (just not user-tunable), documented in doc.go.
 	if cfg.RetryMax < 0 {
-		return "", errors.New("databricks: disabling retries via WithRetries is not supported by the kernel backend " +
-			"(the kernel retries internally); omit it or use the default (Thrift) backend")
+		return "", fmt.Errorf("databricks: disabling retries via WithRetries is %w "+
+			"(the kernel retries internally); omit it or use the default (Thrift) backend", dbsqlerr.ErrNotSupportedByKernel)
 	}
 	return token, nil
 }

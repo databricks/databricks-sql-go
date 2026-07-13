@@ -59,6 +59,13 @@ var ExecutionError error = errors.New("Execution Error")
 // value to be used with errors.Is() to determine if an error chain contains any databricks error
 var DatabricksError error = errors.New("Databricks Error")
 
+// value to be used with errors.Is() to determine if an error is a kernel-backend
+// "option/feature not supported" rejection. The kernel backend (WithUseKernel)
+// rejects options it cannot yet honor rather than silently ignoring them; wrapping
+// them all with this sentinel lets a caller detect the case programmatically (e.g.
+// to fall back to the default Thrift backend) instead of matching on message text.
+var ErrNotSupportedByKernel error = errors.New("not supported by the kernel backend")
+
 // Base interface for driver errors
 type DBError interface {
 	// Descriptive message describing the error

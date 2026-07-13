@@ -204,8 +204,10 @@ func (o *kernelOp) Results(ctx context.Context, callbacks *dbsqlrows.TelemetryCa
 	return newKernelRows(ctx, o, stream, callbacks)
 }
 
-// IsStaging reports whether this is a staging (PUT/GET/REMOVE) operation. The
-// kernel backend does not support staging, so this is always false.
+// IsStaging reports whether this is a staging (PUT/GET/REMOVE) operation. Always
+// false on the kernel path: staging statements are rejected up front in
+// Execute (isStagingStatement), so no kernelOp is ever produced for one — there
+// is nothing for conn.execStagingOperation to act on here.
 func (o *kernelOp) IsStaging(ctx context.Context) (bool, error) { return false, nil }
 
 // Close best-effort closes the executed statement and its statement handle. It is

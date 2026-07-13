@@ -206,10 +206,12 @@ connection options. OAuth (M2M/U2M), initial catalog/schema, and
 WithEnableMetricViewMetadata are not yet supported and return a clear error at
 connect time rather than being silently ignored; likewise WithTimeout (a server
 query timeout the kernel C ABI can't set) and WithRetries used to disable retries
-(the kernel retries internally). Bound query parameters are likewise not yet
-supported and return a clear error at execute time (they arrive per-query, not at
-connect). None of these is silently ignored. (Metadata is issued as ordinary SQL
-— SHOW/DESCRIBE/information_schema — and runs on this backend like any other
+(the kernel retries internally). Bound query parameters and staging operations
+(PUT/GET/REMOVE on a Unity Catalog volume, which need a local file transfer this
+backend cannot perform) are likewise not yet supported and return a clear error
+at execute time (they are per-statement, not connect-time). None of these is
+silently ignored. (Metadata is issued as ordinary SQL —
+SHOW/DESCRIBE/information_schema — and runs on this backend like any other
 query.)
 
 WithMaxRows and retry tuning (WithRetries with a positive limit) are accepted but

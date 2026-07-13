@@ -58,8 +58,10 @@ func klog(format string, args ...any) {
 	fmt.Fprintf(os.Stderr, "[kernel] "+format+"\n", args...)
 }
 
-// KernelDebugEnabled reports whether binding-level debug logging is on. Tests
-// assert the flag wiring; benchmarks assert it is false before measuring.
+// KernelDebugEnabled reports whether binding-level debug logging is on (i.e.
+// DBSQL_KERNEL_DEBUG is set). Exposed so a benchmark can assert the flag is off
+// before measuring — debug logging perturbs latency; there is no such benchmark
+// in-tree yet, so this currently has no callers.
 func KernelDebugEnabled() bool { return kdebug }
 
 // initLoggingOnce guards kernel_init_logging, which is process-wide and
@@ -155,15 +157,20 @@ func lastError(code C.KernelStatusCode) *KernelError {
 // The plain-int status constants used by the untagged classifier logic
 // (errors_classify.go) must stay in lockstep with the C enum in
 // databricks_kernel.h. These compile-time assertions make a drift a build error
-// under -tags databricks_kernel: the array length is 0 when the values match and
-// negative (illegal) otherwise, so the file won't compile if the header changes.
-var (
-	_ [statusInvalidArgument - int(C.KernelStatusCode_InvalidArgument)]struct{}
-	_ [statusUnauthenticated - int(C.KernelStatusCode_Unauthenticated)]struct{}
-	_ [statusUnavailable - int(C.KernelStatusCode_Unavailable)]struct{}
-	_ [statusTimeout - int(C.KernelStatusCode_Timeout)]struct{}
-	_ [statusNetworkError - int(C.KernelStatusCode_NetworkError)]struct{}
-	_ [statusSqlError - int(C.KernelStatusCode_SqlError)]struct{}
+// under -tags databricks_kernel. Each converts BOTH directions of the difference
+// to uint: if the Go constant and the C value disagree, one of a-b / b-a is a
+// negative constant, and `uint(<negative constant>)` is a hard compile error
+// ("constant overflows uint") — so the file won't compile whether the header
+// renumbers a code up OR down. (A one-sided `[a-b]struct{}` array size only
+// catches C > Go: a downward renumber makes a-b positive, a legal array, and the
+// drift slips through.)
+const (
+	_ = uint(statusInvalidArgument-int(C.KernelStatusCode_InvalidArgument)) | uint(int(C.KernelStatusCode_InvalidArgument)-statusInvalidArgument)
+	_ = uint(statusUnauthenticated-int(C.KernelStatusCode_Unauthenticated)) | uint(int(C.KernelStatusCode_Unauthenticated)-statusUnauthenticated)
+	_ = uint(statusUnavailable-int(C.KernelStatusCode_Unavailable)) | uint(int(C.KernelStatusCode_Unavailable)-statusUnavailable)
+	_ = uint(statusTimeout-int(C.KernelStatusCode_Timeout)) | uint(int(C.KernelStatusCode_Timeout)-statusTimeout)
+	_ = uint(statusNetworkError-int(C.KernelStatusCode_NetworkError)) | uint(int(C.KernelStatusCode_NetworkError)-statusNetworkError)
+	_ = uint(statusSqlError-int(C.KernelStatusCode_SqlError)) | uint(int(C.KernelStatusCode_SqlError)-statusSqlError)
 )
 
 // cStr wraps C.CString with a guaranteed free. The kernel copies strings into

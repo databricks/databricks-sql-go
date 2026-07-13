@@ -1,12 +1,14 @@
 package dbsql
 
 import (
+	"errors"
 	"net/http"
 	"reflect"
 	"testing"
 	"time"
 
 	"github.com/databricks/databricks-sql-go/auth/pat"
+	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 	"github.com/databricks/databricks-sql-go/internal/config"
 )
 
@@ -40,8 +42,13 @@ func TestValidateKernelConfig(t *testing.T) {
 	t.Run("catalog rejected", func(t *testing.T) {
 		c := baseKernelConfig()
 		c.Catalog = "main"
-		if _, err := validateKernelConfig(c); err == nil {
-			t.Error("expected an error when a catalog is set")
+		_, err := validateKernelConfig(c)
+		if err == nil {
+			t.Fatal("expected an error when a catalog is set")
+		}
+		// The rejection must be programmatically detectable, not just message text.
+		if !errors.Is(err, dbsqlerr.ErrNotSupportedByKernel) {
+			t.Errorf("rejection should wrap ErrNotSupportedByKernel, got %v", err)
 		}
 	})
 

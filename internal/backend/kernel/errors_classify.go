@@ -15,7 +15,7 @@ import (
 // that reintroduced the duplicate-write bug (or the auth-retry storm) would then
 // fail CI instead of shipping green. The cgo file (cgo.go) populates KernelError
 // from the C struct and asserts these status constants stay in lockstep with the
-// C enum at compile time (see cStatusCodeAssertions).
+// C enum at compile time (see the compile-time assertion block in cgo.go).
 
 // Status codes mirrored from the kernel C enum (KernelStatusCode in
 // databricks_kernel.h) as plain Go ints, so this non-cgo file can classify errors

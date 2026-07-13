@@ -12,10 +12,19 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync/atomic"
 	"time"
 
+	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 	"github.com/databricks/databricks-sql-go/internal/backend"
 )
+
+// kernelSessionSeq is a process-wide monotonic counter for kernel session ids.
+// The C ABI exposes no server session-id accessor, so we mint our own stable,
+// collision-free id per OpenSession rather than deriving one from the session
+// handle pointer (a freed handle's address can be reused, colliding telemetry /
+// log correlation across sequential connections).
+var kernelSessionSeq atomic.Uint64
 
 // Config is the flat connection config for the kernel backend. The connector
 // fills it from the driver's config so the user-facing options are unchanged
@@ -184,9 +193,10 @@ func (k *KernelBackend) OpenSession(ctx context.Context) error {
 	}
 	k.session = sess
 	k.valid = true
-	// The C ABI exposes no formatted session-id accessor; use the handle pointer
-	// as a stable per-conn id for logging / telemetry correlation.
-	k.sessionID = fmt.Sprintf("kernel-%p", sess)
+	// The C ABI exposes no server session-id accessor; mint a process-unique id
+	// for logging / telemetry correlation. NOT derived from the handle pointer —
+	// a freed pointer's address can be reused and collide across connections.
+	k.sessionID = fmt.Sprintf("kernel-%d", kernelSessionSeq.Add(1))
 	klog("OpenSession OK session=%s", k.sessionID)
 	return nil
 }
@@ -217,11 +227,14 @@ func (k *KernelBackend) SessionValid() bool { return k.valid && k.session != nil
 // only the canceller's inflight slot), so this write is race-free.
 func (k *KernelBackend) markSessionDead() { k.valid = false }
 
-// evictIfSessionFatal marks the session dead when err is a session-fatal
-// KernelError, so a conn whose server session died mid-life is evicted from the
-// pool. A no-op for nil, non-KernelError, or non-fatal errors.
+// evictIfSessionFatal marks the session dead when err is (or wraps) a
+// session-fatal KernelError, so a conn whose server session died mid-life is
+// evicted from the pool. A no-op for nil, non-KernelError, or non-fatal errors.
+// Uses errors.As, not a bare type assertion, so it still fires if a caller wraps
+// the KernelError before passing it here.
 func (k *KernelBackend) evictIfSessionFatal(err error) {
-	if ke, ok := err.(*KernelError); ok && isSessionFatal(ke.Code) {
+	var ke *KernelError
+	if errors.As(err, &ke) && isSessionFatal(ke.Code) {
 		k.markSessionDead()
 	}
 }
@@ -239,8 +252,16 @@ func (k *KernelBackend) Execute(ctx context.Context, req backend.ExecRequest) (b
 	// per-query, so this is an execute-time error, not a connect-time one. Return a
 	// non-nil Operation per the Backend contract.
 	if len(req.Params) > 0 {
-		return &kernelOp{}, errors.New("databricks: query parameters are not yet supported by the kernel backend; " +
-			"inline the values or use the default (Thrift) backend")
+		return &kernelOp{}, fmt.Errorf("databricks: query parameters are not yet %w; "+
+			"inline the values or use the default (Thrift) backend", dbsqlerr.ErrNotSupportedByKernel)
+	}
+	// Staging (Unity Catalog volume PUT/GET/REMOVE) needs a local file transfer the
+	// kernel path can't perform, and the kernel C ABI surfaces no IsStagingOperation
+	// signal to drive conn.execStagingOperation. Reject it here rather than let
+	// IsStaging return false and report success with no file moved (silent data loss).
+	if isStagingStatement(req.Query) {
+		return &kernelOp{}, fmt.Errorf("databricks: staging operations (PUT/GET/REMOVE on a volume) are not yet %w; "+
+			"use the default (Thrift) backend", dbsqlerr.ErrNotSupportedByKernel)
 	}
 	return k.execute(ctx, req)
 }
