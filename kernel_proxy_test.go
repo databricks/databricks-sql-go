@@ -40,6 +40,21 @@ func TestProxyForEndpoint(t *testing.T) {
 			want:    "http://corp-proxy:3128",
 		},
 		{
+			// Warehouse-id addressing mode (HTTPPath == "") is what the kernel
+			// prefers; the proxy must still resolve. Previously ToEndpointURL errored
+			// on the empty path and the proxy was silently dropped to "" (direct).
+			name: "warehouse-id mode (no HTTPPath) still resolves proxy",
+			cfg: func() *config.Config {
+				c := config.WithDefaults()
+				c.Host = "my-workspace.databricks.com"
+				c.Port = 443
+				c.WarehouseID = "abc" // no HTTPPath
+				return c
+			}(),
+			resolve: func(*http.Request) (*url.URL, error) { return proxyURL, nil },
+			want:    "http://corp-proxy:3128",
+		},
+		{
 			name:    "host excluded by NO_PROXY -> direct",
 			cfg:     validCfg(),
 			resolve: func(*http.Request) (*url.URL, error) { return nil, nil },

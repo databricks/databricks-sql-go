@@ -175,6 +175,11 @@ func (r *kernelRows) nextBatch() error {
 	}
 	r.cur = rec
 	r.rowInCur = 0
+	// Scope the struct-key cache to this batch: the C Data import mints a fresh
+	// *StructType per batch, so the prior batch's cached prefixes can never be hit
+	// again — resetting keeps the cache from growing one entry per batch over the
+	// whole Rows lifetime (the intra-batch memoization win is unaffected).
+	r.keyCache.Reset()
 	r.chunkCount++
 	if r.callbacks != nil && r.callbacks.OnChunkFetched != nil {
 		// chunkCount is cumulative (per the callback contract). bytesDownloaded,

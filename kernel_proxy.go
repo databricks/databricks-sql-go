@@ -1,6 +1,7 @@
 package dbsql
 
 import (
+	"fmt"
 	"net/http"
 	"net/url"
 
@@ -29,9 +30,22 @@ func proxyForEndpoint(cfg *config.Config) string {
 // inject a deterministic resolver to exercise proxy-set / NO_PROXY / direct
 // without depending on http.ProxyFromEnvironment's process-wide env caching.
 func proxyForEndpointFunc(cfg *config.Config, resolve func(*http.Request) (*url.URL, error)) string {
-	endpoint, err := cfg.ToEndpointURL()
-	if err != nil {
+	// Build the endpoint from scheme/host/port directly rather than via
+	// cfg.ToEndpointURL(): that requires a non-empty HTTPPath and errors in the
+	// warehouse-id addressing mode the kernel prefers (HTTPPath == ""), which would
+	// swallow the error and silently return "" (direct) — ignoring HTTPS_PROXY.
+	// Only scheme+host matter for the proxy/NO_PROXY decision; the path is
+	// irrelevant, so omitting it is correct here.
+	if cfg.Host == "" {
 		return ""
+	}
+	scheme := cfg.Protocol
+	if scheme == "" {
+		scheme = "https"
+	}
+	endpoint := fmt.Sprintf("%s://%s", scheme, cfg.Host)
+	if cfg.Port != 0 {
+		endpoint = fmt.Sprintf("%s://%s:%d", scheme, cfg.Host, cfg.Port)
 	}
 	req, err := http.NewRequest(http.MethodPost, endpoint, nil)
 	if err != nil {

@@ -58,6 +58,9 @@ func TestExecuteRejectsParams(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error for bound parameters, got nil")
 	}
+	if !errors.Is(err, dbsqlerr.ErrNotSupportedByKernel) {
+		t.Errorf("params rejection should wrap ErrNotSupportedByKernel, got %v", err)
+	}
 	if op == nil {
 		t.Fatal("Execute must return a non-nil Operation per the Backend contract")
 	}

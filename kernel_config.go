@@ -32,13 +32,13 @@ func validateKernelConfig(cfg *config.Config) (token string, err error) {
 	// session would run in the default namespace and unqualified names would
 	// resolve differently than Thrift.
 	if cfg.Catalog != "" || cfg.Schema != "" {
-		return "", fmt.Errorf("databricks: WithInitialNamespace (catalog/schema) is not yet %w; "+
+		return "", fmt.Errorf("databricks: WithInitialNamespace (catalog/schema) is %w; "+
 			"omit it or use the default (Thrift) backend", dbsqlerr.ErrNotSupportedByKernel)
 	}
 	// EnableMetricViewMetadata: maps to a server session conf we want to route
 	// backend-neutrally rather than duplicate here.
 	if cfg.EnableMetricViewMetadata {
-		return "", fmt.Errorf("databricks: WithEnableMetricViewMetadata is not yet %w; "+
+		return "", fmt.Errorf("databricks: WithEnableMetricViewMetadata is %w; "+
 			"omit it or use the default (Thrift) backend", dbsqlerr.ErrNotSupportedByKernel)
 	}
 	// Port / Protocol: the kernel C ABI takes only a bare host and connects over
@@ -53,6 +53,16 @@ func validateKernelConfig(cfg *config.Config) (token string, err error) {
 	if cfg.Port != 0 && cfg.Port != 443 {
 		return "", fmt.Errorf("databricks: a non-default port (WithPort) is %w "+
 			"(it connects on 443); omit it or use the default (Thrift) backend", dbsqlerr.ErrNotSupportedByKernel)
+	}
+	// Transport (WithTransport, a custom http.RoundTripper carrying a custom CA
+	// bundle / mTLS / proxy): the kernel uses its own Rust HTTP stack below the C
+	// ABI and never sees a Go RoundTripper, so a custom Transport would be silently
+	// ignored. Reject it per the "nothing silently ignored" contract. (The kernel
+	// does honor HTTPS_PROXY and InsecureSkipVerify through their own mappings; only
+	// a wholesale custom Transport is unsupported.)
+	if cfg.Transport != nil {
+		return "", fmt.Errorf("databricks: a custom WithTransport (RoundTripper) is %w "+
+			"(the kernel uses its own HTTP stack); use the default (Thrift) backend", dbsqlerr.ErrNotSupportedByKernel)
 	}
 	// Auth: the kernel backend authenticates with a PAT only. Any other
 	// authenticator sets cfg.Authenticator but leaves cfg.AccessToken empty, so an
@@ -86,7 +96,7 @@ func validateKernelConfig(cfg *config.Config) (token string, err error) {
 	// (TExecuteStatementReq.QueryTimeout); the kernel C ABI exposes no equivalent,
 	// so reject it rather than run the query with no server-side timeout.
 	if cfg.QueryTimeout > 0 {
-		return "", fmt.Errorf("databricks: WithTimeout (server query timeout) is not yet %w; "+
+		return "", fmt.Errorf("databricks: WithTimeout (server query timeout) is %w; "+
 			"omit it or use the default (Thrift) backend", dbsqlerr.ErrNotSupportedByKernel)
 	}
 	// WithRetries(-1) explicitly disables retries, but the kernel retries

@@ -84,6 +84,15 @@ func New(cfg Config) *KernelBackend {
 func (k *KernelBackend) OpenSession(ctx context.Context) error {
 	// Fail fast on an already-cancelled context before the blocking kernel_session
 	// _open (which the C ABI does not let us interrupt mid-call).
+	//
+	// Deferred (tracked): this ctx is only checked here, at entry — once inside the
+	// blocking kernel_session_open there is no way to honor a deadline/cancel that
+	// fires mid-connect (a slow warehouse cold-start or a connect-time network
+	// partition blocks until the kernel returns on its own). Same class and same
+	// root cause as the CloseSession no-deadline note below (the kernel C ABI
+	// exposes no deadline/cancellation on the session-lifecycle calls); the fix is
+	// the same kernel-side change (a deadline arg or cancel handle), so it's grouped
+	// with that follow-up rather than fixed Go-side with a watchdog here.
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -264,7 +273,7 @@ func (k *KernelBackend) Execute(ctx context.Context, req backend.ExecRequest) (b
 	// per-query, so this is an execute-time error, not a connect-time one. Return a
 	// non-nil Operation per the Backend contract.
 	if len(req.Params) > 0 {
-		return &kernelOp{}, fmt.Errorf("databricks: query parameters are not yet %w; "+
+		return &kernelOp{}, fmt.Errorf("databricks: query parameters are %w; "+
 			"inline the values or use the default (Thrift) backend", dbsqlerr.ErrNotSupportedByKernel)
 	}
 	// Staging (Unity Catalog volume PUT/GET/REMOVE) needs a local file transfer the
@@ -272,7 +281,7 @@ func (k *KernelBackend) Execute(ctx context.Context, req backend.ExecRequest) (b
 	// signal to drive conn.execStagingOperation. Reject it here rather than let
 	// IsStaging return false and report success with no file moved (silent data loss).
 	if isStagingStatement(req.Query) {
-		return &kernelOp{}, fmt.Errorf("databricks: staging operations (PUT/GET/REMOVE on a volume) are not yet %w; "+
+		return &kernelOp{}, fmt.Errorf("databricks: staging operations (PUT/GET/REMOVE on a volume) are %w; "+
 			"use the default (Thrift) backend", dbsqlerr.ErrNotSupportedByKernel)
 	}
 	return k.execute(ctx, req)

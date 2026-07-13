@@ -256,9 +256,18 @@ func (o *kernelOp) close() bool {
 	return didClose
 }
 
-// ExecutionError wraps cause as the driver's execution error. The kernel error
-// already carries the sqlstate (see KernelError), so this returns cause as-is
-// (nil when cause is nil), matching the neutral contract.
+// ExecutionError wraps cause as the driver's execution error.
+//
+// Deferred (tracked): this returns the bare *KernelError from toStatementError,
+// which implements only Error(). The Thrift path returns NewExecutionError, which
+// satisfies errors.Is(err, dbsqlerr.ExecutionError) and the exported
+// DBExecutionError interface (QueryId()/SqlState()). So the errors.Is/errors.As
+// recipe in doc.go silently no-ops for kernel query failures even though
+// KernelError carries SQLState/QueryID — same code, different result by backend.
+// The fix (wrap via dbsqlerrint.NewExecutionErrorWithState with the KernelError as
+// cause, so sqlstate/queryId stay reachable) lands with the telemetry follow-up
+// that also surfaces the statement id; kept out of this PR to keep the error-path
+// change together with that work.
 func (o *kernelOp) ExecutionError(ctx context.Context, cause error) error {
 	return toStatementError(cause)
 }

@@ -39,34 +39,38 @@ func TestValidateKernelConfig(t *testing.T) {
 		}
 	})
 
-	t.Run("catalog rejected", func(t *testing.T) {
-		c := baseKernelConfig()
-		c.Catalog = "main"
-		_, err := validateKernelConfig(c)
-		if err == nil {
-			t.Fatal("expected an error when a catalog is set")
-		}
-		// The rejection must be programmatically detectable, not just message text.
-		if !errors.Is(err, dbsqlerr.ErrNotSupportedByKernel) {
-			t.Errorf("rejection should wrap ErrNotSupportedByKernel, got %v", err)
-		}
-	})
-
-	t.Run("schema rejected", func(t *testing.T) {
-		c := baseKernelConfig()
-		c.Schema = "sys"
-		if _, err := validateKernelConfig(c); err == nil {
-			t.Error("expected an error when a schema is set")
-		}
-	})
-
-	t.Run("metric view rejected", func(t *testing.T) {
-		c := baseKernelConfig()
-		c.EnableMetricViewMetadata = true
-		if _, err := validateKernelConfig(c); err == nil {
-			t.Error("expected an error when metric-view metadata is enabled")
-		}
-	})
+	// Every rejection must (a) error and (b) wrap ErrNotSupportedByKernel, since
+	// that sentinel is the documented programmatic fallback-detection contract —
+	// asserting only err != nil would let a dropped %w (e.g. the round-3
+	// double-negative message bug) ship green. Table-driven so a new rejection is
+	// covered by adding one row.
+	rejections := []struct {
+		name string
+		mut  func(*config.Config)
+	}{
+		{"catalog", func(c *config.Config) { c.Catalog = "main" }},
+		{"schema", func(c *config.Config) { c.Schema = "sys" }},
+		{"metric view", func(c *config.Config) { c.EnableMetricViewMetadata = true }},
+		{"non-PAT authenticator", func(c *config.Config) { c.Authenticator = nonPATAuth{} }},
+		{"query timeout", func(c *config.Config) { c.QueryTimeout = 30 * time.Second }},
+		{"disable retries", func(c *config.Config) { c.RetryMax = -1 }},
+		{"non-https protocol", func(c *config.Config) { c.Protocol = "http" }},
+		{"non-default port", func(c *config.Config) { c.Port = 8443 }},
+		{"custom transport", func(c *config.Config) { c.Transport = http.DefaultTransport }},
+	}
+	for _, tc := range rejections {
+		t.Run(tc.name+" rejected", func(t *testing.T) {
+			c := baseKernelConfig()
+			tc.mut(c)
+			_, err := validateKernelConfig(c)
+			if err == nil {
+				t.Fatalf("expected an error when %s is set", tc.name)
+			}
+			if !errors.Is(err, dbsqlerr.ErrNotSupportedByKernel) {
+				t.Errorf("%s rejection should wrap ErrNotSupportedByKernel, got %v", tc.name, err)
+			}
+		})
+	}
 
 	t.Run("PAT via WithAuthenticator resolves the token", func(t *testing.T) {
 		c := baseKernelConfig()
@@ -82,35 +86,13 @@ func TestValidateKernelConfig(t *testing.T) {
 	})
 
 	t.Run("empty token rejected", func(t *testing.T) {
+		// Missing-required-config, NOT an unsupported-feature rejection, so this is
+		// intentionally NOT expected to wrap ErrNotSupportedByKernel.
 		c := baseKernelConfig()
 		c.AccessToken = ""
 		c.Authenticator = &pat.PATAuth{AccessToken: ""}
 		if _, err := validateKernelConfig(c); err == nil {
 			t.Error("expected an error when the resolved PAT is empty")
-		}
-	})
-
-	t.Run("non-PAT authenticator rejected", func(t *testing.T) {
-		c := baseKernelConfig()
-		c.Authenticator = nonPATAuth{}
-		if _, err := validateKernelConfig(c); err == nil {
-			t.Error("expected an error for a non-PAT authenticator")
-		}
-	})
-
-	t.Run("query timeout rejected", func(t *testing.T) {
-		c := baseKernelConfig()
-		c.QueryTimeout = 30 * time.Second
-		if _, err := validateKernelConfig(c); err == nil {
-			t.Error("expected an error when WithTimeout (query timeout) is set")
-		}
-	})
-
-	t.Run("disabling retries rejected", func(t *testing.T) {
-		c := baseKernelConfig()
-		c.RetryMax = -1
-		if _, err := validateKernelConfig(c); err == nil {
-			t.Error("expected an error when retries are disabled (WithRetries(-1))")
 		}
 	})
 
@@ -127,22 +109,6 @@ func TestValidateKernelConfig(t *testing.T) {
 		c := baseKernelConfig() // WithDefaults sets Protocol=https, Port=443
 		if _, err := validateKernelConfig(c); err != nil {
 			t.Errorf("the default https/443 endpoint should validate, got %v", err)
-		}
-	})
-
-	t.Run("non-https protocol rejected", func(t *testing.T) {
-		c := baseKernelConfig()
-		c.Protocol = "http"
-		if _, err := validateKernelConfig(c); err == nil {
-			t.Error("expected an error for a non-https protocol on the kernel backend")
-		}
-	})
-
-	t.Run("non-default port rejected", func(t *testing.T) {
-		c := baseKernelConfig()
-		c.Port = 8443
-		if _, err := validateKernelConfig(c); err == nil {
-			t.Error("expected an error for a non-default port on the kernel backend")
 		}
 	})
 }
@@ -175,6 +141,7 @@ var kernelConfigFieldDisposition = map[string]string{
 	"RetryMax":                 "rejected", // when < 0 (disable retries)
 	"Protocol":                 "rejected", // kernel is https-only; non-default rejected
 	"Port":                     "rejected", // kernel connects on 443; non-default rejected
+	"Transport":                "rejected", // custom RoundTripper; kernel uses its own HTTP stack, so reject rather than drop
 
 	// Accepted but intentionally inert on the kernel path (documented in doc.go):
 	// the kernel manages these internally, below the C ABI, with no user knob.
@@ -186,7 +153,6 @@ var kernelConfigFieldDisposition = map[string]string{
 	// Not applicable to the kernel path (Thrift/HTTP-transport or telemetry knobs
 	// that don't reach the kernel binding).
 	"UserAgentEntry":           "inert", // TODO: forward once the kernel exposes a UA setter
-	"Transport":                "inert", // custom RoundTripper; kernel uses its own HTTP stack
 	"EnableTelemetry":          "inert",
 	"TelemetryBatchSize":       "inert",
 	"TelemetryFlushInterval":   "inert",

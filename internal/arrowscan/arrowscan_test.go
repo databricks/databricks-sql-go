@@ -318,3 +318,40 @@ func TestScanCellCachedMatchesUncached(t *testing.T) {
 		}
 	}
 }
+
+// StructKeyCache.Reset drops memoized entries (callers scope the cache to one
+// batch this way) and stays correct afterward; Reset on a nil cache is a no-op.
+func TestStructKeyCacheReset(t *testing.T) {
+	pool := memory.NewGoAllocator()
+	dt := arrow.StructOf(arrow.Field{Name: "a", Type: arrow.PrimitiveTypes.Int64})
+	b := array.NewStructBuilder(pool, dt)
+	defer b.Release()
+	b.Append(true)
+	b.FieldBuilder(0).(*array.Int64Builder).Append(7)
+	arr := b.NewArray()
+	defer arr.Release()
+
+	cache := NewStructKeyCache()
+	first, err := ScanCellCached(arr, 0, nil, cache)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cache.m) == 0 {
+		t.Fatal("expected the cache to memoize the struct type")
+	}
+	cache.Reset()
+	if len(cache.m) != 0 {
+		t.Errorf("Reset should empty the cache, got %d entries", len(cache.m))
+	}
+	// Rendering after Reset must still be correct (re-memoizes on demand).
+	second, err := ScanCellCached(arr, 0, nil, cache)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != second {
+		t.Errorf("render after Reset diverged: %q != %q", first, second)
+	}
+
+	var nilCache *StructKeyCache
+	nilCache.Reset() // must not panic
+}

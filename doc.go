@@ -298,6 +298,17 @@ Each type has a corresponding sentinel value which can be used with errors.Is() 
 	RequestError
 	ExecutionError
 
+The kernel backend (WithUseKernel, see above) additionally wraps every rejection
+of an option or feature it cannot yet honor with the sentinel ErrNotSupportedByKernel.
+A caller can detect this case with errors.Is(err, dbsqlerr.ErrNotSupportedByKernel)
+— for example to fall back to the default (Thrift) backend — rather than matching
+on the error message text:
+
+	if errors.Is(err, dbsqlerr.ErrNotSupportedByKernel) {
+		// this option/statement isn't supported on the kernel backend yet;
+		// retry with the default backend (omit WithUseKernel).
+	}
+
 Example usage:
 
 	import (

@@ -48,9 +48,16 @@ func ScanCell(col arrow.Array, row int, loc *time.Location) (driver.Value, error
 // StructKeyCache memoizes the JSON-escaped `"name":` prefixes for a struct type,
 // so writeStructJSON doesn't re-marshal constant field names on every row. It is
 // caller-owned and must be scoped to a single result set (e.g. one driver.Rows)
-// and discarded with it — NOT a process-global, which would leak because the Arrow
-// C Data import allocates a fresh *StructType per batch (see databricks-sql-go
-// round-2 N1). A nil cache is valid: rendering just recomputes the keys inline.
+// and discarded with it — NOT a process-global, which would leak.
+//
+// The Arrow C Data import allocates a fresh *StructType per batch, so a key is
+// only ever hit within the batch that created it: across a multi-batch result the
+// map would otherwise accrue one never-evicted entry per batch for the whole Rows
+// lifetime. Callers should therefore Reset() the cache at each batch boundary —
+// all rows of a batch share one imported Record, so the intra-batch win (escape
+// each field name once per batch, not once per row) is fully preserved while the
+// map stays bounded to a single batch's struct types. A nil cache is valid:
+// rendering just recomputes the keys inline.
 type StructKeyCache struct {
 	m map[*arrow.StructType][]string
 }
@@ -58,6 +65,19 @@ type StructKeyCache struct {
 // NewStructKeyCache returns a cache ready to pass to ScanCellCached.
 func NewStructKeyCache() *StructKeyCache {
 	return &StructKeyCache{m: make(map[*arrow.StructType][]string)}
+}
+
+// Reset drops all memoized prefixes. Callers scope the cache to one batch by
+// calling this when a new batch is imported (see StructKeyCache): the prior
+// batch's *StructType keys can never be hit again, so keeping them only grows the
+// map. Safe on a nil receiver.
+func (c *StructKeyCache) Reset() {
+	if c == nil {
+		return
+	}
+	for k := range c.m {
+		delete(c.m, k)
+	}
 }
 
 // keyPrefixes returns the escaped `"name":` prefix for each field of st,
