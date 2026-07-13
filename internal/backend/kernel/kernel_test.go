@@ -24,9 +24,15 @@ func TestSetAuthByMode(t *testing.T) {
 	}{
 		{"PAT", Auth{Mode: AuthPAT, Token: "dapi-x"}},
 		{"M2M", Auth{Mode: AuthM2M, ClientID: "cid", ClientSecret: "sec"}},
+		// "U2M full" populates Scopes/RedirectPort, which no production path sets today
+		// (resolveKernelAuth sources only the client id — see kernel.Auth docs). It is
+		// kept deliberately to pin the marshalling of those optional set_auth_u2m args
+		// (joinScopes + uint16 port), so the dormant wiring stays correct for a future
+		// U2M scopes/port option.
 		{"U2M full", Auth{Mode: AuthU2M, ClientID: "u2m-cid", Scopes: []string{"sql", "offline_access"}, RedirectPort: 8030}},
-		// U2M with everything defaulted: empty client id / no scopes / port 0 must
-		// pass NULL / 0 so the kernel applies its own defaults (exercises newCStrOrNull).
+		// U2M with everything defaulted (the production shape): empty client id / no
+		// scopes / port 0 must pass NULL / 0 so the kernel applies its own defaults
+		// (exercises newCStrOrNull).
 		{"U2M defaults", Auth{Mode: AuthU2M}},
 	}
 	for _, c := range cases {

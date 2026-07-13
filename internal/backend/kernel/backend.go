@@ -199,7 +199,12 @@ func (k *KernelBackend) OpenSession(ctx context.Context) error {
 	// connect and close the session we just opened (the connector does not call
 	// CloseSession on an OpenSession error).
 	if err := k.applyInitialNamespace(ctx); err != nil {
-		C.kernel_session_close(sess)
+		// Close the session we just opened, routing through call() so a failed close
+		// is logged (via lastError's Warn) rather than silently discarded — mirroring
+		// CloseSession. The namespace error is authoritative and returned as-is.
+		if closeErr := call(func() C.KernelStatusCode { return C.kernel_session_close(sess) }); closeErr != nil {
+			klog("close after initial-namespace failure also failed: %v", closeErr)
+		}
 		k.session = nil
 		k.valid = false
 		return err

@@ -80,8 +80,9 @@ type u2mAuthenticator struct {
 
 // U2MClientID exposes the cloud-inferred OAuth client id so the SEA-via-kernel
 // backend uses the same client id for the kernel's browser/PKCE flow that the
-// Thrift path would. Implements auth.U2MCredentialsProvider, keeping
-// cfg.Authenticator the single source of truth for auth mode.
+// Thrift path would, keeping cfg.Authenticator the single source of truth for auth
+// mode. It structurally satisfies the U2MCredentialsProvider interface the kernel
+// backend asserts (defined in internal/backend/kernel, off the public API).
 func (c *u2mAuthenticator) U2MClientID() string { return c.clientID }
 
 // Auth will start the OAuth Authorization Flow to authenticate the cli client

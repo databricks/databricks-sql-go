@@ -216,6 +216,14 @@ error at execute time (they arrive per-query, not at connect). None of these is
 silently ignored. (Metadata is issued as ordinary SQL — SHOW/DESCRIBE/
 information_schema — and runs on this backend like any other query.)
 
+OAuth U2M is interactive. On a cache miss (no valid cached refresh token) opening a
+connection launches the system browser and blocks until the user completes login or
+the kernel's built-in callback timeout (~120s) expires — and because the kernel C
+ABI cannot interrupt session open mid-call, a deadline on the connection context is
+not honored during that window (nor can the timeout be shortened; the C ABI exposes
+no override). A cached, still-valid token opens without a browser. Use PAT or OAuth
+M2M for headless / deadline-bound connects.
+
 WithMaxRows and retry tuning (WithRetries with a positive limit) are accepted but
 not applied on the kernel path: the kernel manages result fetching and retries
 internally, below the C ABI, with no user-facing knob.
