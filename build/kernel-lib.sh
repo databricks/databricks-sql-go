@@ -160,8 +160,12 @@ log "kernel at $(git -C "$KERNEL_SRC" rev-parse --short HEAD)"
 # --no-default-features --features tls-rustls: pure-Rust TLS (no system OpenSSL)
 # keeps the archive self-contained and cross-compile-tractable. The kernel's
 # default is tls-native, so the override is required.
-log "cargo build --release --no-default-features --features tls-rustls"
-( cd "$KERNEL_SRC" && cargo build --release --no-default-features --features tls-rustls )
+# --locked: build against the kernel's committed Cargo.lock rather than
+# re-resolving, so a fixed KERNEL_REV yields a fixed dependency graph (paired
+# with the pinned rustc in rust-toolchain.toml, the .a is reproducible). Fails
+# loud if the lock is stale instead of silently pulling newer deps.
+log "cargo build --release --locked --no-default-features --features tls-rustls"
+( cd "$KERNEL_SRC" && cargo build --release --locked --no-default-features --features tls-rustls )
 
 src_a="$KERNEL_SRC/target/release/$LIB_NAME"
 src_h="$KERNEL_SRC/include/$HEADER_NAME"

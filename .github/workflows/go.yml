@@ -115,6 +115,16 @@ jobs:
     # lib from the pinned KERNEL_REV and runs the `databricks_kernel`-tagged unit
     # tests with CGO. Separate from build-and-test so that job's CGO_ENABLED=0
     # pure-Go invariant is untouched.
+    #
+    # Bound the blast radius of the source build: it clones an external repo and
+    # cold-compiles ~200 Rust crates, so a network stall or hung cargo would
+    # otherwise hold a protected-runner slot up to the 360-min default. A tight
+    # per-ref concurrency group also collapses redundant heavy builds when the
+    # branch is pushed repeatedly (each push cancels the prior in-flight run).
+    timeout-minutes: 30
+    concurrency:
+      group: kernel-build-${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: true
     runs-on:
       group: databricks-protected-runner-group
       labels: linux-ubuntu-latest
@@ -161,10 +171,15 @@ jobs:
           go-version: '1.25.x'
           cache: false
 
+      # Install the exact toolchain the kernel .a is built with. rust-toolchain.toml
+      # at the repo root is what actually governs the cargo build (it's a parent of
+      # build/kernel-src/, and the kernel repo pins no toolchain of its own), so a
+      # floating `stable` here would drift the archive under a fixed KERNEL_REV.
+      # Keep this in lockstep with rust-toolchain.toml's channel.
       - name: Set up Rust Toolchain
         uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1.16.1
         with:
-          toolchain: stable
+          toolchain: 1.96.1
 
       # The kernel repo (databricks/databricks-sql-kernel) is private, and the
       # hardened runner has no ambient git credentials, so kernel-lib.sh's fetch
@@ -199,7 +214,7 @@ jobs:
           path: |
             internal/backend/kernel/lib
             internal/backend/kernel/include
-          key: ${{ runner.os }}-kernellib-${{ hashFiles('KERNEL_REV') }}
+          key: ${{ runner.os }}-kernellib-${{ hashFiles('KERNEL_REV', 'rust-toolchain.toml') }}
 
       # Cache the cargo registry + kernel build tree so a cache miss on the .a
       # is still an incremental Rust build, not a cold ~200-crate compile.
@@ -210,7 +225,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             build/kernel-src/target
-          key: ${{ runner.os }}-kernel-cargo-${{ hashFiles('KERNEL_REV') }}
+          key: ${{ runner.os }}-kernel-cargo-${{ hashFiles('KERNEL_REV', 'rust-toolchain.toml') }}
           restore-keys: |
             ${{ runner.os }}-kernel-cargo-
 
