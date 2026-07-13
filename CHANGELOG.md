@@ -1,6 +1,7 @@
 # Release History
 
-## Unreleased
+## v1.14.0 (2026-07-13)
+- **Minimum Go version is now 1.25.0** (previously 1.20): the `go` directive was raised to 1.25.0 while clearing OSV-Scanner findings and updating dependencies. Consumers building with an older toolchain will need to upgrade Go (databricks/databricks-sql-go#368)
 - Fix panic in `InitThriftClient` when the endpoint URL is malformed: the thrift transport was type-asserted to `*thrift.THttpClient` before the error from `NewTHttpClientWithOptions` was checked, so a URL that fails to parse (nil transport) caused `interface conversion: thrift.TTransport is nil, not *thrift.THttpClient`; the error is now returned instead (databricks/databricks-sql-go#394)
 - Stop using `html/template` in the U2M OAuth callback page. Reachable use of `html/template` disabled the Go linker's dead-code elimination for the entire binary of any application importing this driver; the page is now rendered with plain string building and explicit HTML escaping, restoring full DCE (databricks/databricks-sql-go#343)
 - Fix DECIMAL precision loss inside complex types: DECIMAL values nested in STRUCT, ARRAY, and MAP columns are now rendered losslessly with their exact scale (e.g. `19.99` instead of `19.990000000000002`), matching the behavior of top-level DECIMAL columns (databricks/databricks-sql-go#253)
