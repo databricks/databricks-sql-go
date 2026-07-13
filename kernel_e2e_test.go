@@ -300,6 +300,13 @@ func TestKernelE2EInitialNamespace(t *testing.T) {
 // read-back would be testing the warehouse's SET behavior, not our routing. A
 // successful connect+query with the flag on is the parity bar (the Thrift path sends
 // the identical conf at OpenSession and likewise never reads it back via SET).
+//
+// Scope note: this is intentionally a thin live smoke test — it proves the flag is
+// accepted end to end, not that the conf value is correct. The actual routing (the
+// flag → the metricview.enabled=true session conf) is asserted in the default-build
+// unit test TestEffectiveSessionParams; the SELECT here overlaps TestKernelE2ESelect1
+// by design, since the conf's live effect can't be observed (see above). Kept as a
+// connect-with-flag smoke rather than deleted so the flag has at least one live path.
 func TestKernelE2EMetricViewMetadata(t *testing.T) {
 	db := kernelTestDBWith(t, WithEnableMetricViewMetadata(true))
 	defer db.Close()
@@ -307,6 +314,43 @@ func TestKernelE2EMetricViewMetadata(t *testing.T) {
 	var got int64
 	if err := db.QueryRowContext(context.Background(), "SELECT 1").Scan(&got); err != nil {
 		t.Fatalf("kernel session with metric-view metadata enabled failed to query: %v", err)
+	}
+	if got != 1 {
+		t.Errorf("SELECT 1 = %d, want 1", got)
+	}
+}
+
+// TestKernelE2EM2M authenticates to a real warehouse via OAuth M2M over the kernel
+// (WithClientCredentials → the kernel's own client-credentials flow), then runs
+// SELECT 1. It self-skips unless DATABRICKS_CLIENT_ID / DATABRICKS_CLIENT_SECRET are
+// set (alongside the host/http-path base), mirroring the PAT tests' skip pattern —
+// so CI without a service principal stays green while a credentialed run proves the
+// M2M setter path actually authenticates end to end (not just that set_auth_m2m
+// returns OK, which TestSetAuthByMode already covers).
+func TestKernelE2EM2M(t *testing.T) {
+	host := os.Getenv("DATABRICKS_HOST")
+	httpPath := os.Getenv("DATABRICKS_HTTP_PATH")
+	clientID := os.Getenv("DATABRICKS_CLIENT_ID")
+	clientSecret := os.Getenv("DATABRICKS_CLIENT_SECRET")
+	if host == "" || httpPath == "" || clientID == "" || clientSecret == "" {
+		t.Skip("set DATABRICKS_HOST / DATABRICKS_HTTP_PATH / DATABRICKS_CLIENT_ID / DATABRICKS_CLIENT_SECRET for the M2M e2e")
+	}
+
+	connector, err := NewConnector(
+		WithServerHostname(host),
+		WithHTTPPath(httpPath),
+		WithClientCredentials(clientID, clientSecret),
+		WithUseKernel(true),
+	)
+	if err != nil {
+		t.Fatalf("NewConnector: %v", err)
+	}
+	db := sql.OpenDB(connector)
+	defer db.Close()
+
+	var got int64
+	if err := db.QueryRowContext(context.Background(), "SELECT 1").Scan(&got); err != nil {
+		t.Fatalf("M2M-authenticated query failed: %v", err)
 	}
 	if got != 1 {
 		t.Errorf("SELECT 1 = %d, want 1", got)
