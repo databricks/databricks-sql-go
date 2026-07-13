@@ -18,7 +18,7 @@ import (
 
 // evictIfSessionFatal flips SessionValid()→false on a session-fatal error (so the
 // pool discards the conn) WITHOUT the error being driver.ErrBadConn (so the
-// statement is never transparently re-run — the H1 constraint).
+// statement is never transparently re-run).
 func TestEvictIfSessionFatal(t *testing.T) {
 	// valid tracks the session-dead flag SessionValid() gates on; the opaque
 	// session pointer is orthogonal here (can't construct the incomplete C type),

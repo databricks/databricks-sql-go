@@ -212,7 +212,7 @@ func (k *KernelBackend) SessionValid() bool { return k.valid && k.session != nil
 // returns false and database/sql discards this conn on return to the pool. Called
 // from the statement/read path when a kernel error is session-fatal (isSessionFatal):
 // it evicts the dead conn WITHOUT returning driver.ErrBadConn, so the statement is
-// never transparently re-run (no duplicate write — the H1 constraint). The backend
+// never transparently re-run (no duplicate write). The backend
 // is single-owner per conn (only the cancel watcher shares state, and it touches
 // only the canceller's inflight slot), so this write is race-free.
 func (k *KernelBackend) markSessionDead() { k.valid = false }

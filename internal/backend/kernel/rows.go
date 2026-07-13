@@ -49,7 +49,7 @@ type kernelRows struct {
 	eof        bool
 	// keyCache memoizes struct field-name JSON keys for this result set so
 	// per-row rendering doesn't re-marshal constant names. Scoped to this Rows
-	// (freed with it) — not a process-global, which would leak (round-2 N1).
+	// (freed with it) — not a process-global, which would leak.
 	keyCache *arrowscan.StructKeyCache
 }
 

@@ -8,9 +8,9 @@ import (
 
 // This file is intentionally NOT behind the `cgo && databricks_kernel` build tag.
 // It holds the kernel error type + the connection-classification logic that
-// enforces two safety-critical guarantees — H1 (a statement-path error must never
+// enforces two safety-critical guarantees — a statement-path error must never
 // become driver.ErrBadConn, so database/sql cannot silently re-run a possibly-
-// committed statement) and L1 (a permanent auth failure is not retried). Keeping
+// committed statement, and a permanent auth failure is not retried. Keeping
 // it pure Go lets its tests run in the default CGO_ENABLED=0 build; a future edit
 // that reintroduced the duplicate-write bug (or the auth-retry storm) would then
 // fail CI instead of shipping green. The cgo file (cgo.go) populates KernelError

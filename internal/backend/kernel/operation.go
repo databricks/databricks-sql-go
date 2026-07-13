@@ -69,7 +69,7 @@ func (k *KernelBackend) execute(ctx context.Context, req backend.ExecRequest) (b
 	// Watcher goroutine (only when there is both a cancellable ctx and a
 	// canceller). The server publishes the statement id to the canceller's
 	// inflight slot only when the initial POST returns — held up to the server's
-	// inline wait (~10s) even for a long query — so a cancel fired before that is
+	// inline wait even for a long query — so a cancel fired before that is
 	// a no-op. Re-fire every 250ms after ctx.Done until the kernel reports the
 	// cancel RPC was actually dispatched (dispatched=true, i.e. the id appeared
 	// and the RPC went out), then stop: one real cancel is enough, and further
@@ -135,7 +135,7 @@ func (k *KernelBackend) execute(ctx context.Context, req backend.ExecRequest) (b
 		// A session-fatal status (expired token, dropped/unavailable session) means
 		// this conn is unusable: evict it so the pool doesn't hand it out again. We
 		// still return the PLAIN error (toStatementError, never ErrBadConn), so the
-		// conn is discarded without database/sql re-running the statement (H1).
+		// conn is discarded without database/sql re-running the statement.
 		k.evictIfSessionFatal(execErr)
 		op.close()
 		return op, fmt.Errorf("kernel: execute: %w", toStatementError(execErr))

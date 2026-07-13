@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// These guard the H1/L1 safety contract (which errors may trigger database/sql's
+// These guard the safety contract (which errors may trigger database/sql's
 // transparent statement replay, and which permanent failures must not be retried).
 // They live in an untagged file so they run under CGO_ENABLED=0 — a future edit
 // reintroducing the duplicate-write bug or the auth-retry storm fails CI here,
