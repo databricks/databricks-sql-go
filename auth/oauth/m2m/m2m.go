@@ -37,8 +37,10 @@ type authClient struct {
 }
 
 // M2MCredentials exposes the raw client-credentials so the SEA-via-kernel backend
-// can drive the kernel's own M2M flow. Implements auth.M2MCredentialsProvider,
-// which keeps cfg.Authenticator the single source of truth for auth mode.
+// can drive the kernel's own M2M flow, keeping cfg.Authenticator the single source
+// of truth for auth mode. It structurally satisfies the M2MCredentialsProvider
+// interface the kernel backend asserts (defined in internal/backend/kernel, so the
+// secret-reading capability is not part of the driver's public API).
 func (c *authClient) M2MCredentials() (clientID, clientSecret string) {
 	return c.clientID, c.clientSecret
 }

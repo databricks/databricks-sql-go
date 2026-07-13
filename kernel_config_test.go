@@ -9,6 +9,7 @@ import (
 
 	"github.com/databricks/databricks-sql-go/auth/pat"
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
+	"github.com/databricks/databricks-sql-go/internal/backend/kernel"
 	"github.com/databricks/databricks-sql-go/internal/config"
 )
 
@@ -86,7 +87,7 @@ func TestValidateKernelConfig(t *testing.T) {
 		if err != nil {
 			t.Fatalf("PAT should validate, got %v", err)
 		}
-		if a.mode != kernelAuthPAT || a.token != "dapi-x" {
+		if a.Mode != kernel.AuthPAT || a.Token != "dapi-x" {
 			t.Errorf("auth = %+v, want mode=PAT token=dapi-x", a)
 		}
 	})
@@ -129,7 +130,7 @@ func TestValidateKernelConfig(t *testing.T) {
 		if err != nil {
 			t.Fatalf("PAT via WithAuthenticator should validate, got %v", err)
 		}
-		if a.mode != kernelAuthPAT || a.token != "dapi-y" {
+		if a.Mode != kernel.AuthPAT || a.Token != "dapi-y" {
 			t.Errorf("auth = %+v, want mode=PAT token=dapi-y (sourced from the authenticator)", a)
 		}
 	})
@@ -144,7 +145,7 @@ func TestValidateKernelConfig(t *testing.T) {
 		if err != nil {
 			t.Fatalf("M2M should validate, got %v", err)
 		}
-		if a.mode != kernelAuthM2M || a.clientID != "cid" || a.clientSecret != "sec" {
+		if a.Mode != kernel.AuthM2M || a.ClientID != "cid" || a.ClientSecret != "sec" {
 			t.Errorf("auth = %+v, want mode=M2M clientID=cid clientSecret=sec", a)
 		}
 	})
@@ -159,7 +160,7 @@ func TestValidateKernelConfig(t *testing.T) {
 		if err != nil {
 			t.Fatalf("U2M should validate, got %v", err)
 		}
-		if a.mode != kernelAuthU2M || a.clientID != "databricks-sql-connector" {
+		if a.Mode != kernel.AuthU2M || a.ClientID != "databricks-sql-connector" {
 			t.Errorf("auth = %+v, want mode=U2M clientID=databricks-sql-connector", a)
 		}
 	})
@@ -178,7 +179,7 @@ func TestValidateKernelConfig(t *testing.T) {
 		if err != nil {
 			t.Fatalf("PAT (last applied) should validate, got %v", err)
 		}
-		if a.mode != kernelAuthPAT || a.token != "dapi-z" {
+		if a.Mode != kernel.AuthPAT || a.Token != "dapi-z" {
 			t.Errorf("auth = %+v, want mode=PAT token=dapi-z (last-applied wins)", a)
 		}
 	})
