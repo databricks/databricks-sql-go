@@ -11,6 +11,7 @@ import (
 	"time"
 
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
+	"github.com/databricks/databricks-sql-go/internal/config"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/require"
 )
@@ -323,5 +324,33 @@ func TestRetryPolicy(t *testing.T) {
 			require.True(t, errors.Is(err, dbsqlerr.RequestError))
 			require.Equal(t, c.isBadConn, errors.Is(err, driver.ErrBadConn))
 		}
+	})
+}
+
+// TestInitThriftClientMalformedEndpointDoesNotPanic is a regression test: when the
+// endpoint URL is malformed, thrift.NewTHttpClientWithOptions returns a nil
+// TTransport and an error. InitThriftClient previously type-asserted that nil
+// transport to *thrift.THttpClient before checking the error, panicking with
+// "interface conversion: thrift.TTransport is nil, not *thrift.THttpClient".
+// It must now surface the error instead.
+func TestInitThriftClientMalformedEndpointDoesNotPanic(t *testing.T) {
+	cfg := &config.Config{
+		UserConfig: config.UserConfig{
+			Protocol: "https",
+			Host:     "example.cloud.databricks.com",
+			Port:     443,
+			// A control character passes ToEndpointURL's non-empty check but
+			// makes url.Parse (inside NewTHttpClientWithOptions) fail.
+			HTTPPath: "/sql/1.0/warehouses/\x7f",
+		},
+		ThriftProtocol:  "binary",
+		ThriftTransport: "http",
+	}
+
+	require.NotPanics(t, func() {
+		// Non-nil httpclient so we exercise the transport path, not the
+		// missing-authenticator early return.
+		_, err := InitThriftClient(cfg, &http.Client{})
+		require.Error(t, err)
 	})
 }
