@@ -114,8 +114,7 @@ jobs:
     # Exercises the opt-in SEA-via-kernel backend: builds the Rust kernel static
     # lib from the pinned KERNEL_REV and runs the `databricks_kernel`-tagged unit
     # tests with CGO. Separate from build-and-test so that job's CGO_ENABLED=0
-    # pure-Go invariant is untouched. No warehouse creds here, so the live e2e /
-    # parity tests self-skip; only the tagged unit tests run.
+    # pure-Go invariant is untouched.
     runs-on:
       group: databricks-protected-runner-group
       labels: linux-ubuntu-latest
@@ -172,8 +171,9 @@ jobs:
       # fails with "could not read Username". Mint a repo-scoped token from the
       # INTEGRATION_TEST_APP GitHub App (installed on the org with kernel read
       # access — the same mechanism the ODBC driver uses) and rewrite the kernel
-      # HTTPS URL to carry it. This is transparent to kernel-lib.sh. Retire once
-      # the kernel publishes a release artifact (KERNEL_LOCAL_A / download path).
+      # HTTPS URL to carry it. This is transparent to kernel-lib.sh. Only needed
+      # while the kernel repo is private and this job builds it from source; drop
+      # it once the repo is public (the download path never clones the source).
       - name: Generate GitHub App token for databricks-sql-kernel
         id: kernel-token
         uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3.0.0
