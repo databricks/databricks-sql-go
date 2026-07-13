@@ -51,6 +51,13 @@ import (
 // binding and kernel logs interleave on stderr as one stream.
 var kdebug = os.Getenv("DBSQL_KERNEL_DEBUG") != ""
 
+// Deferred (tracked): klog writes raw to stderr, NOT through the driver's
+// logger.Logger, so its lines carry no connId/corrId/queryId and can't be
+// correlated in a multi-conn process; it's also gated on its own
+// DBSQL_KERNEL_DEBUG rather than the driver's DATABRICKS_LOG_LEVEL knob. Unifying
+// kernel logging onto logger.Logger (which no-ops below its level, so no
+// benchmark cost) is a tracked logging-unification follow-up, kept separate from
+// this PR because it changes the debug-logging surface.
 func klog(format string, args ...any) {
 	if !kdebug {
 		return

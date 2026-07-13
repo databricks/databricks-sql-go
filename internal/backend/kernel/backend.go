@@ -208,6 +208,13 @@ func (k *KernelBackend) OpenSession(ctx context.Context) error {
 
 // CloseSession tears down the server-side session. Best-effort: the kernel's
 // close is async (see the C header), so an error is logged, not hard-failed.
+//
+// Deferred (tracked): this ignores ctx and blocks in the synchronous call() until
+// kernel_session_close returns, with no deadline — a stalled kernel-side close
+// (e.g. a shutdown-time network partition) can block database/sql pool cleanup.
+// A bounded close needs either a kernel_session_close_blocking with a deadline or
+// a Go-side watchdog; grouped with the kernel C-ABI follow-ups. Not fixed here to
+// keep this PR scoped to the opt-in backend rather than add a watchdog.
 func (k *KernelBackend) CloseSession(ctx context.Context) error {
 	if k.session == nil {
 		return nil

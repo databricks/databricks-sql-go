@@ -246,6 +246,13 @@ func writeListJSON(b *strings.Builder, values arrow.Array, start, end int, loc *
 }
 
 func writeMapJSON(b *strings.Builder, m *array.Map, row int, loc *time.Location, keys *StructKeyCache) error {
+	// Deferred (tracked): every entry key is written unconditionally in Arrow
+	// order, so an Arrow-legal MAP with duplicate keys renders non-unique JSON
+	// object keys (e.g. {"1":"a","1":"b"}). This mirrors the Thrift path exactly
+	// (parity holds), so it is intentionally NOT changed here — deciding dedup-last
+	// vs. error is a cross-backend contract change that belongs in its own PR so
+	// both renderers stay byte-identical.
+	//
 	// Map embeds *List, so ValueOffsets is offset-aware (adds data.offset); use it
 	// rather than Offsets()[row] for the same reason as writeJSON's List case.
 	s, e := m.ValueOffsets(row)
