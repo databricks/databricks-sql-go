@@ -8,8 +8,11 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/databricks/databricks-sql-go/driverctx"
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 	"github.com/databricks/databricks-sql-go/internal/backend"
+	"github.com/databricks/databricks-sql-go/logger"
+	"github.com/rs/zerolog"
 )
 
 // setAuth maps each Auth mode to exactly one kernel_session_config_set_auth_*
@@ -67,6 +70,58 @@ func TestSetKernelTLS(t *testing.T) {
 				t.Errorf("applyKernelTLS(%s) = %v, want nil", c.name, err)
 			}
 		})
+	}
+}
+
+// kernelLogLevel maps the driver's zerolog level to the kernel_init_logging level
+// string, so DATABRICKS_LOG_LEVEL drives the kernel's Rust logs too. Pin the
+// mapping (incl. the fatal/panic→ERROR collapse and the default→WARN fallback) so
+// a level the kernel would reject can't silently ship.
+func TestKernelLogLevel(t *testing.T) {
+	cases := []struct {
+		in   zerolog.Level
+		want string
+	}{
+		{zerolog.TraceLevel, "TRACE"},
+		{zerolog.DebugLevel, "DEBUG"},
+		{zerolog.InfoLevel, "INFO"},
+		{zerolog.WarnLevel, "WARN"},
+		{zerolog.ErrorLevel, "ERROR"},
+		{zerolog.FatalLevel, "ERROR"},
+		{zerolog.PanicLevel, "ERROR"},
+		{zerolog.Disabled, "OFF"},
+		{zerolog.NoLevel, "WARN"}, // unrecognized → the kernel's own default
+	}
+	for _, c := range cases {
+		if got := kernelLogLevel(c.in); got != c.want {
+			t.Errorf("kernelLogLevel(%v) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// klog / klogCtx must be allocation-free at the default (above-Debug) log level —
+// the "no hot-path cost, safe during benchmarks" guarantee. klogCtx is the one that
+// matters: logger.WithContext eagerly allocates (zerolog's With() does
+// make([]byte, 0, 500)) BEFORE the .Debug() gate, so without the up-front
+// kernelDebugOff() guard this would allocate ~500 B per call — per Arrow batch on the
+// nextBatch hot path. Guards against reintroducing that (an Isaac Review MAJOR).
+func TestKernelLogNoAllocWhenOff(t *testing.T) {
+	prev := logger.Logger.GetLevel()
+	if err := logger.SetLogLevel("warn"); err != nil { // the default level
+		t.Fatal(err)
+	}
+	defer logger.SetLogLevel(prev.String()) //nolint:errcheck // restoring a known-good level
+
+	ctx := driverctx.NewContextWithConnId(context.Background(), "conn-1")
+	if n := testing.AllocsPerRun(100, func() {
+		klog("hot path %d", 1)
+	}); n != 0 {
+		t.Errorf("klog allocated %v times at Warn level, want 0", n)
+	}
+	if n := testing.AllocsPerRun(100, func() {
+		klogCtx(ctx, "hot path %d", 1)
+	}); n != 0 {
+		t.Errorf("klogCtx allocated %v times at Warn level, want 0", n)
 	}
 }
 

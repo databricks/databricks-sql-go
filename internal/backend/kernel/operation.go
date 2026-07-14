@@ -37,7 +37,7 @@ func (k *KernelBackend) execute(ctx context.Context, req backend.ExecRequest) (b
 	// Log the SQL length, not the text: query bodies can carry PII/secrets in
 	// WHERE/INSERT/SET, and this goes to stderr. Matches the driver's own
 	// debuglog convention (conn.ExecContext logs sql.len=%d).
-	klog("Execute sql.len=%d", len(req.Query))
+	klogCtx(ctx, "Execute sql.len=%d", len(req.Query))
 
 	var stmt *C.kernel_statement_t
 	if err := call(func() C.KernelStatusCode {
@@ -76,7 +76,7 @@ func (k *KernelBackend) execute(ctx context.Context, req backend.ExecRequest) (b
 	if err := call(func() C.KernelStatusCode {
 		return C.kernel_statement_canceller_new(stmt, &canceller)
 	}); err != nil {
-		klog("canceller_new failed (proceeding without cancel): %v", err)
+		klogCtx(ctx, "canceller_new failed (proceeding without cancel): %v", err)
 		canceller = nil
 	}
 
@@ -111,11 +111,11 @@ func (k *KernelBackend) execute(ctx context.Context, req backend.ExecRequest) (b
 				return
 			default:
 			}
-			klog("ctx.Done (%v) → firing canceller (with retry until dispatched)", ctx.Err())
+			klogCtx(ctx, "ctx.Done (%v) → firing canceller (with retry until dispatched)", ctx.Err())
 			ticker := time.NewTicker(250 * time.Millisecond)
 			defer ticker.Stop()
 			if fireCancel(canceller) {
-				klog("cancel dispatched on first fire")
+				klogCtx(ctx, "cancel dispatched on first fire")
 				return
 			}
 			for {
@@ -124,7 +124,7 @@ func (k *KernelBackend) execute(ctx context.Context, req backend.ExecRequest) (b
 					return
 				case <-ticker.C:
 					if fireCancel(canceller) {
-						klog("cancel dispatched, watcher stopping")
+						klogCtx(ctx, "cancel dispatched, watcher stopping")
 						return
 					}
 				}
@@ -165,11 +165,11 @@ func (k *KernelBackend) execute(ctx context.Context, req backend.ExecRequest) (b
 		// otherwise a session-fatal failure racing a cancel would lose its
 		// sqlstate/queryId, the one handle to what actually went wrong server-side.
 		if ctx.Err() != nil {
-			klog("Execute failed under cancelled ctx: kernelErr=%v ctxErr=%v", execErr, ctx.Err())
+			klogCtx(ctx, "Execute failed under cancelled ctx: kernelErr=%v ctxErr=%v", execErr, ctx.Err())
 			op.close()
 			return op, fmt.Errorf("kernel: execute cancelled: %w (kernel error: %w)", ctx.Err(), toStatementError(execErr))
 		}
-		klog("Execute failed: %v", execErr)
+		klogCtx(ctx, "Execute failed: %v", execErr)
 		// We still return the PLAIN error (toStatementError, never ErrBadConn), so the
 		// conn is discarded without database/sql re-running the statement.
 		op.close()
@@ -192,7 +192,7 @@ func (k *KernelBackend) execute(ctx context.Context, req backend.ExecRequest) (b
 	if qid := C.kernel_executed_statement_query_id(exec); qid != nil {
 		op.statementID = C.GoString(qid) // deep-copies out of the borrowed C string
 	}
-	klog("Execute OK stmt=%p exec=%p affectedRows=%d statementID=%q", stmt, exec, op.affectedRows, op.statementID)
+	klogCtx(ctx, "Execute OK stmt=%p exec=%p affectedRows=%d statementID=%q", stmt, exec, op.affectedRows, op.statementID)
 	return op, nil
 }
 
