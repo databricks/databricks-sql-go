@@ -222,3 +222,27 @@ func (s cStr) free() {
 		C.free(unsafe.Pointer(s.c))
 	}
 }
+
+// cBytes wraps C.CBytes with a guaranteed free, for the byte-buffer setters (e.g.
+// a PEM CA bundle) that take a (*C.uint8_t, C.size_t) pair. The kernel copies the
+// bytes into owned Rust memory on receipt, so freeing right after the call is
+// safe. An empty slice yields a NULL pointer + 0 length (the setters reject that,
+// which is what we want — an empty buffer is never valid).
+// Use: cb := newCBytes(b); defer cb.free(); ...C.fn(cb.ptr, cb.len)...
+type cBytes struct {
+	ptr *C.uint8_t
+	len C.size_t
+}
+
+func newCBytes(b []byte) cBytes {
+	if len(b) == 0 {
+		return cBytes{}
+	}
+	return cBytes{ptr: (*C.uint8_t)(C.CBytes(b)), len: C.size_t(len(b))}
+}
+
+func (b cBytes) free() {
+	if b.ptr != nil {
+		C.free(unsafe.Pointer(b.ptr))
+	}
+}

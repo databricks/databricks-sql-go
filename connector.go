@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"database/sql/driver"
+	"errors"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -43,6 +44,16 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 	if c.cfg.UseKernel {
 		be, err = newKernelBackend(ctx, c.cfg)
 	} else {
+		// The experimental WithKernel* TLS options have no Thrift-path equivalent —
+		// reject them loudly rather than silently ignore, so a caller who sets a
+		// trusted-CA bundle / an independent hostname skip and forgets WithUseKernel
+		// learns the option had no effect instead of connecting with a
+		// weaker-than-intended (or unconfigured) TLS trust store.
+		if c.cfg.KernelExperimental != nil {
+			return nil, errors.New("databricks: the WithKernel* options " +
+				"(WithKernelTrustedCerts / WithKernelSkipHostnameVerify) require the kernel backend; " +
+				"add WithUseKernel(true) or remove them")
+		}
 		be, err = thrift.New(ctx, c.cfg, c.client)
 	}
 	if err != nil {
@@ -535,5 +546,47 @@ func WithFederatedTokenProviderAndClientID(baseProvider tokenprovider.TokenProvi
 			federationProvider := tokenprovider.NewFederationProviderWithClientID(baseProvider, c.Host, clientID)
 			c.Authenticator = tokenprovider.NewAuthenticator(federationProvider)
 		}
+	}
+}
+
+// ─── Experimental kernel-only options ─────────────────────────────────────────
+//
+// These configure the SEA-via-kernel backend (WithUseKernel) only; they expose a
+// richer TLS surface than the backend-neutral WithSkipTLSHostVerify. They have no
+// equivalent on the default (Thrift) path, which rejects them loudly at connect.
+// They are deliberately NOT part of the stable DSN/UserConfig surface — they hang
+// off config.Config.KernelExperimental (mirroring Node's non-exported
+// InternalConnectionOptions). The WithKernel* prefix signals both "kernel-backend
+// only" and "experimental" so they read distinctly from the backend-neutral
+// options above (e.g. WithSkipTLSHostVerify).
+
+// kernelExperimental lazily allocates and returns the experimental config block.
+func kernelExperimental(c *config.Config) *config.KernelExperimentalConfig {
+	if c.KernelExperimental == nil {
+		c.KernelExperimental = &config.KernelExperimentalConfig{}
+	}
+	return c.KernelExperimental
+}
+
+// WithKernelTrustedCerts adds a PEM CA-certificate bundle to the kernel's TLS
+// trust store on top of the system roots — for a corporate re-signing proxy or an
+// on-prem CA. Required (rather than relying on SSL_CERT_FILE) because the kernel's
+// rustls stack does not read that environment variable.
+//
+// EXPERIMENTAL, kernel-only: the default (Thrift) backend rejects this at connect.
+func WithKernelTrustedCerts(pem []byte) ConnOption {
+	return func(c *config.Config) {
+		kernelExperimental(c).TLSTrustedCertsPEM = pem
+	}
+}
+
+// WithKernelSkipHostnameVerify skips only the certificate hostname-vs-SNI check on
+// the kernel backend, while keeping chain validation. This is finer-grained than
+// WithSkipTLSHostVerify, which relaxes both chain and hostname checks.
+//
+// EXPERIMENTAL, kernel-only: the default (Thrift) backend rejects this at connect.
+func WithKernelSkipHostnameVerify() ConnOption {
+	return func(c *config.Config) {
+		kernelExperimental(c).TLSSkipHostnameVerify = true
 	}
 }

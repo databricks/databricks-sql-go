@@ -234,6 +234,18 @@ WithMaxRows and retry tuning (WithRetries with a positive limit) are accepted bu
 not applied on the kernel path: the kernel manages result fetching and retries
 internally, below the C ABI, with no user-facing knob.
 
+Experimental kernel-only TLS options. The kernel exposes a richer TLS surface than
+the backend-neutral WithSkipTLSHostVerify (which relaxes both chain and hostname
+checks). These are kernel-only — the default (Thrift) backend rejects them at
+connect rather than silently ignoring them — and experimental (the WithKernel*
+prefix marks both):
+  - WithKernelTrustedCerts(pem) adds a PEM CA bundle to the kernel's trust store on
+    top of the system roots (for a corporate re-signing proxy or an on-prem CA).
+    Required rather than relying on SSL_CERT_FILE: the kernel's TLS stack (rustls)
+    does not read that environment variable.
+  - WithKernelSkipHostnameVerify() skips only the certificate hostname check while
+    keeping chain validation (finer-grained than WithSkipTLSHostVerify).
+
 Features that live above the backend seam are inherited unchanged: the
 database/sql connection pool (each connection wraps one kernel session),
 per-connection telemetry (CREATE_SESSION, EXECUTE_STATEMENT, and DELETE_SESSION

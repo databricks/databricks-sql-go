@@ -47,6 +47,14 @@ func newKernelBackend(_ context.Context, cfg *config.Config) (backend.Backend, e
 	if cfg.TLSConfig != nil && cfg.TLSConfig.InsecureSkipVerify {
 		kc.TLSSkipVerify = true
 	}
+	// Experimental kernel-only TLS knobs (WithKernelTrustedCerts /
+	// WithKernelSkipHostnameVerify), if any. These have no Thrift-path equivalent
+	// (the connector rejects them on that path) and are forwarded verbatim to the
+	// kernel C ABI in OpenSession.
+	if ke := cfg.KernelExperimental; ke != nil {
+		kc.TLSTrustedCertsPEM = ke.TLSTrustedCertsPEM
+		kc.TLSSkipHostnameVerify = ke.TLSSkipHostnameVerify
+	}
 	// Proxy: the Thrift path uses http.ProxyFromEnvironment; mirror it by reading
 	// the same HTTP(S)_PROXY / NO_PROXY environment for the kernel.
 	kc.ProxyURL = proxyForEndpoint(cfg)
