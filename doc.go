@@ -44,6 +44,8 @@ Supported optional connection parameters can be specified in param=value and inc
   - accessToken: Personal access token. Required if authType set to Pat
   - clientID: Specifies the client ID to use with OauthM2M
   - clientSecret: Specifies the client secret to use with OauthM2M
+  - useKernel: Routes execution through the SEA-via-kernel backend instead of Thrift. Requires a build with -tags databricks_kernel (CGO_ENABLED=1); the default pure-Go build returns a clear error. Default is false. See the kernel-backend section below
+  - warehouseId: The bare SQL warehouse id, used by the kernel backend (which addresses a warehouse by id) in preference to the http path. Ignored by the Thrift backend
 
 Supported optional session parameters can be specified in param=value and include:
 
@@ -90,6 +92,8 @@ Supported functional options include:
   - WithMaxDownloadThreads (<num_threads> int). Sets up the max number of concurrent workers for cloud fetch. Default is 10. Optional
   - WithAuthenticator (<authenticator> auth.Authenticator). Sets up authentication. Required if neither access token or client credentials are provided.
   - WithClientCredentials(<clientID> string, <clientSecret> string). Sets up Oauth M2M authentication.
+  - WithUseKernel(<useKernel> bool). Routes execution through the SEA-via-kernel backend instead of Thrift. Requires a build with -tags databricks_kernel (CGO_ENABLED=1); the default build returns a clear error. Default is false. See the kernel-backend section below. Optional
+  - WithWarehouseID(<id> string). The bare SQL warehouse id used by the kernel backend in preference to the http path; ignored by the Thrift backend. Optional
 
 # Query cancellation and timeout
 
@@ -154,6 +158,79 @@ The user can also utilize Track() and Duration() to custom log the elapsed time 
 The result log may look like this:
 
 	{"level":"debug","connId":"01ed6545-5669-1ec7-8c7e-6d8a1ea0ab16","corrId":"workflow-example","queryId":"01ed6545-57cc-188a-bfc5-d9c0eaf8e189","time":1668558402,"message":"Run Main elapsed time: 1.298712292s"}
+
+# SEA-via-kernel backend (experimental)
+
+By default the driver uses the Thrift/HiveServer2 backend and is pure Go
+(CGO_ENABLED=0, go-gettable, cross-compilable). An experimental second backend
+runs statements over the Statement Execution API via the Rust
+databricks-sql-kernel, reached through a cgo C ABI. It is opt-in and compiled in
+only under a build tag, so the default build is unchanged.
+
+To use it, build with the databricks_kernel tag and CGO enabled, and select it
+per connection with WithUseKernel. The tagged build links the kernel static
+library, which is not committed — run `make kernel-lib` first to produce it (and
+the C header) under the cgo link path; `make build-kernel` does both steps:
+
+	make kernel-lib      # builds the kernel .a + header at the pinned KERNEL_REV
+	CGO_ENABLED=1 go build -tags databricks_kernel ./...
+
+	connector, _ := dbsql.NewConnector(
+		dbsql.WithServerHostname(host),
+		dbsql.WithHTTPPath(httpPath),
+		dbsql.WithAccessToken(token),
+		dbsql.WithUseKernel(true),
+	)
+	db := sql.OpenDB(connector)
+
+In a build without the tag, WithUseKernel(true) returns a clear error at connect
+time rather than silently using Thrift.
+
+To see the kernel's own logs interleaved with the driver's, set DBSQL_KERNEL_DEBUG
+to any non-empty value. That single flag turns on the driver's binding step tracer
+AND installs the kernel's Rust log subscriber, so both write to the same stderr in
+execution order. It is off by default (and must stay off during benchmarks — debug
+logging perturbs latency). The kernel's verbosity is then controlled by RUST_LOG,
+which the kernel honors directly; filter on the target databricks::sql::kernel
+(note the colons — it is the kernel's explicit log target, NOT the crate module
+path databricks_sql_kernel, which would match nothing):
+
+	# kernel logs only:
+	DBSQL_KERNEL_DEBUG=1 RUST_LOG=databricks::sql::kernel=debug ./your_app 2>&1
+	# kernel logs plus its HTTP stack (hyper/reqwest):
+	DBSQL_KERNEL_DEBUG=1 RUST_LOG=debug ./your_app 2>&1
+
+The kernel backend currently supports PAT authentication; reading scalar, nested,
+and complex-typed results (CloudFetch is handled transparently); context
+cancellation during execute (a cancelled ctx fires a real server-side cancel; on
+the read path cancellation is honored at result-batch boundaries, not mid-fetch);
+and the TLS, proxy, and session-conf (query tags, statement timeout, time zone)
+connection options. OAuth (M2M/U2M), initial catalog/schema,
+WithEnableMetricViewMetadata, a non-default WithPort, and a non-https protocol
+are not yet supported and return a clear error at connect time rather than being
+silently ignored (the kernel backend connects over https:443 and has no port or
+scheme setter); likewise WithTimeout (a server query timeout the kernel C ABI
+can't set) and WithRetries used to disable retries (the kernel retries
+internally). Bound query parameters and staging operations
+(PUT/GET/REMOVE on a Unity Catalog volume, which need a local file transfer this
+backend cannot perform) are likewise not yet supported and return a clear error
+at execute time (they are per-statement, not connect-time). None of these is
+silently ignored. (Metadata is issued as ordinary SQL —
+SHOW/DESCRIBE/information_schema — and runs on this backend like any other
+query.)
+
+WithMaxRows and retry tuning (WithRetries with a positive limit) are accepted but
+not applied on the kernel path: the kernel manages result fetching and retries
+internally, below the C ABI, with no user-facing knob.
+
+Two further kernel-backend caveats. The INTERVAL types (year-month / day-time)
+listed in the type table below are not yet handled by the kernel scanner and
+return a scan error; use the default (Thrift) backend for interval columns. And
+the kernel backend does not yet surface a per-statement server query id on the
+success path, so a QueryIdCallback (see below) fires with "" and no
+EXECUTE_STATEMENT telemetry is emitted for kernel queries. (On a query failure the
+server query id IS available: the returned error is a DBExecutionError whose
+QueryId() carries it — see the Errors section.)
 
 # Programmatically Retrieving Connection and Query Id
 
@@ -225,6 +302,17 @@ Each type has a corresponding sentinel value which can be used with errors.Is() 
 	DriverError
 	RequestError
 	ExecutionError
+
+The kernel backend (WithUseKernel, see above) additionally wraps every rejection
+of an option or feature it cannot yet honor with the sentinel ErrNotSupportedByKernel.
+A caller can detect this case with errors.Is(err, dbsqlerr.ErrNotSupportedByKernel)
+— for example to fall back to the default (Thrift) backend — rather than matching
+on the error message text:
+
+	if errors.Is(err, dbsqlerr.ErrNotSupportedByKernel) {
+		// this option/statement isn't supported on the kernel backend yet;
+		// retry with the default backend (omit WithUseKernel).
+	}
 
 Example usage:
 

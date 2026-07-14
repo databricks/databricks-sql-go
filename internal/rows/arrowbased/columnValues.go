@@ -2,13 +2,12 @@ package arrowbased
 
 import (
 	"encoding/json"
-	"math/big"
 	"strings"
 	"time"
 
 	"github.com/apache/arrow/go/v12/arrow"
 	"github.com/apache/arrow/go/v12/arrow/array"
-	"github.com/apache/arrow/go/v12/arrow/decimal128"
+	"github.com/databricks/databricks-sql-go/internal/decimalfmt"
 	"github.com/databricks/databricks-sql-go/internal/rows/rowscanner"
 	dbsqllog "github.com/databricks/databricks-sql-go/logger"
 	"github.com/pkg/errors"
@@ -363,7 +362,7 @@ func (mvc *mapValueContainer) SetValueArray(colData arrow.ArrayData) error {
 
 type structValueContainer struct {
 	structArray     *array.Struct
-	fieldNames      []string
+	fieldKeys       []string // precomputed JSON-escaped `"name":` prefixes, one per field
 	complexValue    []bool
 	fieldValues     []columnValues
 	structArrayType *arrow.StructType
@@ -371,11 +370,19 @@ type structValueContainer struct {
 
 var _ columnValues = (*structValueContainer)(nil)
 
+// Value renders the struct at row i as a JSON object string. This grammar is
+// mirrored by internal/arrowscan (the kernel backend); the two must render
+// byte-identically — internal/rows/arrowbased/arrowscan_parity_test.go guards it.
 func (svc *structValueContainer) Value(i int) (any, error) {
 	if i < svc.structArray.Len() {
 		r := "{"
 		for j := range svc.fieldValues {
-			r = r + "\"" + svc.fieldNames[j] + "\":"
+			// fieldKeys[j] is the precomputed JSON-escaped `"name":` prefix (built
+			// once at construction). Escaping matters — a raw `"` + name + `"` concat
+			// produces invalid JSON for a name with a quote/backslash/control char
+			// (`a"b` → `{"a"b":...}`) — but doing it per row would re-marshal the same
+			// constant strings N_rows × N_fields times on this hot path.
+			r = r + svc.fieldKeys[j]
 
 			if svc.fieldValues[j].IsNull(int(i)) {
 				r = r + "null"
@@ -550,48 +557,9 @@ func (tvc *decimal128Container) Value(i int) (any, error) {
 // for backwards-compatible JSON rendering inside complex types.
 // See databricks/databricks-sql-go#274.
 func (tvc *decimal128Container) ValueString(i int) string {
-	return decimal128ToString(tvc.decimalArray.Value(i), tvc.scale)
-}
-
-// decimal128ToString renders a decimal128 value exactly as a fixed-point
-// string with `scale` fractional digits. It formats from the value's exact
-// 128-bit unscaled integer (BigInt) and inserts the decimal point by string
-// manipulation, so — unlike arrow's decimal128.Num.ToString, which divides via
-// big.Float and rounds beyond ~17 significant digits — it never loses
-// precision. See databricks/databricks-sql-go#274.
-func decimal128ToString(n decimal128.Num, scale int32) string {
-	unscaled := n.BigInt() // exact signed unscaled integer
-
-	neg := unscaled.Sign() < 0
-	digits := new(big.Int).Abs(unscaled).String()
-
-	var b strings.Builder
-	if neg {
-		b.WriteByte('-')
-	}
-
-	if scale <= 0 {
-		// No fractional part (negative scale is not produced by the server,
-		// but treat it as scale 0 rather than panicking).
-		b.WriteString(digits)
-		return b.String()
-	}
-
-	s := int(scale)
-	if len(digits) <= s {
-		// Pad with leading zeros so there are exactly `scale` fractional digits
-		// and a single leading integer zero, e.g. 5 with scale 3 -> "0.005".
-		b.WriteString("0.")
-		b.WriteString(strings.Repeat("0", s-len(digits)))
-		b.WriteString(digits)
-	} else {
-		intPart := digits[:len(digits)-s]
-		fracPart := digits[len(digits)-s:]
-		b.WriteString(intPart)
-		b.WriteByte('.')
-		b.WriteString(fracPart)
-	}
-	return b.String()
+	// Exact fixed-point rendering lives in internal/decimalfmt, shared with the
+	// kernel backend so both paths render DECIMAL identically. See #274.
+	return decimalfmt.ExactString(tvc.decimalArray.Value(i), tvc.scale)
 }
 
 func (tvc *decimal128Container) IsNull(i int) bool {
