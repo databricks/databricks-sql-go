@@ -47,6 +47,14 @@ type Config struct {
 	// so the kernel path relaxes both to match.
 	TLSSkipVerify bool
 
+	// Experimental kernel-only TLS knobs (from the WithKernel* options). These
+	// have no Thrift-path equivalent and are set via config.KernelExperimental.
+	// Empty/false fields are simply not applied. TLSTrustedCertsPEM is a custom CA
+	// bundle added on top of the system roots; TLSSkipHostnameVerify skips only the
+	// hostname check (finer-grained than the blanket TLSSkipVerify above).
+	TLSTrustedCertsPEM    []byte
+	TLSSkipHostnameVerify bool
+
 	// ProxyURL configures an HTTP proxy, already resolved for this endpoint from
 	// the same HTTP(S)_PROXY / NO_PROXY environment the Thrift path uses (NO_PROXY
 	// is applied during resolution). Empty leaves the kernel on a direct
@@ -166,6 +174,14 @@ func (k *KernelBackend) OpenSession(ctx context.Context) error {
 		}
 	}
 
+	// Experimental kernel-only TLS: a custom CA bundle and an independent hostname
+	// skip (finer-grained than the blanket InsecureSkipVerify above). The kernel's
+	// rustls stack ignores SSL_CERT_FILE, so a custom CA must be handed over
+	// explicitly.
+	if err := k.applyKernelTLS(cfg); err != nil {
+		return err
+	}
+
 	// Proxy: only when the environment configured one for this endpoint. NO_PROXY
 	// was already applied during resolution, so no bypass list is needed here;
 	// any credentials are carried in the URL userinfo (Go's proxy-env convention),
@@ -238,6 +254,31 @@ func (k *KernelBackend) OpenSession(ctx context.Context) error {
 	return nil
 }
 
+// applyKernelTLS forwards the experimental kernel-only TLS knobs to the session
+// config: a custom CA bundle and an independent hostname-skip. Each is a no-op
+// when its field is unset, so this is safe to call unconditionally. (mTLS client
+// cert/key is a separate follow-up — it needs a kernel C-ABI setter that is not
+// yet on kernel main.)
+func (k *KernelBackend) applyKernelTLS(cfg *C.KernelSessionConfig) error {
+	if len(k.cfg.TLSTrustedCertsPEM) > 0 {
+		ca := newCBytes(k.cfg.TLSTrustedCertsPEM)
+		defer ca.free()
+		if err := call(func() C.KernelStatusCode {
+			return C.kernel_session_config_set_tls_trusted_certs(cfg, ca.ptr, ca.len)
+		}); err != nil {
+			return fmt.Errorf("kernel: set_tls_trusted_certs: %w", toConnError(err))
+		}
+	}
+	if k.cfg.TLSSkipHostnameVerify {
+		if err := call(func() C.KernelStatusCode {
+			return C.kernel_session_config_set_tls_skip_hostname_verification(cfg, C.bool(true))
+		}); err != nil {
+			return fmt.Errorf("kernel: set_tls_skip_hostname_verification: %w", toConnError(err))
+		}
+	}
+	return nil
+}
+
 // setAuth applies the resolved auth form to the session config via exactly one
 // kernel_session_config_set_auth_* call. PAT and M2M are plain value setters; U2M
 // records the client id / redirect port / scopes and the kernel owns the browser
@@ -299,6 +340,20 @@ func trySetAuth(auth Auth) error {
 	defer C.kernel_session_config_free(cfg)
 	k := &KernelBackend{cfg: Config{Auth: auth}}
 	return k.setAuth(cfg)
+}
+
+// trySetKernelTLS allocates a throwaway session config, applies the experimental
+// TLS knobs from cfg to it, and frees it — the analogous test seam to trySetAuth,
+// so a tagged test can exercise the real byte-buffer cgo setter (trusted certs)
+// and the hostname-skip setter end to end. Not used in production.
+func trySetKernelTLS(cfg Config) error {
+	var c *C.KernelSessionConfig
+	if err := call(func() C.KernelStatusCode { return C.kernel_session_config_new(&c) }); err != nil {
+		return fmt.Errorf("config_new: %w", err)
+	}
+	defer C.kernel_session_config_free(c)
+	k := &KernelBackend{cfg: cfg}
+	return k.applyKernelTLS(c)
 }
 
 // applyInitialNamespace runs USE CATALOG / USE SCHEMA to select the configured

@@ -48,6 +48,48 @@ type Config struct {
 	ThriftTransport           string
 	ThriftProtocolVersion     cli_service.TProtocolVersion
 	ThriftDebugClientProtocol bool
+
+	// KernelExperimental carries experimental, kernel-backend-only options that
+	// have no equivalent on the default (Thrift) path — currently the richer TLS
+	// surface (a trusted-CA bundle and an independent hostname-skip) the kernel
+	// exposes over its C ABI. It lives here on Config, NOT on UserConfig, so it
+	// stays off the stable exported/DSN surface (the same treatment TLSConfig and
+	// ArrowConfig get). nil means no experimental option was set. The Thrift
+	// backend rejects a non-nil value loudly; the kernel backend forwards it to
+	// the kernel C ABI. Mirrors Node's non-exported InternalConnectionOptions /
+	// Python's underscore-prefixed kwargs.
+	KernelExperimental *KernelExperimentalConfig
+}
+
+// KernelExperimentalConfig holds the experimental, kernel-only connection knobs
+// set via the WithKernel* options. Every field is either forwarded to the kernel
+// C ABI (kernel backend) or rejected (Thrift backend) — never silently dropped;
+// the exhaustiveness guard TestKernelExperimentalFieldsClassified asserts this so
+// a newly-added field can't slip through unclassified.
+type KernelExperimentalConfig struct {
+	// TLSTrustedCertsPEM is a PEM CA bundle added to the kernel's trust store on
+	// top of the system roots (maps to kernel_session_config_set_tls_trusted_certs).
+	// Needed because the kernel's rustls stack ignores SSL_CERT_FILE, so a custom
+	// CA must be handed to the kernel explicitly.
+	TLSTrustedCertsPEM []byte
+	// TLSSkipHostnameVerify skips only the certificate hostname check, independent
+	// of the blanket InsecureSkipVerify (which relaxes both chain and hostname).
+	// Maps to kernel_session_config_set_tls_skip_hostname_verification.
+	TLSSkipHostnameVerify bool
+}
+
+// DeepCopy returns a deep copy of the experimental config, or nil for a nil
+// receiver. The byte slice is copied so a mutation of the copy can't reach back
+// into the original (the connector may DeepCopy the whole Config per conn).
+func (k *KernelExperimentalConfig) DeepCopy() *KernelExperimentalConfig {
+	if k == nil {
+		return nil
+	}
+	cp := &KernelExperimentalConfig{TLSSkipHostnameVerify: k.TLSSkipHostnameVerify}
+	if k.TLSTrustedCertsPEM != nil {
+		cp.TLSTrustedCertsPEM = append([]byte(nil), k.TLSTrustedCertsPEM...)
+	}
+	return cp
 }
 
 // MetricViewMetadataConfKey is the server session conf that enables metric-view
@@ -110,6 +152,7 @@ func (c *Config) DeepCopy() *Config {
 		ThriftTransport:           c.ThriftTransport,
 		ThriftProtocolVersion:     c.ThriftProtocolVersion,
 		ThriftDebugClientProtocol: c.ThriftDebugClientProtocol,
+		KernelExperimental:        c.KernelExperimental.DeepCopy(),
 	}
 }
 

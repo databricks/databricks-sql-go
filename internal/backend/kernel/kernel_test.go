@@ -45,6 +45,31 @@ func TestSetAuthByMode(t *testing.T) {
 	}
 }
 
+// TestSetKernelTLS exercises the real cgo setters for the experimental kernel-only
+// TLS knobs (the byte-buffer trusted-CA bundle + the hostname-skip bool) via the
+// trySetKernelTLS seam — proving the (*C.uint8_t, C.size_t) marshalling and the C
+// signatures. A failure here means the field→setter wiring or a C signature
+// drifted.
+func TestSetKernelTLS(t *testing.T) {
+	ca := []byte("-----BEGIN CERTIFICATE-----\nca\n-----END CERTIFICATE-----\n")
+	cases := []struct {
+		name string
+		cfg  Config
+	}{
+		{"trusted certs only", Config{TLSTrustedCertsPEM: ca}},
+		{"skip hostname only", Config{TLSSkipHostnameVerify: true}},
+		{"both together", Config{TLSTrustedCertsPEM: ca, TLSSkipHostnameVerify: true}},
+		{"none (no-op)", Config{}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if err := trySetKernelTLS(c.cfg); err != nil {
+				t.Errorf("applyKernelTLS(%s) = %v, want nil", c.name, err)
+			}
+		})
+	}
+}
+
 // The pure error-classifier tests (TestIsBadConnection, TestIsSessionFatal,
 // TestToConnError, TestToStatementErrorNeverBadConn) live in the untagged
 // errors_classify_test.go so they run under CGO_ENABLED=0. The tests below need a
