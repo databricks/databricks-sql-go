@@ -11,21 +11,23 @@
 // the error mapping to the driver's error surface, and the gated step logger.
 // The backend, operation, and rows layers live in sibling files.
 //
-// The directives below name the kernel library to link but carry no search
-// paths, so the header and static lib locations are supplied at build time via
-// the standard CGO_CFLAGS / CGO_LDFLAGS environment variables, e.g.:
-//
-//	CGO_CFLAGS="-I<kernel>/include" \
-//	CGO_LDFLAGS="-L<kernel>/target/release -Wl,-rpath,<kernel>/target/release" \
-//	go build -tags databricks_kernel ./...
-//
-// A shippable build instead links a committed per-platform prebuilt static lib
-// via a ${SRCDIR}-relative path (the go-duckdb duckdb-go-bindings model); wiring
-// that + a tagged CI job is a distribution follow-up.
+// Link contract (${SRCDIR}-relative, machine-independent). The header is
+// included from ${SRCDIR}/include and the static lib is linked from
+// ${SRCDIR}/lib/<os>_<arch>; the per-platform link flags live in the
+// cgo_<os>.go files beside this one. Both directories are produced by the
+// build step (`make kernel-lib`), which checks out the kernel at the commit
+// pinned in the repo-root KERNEL_REV file and `cargo build`s a static lib —
+// so the kernel revision is a reviewable pin, never baked into a #cgo line
+// (those expand only ${SRCDIR} and cannot run git or read env). The dirs are
+// .gitignore'd; nothing kernel-built is committed. For local development
+// against an existing checkout, `make kernel-lib KERNEL_LOCAL_A=<path/to>.a
+// KERNEL_LOCAL_HEADER=<path/to>databricks_kernel.h` copies those in instead of
+// building. The eventual release path downloads a published .a at the pinned
+// rev rather than building it (see the driver's distribution design).
 package kernel
 
 /*
-#cgo LDFLAGS: -ldatabricks_sql_kernel -ldl -lm
+#cgo CFLAGS: -I${SRCDIR}/include
 #include <stdlib.h>
 #include "databricks_kernel.h"
 */

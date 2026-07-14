@@ -168,8 +168,11 @@ databricks-sql-kernel, reached through a cgo C ABI. It is opt-in and compiled in
 only under a build tag, so the default build is unchanged.
 
 To use it, build with the databricks_kernel tag and CGO enabled, and select it
-per connection with WithUseKernel:
+per connection with WithUseKernel. The tagged build links the kernel static
+library, which is not committed — run `make kernel-lib` first to produce it (and
+the C header) under the cgo link path; `make build-kernel` does both steps:
 
+	make kernel-lib      # builds the kernel .a + header at the pinned KERNEL_REV
 	CGO_ENABLED=1 go build -tags databricks_kernel ./...
 
 	connector, _ := dbsql.NewConnector(

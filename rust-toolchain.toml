@@ -1,0 +1,10 @@
+# Pins the Rust toolchain used to build the SEA kernel static lib, so the archive
+# is reproducible: a floating `stable` drifts the .a (and its sha256) under a fixed
+# KERNEL_REV as rustc/std advance. rustup honors this file for any cargo invocation
+# in this dir or below — including the kernel checkout under build/kernel-src/ — so
+# CI and local `make kernel-lib` build with the same compiler. Bump deliberately,
+# in lockstep with the kernel's MSRV (kernel Cargo.toml edition 2021; no pin of its
+# own). Only the opt-in `databricks_kernel` build reads this; the pure-Go default
+# build has no Rust dependency.
+[toolchain]
+channel = "1.96.1"

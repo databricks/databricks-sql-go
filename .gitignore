@@ -66,3 +66,8 @@ _tmp*
 .vscode/
 __debug_bin
 .DS_Store
+
+# Kernel (SEA) backend build artifacts — produced by `make kernel-lib`, never committed.
+/build/kernel-src/
+/internal/backend/kernel/lib/
+/internal/backend/kernel/include/
