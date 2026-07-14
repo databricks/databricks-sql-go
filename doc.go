@@ -226,9 +226,11 @@ internally, below the C ABI, with no user-facing knob.
 Two further kernel-backend caveats. The INTERVAL types (year-month / day-time)
 listed in the type table below are not yet handled by the kernel scanner and
 return a scan error; use the default (Thrift) backend for interval columns. And
-the kernel backend does not yet surface a per-statement server query id, so a
-QueryIdCallback (see below) fires with "" and no EXECUTE_STATEMENT telemetry is
-emitted for kernel queries.
+the kernel backend does not yet surface a per-statement server query id on the
+success path, so a QueryIdCallback (see below) fires with "" and no
+EXECUTE_STATEMENT telemetry is emitted for kernel queries. (On a query failure the
+server query id IS available: the returned error is a DBExecutionError whose
+QueryId() carries it — see the Errors section.)
 
 # Programmatically Retrieving Connection and Query Id
 
