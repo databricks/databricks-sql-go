@@ -4,8 +4,10 @@ package dbsql
 
 import (
 	"context"
-	"strings"
+	"errors"
 	"testing"
+
+	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 )
 
 // In the default pure-Go build (no databricks_kernel tag) the kernel backend is
@@ -27,7 +29,8 @@ func TestKernelBackendNotCompiledIn(t *testing.T) {
 	if err == nil {
 		t.Fatal("Connect with WithUseKernel(true) in a non-kernel build should error, got nil")
 	}
-	if !strings.Contains(err.Error(), "databricks_kernel") && !strings.Contains(err.Error(), "not compiled") {
-		t.Errorf("error should mention the missing build tag / not-compiled-in; got: %v", err)
+	// Detect the build mismatch via the exported sentinel, not message text.
+	if !errors.Is(err, dbsqlerr.ErrKernelNotCompiled) {
+		t.Errorf("error should wrap ErrKernelNotCompiled; got: %v", err)
 	}
 }

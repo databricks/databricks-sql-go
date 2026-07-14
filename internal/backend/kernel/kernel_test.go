@@ -103,6 +103,45 @@ func TestExecuteRejectsStaging(t *testing.T) {
 	}
 }
 
+// ExecutionError must satisfy the same public contract as the Thrift path so the
+// errors.Is → errors.As → SqlState()/QueryId() recipe documented in doc.go works
+// on the kernel backend too (it previously returned a bare *KernelError that
+// matched none of it).
+func TestExecutionErrorContract(t *testing.T) {
+	o := &kernelOp{}
+
+	if got := o.ExecutionError(context.Background(), nil); got != nil {
+		t.Errorf("ExecutionError(nil) = %v, want nil", got)
+	}
+
+	cause := &KernelError{Code: statusSqlError, Message: "boom", SQLState: "42000", QueryID: "q-123"}
+	err := o.ExecutionError(context.Background(), cause)
+	if err == nil {
+		t.Fatal("ExecutionError(cause) should not be nil")
+	}
+	if !errors.Is(err, dbsqlerr.ExecutionError) {
+		t.Errorf("kernel execution error should match dbsqlerr.ExecutionError; got %v", err)
+	}
+	var dbExec dbsqlerr.DBExecutionError
+	if !errors.As(err, &dbExec) {
+		t.Fatalf("kernel execution error should be a DBExecutionError; got %T", err)
+	}
+	if dbExec.SqlState() != "42000" {
+		t.Errorf("SqlState() = %q, want 42000 (from the KernelError)", dbExec.SqlState())
+	}
+	// QueryId must come from the KernelError, not the (empty) ctx query id — the
+	// kernel path's StatementID() is "", so relying on ctx would drop the one
+	// server-side correlation handle.
+	if dbExec.QueryId() != "q-123" {
+		t.Errorf("QueryId() = %q, want q-123 (from the KernelError)", dbExec.QueryId())
+	}
+	// The *KernelError cause stays reachable via Unwrap.
+	var ke *KernelError
+	if !errors.As(err, &ke) {
+		t.Error("the *KernelError cause should remain reachable via errors.As")
+	}
+}
+
 // The cell/nested rendering (ScanCell and the JSON grammar) now lives in the
 // untagged internal/arrowscan package, where its tests run in the default
 // CGO_ENABLED=0 build; see arrowscan_test.go. The decimal formatter lives in

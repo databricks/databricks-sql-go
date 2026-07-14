@@ -212,6 +212,18 @@ func TestArrowbasedKernelRenderParity(t *testing.T) {
 			vb.Append(6)
 			return b.NewArray()
 		}},
+		// Empty-but-non-null collections: the row is present with zero elements, so
+		// both backends must render [] / {} (not null). Distinct from a null parent.
+		{"empty_list", func() arrow.Array {
+			b := array.NewListBuilder(pool, arrow.PrimitiveTypes.Int64)
+			b.Append(true) // present, no element appends
+			return b.NewArray()
+		}},
+		{"empty_map", func() arrow.Array {
+			b := array.NewMapBuilder(pool, arrow.BinaryTypes.String, arrow.PrimitiveTypes.Int64, false)
+			b.Append(true) // present, no entries
+			return b.NewArray()
+		}},
 	}
 
 	// Sliced-array cases: a slice sets a non-zero logical offset, so an

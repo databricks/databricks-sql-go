@@ -11,11 +11,14 @@ import "C"
 import (
 	"context"
 	"database/sql/driver"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
 
+	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 	"github.com/databricks/databricks-sql-go/internal/backend"
+	dbsqlerrint "github.com/databricks/databricks-sql-go/internal/errors"
 	dbsqlrows "github.com/databricks/databricks-sql-go/internal/rows"
 )
 
@@ -155,6 +158,15 @@ func (k *KernelBackend) execute(ctx context.Context, req backend.ExecRequest) (b
 	// Capture the modified-row count now, while exec is live — the operation is
 	// closed (nulling exec) before AffectedRows is read on the ExecContext path.
 	op.affectedRows = int64(C.kernel_executed_statement_num_modified_rows(exec))
+	// A nil execErr means the statement reached a terminal state server-side (it
+	// committed). We deliberately do NOT re-check ctx.Err() here to convert a
+	// completed statement into a cancellation: for a non-idempotent DML that would
+	// report a committed write as cancelled, and a caller treating cancellation as
+	// retryable would double-write. This matches the Thrift path, which returns
+	// success on completion with no post-completion ctx re-check. A cancel that
+	// arrives before completion is still honored via the watcher → execErr branch
+	// above; one that loses the race to a committed statement yields that statement's
+	// result, same as Thrift.
 	klog("Execute OK stmt=%p exec=%p affectedRows=%d", stmt, exec, op.affectedRows)
 	return op, nil
 }
@@ -256,18 +268,22 @@ func (o *kernelOp) close() bool {
 	return didClose
 }
 
-// ExecutionError wraps cause as the driver's execution error.
-//
-// Deferred (tracked): this returns the bare *KernelError from toStatementError,
-// which implements only Error(). The Thrift path returns NewExecutionError, which
-// satisfies errors.Is(err, dbsqlerr.ExecutionError) and the exported
-// DBExecutionError interface (QueryId()/SqlState()). So the errors.Is/errors.As
-// recipe in doc.go silently no-ops for kernel query failures even though
-// KernelError carries SQLState/QueryID — same code, different result by backend.
-// The fix (wrap via dbsqlerrint.NewExecutionErrorWithState with the KernelError as
-// cause, so sqlstate/queryId stay reachable) lands with the telemetry follow-up
-// that also surfaces the statement id; kept out of this PR to keep the error-path
-// change together with that work.
+// ExecutionError wraps cause as the driver's execution error so it satisfies the
+// same public contract as the Thrift path: errors.Is(err, dbsqlerr.ExecutionError)
+// matches, and errors.As(err, &dbExecErr) exposes SqlState()/QueryId() — the recipe
+// documented in doc.go. The kernel carries BOTH sqlState and the server query id in
+// its own *KernelError (not a Thrift TGetOperationStatusResp, and unlike Thrift the
+// kernel path has no ctx query id — StatementID() is ""), so pull both out and hand
+// them to NewExecutionErrorWithState, keeping the *KernelError as the cause so its
+// detail stays reachable via Unwrap.
 func (o *kernelOp) ExecutionError(ctx context.Context, cause error) error {
-	return toStatementError(cause)
+	if cause == nil {
+		return nil
+	}
+	sqlState, queryID := "", ""
+	var ke *KernelError
+	if errors.As(cause, &ke) {
+		sqlState, queryID = ke.SQLState, ke.QueryID
+	}
+	return dbsqlerrint.NewExecutionErrorWithState(ctx, dbsqlerr.ErrQueryExecution, cause, queryID, sqlState)
 }

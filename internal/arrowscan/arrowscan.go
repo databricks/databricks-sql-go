@@ -164,6 +164,13 @@ func ScanCellCached(col arrow.Array, row int, loc *time.Location, keys *StructKe
 		if !ok {
 			return nil, fmt.Errorf("timestamp column has unexpected datatype %s", col.DataType())
 		}
+		// Honor the schema's declared unit. This is intentionally stricter than the
+		// Thrift path (arrowRows hardcodes Timestamp_us): Databricks TIMESTAMP is
+		// always microseconds, so both agree in practice — but if a non-µs TIMESTAMP
+		// ever arrived, this renders the correct instant while Thrift would misread
+		// it. The cross-backend parity test pins both sides to µs (matching the wire
+		// reality), so it can't exercise a non-µs value; TestScanCellTimestampUnits
+		// covers this arm's unit-correctness directly instead.
 		return inLocation(c.Value(row).ToTime(dt.Unit), loc), nil
 	case *array.Decimal128:
 		dt := col.DataType().(*arrow.Decimal128Type)

@@ -41,9 +41,8 @@ func TestValidateKernelConfig(t *testing.T) {
 
 	// Every rejection must (a) error and (b) wrap ErrNotSupportedByKernel, since
 	// that sentinel is the documented programmatic fallback-detection contract —
-	// asserting only err != nil would let a dropped %w (e.g. the round-3
-	// double-negative message bug) ship green. Table-driven so a new rejection is
-	// covered by adding one row.
+	// asserting only err != nil would let a dropped or malformed %w wrap ship green.
+	// Table-driven so a new rejection is covered by adding one row.
 	rejections := []struct {
 		name string
 		mut  func(*config.Config)

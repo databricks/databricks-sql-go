@@ -156,6 +156,43 @@ func TestScanCellTimestampLocation(t *testing.T) {
 	})
 }
 
+// ScanCell honors the TIMESTAMP column's declared arrow unit (not a hardcoded
+// microsecond assumption), so the same wall-clock instant is rendered whether the
+// unit is s / ms / µs / ns. The cross-backend parity test can't cover this (it
+// pins both sides to µs, matching the Databricks wire reality), so the unit
+// arithmetic is verified here directly.
+func TestScanCellTimestampUnits(t *testing.T) {
+	pool := memory.NewGoAllocator()
+	// One fixed instant, expressed in each unit's ticks-since-epoch.
+	inst := time.Date(2026, time.July, 9, 12, 0, 0, 0, time.UTC)
+	cases := []struct {
+		unit  arrow.TimeUnit
+		ticks int64
+	}{
+		{arrow.Second, inst.Unix()},
+		{arrow.Millisecond, inst.UnixMilli()},
+		{arrow.Microsecond, inst.UnixMicro()},
+		{arrow.Nanosecond, inst.UnixNano()},
+	}
+	for _, tc := range cases {
+		t.Run(tc.unit.String(), func(t *testing.T) {
+			b := array.NewTimestampBuilder(pool, &arrow.TimestampType{Unit: tc.unit})
+			defer b.Release()
+			b.Append(arrow.Timestamp(tc.ticks))
+			arr := b.NewArray()
+			defer arr.Release()
+
+			v, err := ScanCell(arr, 0, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := v.(time.Time); !got.Equal(inst) {
+				t.Errorf("unit %s: got %v, want %v", tc.unit, got.UTC(), inst)
+			}
+		})
+	}
+}
+
 // ScanCell renders nested types (list/struct/map) to a JSON string matching the
 // Thrift path.
 func TestScanCellNested(t *testing.T) {
@@ -354,4 +391,119 @@ func TestStructKeyCacheReset(t *testing.T) {
 
 	var nilCache *StructKeyCache
 	nilCache.Reset() // must not panic
+}
+
+// LargeList and FixedSizeList are handled by arrowscan but NOT by the Thrift
+// arrowbased renderer, so the cross-backend parity test can't reach them; their
+// offset arithmetic (hand-rolled, distinct from List's ValueOffsets — arrow-go v12
+// LargeList.ValueOffsets does not add the logical offset, and FixedSizeList has no
+// ValueOffsets at all) is verified here directly, including on a sliced array where
+// a non-zero logical offset would expose an off-by-offset bug.
+func TestScanCellLargeAndFixedSizeList(t *testing.T) {
+	pool := memory.NewGoAllocator()
+
+	t.Run("large list", func(t *testing.T) {
+		b := array.NewLargeListBuilder(pool, arrow.PrimitiveTypes.Int64)
+		defer b.Release()
+		vb := b.ValueBuilder().(*array.Int64Builder)
+		for r := 0; r < 3; r++ { // 3 rows so a slice can drop the head
+			b.Append(true)
+			vb.Append(int64(r * 10))
+			vb.Append(int64(r*10 + 1))
+		}
+		full := b.NewArray()
+		defer full.Release()
+		sliced := array.NewSlice(full, 1, 3) // logical offset != 0
+		defer sliced.Release()
+
+		// row 0 of the slice is row 1 of full → [10,11]
+		got, err := ScanCell(sliced, 0, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != "[10,11]" {
+			t.Errorf("sliced large-list row 0 = %q, want [10,11]", got)
+		}
+	})
+
+	t.Run("fixed-size list", func(t *testing.T) {
+		b := array.NewFixedSizeListBuilder(pool, 2, arrow.PrimitiveTypes.Int64)
+		defer b.Release()
+		vb := b.ValueBuilder().(*array.Int64Builder)
+		for r := 0; r < 3; r++ {
+			b.Append(true)
+			vb.Append(int64(r * 10))
+			vb.Append(int64(r*10 + 1))
+		}
+		full := b.NewArray()
+		defer full.Release()
+		sliced := array.NewSlice(full, 1, 3) // offset != 0 → base = (row+offset)*n
+		defer sliced.Release()
+
+		got, err := ScanCell(sliced, 0, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != "[10,11]" {
+			t.Errorf("sliced fixed-size-list row 0 = %q, want [10,11]", got)
+		}
+	})
+}
+
+// Empty-but-non-null collections must render as [] / {} (not null): the row is
+// present, the collection just has zero elements. A nil/absent parent is a
+// separate case (covered by the null-leaf tests).
+func TestScanCellEmptyCollections(t *testing.T) {
+	pool := memory.NewGoAllocator()
+
+	t.Run("empty list", func(t *testing.T) {
+		b := array.NewListBuilder(pool, arrow.PrimitiveTypes.Int64)
+		defer b.Release()
+		b.Append(true) // present row, no ValueBuilder appends → empty
+		arr := b.NewArray()
+		defer arr.Release()
+		got, err := ScanCell(arr, 0, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != "[]" {
+			t.Errorf("empty list = %q, want []", got)
+		}
+	})
+
+	t.Run("empty map", func(t *testing.T) {
+		b := array.NewMapBuilder(pool, arrow.BinaryTypes.String, arrow.PrimitiveTypes.Int64, false)
+		defer b.Release()
+		b.Append(true) // present row, no entries → empty
+		arr := b.NewArray()
+		defer arr.Release()
+		got, err := ScanCell(arr, 0, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != "{}" {
+			t.Errorf("empty map = %q, want {}", got)
+		}
+	})
+}
+
+// DECIMAL rendering at the len(digits) == scale boundary: a value whose digit
+// count equals the scale must render as "0.<digits>" (leading zero + full
+// fractional part), not drop the integer-part zero or misplace the point.
+func TestScanCellDecimalScaleBoundary(t *testing.T) {
+	pool := memory.NewGoAllocator()
+	// scale 2, value 0.05 → unscaled 5 (1 digit, scale 2): integer part is 0.
+	dt := &arrow.Decimal128Type{Precision: 5, Scale: 2}
+	b := array.NewDecimal128Builder(pool, dt)
+	defer b.Release()
+	b.Append(decimal128.FromU64(5))
+	arr := b.NewArray()
+	defer arr.Release()
+	got, err := ScanCell(arr, 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "0.05" {
+		t.Errorf("decimal 5 @ scale 2 = %q, want 0.05", got)
+	}
 }
