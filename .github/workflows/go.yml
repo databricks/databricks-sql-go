@@ -243,10 +243,9 @@ jobs:
       # missed, then runs `CGO_ENABLED=1 go test -tags databricks_kernel ./...`.
       #
       # No warehouse creds here — this job runs only the tagged UNIT tests, so the
-      # live e2e / Thrift-parity tests self-skip (they need DATABRICKS_HOST /
-      # DATABRICKS_HTTP_PATH / DATABRICKS_TOKEN). This matches how build-and-test
-      # treats the Thrift path (pure-Go unit tests only); live integration tests for
-      # both backends run through the separate trigger-integration-tests.yml dispatch
-      # to databricks-driver-test, not in this workflow.
+      # live e2e / Thrift-parity tests self-skip (they need the DATABRICKS_PECOTESTING_*
+      # warehouse credentials). This matches how build-and-test treats the Thrift path
+      # (pure-Go unit tests only); the credentialed e2e suites for both backends run in
+      # the separate nightly-e2e workflow.
       - name: Build kernel lib + run tagged tests
         run: make test-kernel

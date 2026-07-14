@@ -13,11 +13,14 @@ import (
 // parity comparison against the kernel backend.
 func thriftTestDB(t *testing.T) *sql.DB {
 	t.Helper()
-	host := os.Getenv("DATABRICKS_HOST")
-	httpPath := os.Getenv("DATABRICKS_HTTP_PATH")
-	token := os.Getenv("DATABRICKS_TOKEN")
+	host := os.Getenv("DATABRICKS_PECOTESTING_SERVER_HOSTNAME")
+	httpPath := os.Getenv("DATABRICKS_PECOTESTING_HTTP_PATH2")
+	token := os.Getenv("DATABRICKS_PECOTESTING_TOKEN")
+	if token == "" {
+		token = os.Getenv("DATABRICKS_PECOTESTING_TOKEN_PERSONAL")
+	}
 	if host == "" || httpPath == "" || token == "" {
-		t.Skip("set DATABRICKS_HOST / DATABRICKS_HTTP_PATH / DATABRICKS_TOKEN for the parity test")
+		t.Skip("set DATABRICKS_PECOTESTING_SERVER_HOSTNAME, DATABRICKS_PECOTESTING_HTTP_PATH2, and DATABRICKS_PECOTESTING_TOKEN for the parity test")
 	}
 	connector, err := NewConnector(
 		WithServerHostname(host),

@@ -18,10 +18,10 @@ import (
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 )
 
-// kernelTestDB opens a kernel-backed *sql.DB from DATABRICKS_HOST /
-// DATABRICKS_HTTP_PATH / DATABRICKS_TOKEN, or skips when they are unset. It goes
-// through the standard connector with WithUseKernel(true) — the same path a real
-// consumer uses — not a kernel-only connector.
+// kernelTestDB opens a kernel-backed *sql.DB from the DATABRICKS_PECOTESTING_*
+// warehouse credentials, or skips when they are unset. It goes through the standard
+// connector with WithUseKernel(true) — the same path a real consumer uses — not a
+// kernel-only connector.
 func kernelTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 	return kernelTestDBWith(t)
@@ -47,11 +47,16 @@ func TestKernelE2ESelect1(t *testing.T) {
 // counterpart to kernelTestDB.
 func kernelTestDBWith(t *testing.T, extra ...ConnOption) *sql.DB {
 	t.Helper()
-	host := os.Getenv("DATABRICKS_HOST")
-	httpPath := os.Getenv("DATABRICKS_HTTP_PATH")
-	token := os.Getenv("DATABRICKS_TOKEN")
+	// Reads the same DATABRICKS_PECOTESTING_* warehouse credentials as the Thrift
+	// E2E suite, so both backends run against one test warehouse from one secret set.
+	host := os.Getenv("DATABRICKS_PECOTESTING_SERVER_HOSTNAME")
+	httpPath := os.Getenv("DATABRICKS_PECOTESTING_HTTP_PATH2")
+	token := os.Getenv("DATABRICKS_PECOTESTING_TOKEN")
+	if token == "" {
+		token = os.Getenv("DATABRICKS_PECOTESTING_TOKEN_PERSONAL")
+	}
 	if host == "" || httpPath == "" || token == "" {
-		t.Skip("set DATABRICKS_HOST / DATABRICKS_HTTP_PATH / DATABRICKS_TOKEN for the kernel e2e")
+		t.Skip("set DATABRICKS_PECOTESTING_SERVER_HOSTNAME, DATABRICKS_PECOTESTING_HTTP_PATH2, and DATABRICKS_PECOTESTING_TOKEN for the kernel e2e")
 	}
 	opts := append([]ConnOption{
 		WithServerHostname(host),
@@ -471,12 +476,12 @@ func TestKernelE2EMetricViewMetadata(t *testing.T) {
 // M2M setter path actually authenticates end to end (not just that set_auth_m2m
 // returns OK, which TestSetAuthByMode already covers).
 func TestKernelE2EM2M(t *testing.T) {
-	host := os.Getenv("DATABRICKS_HOST")
-	httpPath := os.Getenv("DATABRICKS_HTTP_PATH")
+	host := os.Getenv("DATABRICKS_PECOTESTING_SERVER_HOSTNAME")
+	httpPath := os.Getenv("DATABRICKS_PECOTESTING_HTTP_PATH2")
 	clientID := os.Getenv("DATABRICKS_CLIENT_ID")
 	clientSecret := os.Getenv("DATABRICKS_CLIENT_SECRET")
 	if host == "" || httpPath == "" || clientID == "" || clientSecret == "" {
-		t.Skip("set DATABRICKS_HOST / DATABRICKS_HTTP_PATH / DATABRICKS_CLIENT_ID / DATABRICKS_CLIENT_SECRET for the M2M e2e")
+		t.Skip("set DATABRICKS_PECOTESTING_SERVER_HOSTNAME, DATABRICKS_PECOTESTING_HTTP_PATH2, DATABRICKS_CLIENT_ID, and DATABRICKS_CLIENT_SECRET for the M2M e2e")
 	}
 
 	connector, err := NewConnector(
