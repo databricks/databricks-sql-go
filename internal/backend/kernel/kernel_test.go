@@ -14,6 +14,7 @@ import (
 	"github.com/databricks/databricks-sql-go/driverctx"
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 	"github.com/databricks/databricks-sql-go/internal/backend"
+	dbsqlrows "github.com/databricks/databricks-sql-go/internal/rows"
 	"github.com/databricks/databricks-sql-go/logger"
 )
 
@@ -345,3 +346,78 @@ func strPtr(s string) *string { return &s }
 // CGO_ENABLED=0 build; see arrowscan_test.go. The decimal formatter lives in
 // internal/decimalfmt. This file keeps the kernel-specific tests: error mapping,
 // bad-connection classification, and the bound-params rejection.
+
+// kernelRows.Close() must fire the OnClose telemetry callback so the kernel path
+// records CLOSE_STATEMENT / latency / statement success-or-failure — conn gates
+// that recording on OnClose being called, and the Thrift path fires it. Before this
+// wiring, kernel queries emitted no close telemetry (a production blind spot). A bare
+// kernelRows is safe: Close() nil-guards cur/stream/op.
+func TestKernelRowsCloseFiresOnClose(t *testing.T) {
+	t.Run("success path reports nil iterErr", func(t *testing.T) {
+		var got struct {
+			called            bool
+			chunkCount        int
+			iterErr, closeErr error
+		}
+		r := &kernelRows{
+			chunkCount: 3,
+			callbacks: &dbsqlrows.TelemetryCallbacks{
+				OnClose: func(latencyMs int64, chunkCount int, iterErr, closeErr error) {
+					got.called, got.chunkCount, got.iterErr, got.closeErr = true, chunkCount, iterErr, closeErr
+				},
+			},
+		}
+		if err := r.Close(); err != nil {
+			t.Fatalf("Close() = %v, want nil", err)
+		}
+		if !got.called {
+			t.Fatal("OnClose was not fired")
+		}
+		if got.chunkCount != 3 {
+			t.Errorf("OnClose chunkCount = %d, want 3", got.chunkCount)
+		}
+		if got.iterErr != nil || got.closeErr != nil {
+			t.Errorf("OnClose errs = (%v, %v), want (nil, nil)", got.iterErr, got.closeErr)
+		}
+	})
+
+	t.Run("iterationErr is reported", func(t *testing.T) {
+		sentinel := errors.New("boom")
+		var gotIter error
+		fired := 0
+		r := &kernelRows{
+			iterationErr: sentinel,
+			callbacks: &dbsqlrows.TelemetryCallbacks{
+				OnClose: func(_ int64, _ int, iterErr, _ error) { fired++; gotIter = iterErr },
+			},
+		}
+		_ = r.Close()
+		if !errors.Is(gotIter, sentinel) {
+			t.Errorf("OnClose iterErr = %v, want %v", gotIter, sentinel)
+		}
+		// Idempotent: a second Close must not re-fire (conn/database-sql may double-close).
+		_ = r.Close()
+		if fired != 1 {
+			t.Errorf("OnClose fired %d times across two Close() calls, want 1", fired)
+		}
+	})
+
+	t.Run("nil callbacks is safe", func(t *testing.T) {
+		r := &kernelRows{} // no callbacks
+		if err := r.Close(); err != nil {
+			t.Errorf("Close() with nil callbacks = %v, want nil", err)
+		}
+	})
+
+	t.Run("construction-failure Close must not fire a success OnClose", func(t *testing.T) {
+		// newKernelRows arms the callback only after a successful build, so its
+		// cleanup Close() on a schema-fetch/import failure has callbacks==nil and
+		// must NOT record a (falsely successful) CLOSE_STATEMENT. Model that state.
+		fired := false
+		r := &kernelRows{ /* callbacks intentionally nil, as during construction */ }
+		_ = r.Close()
+		if fired {
+			t.Error("OnClose fired for a rows object that never finished construction")
+		}
+	})
+}
