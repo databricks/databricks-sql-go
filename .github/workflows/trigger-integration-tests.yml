@@ -9,9 +9,18 @@ name: Trigger Integration Tests
 # preview with the `integration-test` label (replay) or `integration-test-full`
 # (full passthrough), and merge queue runs the real required gate.
 #
+# The suite runs against either driver backend, selected by the label:
+#   - `integration-test` (replay) / `integration-test-full` (passthrough) → Thrift
+#   - `integration-test-kernel` (passthrough)                             → SEA-via-kernel
+# The kernel label adds `go_mode: sea` to the dispatch payload; driver-test then
+# builds the kernel static lib and runs the tagged (databricks_kernel) leg. It uses
+# passthrough (real warehouse) — the sea leg has no committed recordings to replay
+# yet, so there is no sea replay label until those are captured.
+#
 # Required external setup:
 #
-#   1. `integration-test` and `integration-test-full` labels exist in this repo.
+#   1. The three trigger labels exist in this repo: `integration-test`,
+#      `integration-test-full`, `integration-test-kernel`.
 #   2. `INTEGRATION_TEST_APP_ID` / `INTEGRATION_TEST_PRIVATE_KEY` repo secrets
 #      are installed in this repo for the dispatcher GitHub App.
 #   3. The app is installed/granted on `databricks-driver-test` so this workflow
@@ -46,7 +55,7 @@ jobs:
         with:
           script: |
             const present = context.payload.pull_request.labels.map((l) => l.name);
-            const triggerLabels = ['integration-test', 'integration-test-full'];
+            const triggerLabels = ['integration-test', 'integration-test-full', 'integration-test-kernel'];
             const removed = [];
             for (const name of triggerLabels) {
               if (!present.includes(name)) continue;
@@ -111,7 +120,7 @@ jobs:
               completed_at: new Date().toISOString(),
               output: {
                 title: 'Skipped on PR - runs in merge queue',
-                summary: 'Go integration tests are skipped on ordinary PR events and run as a required gate in the merge queue. Add the `integration-test` label to preview replay (or `integration-test-full` for the full passthrough suite) on this PR.',
+                summary: 'Go integration tests are skipped on ordinary PR events and run as a required gate in the merge queue. Preview on this PR by adding a label: `integration-test` (Thrift, replay) or `integration-test-full` (Thrift, passthrough); `integration-test-kernel` runs the SEA-via-kernel backend against the real warehouse (passthrough).',
               },
             });
 
@@ -122,7 +131,8 @@ jobs:
       github.event_name == 'pull_request' &&
       github.event.action == 'labeled' &&
       (github.event.label.name == 'integration-test' ||
-       github.event.label.name == 'integration-test-full')
+       github.event.label.name == 'integration-test-full' ||
+       github.event.label.name == 'integration-test-kernel')
     runs-on:
       group: databricks-protected-runner-group
       labels: linux-ubuntu-latest
@@ -134,14 +144,24 @@ jobs:
       pull-requests: write
       checks: write
     steps:
-      - name: Resolve proxy mode from label
+      - name: Resolve proxy mode + backend from label
         id: mode
+        # go_mode: integration-test-kernel runs the SEA-via-kernel backend; the others
+        # run Thrift. proxy_mode: integration-test-full and integration-test-kernel hit
+        # the real warehouse (passthrough); plain integration-test serves recordings
+        # (replay). The kernel label is passthrough because the sea leg has no committed
+        # recordings to replay yet. driver-test reads go_mode to decide whether to build
+        # the kernel lib and run the tagged leg.
         run: |
-          if [ "${{ github.event.label.name }}" = "integration-test-full" ]; then
-            echo "proxy_mode=passthrough" >> "$GITHUB_OUTPUT"
-          else
-            echo "proxy_mode=replay" >> "$GITHUB_OUTPUT"
-          fi
+          LABEL="${{ github.event.label.name }}"
+          case "$LABEL" in
+            integration-test-full|integration-test-kernel) echo "proxy_mode=passthrough" >> "$GITHUB_OUTPUT" ;;
+            *)                                             echo "proxy_mode=replay"      >> "$GITHUB_OUTPUT" ;;
+          esac
+          case "$LABEL" in
+            integration-test-kernel) echo "go_mode=sea"    >> "$GITHUB_OUTPUT" ;;
+            *)                       echo "go_mode=thrift" >> "$GITHUB_OUTPUT" ;;
+          esac
 
       - name: Generate GitHub App token (driver-test repo)
         id: app-token
@@ -156,6 +176,7 @@ jobs:
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           PROXY_MODE: ${{ steps.mode.outputs.proxy_mode }}
+          GO_MODE: ${{ steps.mode.outputs.go_mode }}
         with:
           github-token: ${{ steps.app-token.outputs.token }}
           script: |
@@ -170,9 +191,10 @@ jobs:
                 pr_repo: context.repo.owner + '/' + context.repo.repo,
                 pr_url: pr.html_url,
                 proxy_mode: process.env.PROXY_MODE,
+                go_mode: process.env.GO_MODE,
               },
             });
-            core.info(`Dispatched go-pr-test (${process.env.PROXY_MODE}) for PR #${pr.number} @ ${pr.head.sha}`);
+            core.info(`Dispatched go-pr-test (${process.env.GO_MODE}/${process.env.PROXY_MODE}) for PR #${pr.number} @ ${pr.head.sha}`);
 
       - name: Fail check on dispatch error
         if: failure()
@@ -198,13 +220,14 @@ jobs:
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           PROXY_MODE: ${{ steps.mode.outputs.proxy_mode }}
+          GO_MODE: ${{ steps.mode.outputs.go_mode }}
         with:
           script: |
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
-              body: `Go integration tests triggered (\`${process.env.PROXY_MODE}\`). [View workflow runs](https://github.com/databricks/databricks-driver-test/actions).`,
+              body: `Go integration tests triggered (\`${process.env.GO_MODE}\` / \`${process.env.PROXY_MODE}\`). [View workflow runs](https://github.com/databricks/databricks-driver-test/actions).`,
             });
 
   # Merge queue: the required gate. Runs replay once before merge.
@@ -261,9 +284,14 @@ jobs:
                 pr_repo: context.repo.owner + '/' + context.repo.repo,
                 pr_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/pull/${prNumber}`,
                 proxy_mode: 'replay',
+                // The required merge-queue gate runs the Thrift backend only. The
+                // kernel (sea) leg is previewed on demand via the kernel labels but
+                // is not a required gate — it becomes one once the SEA backend ships
+                // in a released driver and its recordings are captured.
+                go_mode: 'thrift',
               },
             });
-            core.info(`Merge-queue dispatch go-pr-test (replay) for PR #${prNumber} @ ${process.env.HEAD_SHA}`);
+            core.info(`Merge-queue dispatch go-pr-test (thrift/replay) for PR #${prNumber} @ ${process.env.HEAD_SHA}`);
 
       - name: Fail check on dispatch error
         if: failure()
