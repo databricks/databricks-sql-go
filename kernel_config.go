@@ -129,6 +129,9 @@ func resolveKernelAuth(cfg *config.Config) (kernel.Auth, error) {
 			}
 		}
 		if token == "" {
+			// Missing required config (not an unsupported-feature rejection), so this is
+			// intentionally NOT wrapped with ErrNotSupportedByKernel — a caller shouldn't
+			// fall back to Thrift for a forgotten token, it should supply one.
 			return kernel.Auth{}, errors.New("databricks: the kernel backend requires a personal access token; " +
 				"set one with WithAccessToken (or a *pat.PATAuth via WithAuthenticator)")
 		}

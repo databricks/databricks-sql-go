@@ -96,8 +96,8 @@ func TestValidateKernelConfig(t *testing.T) {
 	// since that sentinel is the documented programmatic fallback-detection contract —
 	// asserting only err != nil would let a dropped or malformed %w wrap ship green.
 	// Table-driven so a new rejection is covered by adding one row. (Catalog/schema/
-	// metric-view moved to forwarded above; a non-PAT authenticator is rejected too but
-	// not sentinel-wrapped, so it's asserted separately below.)
+	// metric-view moved to forwarded above; a non-PAT authenticator is also
+	// sentinel-wrapped but needs its own AccessToken="" setup, so it's asserted separately below.)
 	rejections := []struct {
 		name string
 		mut  func(*config.Config)
