@@ -113,7 +113,7 @@ func (k *KernelBackend) OpenSession(ctx context.Context) error {
 		return err
 	}
 	initKernelLogging()
-	klog("OpenSession host=%s httpPath=%s warehouse=%s", k.cfg.Host, k.cfg.HTTPPath, k.cfg.WarehouseID)
+	klogCtx(ctx, "OpenSession host=%s httpPath=%s warehouse=%s", k.cfg.Host, k.cfg.HTTPPath, k.cfg.WarehouseID)
 
 	var cfg *C.KernelSessionConfig
 	if err := call(func() C.KernelStatusCode { return C.kernel_session_config_new(&cfg) }); err != nil {
@@ -243,14 +243,14 @@ func (k *KernelBackend) OpenSession(ctx context.Context) error {
 		// is logged (via lastError's Warn) rather than silently discarded — mirroring
 		// CloseSession. The namespace error is authoritative and returned as-is.
 		if closeErr := call(func() C.KernelStatusCode { return C.kernel_session_close(sess) }); closeErr != nil {
-			klog("close after initial-namespace failure also failed: %v", closeErr)
+			klogCtx(ctx, "close after initial-namespace failure also failed: %v", closeErr)
 		}
 		k.session = nil
 		k.valid = false
 		return err
 	}
 
-	klog("OpenSession OK session=%s", k.sessionID)
+	klogCtx(ctx, "OpenSession OK session=%s", k.sessionID)
 	return nil
 }
 
@@ -400,7 +400,7 @@ func (k *KernelBackend) CloseSession(ctx context.Context) error {
 	if k.session == nil {
 		return nil
 	}
-	klog("CloseSession session=%s", k.sessionID)
+	klogCtx(ctx, "CloseSession session=%s", k.sessionID)
 	err := call(func() C.KernelStatusCode { return C.kernel_session_close(k.session) })
 	k.session = nil
 	k.valid = false

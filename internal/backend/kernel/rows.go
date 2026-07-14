@@ -76,7 +76,7 @@ func newKernelRows(ctx context.Context, op *kernelOp, stream *C.kernel_result_st
 	for i, f := range fields {
 		r.cols[i] = f.Name
 	}
-	klog("newKernelRows: %d columns", len(r.cols))
+	klogCtx(ctx, "newKernelRows: %d columns", len(r.cols))
 	return r, nil
 }
 
@@ -101,7 +101,7 @@ func (r *kernelRows) Close() error {
 	if r.op != nil {
 		r.op.close()
 	}
-	klog("kernelRows closed")
+	klogCtx(r.ctx, "kernelRows closed")
 	return nil
 }
 
@@ -161,7 +161,7 @@ func (r *kernelRows) nextBatch() error {
 	}
 	if carr.release == nil {
 		r.eof = true
-		klog("nextBatch: EOF")
+		klogCtx(r.ctx, "nextBatch: EOF")
 		return io.EOF
 	}
 	// Zero-copy import. The kernel exports self-contained batches (Rust to_ffi
@@ -189,6 +189,6 @@ func (r *kernelRows) nextBatch() error {
 		// reports — a fabricated number would be worse than a truthful zero.
 		r.callbacks.OnChunkFetched(r.chunkCount, 0, 0, 0, 0)
 	}
-	klog("nextBatch: %d rows (chunk %d)", rec.NumRows(), r.chunkCount)
+	klogCtx(r.ctx, "nextBatch: %d rows (chunk %d)", rec.NumRows(), r.chunkCount)
 	return nil
 }

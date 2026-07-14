@@ -186,16 +186,30 @@ the C header) under the cgo link path; `make build-kernel` does both steps:
 In a build without the tag, WithUseKernel(true) returns a clear error at connect
 time rather than silently using Thrift.
 
-To see the kernel's own logs interleaved with the driver's, set DBSQL_KERNEL_DEBUG
-to any non-empty value. That single flag turns on the driver's binding step tracer
-AND installs the kernel's Rust log subscriber, so both write to the same stderr in
-execution order. It is off by default (and must stay off during benchmarks — debug
-logging perturbs latency). The kernel's verbosity is then controlled by RUST_LOG,
-which the kernel honors directly; filter on the target databricks::sql::kernel
-(note the colons — it is the kernel's explicit log target, NOT the crate module
-path databricks_sql_kernel, which would match nothing):
+Kernel-backend logging follows the same knob as the rest of the driver. The
+binding-layer trace (session/statement/batch steps) is emitted through the shared
+logger at Debug level, so DATABRICKS_LOG_LEVEL=debug or dbsql.SetLogLevel("debug")
+turns it on — no separate switch — and each line carries the same structured
+connId/corrId/queryId fields as the driver's other logs, so it can be correlated in
+a multi-connection process. At the default Warn level the lines are suppressed with
+no cost (zerolog no-ops a below-level event), including during benchmarks.
 
-	# kernel logs only:
+	dbsql.SetLogLevel("debug") // or DATABRICKS_LOG_LEVEL=debug
+
+The driver's log level is also mapped into the kernel's own Rust log subscriber, so
+the same knob governs the kernel's internal (Rust) logs; they write to stderr and
+interleave with the driver's output. Note the kernel's Rust lines are currently
+plain text and do NOT yet carry the structured connId/corrId/queryId fields — that
+needs a kernel log-callback ABI (tracked separately); only the Go binding lines are
+structured today.
+
+For finer control of the kernel's Rust verbosity independent of the driver level,
+set DBSQL_KERNEL_DEBUG to any non-empty value: it forces the kernel subscriber on
+and defers to RUST_LOG for the kernel's threshold. Filter on the target
+databricks::sql::kernel (note the colons — the kernel's explicit log target, NOT
+the crate module path databricks_sql_kernel, which would match nothing):
+
+	# kernel logs only, at the kernel's own verbosity:
 	DBSQL_KERNEL_DEBUG=1 RUST_LOG=databricks::sql::kernel=debug ./your_app 2>&1
 	# kernel logs plus its HTTP stack (hyper/reqwest):
 	DBSQL_KERNEL_DEBUG=1 RUST_LOG=debug ./your_app 2>&1
