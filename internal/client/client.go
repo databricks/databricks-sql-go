@@ -317,15 +317,15 @@ func InitThriftClient(cfg *config.Config, httpclient *http.Client) (*ThriftServi
 		}
 
 		tTrans, err = thrift.NewTHttpClientWithOptions(endpoint, thrift.THttpClientOptions{Client: httpclient})
+		if err != nil {
+			return nil, dbsqlerrint.NewRequestError(context.TODO(), dbsqlerr.ErrInvalidURL, err)
+		}
 
 		thriftHttpClient := tTrans.(*thrift.THttpClient)
 		thriftHttpClient.SetHeader("User-Agent", BuildUserAgent(cfg))
 
 	default:
 		return nil, dbsqlerrint.NewDriverError(context.TODO(), fmt.Sprintf("unsupported transport `%s`", cfg.ThriftTransport), nil)
-	}
-	if err != nil {
-		return nil, dbsqlerrint.NewRequestError(context.TODO(), dbsqlerr.ErrInvalidURL, err)
 	}
 	if err = tTrans.Open(); err != nil {
 		return nil, dbsqlerrint.NewRequestError(context.TODO(), fmt.Sprintf("failed to open http transport for endpoint %s", endpoint), err)
