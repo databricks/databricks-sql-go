@@ -15,7 +15,6 @@ import (
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 	"github.com/databricks/databricks-sql-go/internal/backend"
 	"github.com/databricks/databricks-sql-go/logger"
-	"github.com/rs/zerolog"
 )
 
 // setAuth maps each Auth mode to exactly one kernel_session_config_set_auth_*
@@ -76,33 +75,9 @@ func TestSetKernelTLS(t *testing.T) {
 	}
 }
 
-// kernelLogLevel maps the driver's zerolog level to the kernel_init_logging level
-// string, so DATABRICKS_LOG_LEVEL drives the kernel's Rust logs too. Pin the
-// mapping (incl. the fatal/panic→OFF collapse and the default→WARN fallback) so a
-// level the kernel would reject can't silently ship. fatal/panic map to OFF, not
-// ERROR: the Go driver suppresses even Error() lines at those levels, so the Rust
-// subscriber must stay at least as quiet as the driver the user configured.
-func TestKernelLogLevel(t *testing.T) {
-	cases := []struct {
-		in   zerolog.Level
-		want string
-	}{
-		{zerolog.TraceLevel, "TRACE"},
-		{zerolog.DebugLevel, "DEBUG"},
-		{zerolog.InfoLevel, "INFO"},
-		{zerolog.WarnLevel, "WARN"},
-		{zerolog.ErrorLevel, "ERROR"},
-		{zerolog.FatalLevel, "OFF"}, // driver suppresses Error() here → kernel stays silent, not louder
-		{zerolog.PanicLevel, "OFF"},
-		{zerolog.Disabled, "OFF"},
-		{zerolog.NoLevel, "WARN"}, // unrecognized → the kernel's own default
-	}
-	for _, c := range cases {
-		if got := kernelLogLevel(c.in); got != c.want {
-			t.Errorf("kernelLogLevel(%v) = %q, want %q", c.in, got, c.want)
-		}
-	}
-}
+// TestKernelLogLevel and TestResolveKernelLogArg — the pure level-resolution tests —
+// live in the untagged logging_level_test.go so they run under CGO_ENABLED=0. The
+// tests below exercise klog/klogCtx and so need the cgo build.
 
 // klog / klogCtx must be allocation-free at the default (above-Debug) log level —
 // the "no hot-path cost, safe during benchmarks" guarantee. klogCtx is the one that
