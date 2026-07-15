@@ -199,8 +199,15 @@ func TestValidateKernelConfig(t *testing.T) {
 		c := baseKernelConfig()
 		c.AccessToken = ""
 		c.Authenticator = nonPATAuth{}
-		if _, err := validateKernelConfig(c); err == nil {
-			t.Error("expected an error for a token-provider/external/federated authenticator")
+		_, err := validateKernelConfig(c)
+		if err == nil {
+			t.Fatal("expected an error for a token-provider/external/federated authenticator")
+		}
+		// An unsupported authenticator is a "kernel can't honor this" rejection, so it
+		// must wrap ErrNotSupportedByKernel like every other unsupported option — the
+		// contract doc.go advertises for programmatic fallback via errors.Is.
+		if !errors.Is(err, dbsqlerr.ErrNotSupportedByKernel) {
+			t.Errorf("unsupported-auth rejection should wrap ErrNotSupportedByKernel, got %v", err)
 		}
 	})
 
