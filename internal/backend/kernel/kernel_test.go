@@ -85,8 +85,9 @@ func TestEvictIfSessionFatal(t *testing.T) {
 // When Execute fails before it acquires a statement handle (here: a nil session
 // makes new_statement fail), it must still honor the Backend contract — a non-nil,
 // handle-less Operation that Closes as a no-op (closed=false, no CLOSE_STATEMENT)
-// and reports zero AffectedRows. (Parameter binding is exercised live in
-// TestKernelE2EParams; a nil-session unit test can't reach the bind path.)
+// and reports zero AffectedRows. (A nil-session unit test can't reach the bind
+// path: the param mapping is unit-tested hermetically in TestParamBindArg, and
+// exercised live end-to-end in TestKernelParamsVsThrift.)
 func TestExecuteHandleLessOpContract(t *testing.T) {
 	k := &KernelBackend{} // nil session → new_statement fails
 	op, err := k.Execute(context.Background(), backend.ExecRequest{
@@ -171,6 +172,43 @@ func TestExecutionErrorContract(t *testing.T) {
 		t.Errorf("QueryId() = %q, want q-123 (from the KernelError)", dbExec.QueryId())
 	}
 	// The *KernelError cause stays reachable via Unwrap.
+	var ke *KernelError
+	if !errors.As(err, &ke) {
+		t.Error("the *KernelError cause should remain reachable via errors.As")
+	}
+}
+
+// The execute error path must NEVER report retryable, even when the kernel marks
+// the failure retryable. This is the post-submission surface (toStatementError
+// refuses driver.ErrBadConn here for the same reason): a network/unavailable
+// failure seen after the statement was sent may have already committed a
+// non-idempotent INSERT/UPDATE/MERGE, so an app keying retry on IsRetryable() would
+// double-write. It also matches the Thrift path, which always builds a
+// non-retryable execution error. sqlState/queryId must still come through.
+func TestExecutionErrorNeverRetryable(t *testing.T) {
+	o := &kernelOp{}
+	cause := &KernelError{Code: statusUnavailable, Message: "try again", SQLState: "08000", QueryID: "q-9", Retryable: true}
+	err := o.ExecutionError(context.Background(), cause)
+	if err == nil {
+		t.Fatal("ExecutionError(cause) should not be nil")
+	}
+
+	var dbExec dbsqlerr.DBExecutionError
+	if !errors.As(err, &dbExec) {
+		t.Fatalf("kernel execution error should be a DBExecutionError; got %T", err)
+	}
+	// Even though the KernelError is Retryable, the execute path must report false:
+	// the statement may have committed, so replay is unsafe.
+	if dbExec.IsRetryable() {
+		t.Error("IsRetryable() = true on the execute path; want false (a sent statement may have committed — no replay)")
+	}
+	// Dropping the retryable signal must not drop sqlState/queryId or the cause.
+	if dbExec.SqlState() != "08000" {
+		t.Errorf("SqlState() = %q, want 08000", dbExec.SqlState())
+	}
+	if dbExec.QueryId() != "q-9" {
+		t.Errorf("QueryId() = %q, want q-9", dbExec.QueryId())
+	}
 	var ke *KernelError
 	if !errors.As(err, &ke) {
 		t.Error("the *KernelError cause should remain reachable via errors.As")
