@@ -1,10 +1,14 @@
 package dbsql
 
 import (
+	"context"
+	"errors"
 	"reflect"
 	"testing"
 
 	"github.com/databricks/databricks-sql-go/internal/config"
+
+	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 )
 
 // This file is untagged (no cgo) so its tests — the experimental-option
@@ -72,6 +76,43 @@ func TestWithKernelTLSOptionsSetExperimental(t *testing.T) {
 			}
 			if !c.verify(cfg.KernelExperimental) {
 				t.Errorf("%s: option did not set the expected field(s): %+v", c.name, cfg.KernelExperimental)
+			}
+		})
+	}
+}
+
+// End-to-end: setting a WithKernel* option WITHOUT WithUseKernel must make
+// Connect fail loud on the default (Thrift) path rather than silently connect
+// with a weaker-than-intended trust store. This exercises the connector's
+// reject branch (not just option→config wiring) and asserts the error wraps the
+// ErrRequiresKernelBackend sentinel so callers can detect it with errors.Is —
+// the mirror of TestKernelBackendNotCompiledIn. Runs in the default
+// CGO_ENABLED=0 build (no kernel linked in).
+func TestWithKernelOptionsRejectedOnThriftPath(t *testing.T) {
+	cases := []struct {
+		name string
+		opt  ConnOption
+	}{
+		{"trusted certs", WithKernelTrustedCerts([]byte("ca"))},
+		{"skip hostname", WithKernelSkipHostnameVerify()},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c, err := NewConnector(
+				WithServerHostname("example.cloud.databricks.com"),
+				WithPort(443),
+				WithHTTPPath("/sql/1.0/endpoints/12346a5b5b0e123a"),
+				WithAccessToken("supersecret"),
+				tc.opt,
+			)
+			if err != nil {
+				t.Fatalf("NewConnector: %v", err)
+			}
+			// No WithUseKernel — the Thrift path must reject the kernel-only option.
+			if _, err = c.Connect(context.Background()); err == nil {
+				t.Fatal("Connect should reject a WithKernel* option on the Thrift path, got nil")
+			} else if !errors.Is(err, dbsqlerr.ErrRequiresKernelBackend) {
+				t.Errorf("error should wrap ErrRequiresKernelBackend; got: %v", err)
 			}
 		})
 	}

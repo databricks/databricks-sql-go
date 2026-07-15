@@ -246,6 +246,11 @@ prefix marks both):
   - WithKernelSkipHostnameVerify() skips only the certificate hostname check while
     keeping chain validation (finer-grained than WithSkipTLSHostVerify).
 
+Setting either without WithUseKernel makes Connect fail with an error wrapping the
+sentinel ErrRequiresKernelBackend (the mirror of ErrNotSupportedByKernel), so the
+"add WithUseKernel or remove it" case is detectable with errors.Is rather than by
+matching message text.
+
 Features that live above the backend seam are inherited unchanged: the
 database/sql connection pool (each connection wraps one kernel session),
 per-connection telemetry (CREATE_SESSION, EXECUTE_STATEMENT, and DELETE_SESSION

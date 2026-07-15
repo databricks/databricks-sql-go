@@ -4,7 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"database/sql/driver"
-	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -16,6 +16,7 @@ import (
 	"github.com/databricks/databricks-sql-go/auth/pat"
 	"github.com/databricks/databricks-sql-go/auth/tokenprovider"
 	"github.com/databricks/databricks-sql-go/driverctx"
+	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 	"github.com/databricks/databricks-sql-go/internal/backend"
 	"github.com/databricks/databricks-sql-go/internal/backend/thrift"
 	"github.com/databricks/databricks-sql-go/internal/client"
@@ -50,9 +51,9 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 		// learns the option had no effect instead of connecting with a
 		// weaker-than-intended (or unconfigured) TLS trust store.
 		if c.cfg.KernelExperimental != nil {
-			return nil, errors.New("databricks: the WithKernel* options " +
-				"(WithKernelTrustedCerts / WithKernelSkipHostnameVerify) require the kernel backend; " +
-				"add WithUseKernel(true) or remove them")
+			return nil, fmt.Errorf("databricks: a WithKernel* option "+
+				"(WithKernelTrustedCerts / WithKernelSkipHostnameVerify) %w; "+
+				"add WithUseKernel(true) or remove it", dbsqlerr.ErrRequiresKernelBackend)
 		}
 		be, err = thrift.New(ctx, c.cfg, c.client)
 	}
@@ -576,13 +577,25 @@ func kernelExperimental(c *config.Config) *config.KernelExperimentalConfig {
 // EXPERIMENTAL, kernel-only: the default (Thrift) backend rejects this at connect.
 func WithKernelTrustedCerts(pem []byte) ConnOption {
 	return func(c *config.Config) {
-		kernelExperimental(c).TLSTrustedCertsPEM = pem
+		// Copy defensively (matching KernelExperimentalConfig.DeepCopy) so a
+		// caller mutating pem between NewConnector and Connect can't change the
+		// trust store out from under us.
+		if len(pem) > 0 {
+			kernelExperimental(c).TLSTrustedCertsPEM = append([]byte(nil), pem...)
+		} else {
+			kernelExperimental(c).TLSTrustedCertsPEM = pem
+		}
 	}
 }
 
 // WithKernelSkipHostnameVerify skips only the certificate hostname-vs-SNI check on
 // the kernel backend, while keeping chain validation. This is finer-grained than
 // WithSkipTLSHostVerify, which relaxes both chain and hostname checks.
+// WARNING:
+// Skipping hostname verification still weakens TLS: a certificate issued by a
+// trusted CA for a different host will be accepted, opening a machine-in-the-middle
+// vector. Only use this when the hostname is an internal private-link hostname that
+// legitimately differs from the certificate's subject.
 //
 // EXPERIMENTAL, kernel-only: the default (Thrift) backend rejects this at connect.
 func WithKernelSkipHostnameVerify() ConnOption {
