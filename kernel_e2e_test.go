@@ -47,17 +47,9 @@ func TestKernelE2ESelect1(t *testing.T) {
 // counterpart to kernelTestDB.
 func kernelTestDBWith(t *testing.T, extra ...ConnOption) *sql.DB {
 	t.Helper()
-	// Reads the same DATABRICKS_PECOTESTING_* warehouse credentials as the Thrift
-	// E2E suite, so both backends run against one test warehouse from one secret set.
-	host := os.Getenv("DATABRICKS_PECOTESTING_SERVER_HOSTNAME")
-	httpPath := os.Getenv("DATABRICKS_PECOTESTING_HTTP_PATH2")
-	token := os.Getenv("DATABRICKS_PECOTESTING_TOKEN")
-	if token == "" {
-		token = os.Getenv("DATABRICKS_PECOTESTING_TOKEN_PERSONAL")
-	}
-	if host == "" || httpPath == "" || token == "" {
-		t.Skip("set DATABRICKS_PECOTESTING_SERVER_HOSTNAME, DATABRICKS_PECOTESTING_HTTP_PATH2, and DATABRICKS_PECOTESTING_TOKEN for the kernel e2e")
-	}
+	// Same DATABRICKS_PECOTESTING_* warehouse credentials as the Thrift E2E suite, so
+	// both backends run against one test warehouse from one secret set.
+	host, httpPath, token := pecoTestingCreds(t)
 	opts := append([]ConnOption{
 		WithServerHostname(host),
 		WithHTTPPath(httpPath),

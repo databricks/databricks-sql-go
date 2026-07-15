@@ -216,9 +216,10 @@ context cancellation during execute; the initial namespace (WithInitialNamespace
 applied post-connect via USE CATALOG / USE SCHEMA); metric-view metadata
 (WithEnableMetricViewMetadata); and the TLS, proxy, and session-conf (query tags,
 statement timeout, time zone) options. Nothing is silently ignored: WithTimeout, a
-retries-disabling WithRetries, and token-provider / external / federated
-authenticators are rejected at connect; staging (PUT/GET/REMOVE on a Unity Catalog
-volume) is rejected at execute. WithMaxRows and positive-limit WithRetries are
+retries-disabling WithRetries, token-provider / external / federated
+authenticators, and custom M2M OAuth scopes (the kernel applies its own) are
+rejected at connect; staging (PUT/GET/REMOVE on a Unity Catalog volume) is
+rejected at execute. WithMaxRows and positive-limit WithRetries are
 accepted but inert (the kernel manages fetching and retries below the C ABI).
 
 OAuth U2M is interactive: on a cache miss, connecting launches the system browser and

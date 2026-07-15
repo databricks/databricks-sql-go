@@ -5,7 +5,6 @@ package dbsql
 import (
 	"context"
 	"database/sql"
-	"os"
 	"testing"
 )
 
@@ -13,15 +12,7 @@ import (
 // parity comparison against the kernel backend.
 func thriftTestDB(t *testing.T) *sql.DB {
 	t.Helper()
-	host := os.Getenv("DATABRICKS_PECOTESTING_SERVER_HOSTNAME")
-	httpPath := os.Getenv("DATABRICKS_PECOTESTING_HTTP_PATH2")
-	token := os.Getenv("DATABRICKS_PECOTESTING_TOKEN")
-	if token == "" {
-		token = os.Getenv("DATABRICKS_PECOTESTING_TOKEN_PERSONAL")
-	}
-	if host == "" || httpPath == "" || token == "" {
-		t.Skip("set DATABRICKS_PECOTESTING_SERVER_HOSTNAME, DATABRICKS_PECOTESTING_HTTP_PATH2, and DATABRICKS_PECOTESTING_TOKEN for the parity test")
-	}
+	host, httpPath, token := pecoTestingCreds(t)
 	connector, err := NewConnector(
 		WithServerHostname(host),
 		WithHTTPPath(httpPath),
@@ -48,6 +39,40 @@ func TestKernelThriftParity(t *testing.T) {
 		// A decimal inside a struct: exercises exact-string nested-decimal
 		// rendering (19.99, not a lossy 19.990000000000002).
 		"named_struct('d', CAST(19.99 AS DECIMAL(5,2)))"
+
+	kernelDB := kernelTestDB(t)
+	defer kernelDB.Close()
+	thriftDB := thriftTestDB(t)
+	defer thriftDB.Close()
+
+	kernelRow := scanOneRowAsStrings(t, kernelDB, query)
+	thriftRow := scanOneRowAsStrings(t, thriftDB, query)
+
+	if len(kernelRow) != len(thriftRow) {
+		t.Fatalf("column count differs: kernel=%d thrift=%d", len(kernelRow), len(thriftRow))
+	}
+	for i := range kernelRow {
+		if kernelRow[i] != thriftRow[i] {
+			t.Errorf("col %d differs: kernel=%q thrift=%q", i, kernelRow[i], thriftRow[i])
+		}
+	}
+}
+
+// TestKernelE2EInterval gives the INTERVAL rendering the same live ground-truth
+// check the other types have. The kernel scans a native arrow duration/month-interval
+// and formats it Go-side; the Thrift path receives the server's pre-formatted string
+// (native-interval is off in prod). Comparing the two scanned strings proves the
+// Go-side formatter reproduces the server form byte-for-byte — including the sign
+// placement, day separator, and fractional-digit edges the arrow-level parity suite
+// cannot reach (it never scans a duration array). Named TestKernelE2E* so the nightly
+// -run picks it up.
+func TestKernelE2EInterval(t *testing.T) {
+	// Day-time and year-month, each with a positive and a negative case (the sign is
+	// the highest-risk format edge — see formatDayTimeInterval / formatYearMonthInterval).
+	const query = "SELECT INTERVAL '1 02:03:04.5' DAY TO SECOND, " +
+		"INTERVAL '-1 02:03:04.5' DAY TO SECOND, " +
+		"INTERVAL '3-4' YEAR TO MONTH, " +
+		"INTERVAL '-3-4' YEAR TO MONTH"
 
 	kernelDB := kernelTestDB(t)
 	defer kernelDB.Close()

@@ -1,6 +1,7 @@
 package kernel
 
 import (
+	"errors"
 	"fmt"
 
 	dbsqlerrint "github.com/databricks/databricks-sql-go/internal/errors"
@@ -45,9 +46,8 @@ type KernelError struct {
 
 func (e *KernelError) Error() string {
 	// Append the server query id when present — it is the one correlation handle
-	// to server-side query history. On the execute-error path there is no executed
-	// statement handle, so kernelOp.StatementID() is "" there; carrying the id on
-	// the error itself keeps it reachable when the accessor can't surface it.
+	// to server-side query history, and on the execute-error path (no exec handle)
+	// the error itself is where kernelOp.StatementID() reads it from.
 	q := ""
 	if e.QueryID != "" {
 		q = fmt.Sprintf(", queryId=%s", e.QueryID)
@@ -56,6 +56,18 @@ func (e *KernelError) Error() string {
 		return fmt.Sprintf("kernel: %s (sqlstate=%s, code=%d%s)", e.Message, e.SQLState, e.Code, q)
 	}
 	return fmt.Sprintf("kernel: %s (code=%d%s)", e.Message, e.Code, q)
+}
+
+// statementIDFromError returns the server query id carried on a KernelError, or ""
+// for a nil / non-KernelError error or one with no id. The execute-error path uses
+// it to set kernelOp.statementID (there is no exec handle to read it from), so the
+// conn's StatementID()-gated failure telemetry fires as it does on the Thrift path.
+func statementIDFromError(err error) string {
+	var ke *KernelError
+	if errors.As(err, &ke) {
+		return ke.QueryID
+	}
+	return ""
 }
 
 // isBadConnection reports whether a status code is a *transient* connection

@@ -1,6 +1,7 @@
 package kernel
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/databricks/databricks-sql-go/internal/backend"
@@ -62,5 +63,20 @@ func TestParamBindArg(t *testing.T) {
 				t.Errorf("paramBindArg(%+v) = %+v, want %+v", c.param, got, c.want)
 			}
 		})
+	}
+}
+
+// checkParamValue must reject an interior NUL (the kernel bind ABI would truncate
+// it) but accept ordinary values, a trailing NUL-free string, and a NULL param.
+func TestCheckParamValue(t *testing.T) {
+	if err := checkParamValue(bindArg{value: "a\x00b"}); !errors.Is(err, errParamNUL) {
+		t.Errorf("interior NUL: got %v, want errParamNUL", err)
+	}
+	if err := checkParamValue(bindArg{value: "plain"}); err != nil {
+		t.Errorf("plain value: got %v, want nil", err)
+	}
+	// A NULL param carries no value string, so the NUL check must not apply.
+	if err := checkParamValue(bindArg{isNull: true}); err != nil {
+		t.Errorf("NULL param: got %v, want nil", err)
 	}
 }

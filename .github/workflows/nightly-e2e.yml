@@ -29,8 +29,10 @@ permissions:
 jobs:
   thrift-e2e:
     name: E2E (Thrift backend)
-    # Skips cleanly (no-op success) if the warehouse secret isn't provisioned yet,
-    # so the workflow doesn't hard-fail on a repo where the secrets haven't landed.
+    # Runs by default; disable by setting the NIGHTLY_E2E_ENABLED repo variable to
+    # 'false'. This is NOT a skip-on-missing-secret gate: if the variable is unset
+    # and the warehouse secrets aren't provisioned, the credential step below
+    # hard-fails by design (a silent skip reporting green is the gap being closed).
     if: ${{ vars.NIGHTLY_E2E_ENABLED != 'false' }}
     timeout-minutes: 20
     runs-on:

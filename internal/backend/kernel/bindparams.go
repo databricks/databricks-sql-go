@@ -1,6 +1,11 @@
 package kernel
 
-import "github.com/databricks/databricks-sql-go/internal/backend"
+import (
+	"errors"
+	"strings"
+
+	"github.com/databricks/databricks-sql-go/internal/backend"
+)
 
 // This file is intentionally NOT behind the `cgo && databricks_kernel` build tag.
 // It holds the pure decision of how one backend.Param maps onto the kernel's
@@ -49,4 +54,19 @@ func paramBindArg(p backend.Param) bindArg {
 	}
 	a.value = *p.Value
 	return a
+}
+
+// errParamNUL rejects a bound value containing an interior NUL. The kernel bind
+// ABI takes value as a NUL-terminated C string with no length, so a NUL would
+// silently truncate it (a valid Spark STRING can hold one); Thrift sends it
+// length-prefixed. Fail loudly rather than diverge.
+var errParamNUL = errors.New("value contains a NUL byte, which the kernel bind ABI cannot carry")
+
+// checkParamValue validates one already-mapped bind arg before the cgo layer
+// C-string-marshals it. Only real (non-NULL) values are checked.
+func checkParamValue(a bindArg) error {
+	if !a.isNull && strings.IndexByte(a.value, 0) >= 0 {
+		return errParamNUL
+	}
+	return nil
 }

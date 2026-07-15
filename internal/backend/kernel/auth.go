@@ -48,10 +48,27 @@ type Auth struct {
 // secret-reading capability is never exposed on the driver's public API; the
 // unexported concrete m2m authenticator satisfies it structurally.
 type M2MCredentialsProvider interface {
-	// M2MCredentials returns the client id and client secret. (The kernel's C-ABI
-	// M2M setter takes no scopes — it applies its own default scope set, matching
-	// the Go authenticator's default — so scopes are not exposed here.)
+	// M2MCredentials returns the client id and client secret.
 	M2MCredentials() (clientID, clientSecret string)
+	// M2MScopes returns the configured OAuth scopes. The kernel's C-ABI M2M setter
+	// takes no scopes (it applies its own default set), so resolveKernelAuth rejects
+	// a custom set via M2MScopesSupported rather than silently dropping it.
+	M2MScopes() []string
+}
+
+// M2MScopesSupported reports whether an M2M authenticator's scopes can be honored
+// on the kernel path. The kernel's set_auth_m2m has no scopes argument and applies
+// "all-apis" itself, so only an empty set or exactly {"all-apis"} is forwardable;
+// any other set would silently downgrade to the kernel default, so it is rejected.
+func M2MScopesSupported(scopes []string) bool {
+	switch len(scopes) {
+	case 0:
+		return true
+	case 1:
+		return scopes[0] == "all-apis"
+	default:
+		return false
+	}
 }
 
 // U2MCredentialsProvider is implemented by the OAuth U2M authenticator to expose

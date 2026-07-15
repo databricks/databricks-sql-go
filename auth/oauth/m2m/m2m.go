@@ -45,6 +45,12 @@ func (c *authClient) M2MCredentials() (clientID, clientSecret string) {
 	return c.clientID, c.clientSecret
 }
 
+// M2MScopes exposes the configured scopes so the kernel backend can reject a
+// custom set its scopes-less M2M setter can't carry (M2MScopesSupported).
+func (c *authClient) M2MScopes() []string {
+	return c.scopes
+}
+
 // Auth will start the OAuth Authorization Flow to authenticate the cli client
 // using the users credentials in the browser. Compatible with SSO.
 func (c *authClient) Authenticate(r *http.Request) error {

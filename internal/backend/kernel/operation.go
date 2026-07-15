@@ -158,6 +158,12 @@ func (k *KernelBackend) execute(ctx context.Context, req backend.ExecRequest) (b
 		// error stays a plain toStatementError / ctx error), so database/sql discards
 		// the conn without re-running the statement (no duplicate write).
 		k.evictIfSessionFatal(execErr)
+		// Surface the server query id from the error so failure telemetry fires:
+		// there is no exec handle here, but a post-submit failure (e.g. a SQL
+		// error) still carries a query id on the KernelError. conn gates
+		// EXECUTE_STATEMENT on StatementID() != "", so without this a failed
+		// kernel query records no metric while the same Thrift failure does.
+		op.statementID = statementIDFromError(execErr)
 		// Prefer the caller's ctx error when the ctx was cancelled (database/sql
 		// convention). Wrap BOTH the ctx error and the kernel error so
 		// errors.Is(err, context.Canceled/DeadlineExceeded) still matches (the
@@ -207,6 +213,9 @@ func bindParams(stmt *C.kernel_statement_t, params []backend.Param) error {
 		// (unit-tested under CGO_ENABLED=0 in bindparams_test.go); this loop only does
 		// the C-string marshaling of that decision.
 		a := paramBindArg(p)
+		if err := checkParamValue(a); err != nil {
+			return fmt.Errorf("param %d (name=%q type=%q): %w", i, p.Name, p.Type, err)
+		}
 		name := newCStrOrNull(a.name) // empty name → NULL → positional
 		typ := newCStr(a.typ)
 		val := newCStrOrNull("") // NULL pointer: the SQL-NULL wire form
@@ -252,9 +261,10 @@ type kernelOp struct {
 
 var _ backend.Operation = (*kernelOp)(nil)
 
-// StatementID returns the server query id captured at execute time (empty on a
-// handle-less op that never executed). A non-empty id ungates EXECUTE_STATEMENT
-// telemetry and drives QueryIdCallback, matching the Thrift path.
+// StatementID returns the server query id — captured at execute time on success,
+// or from the KernelError on an execute failure (empty only when the server
+// returned none). A non-empty id ungates EXECUTE_STATEMENT telemetry and drives
+// QueryIdCallback, matching the Thrift path.
 func (o *kernelOp) StatementID() string { return o.statementID }
 
 // AffectedRows is the modified-row count for ExecContext. It returns the value
@@ -329,11 +339,9 @@ func (o *kernelOp) close() bool {
 // same public contract as the Thrift path: errors.Is(err, dbsqlerr.ExecutionError)
 // matches, and errors.As(err, &dbExecErr) exposes SqlState()/QueryId() — the recipe
 // documented in doc.go. The kernel carries both sqlState and the server query id in
-// its own *KernelError (not a Thrift TGetOperationStatusResp; and on the
-// execute-error path there is no exec handle, so StatementID() is "" and the query
-// id must come from the KernelError, not ctx), so pull both out and hand them to
-// NewExecutionErrorWithState, keeping the *KernelError as the cause so its detail
-// stays reachable via Unwrap.
+// its own *KernelError (not a Thrift TGetOperationStatusResp), so pull both out and
+// hand them to NewExecutionErrorWithState, keeping the *KernelError as the cause so
+// its detail stays reachable via Unwrap.
 //
 // This is exclusively the post-submission (execute / result-read) error path, so it
 // deliberately does NOT surface the kernel's Retryable flag: like the Thrift path

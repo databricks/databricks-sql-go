@@ -107,6 +107,14 @@ func validateKernelConfig(cfg *config.Config) (kernel.Auth, error) {
 func resolveKernelAuth(cfg *config.Config) (kernel.Auth, error) {
 	switch a := cfg.Authenticator.(type) {
 	case kernel.M2MCredentialsProvider:
+		// The kernel's set_auth_m2m takes no scopes and applies "all-apis" itself, so
+		// a custom scope set can't be forwarded — reject it instead of silently
+		// downgrading (a least-privilege caller would get broader-than-asked access).
+		if !kernel.M2MScopesSupported(a.M2MScopes()) {
+			return kernel.Auth{}, fmt.Errorf("databricks: custom M2M OAuth scopes are %w "+
+				"(the kernel applies its default scopes); drop the custom scopes "+
+				"(use m2m.NewAuthenticator) or use the default (Thrift) backend", dbsqlerr.ErrNotSupportedByKernel)
+		}
 		clientID, clientSecret := a.M2MCredentials()
 		return kernel.Auth{Mode: kernel.AuthM2M, ClientID: clientID, ClientSecret: clientSecret}, nil
 	case kernel.U2MCredentialsProvider:

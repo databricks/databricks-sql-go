@@ -26,10 +26,14 @@ func (nonPATAuth) Authenticate(*http.Request) error { return nil }
 // (needs a resolvable host); the kernel only needs the interface, so a fake is both
 // sufficient and hermetic. The real authenticators' method implementations are
 // trivial field returns (verified in auth/oauth/{m2m,u2m}).
-type fakeM2MAuth struct{ id, secret string }
+type fakeM2MAuth struct {
+	id, secret string
+	scopes     []string
+}
 
 func (fakeM2MAuth) Authenticate(*http.Request) error   { return nil }
 func (f fakeM2MAuth) M2MCredentials() (string, string) { return f.id, f.secret }
+func (f fakeM2MAuth) M2MScopes() []string              { return f.scopes }
 
 type fakeU2MAuth struct{ id string }
 
@@ -139,14 +143,28 @@ func TestValidateKernelConfig(t *testing.T) {
 		c := baseKernelConfig()
 		c.AccessToken = ""
 		// An M2M authenticator is the single source of truth; resolveKernelAuth reads
-		// the creds off it via the auth.M2MCredentialsProvider interface.
-		c.Authenticator = fakeM2MAuth{id: "cid", secret: "sec"}
+		// the creds off it via the auth.M2MCredentialsProvider interface. Default
+		// scopes ({"all-apis"}, matching the kernel default) forward fine.
+		c.Authenticator = fakeM2MAuth{id: "cid", secret: "sec", scopes: []string{"all-apis"}}
 		a, err := validateKernelConfig(c)
 		if err != nil {
 			t.Fatalf("M2M should validate, got %v", err)
 		}
 		if a.Mode != kernel.AuthM2M || a.ClientID != "cid" || a.ClientSecret != "sec" {
 			t.Errorf("auth = %+v, want mode=M2M clientID=cid clientSecret=sec", a)
+		}
+	})
+
+	t.Run("OAuth M2M with custom scopes rejected", func(t *testing.T) {
+		c := baseKernelConfig()
+		c.AccessToken = ""
+		// The kernel's set_auth_m2m can't carry scopes, so a custom set must be
+		// rejected (not silently downgraded to the kernel default) and wrap
+		// ErrNotSupportedByKernel like every other unsupported option.
+		c.Authenticator = fakeM2MAuth{id: "cid", secret: "sec", scopes: []string{"all-apis", "custom-scope"}}
+		_, err := validateKernelConfig(c)
+		if !errors.Is(err, dbsqlerr.ErrNotSupportedByKernel) {
+			t.Errorf("custom-scope M2M rejection should wrap ErrNotSupportedByKernel, got %v", err)
 		}
 	})
 
