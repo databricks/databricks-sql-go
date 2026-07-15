@@ -769,11 +769,23 @@ func TestConfig_DeepCopy(t *testing.T) {
 			ThriftTransport:           "http",
 			ThriftProtocolVersion:     cli_service.TProtocolVersion_SPARK_CLI_SERVICE_PROTOCOL_V8,
 			ThriftDebugClientProtocol: false,
+			KernelExperimental: &KernelExperimentalConfig{
+				TLSTrustedCertsPEM:    []byte("ca-bundle"),
+				TLSSkipHostnameVerify: true,
+			},
 		}
 
 		cfg_copy := cfg.DeepCopy()
 		if !reflect.DeepEqual(cfg, cfg_copy) {
 			t.Errorf("DeepCopy() = %v, want %v", cfg_copy, cfg)
+		}
+		// The experimental block must be deep-copied, not aliased.
+		if cfg_copy.KernelExperimental == cfg.KernelExperimental {
+			t.Error("DeepCopy aliased KernelExperimental pointer")
+		}
+		cfg_copy.KernelExperimental.TLSTrustedCertsPEM[0] = 'X'
+		if cfg.KernelExperimental.TLSTrustedCertsPEM[0] == 'X' {
+			t.Error("DeepCopy aliased the KernelExperimental CA byte slice")
 		}
 	})
 }
