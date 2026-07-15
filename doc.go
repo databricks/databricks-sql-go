@@ -189,19 +189,35 @@ time rather than silently using Thrift.
 Kernel-backend logging follows the same knob as the rest of the driver. The
 binding-layer trace (session/statement/batch steps) is emitted through the shared
 logger at Debug level, so DATABRICKS_LOG_LEVEL=debug or dbsql.SetLogLevel("debug")
-turns it on — no separate switch — and each line carries the same structured
-connId/corrId/queryId fields as the driver's other logs, so it can be correlated in
-a multi-connection process. At the default Warn level the lines are suppressed with
-no cost (zerolog no-ops a below-level event), including during benchmarks.
+turns it on — no separate switch — and it lands in the same sink the rest of the
+driver uses (including a custom one set via logger.SetLogOutput). Request-scoped
+binding lines carry the same structured connId/corrId/queryId fields as the
+driver's other logs where a context is in scope (session open/close, execute,
+result-batch fetch), so they can be correlated in a multi-connection process; a few
+context-less lines (parameter binds, operation teardown) are emitted without those
+fields. At the default Warn level the lines are suppressed with no cost (zerolog
+no-ops a below-level event), including during benchmarks.
 
 	dbsql.SetLogLevel("debug") // or DATABRICKS_LOG_LEVEL=debug
 
 The driver's log level is also mapped into the kernel's own Rust log subscriber, so
-the same knob governs the kernel's internal (Rust) logs; they write to stderr and
-interleave with the driver's output. Note the kernel's Rust lines are currently
-plain text and do NOT yet carry the structured connId/corrId/queryId fields — that
-needs a kernel log-callback ABI (tracked separately); only the Go binding lines are
-structured today.
+the same knob governs the kernel's internal (Rust) verbosity. Two caveats apply to
+the Rust logs specifically, both consequences of the kernel's process-wide logging
+ABI rather than the Go layer:
+
+  - They are written to stderr directly and are NOT affected by
+    logger.SetLogOutput — an app that routes the driver's Go logs to a file or an
+    app logger will still find the Rust lines on stderr, not interleaved with that
+    sink.
+  - The Rust verbosity is fixed at the level in effect when the FIRST kernel
+    session in the process is opened (the kernel subscriber is process-wide and
+    installed once); a later dbsql.SetLogLevel changes the Go binding lines but not
+    the already-installed Rust subscriber. Set the level before opening the first
+    kernel connection to control the Rust logs.
+
+The kernel's Rust lines are also currently plain text and do NOT yet carry the
+structured connId/corrId/queryId fields — that needs a kernel log-callback ABI
+(tracked separately); only the Go binding lines are structured today.
 
 For finer control of the kernel's Rust verbosity independent of the driver level,
 set DBSQL_KERNEL_DEBUG to any non-empty value: it forces the kernel subscriber on

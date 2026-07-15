@@ -114,20 +114,25 @@ var initLoggingOnce sync.Once
 // passed to kernel_init_logging (Go zerolog level → the kernel's OFF/ERROR/WARN/
 // INFO/DEBUG/TRACE string); DBSQL_KERNEL_DEBUG forces the subscriber on with a
 // NULL level so the kernel honors RUST_LOG instead (the advanced override for
-// tuning kernel-only verbosity). file_path=NULL sends kernel logs to stderr so they
-// interleave with the driver's own output.
+// tuning kernel-only verbosity). file_path=NULL sends kernel logs to stderr — the
+// kernel ABI has no sink hook, so the Rust lines always go to stderr and are NOT
+// routed through logger.SetLogOutput (unlike the Go binding lines).
 //
 // Best-effort: an Internal return (e.g. the host already installed a global
 // subscriber) is a documented, benign outcome — logged at Warn, never fatal to
-// connect. Only installed when the effective level is at or below the kernel's
-// threshold, so a driver left at the default Warn level (benchmarks included) that
-// hasn't set DBSQL_KERNEL_DEBUG still installs the subscriber only at Warn — the
-// kernel then emits nothing below Warn, so there is no hot-path cost.
+// connect. The subscriber installs at whatever level is mapped in; a driver left at
+// the default Warn level (benchmarks included, and never having set
+// DBSQL_KERNEL_DEBUG) installs it at WARN, so the kernel emits nothing below Warn
+// and there is no hot-path cost.
 //
 // Scope caveat: the kernel subscriber is PROCESS-WIDE, first-call-wins, and never
 // uninstalled — in a long-lived multi-tenant process the first kernel session's
 // level/destination applies to ALL subsequent kernel sessions, with no way to
 // re-scope or turn it off afterward. That is a kernel-ABI property, not a Go one.
+// A direct consequence: the driver level is sampled HERE, once, at the first kernel
+// session — a later dbsql.SetLogLevel re-levels the Go binding lines (klog/klogCtx
+// re-read GetLevel per call) but NOT the already-installed Rust subscriber. Set the
+// level before opening the first kernel connection to govern the Rust logs.
 func initKernelLogging() {
 	initLoggingOnce.Do(func() {
 		// DBSQL_KERNEL_DEBUG override: force the subscriber on and let RUST_LOG tune
@@ -155,6 +160,12 @@ func initKernelLogging() {
 // accepts (OFF/ERROR/WARN/INFO/DEBUG/TRACE), so the driver's log level drives the
 // kernel's Rust logs. An unrecognized level falls back to WARN (the kernel's own
 // default), matching the driver's default.
+//
+// FatalLevel/PanicLevel map to OFF, not ERROR: at those levels the Go driver
+// suppresses even its own Error() lines, so the kernel's Rust subscriber must not
+// be louder than the driver the user configured — the kernel has no fatal/panic
+// threshold, and emitting ERROR lines there would leak stderr output a user who set
+// DATABRICKS_LOG_LEVEL=fatal explicitly asked to silence.
 func kernelLogLevel(l zerolog.Level) string {
 	switch l {
 	case zerolog.TraceLevel:
@@ -165,9 +176,9 @@ func kernelLogLevel(l zerolog.Level) string {
 		return "INFO"
 	case zerolog.WarnLevel:
 		return "WARN"
-	case zerolog.ErrorLevel, zerolog.FatalLevel, zerolog.PanicLevel:
+	case zerolog.ErrorLevel:
 		return "ERROR"
-	case zerolog.Disabled:
+	case zerolog.FatalLevel, zerolog.PanicLevel, zerolog.Disabled:
 		return "OFF"
 	default:
 		return "WARN"

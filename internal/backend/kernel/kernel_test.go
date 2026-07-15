@@ -3,9 +3,12 @@
 package kernel
 
 import (
+	"bytes"
 	"context"
 	"database/sql/driver"
+	"encoding/json"
 	"errors"
+	"os"
 	"testing"
 
 	"github.com/databricks/databricks-sql-go/driverctx"
@@ -75,8 +78,10 @@ func TestSetKernelTLS(t *testing.T) {
 
 // kernelLogLevel maps the driver's zerolog level to the kernel_init_logging level
 // string, so DATABRICKS_LOG_LEVEL drives the kernel's Rust logs too. Pin the
-// mapping (incl. the fatal/panic→ERROR collapse and the default→WARN fallback) so
-// a level the kernel would reject can't silently ship.
+// mapping (incl. the fatal/panic→OFF collapse and the default→WARN fallback) so a
+// level the kernel would reject can't silently ship. fatal/panic map to OFF, not
+// ERROR: the Go driver suppresses even Error() lines at those levels, so the Rust
+// subscriber must stay at least as quiet as the driver the user configured.
 func TestKernelLogLevel(t *testing.T) {
 	cases := []struct {
 		in   zerolog.Level
@@ -87,8 +92,8 @@ func TestKernelLogLevel(t *testing.T) {
 		{zerolog.InfoLevel, "INFO"},
 		{zerolog.WarnLevel, "WARN"},
 		{zerolog.ErrorLevel, "ERROR"},
-		{zerolog.FatalLevel, "ERROR"},
-		{zerolog.PanicLevel, "ERROR"},
+		{zerolog.FatalLevel, "OFF"}, // driver suppresses Error() here → kernel stays silent, not louder
+		{zerolog.PanicLevel, "OFF"},
 		{zerolog.Disabled, "OFF"},
 		{zerolog.NoLevel, "WARN"}, // unrecognized → the kernel's own default
 	}
@@ -122,6 +127,69 @@ func TestKernelLogNoAllocWhenOff(t *testing.T) {
 		klogCtx(ctx, "hot path %d", 1)
 	}); n != 0 {
 		t.Errorf("klogCtx allocated %v times at Warn level, want 0", n)
+	}
+}
+
+// TestKernelLogCtxEmitsCorrelation proves the positive half of the contract the
+// alloc test can't see: at debug level klogCtx actually EMITS through the shared
+// logger AND attaches connId/corrId/queryId, and at the default warn level it emits
+// nothing. Without this, a regression that silently stopped emitting or stopped
+// attaching the fields would still pass TestKernelLogNoAllocWhenOff (0 allocs is
+// also what "emit nothing" looks like).
+func TestKernelLogCtxEmitsCorrelation(t *testing.T) {
+	prev := logger.Logger.GetLevel()
+	var buf bytes.Buffer
+	logger.SetLogOutput(&buf)
+	// Restore the package defaults (stderr sink, prior level) so we don't leak the
+	// buffer/level into sibling tests.
+	defer func() {
+		logger.SetLogOutput(os.Stderr)
+		_ = logger.SetLogLevel(prev.String())
+	}()
+
+	ctx := driverctx.NewContextWithConnId(context.Background(), "conn-1")
+	ctx = driverctx.NewContextWithCorrelationId(ctx, "corr-2")
+	ctx = driverctx.NewContextWithQueryId(ctx, "query-3")
+
+	// Debug level: the line is emitted and carries all three correlation fields.
+	if err := logger.SetLogLevel("debug"); err != nil {
+		t.Fatal(err)
+	}
+	klogCtx(ctx, "step %s", "execute")
+
+	var rec struct {
+		Level   string `json:"level"`
+		Message string `json:"message"`
+		ConnID  string `json:"connId"`
+		CorrID  string `json:"corrId"`
+		QueryID string `json:"queryId"`
+	}
+	line := bytes.TrimSpace(buf.Bytes())
+	if len(line) == 0 {
+		t.Fatal("klogCtx emitted nothing at debug level, want one line")
+	}
+	if err := json.Unmarshal(line, &rec); err != nil {
+		t.Fatalf("klogCtx output is not the expected JSON log line: %v (line: %s)", err, line)
+	}
+	if rec.Level != "debug" {
+		t.Errorf("level = %q, want %q", rec.Level, "debug")
+	}
+	if rec.Message != "[kernel] step execute" {
+		t.Errorf("message = %q, want %q", rec.Message, "[kernel] step execute")
+	}
+	if rec.ConnID != "conn-1" || rec.CorrID != "corr-2" || rec.QueryID != "query-3" {
+		t.Errorf("correlation fields = {connId:%q corrId:%q queryId:%q}, want {conn-1 corr-2 query-3}",
+			rec.ConnID, rec.CorrID, rec.QueryID)
+	}
+
+	// Warn level (the default): nothing is emitted.
+	buf.Reset()
+	if err := logger.SetLogLevel("warn"); err != nil {
+		t.Fatal(err)
+	}
+	klogCtx(ctx, "step %s", "execute")
+	if got := bytes.TrimSpace(buf.Bytes()); len(got) != 0 {
+		t.Errorf("klogCtx emitted %q at warn level, want nothing", got)
 	}
 }
 
