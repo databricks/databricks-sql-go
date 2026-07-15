@@ -118,6 +118,26 @@ func TestWithKernelOptionsRejectedOnThriftPath(t *testing.T) {
 	}
 }
 
+// WithKernelTrustedCerts must copy the PEM defensively, so a caller mutating its
+// slice after applying the option (but before Connect) can't change the stored
+// trust store. This is the option-set counterpart to TestKernelExperimentalDeepCopy
+// (which covers the per-conn DeepCopy path).
+func TestWithKernelTrustedCertsCopiesPEM(t *testing.T) {
+	pem := []byte("ca-bundle")
+	cfg := config.WithDefaults()
+	WithKernelTrustedCerts(pem)(cfg)
+
+	// Mutate the caller's slice after the option ran.
+	pem[0] = 'X'
+
+	if cfg.KernelExperimental == nil {
+		t.Fatal("KernelExperimental should be non-nil after WithKernelTrustedCerts")
+	}
+	if got := string(cfg.KernelExperimental.TLSTrustedCertsPEM); got != "ca-bundle" {
+		t.Errorf("WithKernelTrustedCerts aliased the caller's slice; stored %q, want %q", got, "ca-bundle")
+	}
+}
+
 // DeepCopy must copy the CA byte slice, not alias it — the connector may DeepCopy
 // the whole Config per conn, and a shared backing array would let one conn's
 // mutation reach another.

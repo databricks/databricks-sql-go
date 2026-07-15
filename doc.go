@@ -349,6 +349,11 @@ on the error message text:
 		// retry with the default backend (omit WithUseKernel).
 	}
 
+Conversely, a kernel-only option set without WithUseKernel is rejected on the
+default (Thrift) path with an error wrapping the mirror sentinel
+ErrRequiresKernelBackend, detectable the same way with
+errors.Is(err, dbsqlerr.ErrRequiresKernelBackend).
+
 Example usage:
 
 	import (
