@@ -32,7 +32,8 @@ import (
 //  5. drain the watcher before returning, so a late cancel cannot land on a
 //     statement that reuses this handle
 //
-// Executes SQL text only; bound parameters are rejected up front by Execute.
+// Binds any query parameters (bindParams) before executing; staging statements
+// are rejected up front by Execute, so none reach here.
 func (k *KernelBackend) execute(ctx context.Context, req backend.ExecRequest) (backend.Operation, error) {
 	// Log the SQL length, not the text: query bodies can carry PII/secrets in
 	// WHERE/INSERT/SET, and this goes to stderr. Matches the driver's own
