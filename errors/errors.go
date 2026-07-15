@@ -73,6 +73,15 @@ var ErrNotSupportedByKernel error = errors.New("not supported by the kernel back
 // ErrNotSupportedByKernel — instead of matching on message text.
 var ErrKernelNotCompiled error = errors.New("the SEA-via-kernel backend is not compiled into this binary")
 
+// value to be used with errors.Is() to determine that a kernel-only option (e.g.
+// WithKernelTrustedCerts / WithKernelSkipHostnameVerify) was set without
+// WithUseKernel, so the default (Thrift) backend rejected it rather than
+// connecting with a weaker-than-intended TLS trust store. This is the mirror of
+// ErrNotSupportedByKernel — that sentinel means "the kernel can't honor this
+// option"; this one means "this option requires the kernel". Lets a caller detect
+// the case programmatically instead of matching on message text.
+var ErrRequiresKernelBackend error = errors.New("requires the SEA-via-kernel backend")
+
 // Base interface for driver errors
 type DBError interface {
 	// Descriptive message describing the error
