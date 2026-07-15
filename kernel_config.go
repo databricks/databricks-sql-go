@@ -134,9 +134,16 @@ func resolveKernelAuth(cfg *config.Config) (kernel.Auth, error) {
 		}
 		return kernel.Auth{Mode: kernel.AuthPAT, Token: token}, nil
 	default:
-		return kernel.Auth{}, errors.New("databricks: this authenticator is not supported by the kernel backend; " +
-			"PAT (WithAccessToken) and OAuth M2M/U2M (WithClientCredentials / authType) are supported, but " +
-			"token-provider, external/static, and federated authenticators are not — " +
-			"use one of those or the default (Thrift) backend")
+		// Unsupported authenticator: wrap ErrNotSupportedByKernel so a caller can
+		// detect the "kernel can't honor this auth" case with errors.Is and fall back
+		// to the default backend, rather than substring-matching this message. This is
+		// the same contract every other unsupported kernel option in this file follows
+		// and that doc.go advertises. (The empty-PAT case above is intentionally NOT
+		// wrapped — a missing token is misconfiguration to fix, not a feature the
+		// kernel can't honor.)
+		return kernel.Auth{}, fmt.Errorf("databricks: this authenticator is %w; "+
+			"PAT (WithAccessToken) and OAuth M2M/U2M (WithClientCredentials / authType) are supported, but "+
+			"token-provider, external/static, and federated authenticators are not — "+
+			"use one of those or the default (Thrift) backend", dbsqlerr.ErrNotSupportedByKernel)
 	}
 }
