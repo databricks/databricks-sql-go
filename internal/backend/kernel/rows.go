@@ -65,9 +65,9 @@ func newKernelRows(ctx context.Context, op *kernelOp, stream *C.kernel_result_st
 	// r.Close() calls below run when construction FAILS (schema fetch/import), and a
 	// Close() with the callback set would fire OnClose as a *successful* close for a
 	// statement that never produced rows — masking the failure in CLOSE_STATEMENT
-	// telemetry. Assign it only on the success path (matching the Thrift NewRows,
-	// which sets closeCallback just before returning); the construction error itself
-	// is surfaced to and recorded by the conn execute path.
+	// telemetry. Assign it only on the success path so cleanup Close() on a
+	// schema/import failure does not record a falsely successful CLOSE_STATEMENT; the
+	// construction error itself is surfaced to and recorded by the conn execute path.
 	r := &kernelRows{ctx: ctx, op: op, stream: stream, keyCache: arrowscan.NewStructKeyCache()}
 
 	var csch C.struct_ArrowSchema

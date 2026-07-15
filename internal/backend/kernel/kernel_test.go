@@ -410,14 +410,28 @@ func TestKernelRowsCloseFiresOnClose(t *testing.T) {
 	})
 
 	t.Run("construction-failure Close must not fire a success OnClose", func(t *testing.T) {
-		// newKernelRows arms the callback only after a successful build, so its
-		// cleanup Close() on a schema-fetch/import failure has callbacks==nil and
-		// must NOT record a (falsely successful) CLOSE_STATEMENT. Model that state.
+		// Drive the real newKernelRows construction-failure path: a nil result
+		// stream makes kernel_result_stream_get_schema return a defined
+		// InvalidArgument error (the kernel null-checks the handle — never UB), so
+		// newKernelRows takes its cleanup r.Close() branch and returns an error. The
+		// callback must NOT have been armed yet, so the supplied OnClose must not
+		// fire a (falsely successful) CLOSE_STATEMENT for a statement that produced
+		// no rows. This is the invariant that keeping r.callbacks unset until after
+		// a successful build guarantees.
 		fired := false
-		r := &kernelRows{ /* callbacks intentionally nil, as during construction */ }
-		_ = r.Close()
+		cb := &dbsqlrows.TelemetryCallbacks{
+			OnClose: func(int64, int, error, error) { fired = true },
+		}
+		op := &kernelOp{backend: &KernelBackend{}} // for evictIfSessionFatal on the error path
+		rows, err := newKernelRows(context.Background(), op, nil /* stream */, cb)
+		if err == nil {
+			t.Fatal("newKernelRows(nil stream) = nil error, want a construction failure")
+		}
+		if rows != nil {
+			t.Errorf("newKernelRows on failure = %v rows, want nil", rows)
+		}
 		if fired {
-			t.Error("OnClose fired for a rows object that never finished construction")
+			t.Error("OnClose fired during construction-failure cleanup — callback armed too early")
 		}
 	})
 }
