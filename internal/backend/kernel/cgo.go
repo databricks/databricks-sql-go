@@ -36,7 +36,6 @@ import "C"
 import (
 	"context"
 	"fmt"
-	"os"
 	"runtime"
 	"sync"
 	"unsafe"
@@ -135,16 +134,14 @@ var initLoggingOnce sync.Once
 // level before opening the first kernel connection to govern the Rust logs.
 func initKernelLogging() {
 	initLoggingOnce.Do(func() {
-		// DBSQL_KERNEL_DEBUG override: force the subscriber on and let RUST_LOG tune
-		// it (level=NULL). Otherwise map the driver's current log level in, so the
-		// one DATABRICKS_LOG_LEVEL knob governs kernel verbosity too.
+		// resolveKernelLogArg decides the level (or NULL for the DBSQL_KERNEL_DEBUG
+		// override, which lets the kernel honor RUST_LOG). The pure decision lives in
+		// logging_level.go so it's unit-tested without cgo.
 		var level cStr
-		if os.Getenv("DBSQL_KERNEL_DEBUG") != "" {
-			level = cStr{c: nil} // NULL → kernel honors RUST_LOG
-		} else {
-			level = newCStr(kernelLogLevel(logger.Logger.GetLevel()))
+		if lvl, useNULL := resolveKernelLogArg(); !useNULL {
+			level = newCStr(lvl)
 			defer level.free()
-		}
+		} // else level stays {c: nil} → NULL → kernel honors RUST_LOG
 		if err := call(func() C.KernelStatusCode {
 			return C.kernel_init_logging(level.c, nil)
 		}); err != nil {
@@ -154,35 +151,6 @@ func initKernelLogging() {
 			logger.Logger.Warn().Msgf("databricks: kernel_init_logging: %v (kernel logs unavailable; proceeding)", err)
 		}
 	})
-}
-
-// kernelLogLevel maps a zerolog level to the level string kernel_init_logging
-// accepts (OFF/ERROR/WARN/INFO/DEBUG/TRACE), so the driver's log level drives the
-// kernel's Rust logs. An unrecognized level falls back to WARN (the kernel's own
-// default), matching the driver's default.
-//
-// FatalLevel/PanicLevel map to OFF, not ERROR: at those levels the Go driver
-// suppresses even its own Error() lines, so the kernel's Rust subscriber must not
-// be louder than the driver the user configured — the kernel has no fatal/panic
-// threshold, and emitting ERROR lines there would leak stderr output a user who set
-// DATABRICKS_LOG_LEVEL=fatal explicitly asked to silence.
-func kernelLogLevel(l zerolog.Level) string {
-	switch l {
-	case zerolog.TraceLevel:
-		return "TRACE"
-	case zerolog.DebugLevel:
-		return "DEBUG"
-	case zerolog.InfoLevel:
-		return "INFO"
-	case zerolog.WarnLevel:
-		return "WARN"
-	case zerolog.ErrorLevel:
-		return "ERROR"
-	case zerolog.FatalLevel, zerolog.PanicLevel, zerolog.Disabled:
-		return "OFF"
-	default:
-		return "WARN"
-	}
 }
 
 // call runs a fallible kernel entry point and, on a non-Success status, reads
