@@ -203,15 +203,19 @@ func ScanCellCached(col arrow.Array, row int, loc *time.Location, keys *StructKe
 // with 9 fractional digits, negated with a leading '-'.
 func formatDayTimeInterval(v int64, unit arrow.TimeUnit) string {
 	neg := v < 0
-	if neg {
-		v = -v
-	}
-	// Split into whole seconds + a sub-second nanosecond remainder working in the
-	// native unit. We must NOT scale the full magnitude up to nanoseconds first:
-	// Spark day-time intervals run up to ~Long.MaxValue microseconds (~292 years),
-	// so v*1e3 (or *1e6/*1e9) would overflow int64 and silently produce a wrong
-	// (often negative) string. Deriving seconds by dividing keeps every
-	// intermediate in range; only the bounded sub-second remainder is scaled up.
+	// Derive every component from the SIGNED value (Go integer division/modulo
+	// truncate toward zero, so each component simply carries v's sign), then take
+	// the magnitude of each bounded component when formatting. We deliberately do
+	// NOT negate the full magnitude up front (`v = -v`): at math.MinInt64 that
+	// wraps back to a negative value, so the components would come out negative
+	// *and* a '-' would be prepended — a doubly-negated garbage string — and
+	// math.MinInt64 μs is a representable Spark day-time bound.
+	//
+	// We also must NOT scale the full magnitude up to nanoseconds first: Spark
+	// day-time intervals run up to ~Long.MaxValue microseconds (~292 years), so
+	// v*1e3 (or *1e6/*1e9) would overflow int64 and silently produce a wrong
+	// string. Deriving seconds by dividing keeps every intermediate in range; only
+	// the bounded sub-second remainder is scaled up.
 	var secs, frac int64
 	switch unit {
 	case arrow.Second:
@@ -236,23 +240,40 @@ func formatDayTimeInterval(v int64, unit arrow.TimeUnit) string {
 	if neg {
 		sign = "-"
 	}
-	return fmt.Sprintf("%s%d %02d:%02d:%02d.%09d", sign, days, h, m, s, frac)
+	// Every component is bounded well within int64 (days ≤ ~1.07e8, h < 24, m/s <
+	// 60, frac < 1e9), so abs64 here can never hit the math.MinInt64 abs overflow.
+	return fmt.Sprintf("%s%d %02d:%02d:%02d.%09d", sign, abs64(days), abs64(h), abs64(m), abs64(s), abs64(frac))
 }
 
 // formatYearMonthInterval renders a month count as the Thrift path's "years-months",
 // negated with a leading '-'.
 func formatYearMonthInterval(months int32) string {
 	neg := months < 0
+	// Widen to int64 BEFORE negating: negating math.MinInt32 as an int32 overflows
+	// (wraps back negative → doubly-negated garbage), but math.MinInt32 fits in
+	// int64 where the negation is exact. math.MinInt32 months is a representable
+	// Spark year-month bound.
+	m := int64(months)
 	if neg {
-		months = -months
+		m = -m
 	}
-	y := months / 12
-	mo := months % 12
+	y := m / 12
+	mo := m % 12
 	sign := ""
 	if neg {
 		sign = "-"
 	}
 	return fmt.Sprintf("%s%d-%d", sign, y, mo)
+}
+
+// abs64 returns the absolute value of x. It is only ever called on components
+// already bounded well within int64 (see formatDayTimeInterval), so the classic
+// abs(math.MinInt64) overflow can't arise; the trivial form is intentional.
+func abs64(x int64) int64 {
+	if x < 0 {
+		return -x
+	}
+	return x
 }
 
 // inLocation renders t in loc, matching the Thrift path's .In(location); a nil

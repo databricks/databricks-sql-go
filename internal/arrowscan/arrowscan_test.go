@@ -137,6 +137,15 @@ func TestScanCellInterval(t *testing.T) {
 		// NOT overflow int64 while scaling to nanoseconds — regression guard for the
 		// prior multiply-first bug that produced a wrong/negative string here.
 		{"large_us_no_overflow", arrow.Microsecond, 9223372036854775807, "106751991 04:00:54.775807000"},
+		// math.MinInt64 μs is a representable negative bound. Negating the full
+		// magnitude (`v = -v`) wraps it back negative, doubly-negating into garbage;
+		// deriving components from the signed value renders it correctly. Its
+		// magnitude is exactly one μs past MaxInt64, so the last fractional digit is
+		// 8 where the MaxInt64 case above is 7.
+		{"min_int64_us", arrow.Microsecond, -9223372036854775808, "-106751991 04:00:54.775808000"},
+		// Same MinInt64 wrap-on-negate hazard at the nanosecond unit (no scaling
+		// involved — this isolates the negation bug from the multiply-overflow one).
+		{"min_int64_ns", arrow.Nanosecond, -9223372036854775808, "-106751 23:47:16.854775808"},
 	}
 	for _, tc := range dayTime {
 		t.Run("daytime_"+tc.name, func(t *testing.T) {
@@ -164,6 +173,10 @@ func TestScanCellInterval(t *testing.T) {
 		{"year_and_month", 13, "1-1"},
 		{"months_only", 5, "0-5"},
 		{"negative", -13, "-1-1"},
+		// math.MinInt32 months is a representable negative bound. Negating it as an
+		// int32 (`months = -months`) overflows and wraps back negative, doubly-
+		// negating into garbage; widening to int64 before negating renders it right.
+		{"min_int32", -2147483648, "-178956970-8"},
 	}
 	for _, tc := range yearMonth {
 		t.Run("yearmonth_"+tc.name, func(t *testing.T) {

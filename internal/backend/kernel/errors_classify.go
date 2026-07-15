@@ -45,7 +45,9 @@ type KernelError struct {
 
 func (e *KernelError) Error() string {
 	// Append the server query id when present — it is the one correlation handle
-	// to server-side query history, and StatementID() is "" on this backend.
+	// to server-side query history. On the execute-error path there is no executed
+	// statement handle, so kernelOp.StatementID() is "" there; carrying the id on
+	// the error itself keeps it reachable when the accessor can't surface it.
 	q := ""
 	if e.QueryID != "" {
 		q = fmt.Sprintf(", queryId=%s", e.QueryID)
