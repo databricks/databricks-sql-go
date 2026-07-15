@@ -78,7 +78,7 @@ type paramCase struct {
 // The kernel binds these via kernel_statement_bind_parameter (the driver's
 // backend.Param{Name, Type, Value}); Thrift binds via toSparkParameters. Covers
 // positional (?) and named (:n) markers, each scalar type, SQL NULL, multi-param,
-// and a predicate — mirroring the C2 POC gate.
+// and a predicate.
 var paramCases = []paramCase{
 	{"pos_int", "SELECT ? AS v", []any{int64(42)}},
 	{"pos_string", "SELECT ? AS v", []any{"hello"}},

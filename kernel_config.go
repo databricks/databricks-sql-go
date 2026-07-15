@@ -34,8 +34,8 @@ import (
 func validateKernelConfig(cfg *config.Config) (kernel.Auth, error) {
 	// Initial namespace (WithInitialNamespace) is forwarded, not rejected: the
 	// kernel C ABI has no catalog/schema setter, so KernelBackend.OpenSession
-	// selects it post-connect with USE CATALOG / USE SCHEMA (the OSS ODBC driver's
-	// workaround). No per-backend handling needed here.
+	// selects it post-connect with USE CATALOG / USE SCHEMA. No per-backend handling
+	// needed here.
 	// EnableMetricViewMetadata is forwarded, not rejected: config.EffectiveSessionParams
 	// folds its server conf (spark.sql.thriftserver.metadata.metricview.enabled=true)
 	// into SessionConf backend-neutrally, so the kernel path sends the identical conf
@@ -90,9 +90,9 @@ func validateKernelConfig(cfg *config.Config) (kernel.Auth, error) {
 }
 
 // resolveKernelAuth picks the kernel auth form from the config. The kernel backend
-// drives the kernel's own OAuth flow from raw credentials (mirroring pyo3/napi and
-// the Node/Python kernel bindings) rather than reusing the Go authenticator's
-// Authenticate method. It reads those credentials off cfg.Authenticator — the
+// drives the kernel's own OAuth flow from raw credentials rather than reusing the Go
+// authenticator's Authenticate method. It reads those credentials off
+// cfg.Authenticator — the
 // single source of truth for auth, so the last WithX option applied wins for both
 // backends (matching Thrift's last-writer-wins on cfg.Authenticator). The M2M/U2M
 // authenticator types are unexported, so it asserts the small

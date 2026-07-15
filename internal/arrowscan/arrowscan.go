@@ -14,7 +14,7 @@
 //   - nested NULL → null
 //   - time.Time   → quoted .String()  (matches the Thrift marshal() special-case)
 //   - nested decimal → exact scale-applied JSON number literal (never a lossy
-//     float64), matching Thrift's marshalScalar → ValueString (#253/#274)
+//     float64), matching Thrift's marshalScalar → ValueString
 //   - float32     → native float32 (not widened to float64), so JSON renders
 //     3.14, not 3.140000104904175
 package arrowscan
@@ -34,8 +34,8 @@ import (
 // ScanCell extracts one cell as a driver.Value. Scalars map to their Go value:
 // bool, all int/uint widths, float (native float32/float64), string, binary,
 // date, timestamp, and top-level decimal (as an exact fixed-point string,
-// matching the Thrift path — a float64 would lose precision beyond ~17 digits;
-// see databricks-sql-go#274). Nested types (List/Map/Struct, and VARIANT which
+// matching the Thrift path — a float64 would lose precision beyond ~17 digits).
+// Nested types (List/Map/Struct, and VARIANT which
 // arrives nested) render to a JSON string byte-identical to the Thrift path;
 // GEOMETRY arrives as a WKB/WKT string and is handled by the string arm. INTERVAL
 // day-time/year-month arrive as native arrow duration/month-interval and format to
@@ -331,7 +331,7 @@ func writeJSON(b *strings.Builder, col arrow.Array, row int, loc *time.Location,
 		// Emit the exact scale-applied decimal as a raw JSON number literal, not a
 		// float64 — a float64 would render DECIMAL(5,2) 19.99 as 19.990000000000002
 		// and corrupt high-precision values. Matches the Thrift path's marshalScalar
-		// → ValueString (databricks-sql-go#253/#274).
+		// → ValueString.
 		b.WriteString(decimalfmt.ExactString(c.Value(row), col.DataType().(*arrow.Decimal128Type).Scale))
 		return nil
 	case *array.Float32:

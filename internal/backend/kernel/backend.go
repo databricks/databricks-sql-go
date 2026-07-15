@@ -28,9 +28,8 @@ import (
 var kernelSessionSeq atomic.Uint64
 
 // Config is the flat connection config for the kernel backend. The connector
-// fills it from the driver's config so the user-facing options are unchanged
-// (this mirrors how the kernel's pyo3/napi bindings take flat connection
-// params). Zero-valued fields are simply not applied.
+// fills it from the driver's config so the user-facing options are unchanged.
+// Zero-valued fields are simply not applied.
 type Config struct {
 	Host        string // workspace hostname, no scheme
 	HTTPPath    string // e.g. /sql/1.0/warehouses/abc123 (carries ?o= org routing)
@@ -67,8 +66,8 @@ type Config struct {
 
 	// Catalog / Schema select the initial namespace. The kernel C ABI has no
 	// catalog/schema config setter, so OpenSession applies them post-connect by
-	// running USE CATALOG / USE SCHEMA (the OSS ODBC driver's workaround). Empty
-	// leaves the session in the server default namespace.
+	// running USE CATALOG / USE SCHEMA. Empty leaves the session in the server
+	// default namespace.
 	Catalog string
 	Schema  string
 }
@@ -233,8 +232,8 @@ func (k *KernelBackend) OpenSession(ctx context.Context) error {
 	k.sessionID = fmt.Sprintf("kernel-%d", kernelSessionSeq.Add(1))
 
 	// Initial namespace: the kernel C ABI has no catalog/schema config setter, so
-	// select it post-connect with USE CATALOG / USE SCHEMA (the OSS ODBC driver's
-	// approach). A failure here means the session is not in the requested namespace
+	// select it post-connect with USE CATALOG / USE SCHEMA. A failure here means
+	// the session is not in the requested namespace
 	// — a correctness precondition, like Thrift's InitialNamespace — so fail the
 	// connect and close the session we just opened (the connector does not call
 	// CloseSession on an OpenSession error).
@@ -394,8 +393,7 @@ func (k *KernelBackend) runNamespaceStmt(ctx context.Context, sql string) error 
 // kernel_session_close returns, with no deadline — a stalled kernel-side close
 // (e.g. a shutdown-time network partition) can block database/sql pool cleanup.
 // A bounded close needs either a kernel_session_close_blocking with a deadline or
-// a Go-side watchdog; grouped with the kernel C-ABI follow-ups. Not fixed here to
-// keep this PR scoped to the opt-in backend rather than add a watchdog.
+// a Go-side watchdog; grouped with the kernel C-ABI follow-ups.
 func (k *KernelBackend) CloseSession(ctx context.Context) error {
 	if k.session == nil {
 		return nil

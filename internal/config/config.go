@@ -189,7 +189,6 @@ type UserConfig struct {
 	// connector copies it into Config.ArrowConfig.UseArrowNativeDecimal when it is
 	// assembled. The name intentionally differs from ArrowConfig's field so the
 	// promoted selector Config.UseArrowNativeDecimal stays unambiguous.
-	// See databricks/databricks-sql-go#274.
 	UseArrowNativeDecimalDSN bool
 	CloudFetchConfig
 	// UseKernel selects the SEA-via-kernel backend instead of Thrift. See the

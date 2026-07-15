@@ -25,9 +25,9 @@ const (
 // Thrift path hardcodes both), so resolveKernelAuth leaves them zero and the kernel
 // applies its defaults. They are kept — rather than dropped and the setter hardcoded
 // to NULL/0 — so kernel.Auth models the full set_auth_u2m surface: adding a future
-// WithOAuthRedirectPort / scopes option (ODBC PR #102 already exposes a redirect
-// port) becomes populating these, not re-plumbing the setter. TestSetAuthByMode's
-// "U2M full" case pins that marshalling so the dormant path stays correct.
+// WithOAuthRedirectPort / scopes option becomes populating these, not re-plumbing
+// the setter. TestSetAuthByMode's "U2M full" case pins that marshalling so the
+// dormant path stays correct.
 type Auth struct {
 	Mode         AuthMode
 	Token        string   // PAT

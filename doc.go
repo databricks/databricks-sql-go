@@ -186,116 +186,70 @@ the C header) under the cgo link path; `make build-kernel` does both steps:
 In a build without the tag, WithUseKernel(true) returns a clear error at connect
 time rather than silently using Thrift.
 
-Kernel-backend logging follows the same knob as the rest of the driver. The
-binding-layer trace (session/statement/batch steps) is emitted through the shared
-logger at Debug level, so DATABRICKS_LOG_LEVEL=debug or dbsql.SetLogLevel("debug")
-turns it on — no separate switch — and it lands in the same sink the rest of the
-driver uses (including a custom one set via logger.SetLogOutput). Request-scoped
-binding lines carry the same structured connId/corrId/queryId fields as the
-driver's other logs where a context is in scope (session open/close, execute,
-result-batch fetch), so they can be correlated in a multi-connection process; a few
-context-less lines (parameter binds, operation teardown) are emitted without those
-fields. At the default Warn level the lines are suppressed with no cost (zerolog
-no-ops a below-level event), including during benchmarks.
+Kernel-backend logging uses the same knob as the rest of the driver: the
+binding-layer trace is emitted through the shared logger at Debug level, so
+DATABRICKS_LOG_LEVEL=debug or dbsql.SetLogLevel("debug") turns it on and it lands in
+the driver's normal sink (including a custom logger.SetLogOutput). Where a context is
+in scope, lines carry the usual connId/corrId/queryId fields. At the default Warn
+level the lines are suppressed with no cost.
 
 	dbsql.SetLogLevel("debug") // or DATABRICKS_LOG_LEVEL=debug
 
-The driver's log level is also mapped into the kernel's own Rust log subscriber, so
-the same knob governs the kernel's internal (Rust) verbosity. Two caveats apply to
-the Rust logs specifically, both consequences of the kernel's process-wide logging
-ABI rather than the Go layer:
+The same level is mapped into the kernel's internal (Rust) log subscriber, with two
+caveats specific to the Rust lines: they go to stderr directly (not affected by
+logger.SetLogOutput), and their verbosity is fixed when the first kernel session in
+the process is opened — set the level before that first connect to control them.
 
-  - They are written to stderr directly and are NOT affected by
-    logger.SetLogOutput — an app that routes the driver's Go logs to a file or an
-    app logger will still find the Rust lines on stderr, not interleaved with that
-    sink.
-  - The Rust verbosity is fixed at the level in effect when the FIRST kernel
-    session in the process is opened (the kernel subscriber is process-wide and
-    installed once); a later dbsql.SetLogLevel changes the Go binding lines but not
-    the already-installed Rust subscriber. Set the level before opening the first
-    kernel connection to control the Rust logs.
-
-The kernel's Rust lines are also currently plain text and do NOT yet carry the
-structured connId/corrId/queryId fields — that needs a kernel log-callback ABI
-(tracked separately); only the Go binding lines are structured today.
-
-For finer control of the kernel's Rust verbosity independent of the driver level,
-set DBSQL_KERNEL_DEBUG to any non-empty value: it forces the kernel subscriber on
-and defers to RUST_LOG for the kernel's threshold. Filter on the target
-databricks::sql::kernel (note the colons — the kernel's explicit log target, NOT
-the crate module path databricks_sql_kernel, which would match nothing):
+For finer control of the Rust verbosity independent of the driver level, set
+DBSQL_KERNEL_DEBUG to any non-empty value: it forces the kernel subscriber on and
+defers to RUST_LOG. Filter on the target databricks::sql::kernel (note the colons):
 
 	# kernel logs only, at the kernel's own verbosity:
 	DBSQL_KERNEL_DEBUG=1 RUST_LOG=databricks::sql::kernel=debug ./your_app 2>&1
-	# kernel logs plus its HTTP stack (hyper/reqwest):
+	# kernel logs plus its HTTP stack:
 	DBSQL_KERNEL_DEBUG=1 RUST_LOG=debug ./your_app 2>&1
 
-The kernel backend currently supports PAT and OAuth (M2M via WithClientCredentials,
-and U2M via the authType=oauthU2M DSN param — the interactive browser/PKCE flow is
-owned by the kernel) authentication; reading scalar, nested, and complex-typed
-results (CloudFetch is handled transparently); context cancellation during execute
-(a cancelled ctx fires a real server-side cancel; on the read path cancellation is
-honored at result-batch boundaries, not mid-fetch); the initial namespace
-(WithInitialNamespace catalog/schema, applied post-connect via USE CATALOG / USE
-SCHEMA since the kernel C ABI has no namespace setter); metric-view metadata
-(WithEnableMetricViewMetadata, sent as the same server session conf the Thrift
-backend uses); and the TLS, proxy, and session-conf (query tags, statement timeout,
-time zone) connection options. WithTimeout (a server query timeout the kernel C ABI
-can't set) and WithRetries used to disable retries (the kernel retries internally)
-return a clear error at connect time rather than being silently ignored; token-
-provider, external/static, and federated authenticators are likewise not supported
-and rejected loudly. Staging operations (PUT/GET/REMOVE on a Unity Catalog volume,
-which need a local file transfer this backend cannot perform) are not yet supported
-and return a clear error at execute time (they are per-statement, not connect-time).
-Bound query parameters (positional and named) are supported — bound over the C ABI
-to match the Thrift path. None of these is silently ignored. (Metadata is issued as
-ordinary SQL — SHOW/DESCRIBE/information_schema — and runs on this backend like any
-other query.)
+Supported on the kernel backend: PAT and OAuth (M2M via WithClientCredentials, U2M
+via the authType=oauthU2M DSN param); reading scalar, nested, and complex-typed
+results (CloudFetch is transparent); bound query parameters (positional and named);
+context cancellation during execute; the initial namespace (WithInitialNamespace,
+applied post-connect via USE CATALOG / USE SCHEMA); metric-view metadata
+(WithEnableMetricViewMetadata); and the TLS, proxy, and session-conf (query tags,
+statement timeout, time zone) options. Nothing is silently ignored: WithTimeout, a
+retries-disabling WithRetries, and token-provider / external / federated
+authenticators are rejected at connect; staging (PUT/GET/REMOVE on a Unity Catalog
+volume) is rejected at execute. WithMaxRows and positive-limit WithRetries are
+accepted but inert (the kernel manages fetching and retries below the C ABI).
 
-OAuth U2M is interactive. On a cache miss (no valid cached refresh token) opening a
-connection launches the system browser and blocks until the user completes login or
-the kernel's built-in callback timeout (~120s) expires — and because the kernel C
-ABI cannot interrupt session open mid-call, a deadline on the connection context is
-not honored during that window (nor can the timeout be shortened; the C ABI exposes
-no override). A cached, still-valid token opens without a browser. Use PAT or OAuth
-M2M for headless / deadline-bound connects.
+OAuth U2M is interactive: on a cache miss, connecting launches the system browser and
+blocks until login completes or the kernel's ~120s callback timeout expires. Because
+the C ABI can't interrupt session open mid-call, a connection-context deadline is not
+honored during that window. Use PAT or OAuth M2M for headless / deadline-bound
+connects.
 
-WithMaxRows and retry tuning (WithRetries with a positive limit) are accepted but
-not applied on the kernel path: the kernel manages result fetching and retries
-internally, below the C ABI, with no user-facing knob.
+Experimental kernel-only TLS options (rejected by the default backend; the
+WithKernel* prefix marks them experimental):
+  - WithKernelTrustedCerts(pem) adds a PEM CA bundle on top of the system roots (for
+    a re-signing proxy or on-prem CA). Required because the kernel's TLS stack does
+    not read SSL_CERT_FILE.
+  - WithKernelSkipHostnameVerify() skips only the hostname check while keeping chain
+    validation (finer-grained than WithSkipTLSHostVerify).
 
-Experimental kernel-only TLS options. The kernel exposes a richer TLS surface than
-the backend-neutral WithSkipTLSHostVerify (which relaxes both chain and hostname
-checks). These are kernel-only — the default (Thrift) backend rejects them at
-connect rather than silently ignoring them — and experimental (the WithKernel*
-prefix marks both):
-  - WithKernelTrustedCerts(pem) adds a PEM CA bundle to the kernel's trust store on
-    top of the system roots (for a corporate re-signing proxy or an on-prem CA).
-    Required rather than relying on SSL_CERT_FILE: the kernel's TLS stack (rustls)
-    does not read that environment variable.
-  - WithKernelSkipHostnameVerify() skips only the certificate hostname check while
-    keeping chain validation (finer-grained than WithSkipTLSHostVerify).
+Setting either without WithUseKernel fails Connect with an error wrapping the
+sentinel ErrRequiresKernelBackend, detectable with errors.Is.
 
-Setting either without WithUseKernel makes Connect fail with an error wrapping the
-sentinel ErrRequiresKernelBackend (the mirror of ErrNotSupportedByKernel), so the
-"add WithUseKernel or remove it" case is detectable with errors.Is rather than by
-matching message text.
+Features above the backend seam are inherited unchanged: the database/sql connection
+pool, per-connection telemetry (CREATE_SESSION / EXECUTE_STATEMENT / DELETE_SESSION),
+and the telemetry circuit breaker. Result types render byte-for-byte identical to the
+Thrift backend: scalars, DECIMAL (exact string), TIMESTAMP / TIMESTAMP_NTZ (shifted
+into the session time zone), INTERVAL, nested Array/Map/Struct and VARIANT (as JSON),
+and GEOMETRY (WKT). The server query id is surfaced on the success path, so a
+QueryIdCallback (see below) fires with the real id and EXECUTE_STATEMENT telemetry
+carries it.
 
-Features that live above the backend seam are inherited unchanged: the
-database/sql connection pool (each connection wraps one kernel session),
-per-connection telemetry (CREATE_SESSION, EXECUTE_STATEMENT, and DELETE_SESSION
-are recorded for kernel connections just like Thrift), and the telemetry
-exporter's circuit breaker are all backend-agnostic. Result types are rendered to
-match the Thrift backend byte-for-byte: scalars, DECIMAL (exact string),
-TIMESTAMP / TIMESTAMP_NTZ (both shifted into the session time zone, as Thrift
-does), INTERVAL year-month and day-time, nested Array/Map/Struct and VARIANT (as
-JSON), and GEOMETRY (WKT). The per-statement server query id is surfaced on the
-success path, so a QueryIdCallback (see below) fires with the real id and
-EXECUTE_STATEMENT telemetry carries it.
-
-One kernel-backend limitation remains on the read path: context cancellation is
-honored at result-batch boundaries, not mid-fetch (an in-flight CloudFetch batch
-runs to completion before the cancel takes effect).
+On the read path, context cancellation is honored at result-batch boundaries, not
+mid-fetch: an in-flight CloudFetch batch runs to completion before the cancel takes
+effect.
 
 # Programmatically Retrieving Connection and Query Id
 

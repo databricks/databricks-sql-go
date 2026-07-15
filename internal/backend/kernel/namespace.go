@@ -10,8 +10,8 @@ import "strings"
 // quoteIdent renders name as a backtick-quoted Databricks SQL identifier, doubling
 // any embedded backtick. The kernel C ABI exposes no catalog/schema config setter,
 // so the initial namespace is applied post-connect by running USE CATALOG / USE
-// SCHEMA (the same workaround the OSS ODBC driver uses); quoting makes those
-// statements injection-safe for arbitrary identifier text.
+// SCHEMA; quoting makes those statements injection-safe for arbitrary identifier
+// text.
 func quoteIdent(name string) string {
 	return "`" + strings.ReplaceAll(name, "`", "``") + "`"
 }

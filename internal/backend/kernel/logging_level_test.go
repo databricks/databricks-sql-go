@@ -1,7 +1,6 @@
 package kernel
 
 import (
-	"os"
 	"testing"
 
 	"github.com/databricks/databricks-sql-go/logger"
@@ -37,45 +36,30 @@ func TestKernelLogLevel(t *testing.T) {
 	}
 }
 
-// TestResolveKernelLogArg pins the level-vs-NULL decision initKernelLogging feeds to
-// kernel_init_logging — the behavior the PR justifies in prose but the cgo path
-// can't easily assert. Two invariants: DBSQL_KERNEL_DEBUG (any non-empty value) must
-// yield useNULL=true so the kernel honors RUST_LOG (the whole point of retaining the
-// knob — a NULL level is the ONLY way the kernel consults RUST_LOG); otherwise the
-// driver's current level is mapped in, so DATABRICKS_LOG_LEVEL governs kernel
-// verbosity too. Runs under CGO_ENABLED=0 (no cgo in the resolution path).
+// TestResolveKernelLogArg pins the level-vs-NULL decision: DBSQL_KERNEL_DEBUG (any
+// non-empty value) yields useNULL=true so the kernel honors RUST_LOG; otherwise the
+// driver level is mapped in. Empty is treated as unset (the gate is os.Getenv != "").
 func TestResolveKernelLogArg(t *testing.T) {
-	// Save/restore the env var and the global logger level so this test leaves no
-	// state behind for its siblings.
-	prevEnv, hadEnv := os.LookupEnv("DBSQL_KERNEL_DEBUG")
+	// t.Setenv restores the var after the test; save/restore the global logger level
+	// separately so nothing leaks to sibling tests.
 	prevLevel := logger.Logger.GetLevel()
-	t.Cleanup(func() {
-		if hadEnv {
-			os.Setenv("DBSQL_KERNEL_DEBUG", prevEnv)
-		} else {
-			os.Unsetenv("DBSQL_KERNEL_DEBUG")
-		}
-		logger.Logger.Logger = logger.Logger.Level(prevLevel)
-	})
+	t.Cleanup(func() { logger.Logger.Logger = logger.Logger.Level(prevLevel) })
 
-	// DBSQL_KERNEL_DEBUG set → NULL level (kernel honors RUST_LOG), regardless of the
-	// driver level. Pin it at debug to prove the override wins over the mapped level.
+	// Set → NULL level regardless of the driver level (pinned at debug to prove the
+	// override wins over the mapped level).
 	logger.Logger.Logger = logger.Logger.Level(zerolog.DebugLevel)
-	os.Setenv("DBSQL_KERNEL_DEBUG", "1")
+	t.Setenv("DBSQL_KERNEL_DEBUG", "1")
 	if lvl, useNULL := resolveKernelLogArg(); !useNULL || lvl != "" {
 		t.Errorf("with DBSQL_KERNEL_DEBUG=1: got (level=%q, useNULL=%v), want (\"\", true)", lvl, useNULL)
 	}
 
-	// An empty value is treated as unset (os.Getenv != "" is the gate), so it must
-	// NOT trigger the override — the mapped level is used.
-	os.Setenv("DBSQL_KERNEL_DEBUG", "")
+	// Empty is treated as unset → the mapped level is used, not the override.
+	t.Setenv("DBSQL_KERNEL_DEBUG", "")
 	if lvl, useNULL := resolveKernelLogArg(); useNULL || lvl != "DEBUG" {
 		t.Errorf("with DBSQL_KERNEL_DEBUG=\"\" at debug: got (level=%q, useNULL=%v), want (\"DEBUG\", false)", lvl, useNULL)
 	}
 
-	// Unset → map the driver level. Check two levels to prove it tracks the logger,
-	// including the fatal→OFF collapse.
-	os.Unsetenv("DBSQL_KERNEL_DEBUG")
+	// Mapped level tracks the logger, including the fatal→OFF collapse.
 	logger.Logger.Logger = logger.Logger.Level(zerolog.WarnLevel)
 	if lvl, useNULL := resolveKernelLogArg(); useNULL || lvl != "WARN" {
 		t.Errorf("unset at warn: got (level=%q, useNULL=%v), want (\"WARN\", false)", lvl, useNULL)

@@ -85,7 +85,7 @@ func TestSetKernelTLS(t *testing.T) {
 // matters: logger.WithContext eagerly allocates (zerolog's With() does
 // make([]byte, 0, 500)) BEFORE the .Debug() gate, so without the up-front
 // kernelDebugOff() guard this would allocate ~500 B per call — per Arrow batch on the
-// nextBatch hot path. Guards against reintroducing that (an Isaac Review MAJOR).
+// nextBatch hot path. Guards against reintroducing that.
 func TestKernelLogNoAllocWhenOff(t *testing.T) {
 	prev := logger.Logger.GetLevel()
 	if err := logger.SetLogLevel("warn"); err != nil { // the default level

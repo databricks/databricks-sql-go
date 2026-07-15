@@ -118,8 +118,7 @@ func TestScanCellScalars(t *testing.T) {
 // INTERVAL day-time (arrow duration) and year-month (arrow month-interval) arrive
 // as native arrow values on the kernel path and must format to the exact string the
 // Thrift path receives pre-formatted from the server: "D HH:MM:SS.nnnnnnnnn" and
-// "years-months", with negatives signed. (These formatters were validated live
-// kernel==Thrift in the PuPr POC; this is the regression guard.)
+// "years-months", with negatives signed.
 func TestScanCellInterval(t *testing.T) {
 	pool := memory.NewGoAllocator()
 
