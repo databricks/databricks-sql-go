@@ -1,0 +1,97 @@
+package kernel
+
+import (
+	"bytes"
+	"encoding/json"
+	"os"
+	"strings"
+	"testing"
+
+	"github.com/databricks/databricks-sql-go/logger"
+	"github.com/rs/zerolog"
+)
+
+// The level mapping and nil-sink no-op are pure Go, so they run under
+// CGO_ENABLED=0. Actual kernel→callback delivery is exercised by the tagged
+// TestLogCallbackRoundTrip (which needs the linked kernel).
+
+// A nil sink must be a safe no-op (the trampoline guards against a missing/typed
+// handle by calling forward on a possibly-nil sink).
+func TestLogSinkForwardNilIsNoOp(t *testing.T) {
+	var s *logSink
+	// Must not panic.
+	s.forward(kernelLevelError, "databricks::sql::kernel", "boom")
+}
+
+// forward must map each kernel level to the right zerolog level and carry the
+// target + message through. A buffer-backed TraceLevel sink (mirroring the
+// production snapshot) lets us assert the emitted JSON rather than only "no
+// panic" — a bug swapping e.g. ERROR→Debug would otherwise ship green.
+func TestLogSinkForwardMapsLevels(t *testing.T) {
+	cases := []struct {
+		kernelLevel int
+		wantLevel   string // zerolog "level" field
+		unknown     bool   // unmapped → Debug WITH a kernelLevel diagnostic field
+	}{
+		{kernelLevelError, "error", false},
+		{kernelLevelWarn, "warn", false},
+		{kernelLevelInfo, "info", false},
+		{kernelLevelDebug, "debug", false},
+		{kernelLevelTrace, "trace", false},
+		{0, "debug", true},
+		{99, "debug", true},
+		{-1, "debug", true},
+	}
+	for _, c := range cases {
+		var buf bytes.Buffer
+		s := &logSink{log: zerolog.New(&buf).Level(zerolog.TraceLevel)}
+		s.forward(c.kernelLevel, "databricks::sql::kernel", "hello")
+		var rec map[string]any
+		if err := json.Unmarshal(bytes.TrimSpace(buf.Bytes()), &rec); err != nil {
+			t.Fatalf("kernelLevel=%d: emitted non-JSON %q: %v", c.kernelLevel, buf.String(), err)
+		}
+		if rec["level"] != c.wantLevel {
+			t.Errorf("kernelLevel=%d: level=%v, want %s", c.kernelLevel, rec["level"], c.wantLevel)
+		}
+		// The unknown-level branch adds a kernelLevel field — the ONLY thing
+		// distinguishing an unmapped level from a real Debug line. Assert it so
+		// dropping that field ships red, not green.
+		if c.unknown {
+			if got, ok := rec["kernelLevel"]; !ok || got != float64(c.kernelLevel) {
+				t.Errorf("kernelLevel=%d: expected kernelLevel field=%d, got %v (present=%t)",
+					c.kernelLevel, c.kernelLevel, got, ok)
+			}
+		} else if _, ok := rec["kernelLevel"]; ok {
+			t.Errorf("kernelLevel=%d: mapped level should NOT carry a kernelLevel field", c.kernelLevel)
+		}
+		if rec["target"] != "databricks::sql::kernel" || rec["message"] != "hello" {
+			t.Errorf("kernelLevel=%d: target/message not carried through: %v", c.kernelLevel, rec)
+		}
+	}
+}
+
+// A TraceLevel snapshot must emit events the driver's own level would suppress —
+// this is the anti-double-gating property (forwarded kernel events the kernel
+// already approved must not be re-dropped by a driver still at Warn). Drives the
+// PRODUCTION newLogSink() against a Warn-level global logger, so a regression of
+// newLogSink to `&logSink{log: logger.Logger}` (the exact F1/F3 bug this fix
+// closes) fails here rather than passing against a hand-rolled replica.
+func TestLogSinkForwardNotReGatedByDriverLevel(t *testing.T) {
+	// Point the global driver logger at a buffer and pin it to Warn — the state
+	// newLogSink() reads at install. Restore afterward so other tests are
+	// unaffected.
+	var buf bytes.Buffer
+	prevLevel := logger.Logger.GetLevel()
+	logger.SetLogOutput(&buf)
+	_ = logger.SetLogLevel("warn")
+	t.Cleanup(func() {
+		logger.SetLogOutput(os.Stderr)
+		logger.Logger.Logger = logger.Logger.Level(prevLevel)
+	})
+
+	s := newLogSink() // snapshots logger.Logger at TraceLevel — the real path
+	s.forward(kernelLevelDebug, "databricks::sql::kernel", "debug-line")
+	if !strings.Contains(buf.String(), "debug-line") {
+		t.Errorf("a DEBUG kernel event was dropped despite newLogSink's TraceLevel snapshot: %q", buf.String())
+	}
+}
