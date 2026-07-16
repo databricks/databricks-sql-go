@@ -195,19 +195,31 @@ level the lines are suppressed with no cost.
 
 	dbsql.SetLogLevel("debug") // or DATABRICKS_LOG_LEVEL=debug
 
-The same level is mapped into the kernel's internal (Rust) log subscriber, with two
-caveats specific to the Rust lines: they go to stderr directly (not affected by
-logger.SetLogOutput), and their verbosity is fixed when the first kernel session in
-the process is opened — set the level before that first connect to control them.
+The same level is mapped into the kernel's internal (Rust) log subscriber, which is
+routed into the driver's logger via a reverse-call callback (kernel_set_log_callback):
+kernel-internal tracing events are forwarded into the SAME unified sink as the Go
+binding lines — including a custom logger.SetLogOutput — rather than going to stderr.
+One caveat specific to the Rust lines: BOTH their verbosity AND their output
+destination are captured when the first kernel session in the process is opened (the
+forwarding sink snapshots the logger then). A later dbsql.SetLogLevel or
+logger.SetLogOutput re-targets the Go binding lines but NOT the already-forwarded
+kernel lines, so set the level and any custom output before that first connect to
+govern them.
 
 For finer control of the Rust verbosity independent of the driver level, set
-DBSQL_KERNEL_DEBUG to any non-empty value: it forces the kernel subscriber on and
-defers to RUST_LOG. Filter on the target databricks::sql::kernel (note the colons):
+DBSQL_KERNEL_DEBUG to any non-empty value: the callback then defers its level to
+RUST_LOG. Filter on the target databricks::sql::kernel (note the colons):
 
-	# kernel logs only, at the kernel's own verbosity:
-	DBSQL_KERNEL_DEBUG=1 RUST_LOG=databricks::sql::kernel=debug ./your_app 2>&1
+	# kernel logs at the kernel's own verbosity, forwarded into the driver logger:
+	DBSQL_KERNEL_DEBUG=1 RUST_LOG=databricks::sql::kernel=debug ./your_app
 	# kernel logs plus its HTTP stack:
-	DBSQL_KERNEL_DEBUG=1 RUST_LOG=debug ./your_app 2>&1
+	DBSQL_KERNEL_DEBUG=1 RUST_LOG=debug ./your_app
+
+The kernel exposes one process-global tracing subscriber reachable two mutually
+exclusive ways over the C ABI (kernel_init_logging → stderr, kernel_set_log_callback
+→ the driver logger); the driver installs the callback. A host that has already
+installed its own global tracing subscriber will see the registration report a
+benign, logged failure and kernel events simply won't forward.
 
 Supported on the kernel backend: PAT and OAuth (M2M via WithClientCredentials, U2M
 via the authType=oauthU2M DSN param); reading scalar, nested, and complex-typed
