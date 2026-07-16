@@ -76,6 +76,19 @@ type KernelExperimentalConfig struct {
 	// of the blanket InsecureSkipVerify (which relaxes both chain and hostname).
 	// Maps to kernel_session_config_set_tls_skip_hostname_verification.
 	TLSSkipHostnameVerify bool
+	// TLSClientCertPEM / TLSClientKeyPEM are the client leaf cert (+ optional
+	// chain) and matching private key for mutual TLS (mTLS). They travel as a
+	// pair — both set or both nil (WithKernelClientCertificate is the only setter
+	// and takes both) — and map to the single paired
+	// kernel_session_config_set_tls_client_certificate. The key is never logged.
+	TLSClientCertPEM []byte
+	TLSClientKeyPEM  []byte
+	// CloudFetchEnabled toggles CloudFetch on the kernel path. Tri-state: nil
+	// keeps the kernel default (on); a non-nil *false forces the inline-Arrow
+	// path. A *bool (not a plain bool) so "unset" is distinguishable from
+	// "explicitly false" — maps to kernel_session_config_set_cloudfetch_enabled.
+	// Deliberately NOT the plain-bool WithCloudFetch (which can't express unset).
+	CloudFetchEnabled *bool
 }
 
 // DeepCopy returns a deep copy of the experimental config, or nil for a nil
@@ -88,6 +101,16 @@ func (k *KernelExperimentalConfig) DeepCopy() *KernelExperimentalConfig {
 	cp := &KernelExperimentalConfig{TLSSkipHostnameVerify: k.TLSSkipHostnameVerify}
 	if k.TLSTrustedCertsPEM != nil {
 		cp.TLSTrustedCertsPEM = append([]byte(nil), k.TLSTrustedCertsPEM...)
+	}
+	if k.TLSClientCertPEM != nil {
+		cp.TLSClientCertPEM = append([]byte(nil), k.TLSClientCertPEM...)
+	}
+	if k.TLSClientKeyPEM != nil {
+		cp.TLSClientKeyPEM = append([]byte(nil), k.TLSClientKeyPEM...)
+	}
+	if k.CloudFetchEnabled != nil {
+		v := *k.CloudFetchEnabled
+		cp.CloudFetchEnabled = &v
 	}
 	return cp
 }

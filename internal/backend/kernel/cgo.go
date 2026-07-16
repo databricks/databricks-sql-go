@@ -153,6 +153,44 @@ func initKernelLogging() {
 	})
 }
 
+// abiCheckOnce ensures the ABI-version handshake runs at most once per process
+// (the linked library can't change under us mid-run), and abiCheckErr caches its
+// outcome so every OpenSession after the first returns the same verdict cheaply.
+var (
+	abiCheckOnce sync.Once
+	abiCheckErr  error
+)
+
+// checkABIVersion verifies the C-ABI version compiled into the linked kernel
+// library matches the version the driver's header declares. The build-time
+// status-code assertions in this file catch header-vs-source drift at compile
+// time; this catches the runtime hazard those can't see — a driver built against
+// one header linked against a differently-built prebuilt .a (the eventual
+// download-a-prebuilt-lib distribution path). A mismatch means the
+// KernelStatusCode enum / KernelError struct layout the driver reads may not
+// match what the library writes, so we refuse to open rather than silently
+// misread status codes / error fields. Runs once; the result is cached.
+func checkABIVersion() error {
+	abiCheckOnce.Do(func() {
+		got, want := abiVersions()
+		klog("checkABIVersion got=%d want=%d", got, want)
+		if got != want {
+			abiCheckErr = fmt.Errorf("databricks: kernel ABI version mismatch: linked library reports %d, "+
+				"driver header expects %d; rebuild the kernel static lib and header together (make kernel-lib)", got, want)
+		}
+	})
+	return abiCheckErr
+}
+
+// abiVersions returns (library version, header version): the C-ABI version
+// compiled into the linked kernel library and the version the driver's header
+// declares. A production-side seam so tests can assert the handshake without
+// putting cgo in a _test.go file (which Go forbids); not used in production
+// beyond checkABIVersion.
+func abiVersions() (got, want uint32) {
+	return uint32(C.kernel_abi_version()), uint32(C.DATABRICKS_KERNEL_ABI_VERSION)
+}
+
 // call runs a fallible kernel entry point and, on a non-Success status, reads
 // the kernel's thread-local last error into a Go error.
 //

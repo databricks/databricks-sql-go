@@ -233,15 +233,22 @@ backend exposes a U2M-scopes option, so this is a fixed difference between the t
 default sets, not a dropped setting; both authorize against the built-in public
 client.
 
-Experimental kernel-only TLS options (rejected by the default backend; the
-WithKernel* prefix marks them experimental):
+Experimental kernel-only options (rejected by the default backend; the WithKernel*
+prefix marks them experimental):
   - WithKernelTrustedCerts(pem) adds a PEM CA bundle on top of the system roots (for
     a re-signing proxy or on-prem CA). Required because the kernel's TLS stack does
     not read SSL_CERT_FILE.
   - WithKernelSkipHostnameVerify() skips only the hostname check while keeping chain
     validation (finer-grained than WithSkipTLSHostVerify).
+  - WithKernelClientCertificate(cert, key) configures a client certificate + private
+    key for mutual TLS (mTLS). Both PEM halves are required together; the key is
+    never logged.
+  - WithKernelCloudFetch(enabled) toggles CloudFetch. Tri-state: leaving it unset
+    keeps the kernel default (on); false forces the inline-Arrow path for all result
+    sizes. Distinct from the backend-neutral WithCloudFetch, whose plain-bool unset
+    state can't be told apart from false.
 
-Setting either without WithUseKernel fails Connect with an error wrapping the
+Setting any of these without WithUseKernel fails Connect with an error wrapping the
 sentinel ErrRequiresKernelBackend, detectable with errors.Is.
 
 Features above the backend seam are inherited unchanged: the database/sql connection

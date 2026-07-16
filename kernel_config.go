@@ -86,6 +86,20 @@ func validateKernelConfig(cfg *config.Config) (kernel.Auth, error) {
 		return kernel.Auth{}, fmt.Errorf("databricks: disabling retries via WithRetries is %w "+
 			"(the kernel retries internally); omit it or use the default (Thrift) backend", dbsqlerr.ErrNotSupportedByKernel)
 	}
+	// mTLS client identity (WithKernelClientCertificate) must be a complete pair:
+	// mTLS needs both a client cert and its private key. Reject an unpaired
+	// credential loudly at connect — otherwise applyKernelTLS (which gates the mTLS
+	// forward on the cert being present) would silently drop a lone key and connect
+	// with no client identity, contradicting the "both halves required together /
+	// never silently dropped" contract. The cert-without-key case would fail at the
+	// kernel setter (it rejects a null/empty key), but validating both directions
+	// here surfaces the error earlier and with a clearer message.
+	if ke := cfg.KernelExperimental; ke != nil {
+		if (len(ke.TLSClientCertPEM) == 0) != (len(ke.TLSClientKeyPEM) == 0) {
+			return kernel.Auth{}, fmt.Errorf("databricks: WithKernelClientCertificate requires " +
+				"both a client certificate and a private key; one was empty")
+		}
+	}
 	return kauth, nil
 }
 
@@ -117,13 +131,17 @@ func buildKernelConfig(cfg *config.Config, kauth kernel.Auth) kernel.Config {
 	if cfg.TLSConfig != nil && cfg.TLSConfig.InsecureSkipVerify {
 		kc.TLSSkipVerify = true
 	}
-	// Experimental kernel-only TLS knobs (WithKernelTrustedCerts /
-	// WithKernelSkipHostnameVerify), if any. These have no Thrift-path equivalent
-	// (the connector rejects them on that path) and are forwarded verbatim to the
+	// Experimental kernel-only knobs (WithKernelTrustedCerts /
+	// WithKernelSkipHostnameVerify / WithKernelClientCertificate /
+	// WithKernelCloudFetch), if any. These have no Thrift-path equivalent (the
+	// connector rejects them on that path) and are forwarded verbatim to the
 	// kernel C ABI in OpenSession.
 	if ke := cfg.KernelExperimental; ke != nil {
 		kc.TLSTrustedCertsPEM = ke.TLSTrustedCertsPEM
 		kc.TLSSkipHostnameVerify = ke.TLSSkipHostnameVerify
+		kc.TLSClientCertPEM = ke.TLSClientCertPEM
+		kc.TLSClientKeyPEM = ke.TLSClientKeyPEM
+		kc.CloudFetchEnabled = ke.CloudFetchEnabled
 	}
 	return kc
 }

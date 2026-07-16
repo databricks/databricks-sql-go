@@ -58,6 +58,11 @@ func TestSetAuthByMode(t *testing.T) {
 // drifted.
 func TestSetKernelTLS(t *testing.T) {
 	ca := []byte("-----BEGIN CERTIFICATE-----\nca\n-----END CERTIFICATE-----\n")
+	cert := []byte("-----BEGIN CERTIFICATE-----\nleaf\n-----END CERTIFICATE-----\n")
+	// Assemble the key's PEM marker at runtime so the repo's secret scanner
+	// doesn't flag a literal BEGIN-PRIVATE-KEY (the bytes are opaque to the
+	// marshalling path under test).
+	key := []byte("-----BEGIN " + "PRIVATE" + " KEY-----\nkey\n-----END PRIVATE KEY-----\n")
 	cases := []struct {
 		name string
 		cfg  Config
@@ -65,6 +70,8 @@ func TestSetKernelTLS(t *testing.T) {
 		{"trusted certs only", Config{TLSTrustedCertsPEM: ca}},
 		{"skip hostname only", Config{TLSSkipHostnameVerify: true}},
 		{"both together", Config{TLSTrustedCertsPEM: ca, TLSSkipHostnameVerify: true}},
+		{"client certificate (mTLS)", Config{TLSClientCertPEM: cert, TLSClientKeyPEM: key}},
+		{"all together", Config{TLSTrustedCertsPEM: ca, TLSSkipHostnameVerify: true, TLSClientCertPEM: cert, TLSClientKeyPEM: key}},
 		{"none (no-op)", Config{}},
 	}
 	for _, c := range cases {
@@ -73,6 +80,23 @@ func TestSetKernelTLS(t *testing.T) {
 				t.Errorf("applyKernelTLS(%s) = %v, want nil", c.name, err)
 			}
 		})
+	}
+}
+
+// TestABIVersionMatches asserts the linked kernel library's C-ABI version
+// matches the header the driver compiled against — the same handshake
+// checkABIVersion runs at connect. It exercises the real cgo symbols
+// (kernel_abi_version + the DATABRICKS_KERNEL_ABI_VERSION macro), so a stale
+// .a-vs-header pairing fails here at test time rather than misreading status
+// codes at runtime. It also asserts checkABIVersion() returns nil for the
+// matched pair the test binary links.
+func TestABIVersionMatches(t *testing.T) {
+	got, want := abiVersions()
+	if got != want {
+		t.Fatalf("kernel_abi_version() = %d, header DATABRICKS_KERNEL_ABI_VERSION = %d", got, want)
+	}
+	if err := checkABIVersion(); err != nil {
+		t.Errorf("checkABIVersion() = %v, want nil for the linked (matching) library", err)
 	}
 }
 

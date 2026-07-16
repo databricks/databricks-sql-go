@@ -64,6 +64,13 @@ func (k *KernelBackend) OpenSession(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	// Verify the linked kernel library's C-ABI version matches the header the
+	// driver compiled against before making any other kernel call — a mismatch
+	// means every status code / error struct we read afterward could be
+	// misinterpreted. Runs once per process; cheap and cached thereafter.
+	if err := checkABIVersion(); err != nil {
+		return err
+	}
 	initKernelLogging()
 	klogCtx(ctx, "OpenSession host=%s httpPath=%s warehouse=%s", k.cfg.Host, k.cfg.HTTPPath, k.cfg.WarehouseID)
 
@@ -148,6 +155,19 @@ func (k *KernelBackend) OpenSession(ctx context.Context) error {
 		}
 	}
 
+	// Experimental kernel-only CloudFetch toggle (WithKernelCloudFetch). Tri-state:
+	// only set it when the caller did, so an unset value leaves the kernel default
+	// (CloudFetch on). Do NOT route this through set_session_conf — the kernel owns
+	// the can_cloud_download conf and the server rejects it as not user-settable.
+	if k.cfg.CloudFetchEnabled != nil {
+		enabled := C.bool(*k.cfg.CloudFetchEnabled)
+		if err := call(func() C.KernelStatusCode {
+			return C.kernel_session_config_set_cloudfetch_enabled(cfg, enabled)
+		}); err != nil {
+			return fmt.Errorf("kernel: set_cloudfetch_enabled: %w", toConnError(err))
+		}
+	}
+
 	// Session confs (STATEMENT_TIMEOUT, QUERY_TAGS, TIMEZONE, …) — the same map
 	// the Thrift backend forwards, applied one key at a time.
 	for key, val := range k.cfg.SessionConf {
@@ -225,10 +245,9 @@ func (k *KernelBackend) OpenSession(ctx context.Context) error {
 }
 
 // applyKernelTLS forwards the experimental kernel-only TLS knobs to the session
-// config: a custom CA bundle and an independent hostname-skip. Each is a no-op
-// when its field is unset, so this is safe to call unconditionally. (mTLS client
-// cert/key is a separate follow-up — it needs a kernel C-ABI setter that is not
-// yet on kernel main.)
+// config: a custom CA bundle, an independent hostname-skip, and an mTLS client
+// certificate + key. Each is a no-op when its field is unset, so this is safe to
+// call unconditionally.
 func (k *KernelBackend) applyKernelTLS(cfg *C.KernelSessionConfig) error {
 	if len(k.cfg.TLSTrustedCertsPEM) > 0 {
 		ca := newCBytes(k.cfg.TLSTrustedCertsPEM)
@@ -244,6 +263,20 @@ func (k *KernelBackend) applyKernelTLS(cfg *C.KernelSessionConfig) error {
 			return C.kernel_session_config_set_tls_skip_hostname_verification(cfg, C.bool(true))
 		}); err != nil {
 			return fmt.Errorf("kernel: set_tls_skip_hostname_verification: %w", toConnError(err))
+		}
+	}
+	// mTLS client identity. The cert and key travel as a pair (WithKernelClientCertificate
+	// sets both or neither), forwarded via the single paired setter; checking the
+	// cert is enough. The key bytes go to owned Rust memory and are never logged.
+	if len(k.cfg.TLSClientCertPEM) > 0 {
+		cert := newCBytes(k.cfg.TLSClientCertPEM)
+		defer cert.free()
+		key := newCBytes(k.cfg.TLSClientKeyPEM)
+		defer key.free()
+		if err := call(func() C.KernelStatusCode {
+			return C.kernel_session_config_set_tls_client_certificate(cfg, cert.ptr, cert.len, key.ptr, key.len)
+		}); err != nil {
+			return fmt.Errorf("kernel: set_tls_client_certificate: %w", toConnError(err))
 		}
 	}
 	return nil
@@ -357,14 +390,17 @@ func (k *KernelBackend) runNamespaceStmt(ctx context.Context, sql string) error 
 	return closeErr
 }
 
-// CloseSession tears down the server-side session. Best-effort: the kernel's
-// close is async (see the C header), so an error is logged, not hard-failed.
+// CloseSession tears down the server-side session. Best-effort: kernel_session
+// _close initiates the delete without waiting (see the C header), so it does not
+// block and an error is logged, not hard-failed.
 //
-// Deferred (tracked): this ignores ctx and blocks in the synchronous call() until
-// kernel_session_close returns, with no deadline — a stalled kernel-side close
-// (e.g. a shutdown-time network partition) can block database/sql pool cleanup.
-// A bounded close needs either a kernel_session_close_blocking with a deadline or
-// a Go-side watchdog; grouped with the kernel C-ABI follow-ups.
+// Stays fire-and-forget deliberately. The C ABI also offers
+// kernel_session_close_blocking (awaits DeleteSession, for Python/Node parity),
+// but adopting it here would make close a blocking network round-trip with no
+// deadline honored — a stalled close (shutdown-time network partition) would then
+// block database/sql pool cleanup. Swapping to it is grouped with the
+// cancellable-close follow-up so the blocking close ships with a ctx bridge; until
+// then fire-and-forget is the safer default.
 func (k *KernelBackend) CloseSession(ctx context.Context) error {
 	if k.session == nil {
 		return nil

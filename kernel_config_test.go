@@ -127,6 +127,34 @@ func TestValidateKernelConfig(t *testing.T) {
 		})
 	}
 
+	// mTLS client identity must be a complete pair. An unpaired credential (cert
+	// or key alone) is rejected loudly so a lone key can't be silently dropped by
+	// applyKernelTLS; a complete pair (and the no-mTLS case) validates.
+	t.Run("mTLS unpaired cert rejected", func(t *testing.T) {
+		c := baseKernelConfig()
+		c.KernelExperimental = &config.KernelExperimentalConfig{TLSClientCertPEM: []byte("cert")}
+		if _, err := validateKernelConfig(c); err == nil {
+			t.Fatal("expected an error for a cert without a key")
+		}
+	})
+	t.Run("mTLS unpaired key rejected", func(t *testing.T) {
+		c := baseKernelConfig()
+		c.KernelExperimental = &config.KernelExperimentalConfig{TLSClientKeyPEM: []byte("key")}
+		if _, err := validateKernelConfig(c); err == nil {
+			t.Fatal("expected an error for a key without a cert")
+		}
+	})
+	t.Run("mTLS complete pair validates", func(t *testing.T) {
+		c := baseKernelConfig()
+		c.KernelExperimental = &config.KernelExperimentalConfig{
+			TLSClientCertPEM: []byte("cert"),
+			TLSClientKeyPEM:  []byte("key"),
+		}
+		if _, err := validateKernelConfig(c); err != nil {
+			t.Errorf("a complete mTLS pair should validate, got %v", err)
+		}
+	})
+
 	t.Run("PAT via WithAuthenticator resolves the token", func(t *testing.T) {
 		c := baseKernelConfig()
 		c.AccessToken = ""

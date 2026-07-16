@@ -27,6 +27,9 @@ import (
 var kernelExperimentalFieldDisposition = map[string]string{
 	"TLSTrustedCertsPEM":    "forwarded", // set_tls_trusted_certs
 	"TLSSkipHostnameVerify": "forwarded", // set_tls_skip_hostname_verification
+	"TLSClientCertPEM":      "forwarded", // set_tls_client_certificate (cert half)
+	"TLSClientKeyPEM":       "forwarded", // set_tls_client_certificate (key half)
+	"CloudFetchEnabled":     "forwarded", // set_cloudfetch_enabled
 }
 
 func TestKernelExperimentalFieldsClassified(t *testing.T) {
@@ -66,6 +69,15 @@ func TestWithKernelTLSOptionsSetExperimental(t *testing.T) {
 		{"skip hostname", WithKernelSkipHostnameVerify(), func(k *config.KernelExperimentalConfig) bool {
 			return k.TLSSkipHostnameVerify
 		}},
+		{"client certificate", WithKernelClientCertificate([]byte("cert"), []byte("key")), func(k *config.KernelExperimentalConfig) bool {
+			return string(k.TLSClientCertPEM) == "cert" && string(k.TLSClientKeyPEM) == "key"
+		}},
+		{"cloudfetch off", WithKernelCloudFetch(false), func(k *config.KernelExperimentalConfig) bool {
+			return k.CloudFetchEnabled != nil && !*k.CloudFetchEnabled
+		}},
+		{"cloudfetch on", WithKernelCloudFetch(true), func(k *config.KernelExperimentalConfig) bool {
+			return k.CloudFetchEnabled != nil && *k.CloudFetchEnabled
+		}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -95,6 +107,8 @@ func TestWithKernelOptionsRejectedOnThriftPath(t *testing.T) {
 	}{
 		{"trusted certs", WithKernelTrustedCerts([]byte("ca"))},
 		{"skip hostname", WithKernelSkipHostnameVerify()},
+		{"client certificate", WithKernelClientCertificate([]byte("cert"), []byte("key"))},
+		{"cloudfetch", WithKernelCloudFetch(false)},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -142,17 +156,36 @@ func TestWithKernelTrustedCertsCopiesPEM(t *testing.T) {
 // the whole Config per conn, and a shared backing array would let one conn's
 // mutation reach another.
 func TestKernelExperimentalDeepCopy(t *testing.T) {
+	cf := false
 	orig := &config.KernelExperimentalConfig{
 		TLSTrustedCertsPEM:    []byte("ca-bundle"),
 		TLSSkipHostnameVerify: true,
+		TLSClientCertPEM:      []byte("cert-pem"),
+		TLSClientKeyPEM:       []byte("key-pem"),
+		CloudFetchEnabled:     &cf,
 	}
 	cp := orig.DeepCopy()
 	if cp == nil || string(cp.TLSTrustedCertsPEM) != "ca-bundle" || !cp.TLSSkipHostnameVerify {
 		t.Fatalf("DeepCopy lost data: %+v", cp)
 	}
+	if string(cp.TLSClientCertPEM) != "cert-pem" || string(cp.TLSClientKeyPEM) != "key-pem" {
+		t.Fatalf("DeepCopy lost the mTLS cert/key: %+v", cp)
+	}
+	if cp.CloudFetchEnabled == nil || *cp.CloudFetchEnabled != false {
+		t.Fatalf("DeepCopy lost CloudFetchEnabled: %+v", cp)
+	}
 	cp.TLSTrustedCertsPEM[0] = 'X'
 	if orig.TLSTrustedCertsPEM[0] == 'X' {
 		t.Error("DeepCopy aliased the CA byte slice; a copy mutation reached the original")
+	}
+	cp.TLSClientCertPEM[0] = 'X'
+	cp.TLSClientKeyPEM[0] = 'X'
+	if orig.TLSClientCertPEM[0] == 'X' || orig.TLSClientKeyPEM[0] == 'X' {
+		t.Error("DeepCopy aliased an mTLS byte slice; a copy mutation reached the original")
+	}
+	*cp.CloudFetchEnabled = true
+	if *orig.CloudFetchEnabled {
+		t.Error("DeepCopy aliased the CloudFetchEnabled pointer; a copy mutation reached the original")
 	}
 	if (*config.KernelExperimentalConfig)(nil).DeepCopy() != nil {
 		t.Error("nil.DeepCopy() should be nil")

@@ -45,14 +45,16 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 	if c.cfg.UseKernel {
 		be, err = newKernelBackend(ctx, c.cfg)
 	} else {
-		// The experimental WithKernel* TLS options have no Thrift-path equivalent —
-		// reject them loudly rather than silently ignore, so a caller who sets a
-		// trusted-CA bundle / an independent hostname skip and forgets WithUseKernel
-		// learns the option had no effect instead of connecting with a
-		// weaker-than-intended (or unconfigured) TLS trust store.
+		// The experimental WithKernel* options have no Thrift-path equivalent —
+		// reject them loudly rather than silently ignore, so a caller who sets one
+		// (a trusted-CA bundle, an independent hostname skip, an mTLS client
+		// certificate, or a CloudFetch toggle) and forgets WithUseKernel learns the
+		// option had no effect instead of connecting with a weaker-than-intended
+		// (or unconfigured) setup.
 		if c.cfg.KernelExperimental != nil {
 			return nil, fmt.Errorf("databricks: a WithKernel* option "+
-				"(WithKernelTrustedCerts / WithKernelSkipHostnameVerify) %w; "+
+				"(WithKernelTrustedCerts / WithKernelSkipHostnameVerify / "+
+				"WithKernelClientCertificate / WithKernelCloudFetch) %w; "+
 				"add WithUseKernel(true) or remove it", dbsqlerr.ErrRequiresKernelBackend)
 		}
 		be, err = thrift.New(ctx, c.cfg, c.client)
@@ -601,5 +603,46 @@ func WithKernelTrustedCerts(pem []byte) ConnOption {
 func WithKernelSkipHostnameVerify() ConnOption {
 	return func(c *config.Config) {
 		kernelExperimental(c).TLSSkipHostnameVerify = true
+	}
+}
+
+// WithKernelClientCertificate configures a client certificate + private key for
+// mutual TLS (mTLS) on the kernel backend. cert is a PEM leaf certificate,
+// optionally followed by its intermediate chain; key is the matching PEM private
+// key (use PKCS#8 for portability). Both halves are required together — they map
+// to the single paired kernel_session_config_set_tls_client_certificate, so
+// cert-without-key is unrepresentable. The private key is never logged.
+//
+// EXPERIMENTAL, kernel-only: the default (Thrift) backend rejects this at connect.
+func WithKernelClientCertificate(cert, key []byte) ConnOption {
+	return func(c *config.Config) {
+		// Copy defensively (matching KernelExperimentalConfig.DeepCopy) so a
+		// caller mutating the buffers between NewConnector and Connect can't change
+		// the identity out from under us.
+		k := kernelExperimental(c)
+		if len(cert) > 0 {
+			k.TLSClientCertPEM = append([]byte(nil), cert...)
+		} else {
+			k.TLSClientCertPEM = cert
+		}
+		if len(key) > 0 {
+			k.TLSClientKeyPEM = append([]byte(nil), key...)
+		} else {
+			k.TLSClientKeyPEM = key
+		}
+	}
+}
+
+// WithKernelCloudFetch toggles CloudFetch (cloud-storage-backed download of large
+// result sets) on the kernel backend. Passing false forces the inline-Arrow path
+// for all result sizes. Unlike the backend-neutral WithCloudFetch (a plain bool
+// whose unset state is indistinguishable from false), this is tri-state: not
+// calling it leaves the kernel default (CloudFetch on), and it maps to
+// kernel_session_config_set_cloudfetch_enabled only when set.
+//
+// EXPERIMENTAL, kernel-only: the default (Thrift) backend rejects this at connect.
+func WithKernelCloudFetch(enabled bool) ConnOption {
+	return func(c *config.Config) {
+		kernelExperimental(c).CloudFetchEnabled = &enabled
 	}
 }
