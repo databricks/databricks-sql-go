@@ -56,17 +56,11 @@ func New(cfg Config) *KernelBackend {
 // time. The config handle is consumed by kernel_session_open on success and
 // freed by us on any earlier failure.
 func (k *KernelBackend) OpenSession(ctx context.Context) error {
-	// Fail fast on an already-cancelled context before the blocking kernel_session
-	// _open (which the C ABI does not let us interrupt mid-call).
-	//
-	// Deferred (tracked): this ctx is only checked here, at entry — once inside the
-	// blocking kernel_session_open there is no way to honor a deadline/cancel that
-	// fires mid-connect (a slow warehouse cold-start or a connect-time network
-	// partition blocks until the kernel returns on its own). Same class and same
-	// root cause as the CloseSession no-deadline note below (the kernel C ABI
-	// exposes no deadline/cancellation on the session-lifecycle calls); the fix is
-	// the same kernel-side change (a deadline arg or cancel handle), so it's grouped
-	// with that follow-up rather than fixed Go-side with a watchdog here.
+	// Fail fast on an already-cancelled context before doing any work, then honor
+	// a deadline that fires mid-connect via the ctxWatcher below: kernel_session
+	// _open blocks the calling thread inside the C ABI, so a slow warehouse
+	// cold-start or a connect-time network partition can't be interrupted by the
+	// caller's ctx unless a cancel token is fired from another thread.
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -178,9 +172,22 @@ func (k *KernelBackend) OpenSession(ctx context.Context) error {
 	// args and returned before consuming, this would leak, so the contract must be
 	// re-verified against the header when KERNEL_REV is bumped.
 	var sess *C.kernel_session_t
-	err := call(func() C.KernelStatusCode { return C.kernel_session_open(cfg, &sess) })
+	// Bridge ctx onto a cancel token so a deadline firing mid-connect drops the
+	// in-flight connect request rather than blocking until the kernel returns. A
+	// non-cancellable ctx yields a nil watcher → NULL token → the plain open path,
+	// so there is no watcher overhead on a background context.
+	watcher := newCtxWatcher(ctx)
+	defer watcher.stop()
+	err := call(func() C.KernelStatusCode {
+		return C.kernel_session_open_cancellable(cfg, &sess, watcher.tokenPtr())
+	})
 	consumed = true
 	if err != nil {
+		// Prefer the caller's ctx error when the connect was interrupted by the
+		// deadline (database/sql convention), keeping the kernel error as cause.
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return fmt.Errorf("kernel: session_open cancelled: %w", ctxErr)
+		}
 		return fmt.Errorf("kernel: session_open: %w", toConnError(err))
 	}
 	k.session = sess

@@ -168,14 +168,15 @@ func (r *kernelRows) next(dest []driver.Value) error {
 // nextBatch pulls the next Arrow batch. A released array (release==NULL) is the
 // kernel's end-of-stream sentinel.
 func (r *kernelRows) nextBatch() error {
-	// Honor cancellation at batch boundaries: check ctx before entering the
-	// blocking C fetch (which cannot itself observe ctx). This does NOT interrupt
-	// a fetch already in flight — and database/sql's own cancel watcher can't
-	// either: its Rows.Close takes rs.closemu.Lock(), which blocks until the
-	// in-progress Next (holding the RLock) returns, so the stream close waits for
-	// the C call to finish on its own. A single hung CloudFetch batch is therefore
-	// uninterruptible (the kernel exposes no per-download timeout); mid-fetch
-	// cancellation would need the execute path's watcher/canceller applied here.
+	// Honor cancellation both at the batch boundary AND mid-fetch. The pre-fetch
+	// ctx check fast-fails an already-cancelled ctx without dialing; the ctx
+	// watcher then bridges the deadline onto a kernel cancel token so a fetch
+	// already in flight — a hung CloudFetch chunk (a wedged S3 / pre-signed-URL
+	// GET) — is aborted rather than blocking Next forever. Firing the token drops
+	// the in-flight download future in the kernel, a real abort. A NULL token
+	// (uncancellable ctx) makes the cancellable fetch behave exactly like the
+	// plain kernel_result_stream_next_batch, so there is no watcher overhead on
+	// the common background-context path.
 	if r.ctx != nil {
 		if err := r.ctx.Err(); err != nil {
 			return err
@@ -185,12 +186,31 @@ func (r *kernelRows) nextBatch() error {
 		r.cur.Release()
 		r.cur = nil
 	}
+	// Bridge ctx onto a cancel token for the duration of this fetch, so a deadline
+	// firing mid-fetch drops the in-flight download future. A non-cancellable ctx
+	// yields a nil watcher → NULL token → the plain fetch path (no overhead).
+	watcher := newCtxWatcher(r.ctx)
+	defer watcher.stop()
 	var carr C.struct_ArrowArray
 	var csch C.struct_ArrowSchema
 	if err := call(func() C.KernelStatusCode {
-		return C.kernel_result_stream_next_batch(r.stream, &carr, &csch)
+		return C.kernel_result_stream_next_batch_cancellable(r.stream, &carr, &csch, watcher.tokenPtr())
 	}); err != nil {
+		// Evict a session-fatal conn BEFORE the ctx-cancelled branch below: a
+		// session-fatal fetch failure (expired token, dropped/unavailable session)
+		// racing a ctx deadline/cancel is still session-fatal, so returning the ctx
+		// error first would leave a dead conn marked valid in the pool. Mirrors the
+		// execute path's evict-before-ctx ordering in operation.go.
 		r.op.backend.evictIfSessionFatal(err)
+		// Prefer the caller's ctx error when the fetch was interrupted by the
+		// deadline (database/sql convention). Wrap BOTH the ctx error and the kernel
+		// error so errors.Is(err, context.Canceled/DeadlineExceeded) still matches
+		// AND the *KernelError stays reachable via errors.As — otherwise a
+		// session-fatal failure racing a cancel would lose its sqlstate/queryId, the
+		// one handle to what went wrong server-side. Mirrors the execute path.
+		if r.ctx != nil && r.ctx.Err() != nil {
+			return fmt.Errorf("kernel: next_batch cancelled: %w (kernel error: %w)", r.ctx.Err(), toStatementError(err))
+		}
 		return fmt.Errorf("kernel: next_batch: %w", toStatementError(err))
 	}
 	if carr.release == nil {

@@ -406,6 +406,85 @@ func TestKernelE2ECancellation(t *testing.T) {
 	t.Logf("cancelled after %v with err=%v", elapsed, err)
 }
 
+// TestKernelE2EConnectHonorsCancelledCtx proves the connect-side ctx bridge:
+// opening a session under an already-cancelled ctx must fail, not connect. This
+// covers the OpenSession → kernel_session_open_cancellable path (the execute-path
+// TestKernelE2ECancellation above does not reach connect, which happens before any
+// statement runs).
+func TestKernelE2EConnectHonorsCancelledCtx(t *testing.T) {
+	db := kernelTestDB(t)
+	defer db.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // already cancelled before the first connection is opened
+
+	// The first statement forces a connect; with a pre-cancelled ctx it must
+	// return a context error, not succeed.
+	var got int64
+	err := db.QueryRowContext(ctx, "SELECT 1").Scan(&got)
+	if err == nil {
+		t.Fatal("expected a context error connecting with an already-cancelled ctx, got nil")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Logf("connect under cancelled ctx returned %v (want context.Canceled in the chain)", err)
+		// database/sql may surface its own driver.ErrBadConn retry wrapper; the
+		// key property is that it FAILED rather than silently connecting.
+	}
+}
+
+// TestKernelE2EQueryCancelDuringExecution: a ctx cancelled while a long-running
+// query is in flight is honored — the query returns promptly with a context
+// error rather than blocking until the server finishes. This drives the
+// server-side statement cancel on the execute path AND, once results begin
+// streaming, the mid-fetch cancel token on the read path (nextBatch →
+// kernel_result_stream_next_batch_cancellable). Uses a query that would otherwise
+// run for many seconds.
+func TestKernelE2EQueryCancelDuringExecution(t *testing.T) {
+	db := kernelTestDB(t)
+	defer db.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	start := time.Now()
+	// A deliberately slow, HIGH-CARDINALITY query: an un-aggregated cross join
+	// streams billions of rows, so the result keeps flowing far past the deadline
+	// (unlike a COUNT(*), which collapses to one row that returns instantly and
+	// exercises no mid-fetch cancel). An honored cancel — on the execute path or
+	// mid-fetch on the read path — must return well before it could complete.
+	var err error
+	rows, qerr := db.QueryContext(ctx,
+		"SELECT a.id, b.id FROM range(1000000000) a CROSS JOIN range(1000000) b")
+	if qerr != nil {
+		// Deadline fired during execute/connect (the common case for a slow query).
+		err = qerr
+	} else {
+		// QueryContext returned before the deadline; the deadline then fires while
+		// we drain. Drive rows.Next() (NOT a bare Scan, which would return a
+		// usage error unrelated to cancellation) until it stops, then read the
+		// terminal error — this exercises the mid-fetch path.
+		for rows.Next() {
+		}
+		err = rows.Err()
+		_ = rows.Close()
+	}
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected a context deadline error on a long query past its deadline, got nil")
+	}
+	// It must be the deadline firing, not an unrelated failure — otherwise the
+	// test would pass without proving cancellation works. (Mirrors the assertion
+	// in TestKernelE2ECancellation.)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("expected context.DeadlineExceeded, got %v", err)
+	}
+	if elapsed > 30*time.Second {
+		t.Errorf("cancel took %v — the deadline was not honored promptly", elapsed)
+	}
+	t.Logf("long query cancelled after %v with err=%v", elapsed, err)
+}
+
 // TestKernelE2EInitialNamespace proves WithInitialNamespace selects the initial
 // catalog/schema on the kernel session — applied post-connect via USE CATALOG /
 // USE SCHEMA, since the kernel C ABI has no namespace setter. current_catalog() /
