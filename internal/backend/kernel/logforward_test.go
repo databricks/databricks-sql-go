@@ -74,8 +74,8 @@ func TestLogSinkForwardMapsLevels(t *testing.T) {
 // this is the anti-double-gating property (forwarded kernel events the kernel
 // already approved must not be re-dropped by a driver still at Warn). Drives the
 // PRODUCTION newLogSink() against a Warn-level global logger, so a regression of
-// newLogSink to `&logSink{log: logger.Logger}` (the exact F1/F3 bug this fix
-// closes) fails here rather than passing against a hand-rolled replica.
+// newLogSink to `&logSink{log: logger.Logger}` (routing through the live,
+// driver-gated logger) fails here rather than passing against a hand-rolled replica.
 func TestLogSinkForwardNotReGatedByDriverLevel(t *testing.T) {
 	// Point the global driver logger at a buffer and pin it to Warn — the state
 	// newLogSink() reads at install. Restore afterward so other tests are

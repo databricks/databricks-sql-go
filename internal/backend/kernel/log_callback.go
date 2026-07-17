@@ -40,13 +40,11 @@ import (
 	"github.com/databricks/databricks-sql-go/logger"
 )
 
-// This file holds the reverse-call machinery for the kernel log callback (K4):
+// This file holds the reverse-call machinery for the kernel log callback:
 // a cgo-exported Go function the kernel invokes from its log-drain thread, made
 // safe with a recover() panic firewall (a panic across the cgo boundary would
 // abort the process) and a runtime/cgo.Handle so a Go pointer (the *logSink) can
-// round-trip through the C void* ctx under cgo's pointer rules. This is the same
-// machinery a kernel→host token-provider callback (OAuth U2M external creds)
-// would need.
+// round-trip through the C void* ctx under cgo's pointer rules.
 
 // logCallbackOnce guards the one-time callback registration; logCallbackHandle
 // keeps the cgo.Handle alive for the process (the kernel holds its numeric value
@@ -127,8 +125,8 @@ func installKernelLogCallback(level string) {
 			// Surface at Warn (visible at the default level), NOT klog: klog is
 			// Debug-gated and no-ops at the default, and this install runs once so
 			// a later level change can't re-surface it. The message names the
-			// benign common cause (a global subscriber already installed) so
-			// on-call doesn't mistake a logging no-op for a connect failure.
+			// benign common cause (a global subscriber already installed) so a
+			// logging no-op isn't mistaken for a connect failure.
 			logger.Logger.Warn().Msgf(
 				"databricks: kernel_set_log_callback: %v (kernel logs not forwarded; proceeding)", err)
 		}

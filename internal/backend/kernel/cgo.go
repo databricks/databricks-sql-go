@@ -111,9 +111,7 @@ func klogCtx(ctx context.Context, format string, args ...any) {
 // stderr) and kernel_set_log_callback (reverse-call → a host sink). We install
 // the CALLBACK (see installKernelLogCallback) so kernel-internal events flow into
 // logger.Logger — the SAME unified stream as the Go binding lines (klog/klogCtx)
-// and honouring logger.SetLogOutput — instead of only reaching stderr. This is
-// the completion of the one-knob logging story (PECOBLR-3650 shipped the level
-// unification against the stderr sink; K4 replaces that sink with the callback).
+// and honouring logger.SetLogOutput — instead of only reaching stderr.
 //
 // resolveKernelLogArg maps the driver's zerolog level to the kernel's
 // OFF/ERROR/WARN/INFO/DEBUG/TRACE string; DBSQL_KERNEL_DEBUG instead defers to

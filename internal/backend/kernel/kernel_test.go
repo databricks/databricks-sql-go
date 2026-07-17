@@ -106,8 +106,8 @@ func TestABIVersionMatches(t *testing.T) {
 // kernel's drain thread would (via the test seam), and assert the event arrived
 // with the handle correctly unwrapped and the fields intact. This proves the
 // cgo.Handle round-trip + recover firewall + sink dispatch that a real kernel log
-// event flows through (kernel-side delivery itself is covered by the Rust
-// integration test v0_c_abi_log_callback.rs and the C smoke).
+// event flows through (kernel-side delivery itself is covered by the kernel's own
+// integration tests).
 func TestLogCallbackRoundTrip(t *testing.T) {
 	type got struct {
 		level           int
