@@ -40,6 +40,14 @@ func (k *KernelBackend) execute(ctx context.Context, req backend.ExecRequest) (b
 	// debuglog convention (conn.ExecContext logs sql.len=%d).
 	klogCtx(ctx, "Execute sql.len=%d", len(req.Query))
 
+	// Reject statement text with an interior NUL before touching the kernel: set_sql
+	// takes a NUL-terminated C string with no length, so a NUL would silently
+	// truncate the query (the same reason bound params are guarded by
+	// checkParamValue). Fail loudly rather than run a shorter statement than Thrift.
+	if err := checkQueryText(req.Query); err != nil {
+		return &kernelOp{}, fmt.Errorf("kernel: %w", err)
+	}
+
 	var stmt *C.kernel_statement_t
 	if err := call(func() C.KernelStatusCode {
 		return C.kernel_session_new_statement(k.session, &stmt)

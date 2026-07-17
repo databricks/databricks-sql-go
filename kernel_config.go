@@ -89,6 +89,45 @@ func validateKernelConfig(cfg *config.Config) (kernel.Auth, error) {
 	return kauth, nil
 }
 
+// buildKernelConfig assembles the kernel's flat connection Config from the driver
+// config and the already-resolved auth descriptor. It is the pure, cgo-free half
+// of newKernelBackend (which just calls this, then kernel.New + proxy resolution),
+// extracted here so the field-by-field mapping — in particular the experimental
+// KernelExperimental TLS forwarding, which has no other unit coverage — is
+// asserted under CGO_ENABLED=0 (see TestBuildKernelConfig). Keep it in lockstep
+// with newKernelBackend's kernel.Config assembly.
+func buildKernelConfig(cfg *config.Config, kauth kernel.Auth) kernel.Config {
+	kc := kernel.Config{
+		Host:        cfg.Host,
+		HTTPPath:    cfg.HTTPPath,
+		WarehouseID: cfg.WarehouseID,
+		Auth:        kauth,
+		Location:    cfg.Location,
+		// Initial namespace: no kernel config setter, so the kernel backend applies
+		// these post-connect via USE CATALOG / USE SCHEMA.
+		Catalog: cfg.Catalog,
+		Schema:  cfg.Schema,
+		// Session confs (STATEMENT_TIMEOUT, QUERY_TAGS, TIMEZONE, metric-view, …) —
+		// the same effective params the Thrift backend forwards, so they flow to the
+		// server identically with no per-backend translation.
+		SessionConf: cfg.EffectiveSessionParams(),
+	}
+	// TLS: the driver honors TLSConfig only for InsecureSkipVerify (see
+	// internal/client), so map exactly that knob to the kernel.
+	if cfg.TLSConfig != nil && cfg.TLSConfig.InsecureSkipVerify {
+		kc.TLSSkipVerify = true
+	}
+	// Experimental kernel-only TLS knobs (WithKernelTrustedCerts /
+	// WithKernelSkipHostnameVerify), if any. These have no Thrift-path equivalent
+	// (the connector rejects them on that path) and are forwarded verbatim to the
+	// kernel C ABI in OpenSession.
+	if ke := cfg.KernelExperimental; ke != nil {
+		kc.TLSTrustedCertsPEM = ke.TLSTrustedCertsPEM
+		kc.TLSSkipHostnameVerify = ke.TLSSkipHostnameVerify
+	}
+	return kc
+}
+
 // resolveKernelAuth picks the kernel auth form from the config. The kernel backend
 // drives the kernel's own OAuth flow from raw credentials rather than reusing the Go
 // authenticator's Authenticate method. It reads those credentials off

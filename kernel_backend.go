@@ -25,38 +25,14 @@ func newKernelBackend(_ context.Context, cfg *config.Config) (backend.Backend, e
 		return nil, err
 	}
 
-	kc := kernel.Config{
-		Host:        cfg.Host,
-		HTTPPath:    cfg.HTTPPath,
-		WarehouseID: cfg.WarehouseID,
-		Auth:        kauth,
-		Location:    cfg.Location,
-		// Initial namespace: no kernel config setter, so the kernel backend applies
-		// these post-connect via USE CATALOG / USE SCHEMA.
-		Catalog: cfg.Catalog,
-		Schema:  cfg.Schema,
-		// Session confs (STATEMENT_TIMEOUT, QUERY_TAGS, TIMEZONE, metric-view, …) —
-		// the same effective params the Thrift backend forwards (user SessionParams
-		// plus any option-derived conf like metric-view metadata), so they flow to
-		// the server identically with no per-backend translation. SPOG org routing
-		// rides in HTTPPath's ?o= and is parsed kernel-side.
-		SessionConf: cfg.EffectiveSessionParams(),
-	}
-	// TLS: the driver honors TLSConfig only for InsecureSkipVerify (see
-	// internal/client), so map exactly that knob to the kernel.
-	if cfg.TLSConfig != nil && cfg.TLSConfig.InsecureSkipVerify {
-		kc.TLSSkipVerify = true
-	}
-	// Experimental kernel-only TLS knobs (WithKernelTrustedCerts /
-	// WithKernelSkipHostnameVerify), if any. These have no Thrift-path equivalent
-	// (the connector rejects them on that path) and are forwarded verbatim to the
-	// kernel C ABI in OpenSession.
-	if ke := cfg.KernelExperimental; ke != nil {
-		kc.TLSTrustedCertsPEM = ke.TLSTrustedCertsPEM
-		kc.TLSSkipHostnameVerify = ke.TLSSkipHostnameVerify
-	}
+	// Assemble the flat kernel.Config from the driver config. The field-by-field
+	// mapping (including the experimental TLS forwarding) is the pure, cgo-free
+	// buildKernelConfig in kernel_config.go, unit-tested under CGO_ENABLED=0.
+	// SPOG org routing rides in HTTPPath's ?o= and is parsed kernel-side.
+	kc := buildKernelConfig(cfg, kauth)
 	// Proxy: the Thrift path uses http.ProxyFromEnvironment; mirror it by reading
-	// the same HTTP(S)_PROXY / NO_PROXY environment for the kernel.
+	// the same HTTP(S)_PROXY / NO_PROXY environment for the kernel. Resolved here
+	// (not in buildKernelConfig) since proxyForEndpoint has its own unit coverage.
 	kc.ProxyURL = proxyForEndpoint(cfg)
 	return kernel.New(kc), nil
 }

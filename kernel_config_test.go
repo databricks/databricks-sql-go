@@ -1,6 +1,7 @@
 package dbsql
 
 import (
+	"crypto/tls"
 	"errors"
 	"net/http"
 	"reflect"
@@ -341,4 +342,62 @@ func TestKernelConfigFieldsClassified(t *testing.T) {
 			t.Errorf("kernelConfigFieldDisposition has %q but config.UserConfig (incl. embeds) no longer does; remove it", name)
 		}
 	}
+}
+
+// buildKernelConfig is the pure config-assembly half of newKernelBackend. The
+// experimental KernelExperimental TLS knobs (WithKernelTrustedCerts /
+// WithKernelSkipHostnameVerify) are forwarded into kernel.Config ONLY here, and a
+// dropped forwarding line would otherwise pass every other test (the reflective
+// TestKernelExperimentalFieldsClassified only asserts the disposition map, not the
+// runtime copy). These run in the default CGO_ENABLED=0 build.
+func TestBuildKernelConfig(t *testing.T) {
+	t.Run("experimental TLS fields forwarded", func(t *testing.T) {
+		c := baseKernelConfig()
+		c.KernelExperimental = &config.KernelExperimentalConfig{
+			TLSTrustedCertsPEM:    []byte("ca-bundle"),
+			TLSSkipHostnameVerify: true,
+		}
+		kc := buildKernelConfig(c, kernel.Auth{Mode: kernel.AuthPAT, Token: "dapi-x"})
+		if got := string(kc.TLSTrustedCertsPEM); got != "ca-bundle" {
+			t.Errorf("TLSTrustedCertsPEM = %q, want %q (WithKernelTrustedCerts not forwarded)", got, "ca-bundle")
+		}
+		if !kc.TLSSkipHostnameVerify {
+			t.Error("TLSSkipHostnameVerify = false, want true (WithKernelSkipHostnameVerify not forwarded)")
+		}
+	})
+
+	t.Run("nil KernelExperimental leaves TLS fields zero", func(t *testing.T) {
+		c := baseKernelConfig() // KernelExperimental nil
+		kc := buildKernelConfig(c, kernel.Auth{Mode: kernel.AuthPAT, Token: "dapi-x"})
+		if kc.TLSTrustedCertsPEM != nil || kc.TLSSkipHostnameVerify {
+			t.Errorf("expected zero experimental TLS fields with nil KernelExperimental, got certs=%v skipHost=%v",
+				kc.TLSTrustedCertsPEM, kc.TLSSkipHostnameVerify)
+		}
+	})
+
+	t.Run("InsecureSkipVerify maps to blanket TLSSkipVerify", func(t *testing.T) {
+		c := baseKernelConfig()
+		c.TLSConfig = &tls.Config{InsecureSkipVerify: true} //nolint:gosec // test asserts the mapping, not a real connection
+		kc := buildKernelConfig(c, kernel.Auth{Mode: kernel.AuthPAT, Token: "dapi-x"})
+		if !kc.TLSSkipVerify {
+			t.Error("TLSSkipVerify = false, want true (TLSConfig.InsecureSkipVerify not mapped)")
+		}
+	})
+
+	t.Run("core fields + auth forwarded", func(t *testing.T) {
+		c := baseKernelConfig()
+		c.Catalog = "main"
+		c.Schema = "sys"
+		kauth := kernel.Auth{Mode: kernel.AuthPAT, Token: "dapi-x"}
+		kc := buildKernelConfig(c, kauth)
+		if kc.Host != c.Host || kc.HTTPPath != c.HTTPPath {
+			t.Errorf("host/httpPath not forwarded: got host=%q httpPath=%q", kc.Host, kc.HTTPPath)
+		}
+		if kc.Catalog != "main" || kc.Schema != "sys" {
+			t.Errorf("catalog/schema not forwarded: got catalog=%q schema=%q", kc.Catalog, kc.Schema)
+		}
+		if kc.Auth.Mode != kauth.Mode || kc.Auth.Token != kauth.Token {
+			t.Errorf("auth not forwarded: got %+v, want %+v", kc.Auth, kauth)
+		}
+	})
 }
