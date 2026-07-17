@@ -169,15 +169,14 @@ var (
 // download-a-prebuilt-lib distribution path). A mismatch means the
 // KernelStatusCode enum / KernelError struct layout the driver reads may not
 // match what the library writes, so we refuse to open rather than silently
-// misread status codes / error fields. Runs once; the result is cached.
+// misread status codes / error fields. Runs once; the result is cached. The
+// pure got-vs-want verdict lives in compareABI (untagged) so its mismatch path
+// is testable without the cgo symbols.
 func checkABIVersion() error {
 	abiCheckOnce.Do(func() {
 		got, want := abiVersions()
 		klog("checkABIVersion got=%d want=%d", got, want)
-		if got != want {
-			abiCheckErr = fmt.Errorf("databricks: kernel ABI version mismatch: linked library reports %d, "+
-				"driver header expects %d; rebuild the kernel static lib and header together (make kernel-lib)", got, want)
-		}
+		abiCheckErr = compareABI(got, want)
 	})
 	return abiCheckErr
 }
