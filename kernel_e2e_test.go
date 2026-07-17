@@ -9,6 +9,7 @@ import (
 	"database/sql/driver"
 	"errors"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -485,51 +486,129 @@ func TestKernelE2EQueryCancelDuringExecution(t *testing.T) {
 	t.Logf("long query cancelled after %v with err=%v", elapsed, err)
 }
 
-// TestKernelE2ECancelDuringFetch deterministically drives the mid-fetch cancel
-// path: unlike TestKernelE2EQueryCancelDuringExecution (which usually trips on
-// the execute/connect deadline before a single row is read), this test proves
-// QueryContext succeeded, reads a row so we are provably streaming, THEN cancels
-// and keeps draining — so a subsequent nextBatch → kernel_result_stream_next_batch
-// _cancellable observes the cancellation and returns a context error. This closes
-// the coverage gap where the read-path cancel could pass without ever being
-// exercised.
+// TestKernelE2ECancelDuringFetch proves the mid-fetch cancel path: a ctx
+// cancelled WHILE a nextBatch fetch is blocked inside
+// kernel_result_stream_next_batch_cancellable is honored via the kernel cancel
+// token, not merely by nextBatch's pre-fetch ctx.Err() guard.
+//
+// That guard short-circuits an already-cancelled ctx at the top of nextBatch and
+// returns a bare context error, so a cancel landing *between* batches never
+// reaches the cancellable C call. To hit the in-flight path we cancel from a
+// separate goroutine while actively draining a huge, slow, multi-batch stream —
+// where wall-clock time is dominated by the blocking fetch. Which path handled
+// the cancel is observable in the terminal error: the cancellable call wraps its
+// error as "next_batch cancelled", while the pre-fetch guard returns a bare
+// "context canceled". Because landing mid-fetch is a timing window, we retry a
+// bounded number of times and require at least one run to provably reach the
+// cancellable call.
 func TestKernelE2ECancelDuringFetch(t *testing.T) {
 	db := kernelTestDB(t)
 	defer db.Close()
 
+	const attempts = 6
+	var last string
+	for i := 1; i <= attempts; i++ {
+		midFetch, errStr := cancelDuringFetchOnce(t, db)
+		last = errStr
+		if midFetch {
+			t.Logf("attempt %d reached the mid-fetch cancellable path: %s", i, errStr)
+			return
+		}
+		t.Logf("attempt %d cancelled via the pre-fetch guard (retrying): %s", i, errStr)
+	}
+	t.Fatalf("no attempt reached kernel_result_stream_next_batch_cancellable in %d tries; last err=%q", attempts, last)
+}
+
+// cancelDuringFetchOnce runs one attempt of the mid-fetch cancel: it starts a
+// large slow stream, proves it is streaming (reads a row after QueryContext
+// succeeds), then cancels from a separate goroutine while the drain loop is
+// blocked in a fetch. It asserts the drain stopped promptly with a
+// context.Canceled error, and reports whether that error came from the in-flight
+// cancellable call (the "next_batch cancelled" wrapper) so the caller can retry
+// until the mid-fetch path is provably exercised.
+func cancelDuringFetchOnce(t *testing.T, db *sql.DB) (midFetch bool, errStr string) {
+	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// A large, multi-batch streaming result: the first batch returns quickly (so
-	// QueryContext succeeds and we deterministically reach rows.Next()), but the
-	// stream spans many more batches, so fetching must continue well past the
-	// cancel below.
-	rows, err := db.QueryContext(ctx, "SELECT id FROM range(0, 5000000000)")
+	// A narrow, multi-chunk stream (~2.4 GB, under the external-links byte limit):
+	// small enough that execute/QueryContext returns promptly, but spanning many
+	// CloudFetch chunks so the drain re-enters a blocking network fetch many times.
+	rows, err := db.QueryContext(ctx, "SELECT id FROM range(0, 300000000)")
 	if err != nil {
 		t.Fatalf("QueryContext should succeed before any cancel; got %v", err)
 	}
 	defer rows.Close()
 
-	// Read at least one row so we are provably past QueryContext/execute and into
-	// the fetch/streaming phase (the first nextBatch has already succeeded).
-	if !rows.Next() {
-		t.Fatalf("expected at least one row before cancel; err=%v", rows.Err())
-	}
+	// The pre-fetch ctx.Err() guard means a cancel landing BETWEEN batches never
+	// reaches the cancellable C call, so we can't just cancel on a fixed timer
+	// (that lands mid-batch-consume). Instead a watcher fires the cancel only once
+	// the main goroutine has been blocked inside a single rows.Next() longer than
+	// any buffered-row return could take — i.e. it is provably inside the blocking
+	// kernel_result_stream_next_batch_cancellable fetch, not iterating cached rows.
+	// nextInStart holds the UnixNano when the current Next() began (0 when not in
+	// Next); the watcher polls it and cancels when that dwell exceeds the fetch
+	// threshold.
+	const (
+		fetchThreshold = 15 * time.Millisecond // a buffered-row return is sub-ms; a network fetch is far longer
+		giveUp         = 8 * time.Second       // fallback so a run never hangs if fetches stay hot
+	)
+	var nextInStart atomic.Int64
+	done := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		ticker := time.NewTicker(2 * time.Millisecond)
+		defer ticker.Stop()
+		deadline := time.Now().Add(giveUp)
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				if start := nextInStart.Load(); start != 0 &&
+					time.Now().UnixNano()-start > int64(fetchThreshold) {
+					cancel() // in-flight fetch: fire the token mid-call
+					return
+				}
+				if time.Now().After(deadline) {
+					cancel() // fallback; this attempt likely won't prove mid-fetch
+					return
+				}
+			}
+		}
+	}()
 
-	// Cancel, then keep draining. Once the buffered current batch is exhausted the
-	// next nextBatch must observe the cancellation and stop, so rows.Err() carries
-	// a context error — proving the read path honors ctx.
-	cancel()
-	for rows.Next() {
+	start := time.Now()
+	for {
+		nextInStart.Store(time.Now().UnixNano())
+		ok := rows.Next()
+		nextInStart.Store(0)
+		if !ok {
+			break
+		}
 	}
 	err = rows.Err()
+	elapsed := time.Since(start)
+	close(done)
+	wg.Wait()
+
 	if err == nil {
 		t.Fatal("expected a context error while fetching after cancel, got nil")
 	}
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("expected context.Canceled during fetch, got %v", err)
 	}
-	t.Logf("fetch cancelled with err=%v", err)
+	// A no-op cancel that only returned when the whole stream drained would blow
+	// past this; a real abort returns promptly.
+	if elapsed > 30*time.Second {
+		t.Errorf("fetch cancel took %v; expected prompt abort", elapsed)
+	}
+	// The cancellable C call wraps its error as "next_batch cancelled"; the
+	// pre-fetch guard returns a bare context error. That distinguishes which path
+	// handled the cancel.
+	return strings.Contains(err.Error(), "next_batch cancelled"), err.Error()
 }
 
 // TestKernelE2EInitialNamespace proves WithInitialNamespace selects the initial
