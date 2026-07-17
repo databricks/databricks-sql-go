@@ -485,6 +485,53 @@ func TestKernelE2EQueryCancelDuringExecution(t *testing.T) {
 	t.Logf("long query cancelled after %v with err=%v", elapsed, err)
 }
 
+// TestKernelE2ECancelDuringFetch deterministically drives the mid-fetch cancel
+// path: unlike TestKernelE2EQueryCancelDuringExecution (which usually trips on
+// the execute/connect deadline before a single row is read), this test proves
+// QueryContext succeeded, reads a row so we are provably streaming, THEN cancels
+// and keeps draining — so a subsequent nextBatch → kernel_result_stream_next_batch
+// _cancellable observes the cancellation and returns a context error. This closes
+// the coverage gap where the read-path cancel could pass without ever being
+// exercised.
+func TestKernelE2ECancelDuringFetch(t *testing.T) {
+	db := kernelTestDB(t)
+	defer db.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// A large, multi-batch streaming result: the first batch returns quickly (so
+	// QueryContext succeeds and we deterministically reach rows.Next()), but the
+	// stream spans many more batches, so fetching must continue well past the
+	// cancel below.
+	rows, err := db.QueryContext(ctx, "SELECT id FROM range(0, 5000000000)")
+	if err != nil {
+		t.Fatalf("QueryContext should succeed before any cancel; got %v", err)
+	}
+	defer rows.Close()
+
+	// Read at least one row so we are provably past QueryContext/execute and into
+	// the fetch/streaming phase (the first nextBatch has already succeeded).
+	if !rows.Next() {
+		t.Fatalf("expected at least one row before cancel; err=%v", rows.Err())
+	}
+
+	// Cancel, then keep draining. Once the buffered current batch is exhausted the
+	// next nextBatch must observe the cancellation and stop, so rows.Err() carries
+	// a context error — proving the read path honors ctx.
+	cancel()
+	for rows.Next() {
+	}
+	err = rows.Err()
+	if err == nil {
+		t.Fatal("expected a context error while fetching after cancel, got nil")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("expected context.Canceled during fetch, got %v", err)
+	}
+	t.Logf("fetch cancelled with err=%v", err)
+}
+
 // TestKernelE2EInitialNamespace proves WithInitialNamespace selects the initial
 // catalog/schema on the kernel session — applied post-connect via USE CATALOG /
 // USE SCHEMA, since the kernel C ABI has no namespace setter. current_catalog() /

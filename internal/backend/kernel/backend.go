@@ -184,9 +184,14 @@ func (k *KernelBackend) OpenSession(ctx context.Context) error {
 	consumed = true
 	if err != nil {
 		// Prefer the caller's ctx error when the connect was interrupted by the
-		// deadline (database/sql convention), keeping the kernel error as cause.
+		// deadline (database/sql convention). Wrap BOTH the ctx error and the kernel
+		// error so errors.Is(err, context.Canceled/DeadlineExceeded) still matches
+		// AND the underlying *KernelError stays reachable via errors.As — otherwise a
+		// connect failure carrying real server diagnostics (sqlstate/details) racing a
+		// ctx deadline would lose them. Mirrors the execute (operation.go) and
+		// next_batch (rows.go) cancelled paths.
 		if ctxErr := ctx.Err(); ctxErr != nil {
-			return fmt.Errorf("kernel: session_open cancelled: %w", ctxErr)
+			return fmt.Errorf("kernel: session_open cancelled: %w (kernel error: %w)", ctxErr, toConnError(err))
 		}
 		return fmt.Errorf("kernel: session_open: %w", toConnError(err))
 	}
