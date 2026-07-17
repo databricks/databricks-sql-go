@@ -83,6 +83,16 @@ type KernelExperimentalConfig struct {
 	// kernel_session_config_set_tls_client_certificate. The key is never logged.
 	TLSClientCertPEM []byte
 	TLSClientKeyPEM  []byte
+	// TLSClientCertConfigured records that WithKernelClientCertificate was
+	// invoked, independent of whether the caller passed non-empty bytes. It
+	// exists because an empty cert+key pair is otherwise indistinguishable from
+	// the option never being called (KernelExperimental can be non-nil from any
+	// other WithKernel* option), which would let a caller who explicitly asked
+	// for mTLS — e.g. after a failed/empty PEM load — silently connect with no
+	// client identity (applyKernelTLS gates the setter on a non-empty cert).
+	// validateKernelConfig uses this marker to reject an incomplete mTLS request
+	// loudly instead of failing open. Never forwarded to the kernel C ABI.
+	TLSClientCertConfigured bool
 	// CloudFetchEnabled toggles CloudFetch on the kernel path. Tri-state: nil
 	// keeps the kernel default (on); a non-nil *false forces the inline-Arrow
 	// path. A *bool (not a plain bool) so "unset" is distinguishable from
@@ -98,7 +108,10 @@ func (k *KernelExperimentalConfig) DeepCopy() *KernelExperimentalConfig {
 	if k == nil {
 		return nil
 	}
-	cp := &KernelExperimentalConfig{TLSSkipHostnameVerify: k.TLSSkipHostnameVerify}
+	cp := &KernelExperimentalConfig{
+		TLSSkipHostnameVerify:   k.TLSSkipHostnameVerify,
+		TLSClientCertConfigured: k.TLSClientCertConfigured,
+	}
 	if k.TLSTrustedCertsPEM != nil {
 		cp.TLSTrustedCertsPEM = append([]byte(nil), k.TLSTrustedCertsPEM...)
 	}
