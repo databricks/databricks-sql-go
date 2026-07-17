@@ -1,0 +1,40 @@
+# gitleaks finding suppression file (read automatically by `gitleaks
+# detect`, which the Databricks global pre-push hook runs).
+#
+# False positive: these testdata fixtures embed Apache Arrow IPC
+# payloads as base64 ("batch": "/////..."), which are binary result
+# data — NOT credentials. The gitleaks `aws-access-token` rule (which
+# targets AKIA…/ASIA…-style keys) collides with arbitrary high-entropy
+# base64 substrings inside the Arrow chunk (entropy ~1.5 vs ~4.3+ for a
+# real AWS key).
+#
+# `gitleaks detect` fingerprints are commit-SHA-prefixed. All of these
+# were introduced by commit f27a47b ("Fetch results in arrow format",
+# #109), so they re-surface whenever a new branch's scan range walks
+# back through history and re-includes that commit — even for commits
+# that never touch these files.
+
+f27a47bb8e2208f6963393bbe4504b6e2b600648:internal/rows/arrowbased/testdata/all_types.json:aws-access-token:291
+f27a47bb8e2208f6963393bbe4504b6e2b600648:internal/rows/arrowbased/testdata/all_types_arrow_schema.json:aws-access-token:299
+f27a47bb8e2208f6963393bbe4504b6e2b600648:internal/rows/arrowbased/testdata/all_types_native_complex.json:aws-access-token:280
+f27a47bb8e2208f6963393bbe4504b6e2b600648:internal/rows/arrowbased/testdata/all_types_time_strings.json:aws-access-token:291
+f27a47bb8e2208f6963393bbe4504b6e2b600648:internal/rows/arrowbased/testdata/all_types_with_schema_native.json:aws-access-token:280
+f27a47bb8e2208f6963393bbe4504b6e2b600648:internal/rows/arrowbased/testdata/arrays_native.json:aws-access-token:242
+f27a47bb8e2208f6963393bbe4504b6e2b600648:internal/rows/arrowbased/testdata/diamonds.json:aws-access-token:197
+f27a47bb8e2208f6963393bbe4504b6e2b600648:internal/rows/arrowbased/testdata/diamonds.json:aws-access-token:201
+f27a47bb8e2208f6963393bbe4504b6e2b600648:internal/rows/arrowbased/testdata/diamonds.json:aws-access-token:209
+f27a47bb8e2208f6963393bbe4504b6e2b600648:internal/rows/arrowbased/testdata/diamonds.json:aws-access-token:213
+f27a47bb8e2208f6963393bbe4504b6e2b600648:internal/rows/arrowbased/testdata/diamonds.json:aws-access-token:225
+f27a47bb8e2208f6963393bbe4504b6e2b600648:internal/rows/arrowbased/testdata/diamonds.json:aws-access-token:253
+f27a47bb8e2208f6963393bbe4504b6e2b600648:internal/rows/arrowbased/testdata/diamonds.json:aws-access-token:265
+f27a47bb8e2208f6963393bbe4504b6e2b600648:internal/rows/arrowbased/testdata/diamonds.json:aws-access-token:277
+f27a47bb8e2208f6963393bbe4504b6e2b600648:internal/rows/arrowbased/testdata/diamonds.json:aws-access-token:285
+f27a47bb8e2208f6963393bbe4504b6e2b600648:internal/rows/arrowbased/testdata/diamonds.json:aws-access-token:293
+f27a47bb8e2208f6963393bbe4504b6e2b600648:internal/rows/arrowbased/testdata/diamonds.json:aws-access-token:317
+f27a47bb8e2208f6963393bbe4504b6e2b600648:internal/rows/arrowbased/testdata/diamonds.json:aws-access-token:329
+f27a47bb8e2208f6963393bbe4504b6e2b600648:internal/rows/arrowbased/testdata/diamonds.json:aws-access-token:345
+f27a47bb8e2208f6963393bbe4504b6e2b600648:internal/rows/arrowbased/testdata/diamonds.json:aws-access-token:369
+f27a47bb8e2208f6963393bbe4504b6e2b600648:internal/rows/arrowbased/testdata/diamonds.json:aws-access-token:373
+f27a47bb8e2208f6963393bbe4504b6e2b600648:internal/rows/arrowbased/testdata/diamonds.json:aws-access-token:389
+f27a47bb8e2208f6963393bbe4504b6e2b600648:internal/rows/arrowbased/testdata/diamonds.json:aws-access-token:409
+f27a47bb8e2208f6963393bbe4504b6e2b600648:internal/rows/arrowbased/testdata/structs_native.json:aws-access-token:61
