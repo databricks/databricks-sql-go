@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"database/sql/driver"
+	"fmt"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -15,6 +16,7 @@ import (
 	"github.com/databricks/databricks-sql-go/auth/pat"
 	"github.com/databricks/databricks-sql-go/auth/tokenprovider"
 	"github.com/databricks/databricks-sql-go/driverctx"
+	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 	"github.com/databricks/databricks-sql-go/internal/backend"
 	"github.com/databricks/databricks-sql-go/internal/backend/thrift"
 	"github.com/databricks/databricks-sql-go/internal/client"
@@ -43,6 +45,16 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 	if c.cfg.UseKernel {
 		be, err = newKernelBackend(ctx, c.cfg)
 	} else {
+		// The experimental WithKernel* TLS options have no Thrift-path equivalent —
+		// reject them loudly rather than silently ignore, so a caller who sets a
+		// trusted-CA bundle / an independent hostname skip and forgets WithUseKernel
+		// learns the option had no effect instead of connecting with a
+		// weaker-than-intended (or unconfigured) TLS trust store.
+		if c.cfg.KernelExperimental != nil {
+			return nil, fmt.Errorf("databricks: a WithKernel* option "+
+				"(WithKernelTrustedCerts / WithKernelSkipHostnameVerify) %w; "+
+				"add WithUseKernel(true) or remove it", dbsqlerr.ErrRequiresKernelBackend)
+		}
 		be, err = thrift.New(ctx, c.cfg, c.client)
 	}
 	if err != nil {
@@ -535,5 +547,59 @@ func WithFederatedTokenProviderAndClientID(baseProvider tokenprovider.TokenProvi
 			federationProvider := tokenprovider.NewFederationProviderWithClientID(baseProvider, c.Host, clientID)
 			c.Authenticator = tokenprovider.NewAuthenticator(federationProvider)
 		}
+	}
+}
+
+// ─── Experimental kernel-only options ─────────────────────────────────────────
+//
+// These configure the SEA-via-kernel backend (WithUseKernel) only; they expose a
+// richer TLS surface than the backend-neutral WithSkipTLSHostVerify. They have no
+// equivalent on the default (Thrift) path, which rejects them loudly at connect.
+// They are deliberately NOT part of the stable DSN/UserConfig surface — they hang
+// off config.Config.KernelExperimental (mirroring Node's non-exported
+// InternalConnectionOptions). The WithKernel* prefix signals both "kernel-backend
+// only" and "experimental" so they read distinctly from the backend-neutral
+// options above (e.g. WithSkipTLSHostVerify).
+
+// kernelExperimental lazily allocates and returns the experimental config block.
+func kernelExperimental(c *config.Config) *config.KernelExperimentalConfig {
+	if c.KernelExperimental == nil {
+		c.KernelExperimental = &config.KernelExperimentalConfig{}
+	}
+	return c.KernelExperimental
+}
+
+// WithKernelTrustedCerts adds a PEM CA-certificate bundle to the kernel's TLS
+// trust store on top of the system roots — for a corporate re-signing proxy or an
+// on-prem CA. Required (rather than relying on SSL_CERT_FILE) because the kernel's
+// rustls stack does not read that environment variable.
+//
+// EXPERIMENTAL, kernel-only: the default (Thrift) backend rejects this at connect.
+func WithKernelTrustedCerts(pem []byte) ConnOption {
+	return func(c *config.Config) {
+		// Copy defensively (matching KernelExperimentalConfig.DeepCopy) so a
+		// caller mutating pem between NewConnector and Connect can't change the
+		// trust store out from under us.
+		if len(pem) > 0 {
+			kernelExperimental(c).TLSTrustedCertsPEM = append([]byte(nil), pem...)
+		} else {
+			kernelExperimental(c).TLSTrustedCertsPEM = pem
+		}
+	}
+}
+
+// WithKernelSkipHostnameVerify skips only the certificate hostname-vs-SNI check on
+// the kernel backend, while keeping chain validation. This is finer-grained than
+// WithSkipTLSHostVerify, which relaxes both chain and hostname checks.
+// WARNING:
+// Skipping hostname verification still weakens TLS: a certificate issued by a
+// trusted CA for a different host will be accepted, opening a machine-in-the-middle
+// vector. Only use this when the hostname is an internal private-link hostname that
+// legitimately differs from the certificate's subject.
+//
+// EXPERIMENTAL, kernel-only: the default (Thrift) backend rejects this at connect.
+func WithKernelSkipHostnameVerify() ConnOption {
+	return func(c *config.Config) {
+		kernelExperimental(c).TLSSkipHostnameVerify = true
 	}
 }

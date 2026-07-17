@@ -48,6 +48,72 @@ type Config struct {
 	ThriftTransport           string
 	ThriftProtocolVersion     cli_service.TProtocolVersion
 	ThriftDebugClientProtocol bool
+
+	// KernelExperimental carries experimental, kernel-backend-only options that
+	// have no equivalent on the default (Thrift) path — currently the richer TLS
+	// surface (a trusted-CA bundle and an independent hostname-skip) the kernel
+	// exposes over its C ABI. It lives here on Config, NOT on UserConfig, so it
+	// stays off the stable exported/DSN surface (the same treatment TLSConfig and
+	// ArrowConfig get). nil means no experimental option was set. The Thrift
+	// backend rejects a non-nil value loudly; the kernel backend forwards it to
+	// the kernel C ABI. Mirrors Node's non-exported InternalConnectionOptions /
+	// Python's underscore-prefixed kwargs.
+	KernelExperimental *KernelExperimentalConfig
+}
+
+// KernelExperimentalConfig holds the experimental, kernel-only connection knobs
+// set via the WithKernel* options. Every field is either forwarded to the kernel
+// C ABI (kernel backend) or rejected (Thrift backend) — never silently dropped;
+// the exhaustiveness guard TestKernelExperimentalFieldsClassified asserts this so
+// a newly-added field can't slip through unclassified.
+type KernelExperimentalConfig struct {
+	// TLSTrustedCertsPEM is a PEM CA bundle added to the kernel's trust store on
+	// top of the system roots (maps to kernel_session_config_set_tls_trusted_certs).
+	// Needed because the kernel's rustls stack ignores SSL_CERT_FILE, so a custom
+	// CA must be handed to the kernel explicitly.
+	TLSTrustedCertsPEM []byte
+	// TLSSkipHostnameVerify skips only the certificate hostname check, independent
+	// of the blanket InsecureSkipVerify (which relaxes both chain and hostname).
+	// Maps to kernel_session_config_set_tls_skip_hostname_verification.
+	TLSSkipHostnameVerify bool
+}
+
+// DeepCopy returns a deep copy of the experimental config, or nil for a nil
+// receiver. The byte slice is copied so a mutation of the copy can't reach back
+// into the original (the connector may DeepCopy the whole Config per conn).
+func (k *KernelExperimentalConfig) DeepCopy() *KernelExperimentalConfig {
+	if k == nil {
+		return nil
+	}
+	cp := &KernelExperimentalConfig{TLSSkipHostnameVerify: k.TLSSkipHostnameVerify}
+	if k.TLSTrustedCertsPEM != nil {
+		cp.TLSTrustedCertsPEM = append([]byte(nil), k.TLSTrustedCertsPEM...)
+	}
+	return cp
+}
+
+// MetricViewMetadataConfKey is the server session conf that enables metric-view
+// metadata (WithEnableMetricViewMetadata). Despite the "thriftserver" in its name
+// — a historical server-side name — it is an ordinary Spark SQL session conf the
+// server honors regardless of client transport, so both the Thrift and kernel
+// backends send the identical key/value. Defined once here so no backend hardcodes
+// the literal (see EffectiveSessionParams).
+const MetricViewMetadataConfKey = "spark.sql.thriftserver.metadata.metricview.enabled"
+
+// EffectiveSessionParams returns the session confs to send to the server: the
+// user-supplied SessionParams plus any conf derived from a higher-level option
+// (currently metric-view metadata). Both backends call this, so the derivation is
+// backend-neutral — neither special-cases the option nor hardcodes the conf
+// literal. The returned map is always a fresh copy the caller may mutate freely.
+func (c *Config) EffectiveSessionParams() map[string]string {
+	params := make(map[string]string, len(c.SessionParams)+1)
+	for k, v := range c.SessionParams {
+		params[k] = v
+	}
+	if c.EnableMetricViewMetadata {
+		params[MetricViewMetadataConfKey] = "true"
+	}
+	return params
 }
 
 // ToEndpointURL generates the endpoint URL from Config that a Thrift client will connect to
@@ -86,6 +152,7 @@ func (c *Config) DeepCopy() *Config {
 		ThriftTransport:           c.ThriftTransport,
 		ThriftProtocolVersion:     c.ThriftProtocolVersion,
 		ThriftDebugClientProtocol: c.ThriftDebugClientProtocol,
+		KernelExperimental:        c.KernelExperimental.DeepCopy(),
 	}
 }
 
@@ -122,7 +189,6 @@ type UserConfig struct {
 	// connector copies it into Config.ArrowConfig.UseArrowNativeDecimal when it is
 	// assembled. The name intentionally differs from ArrowConfig's field so the
 	// promoted selector Config.UseArrowNativeDecimal stays unambiguous.
-	// See databricks/databricks-sql-go#274.
 	UseArrowNativeDecimalDSN bool
 	CloudFetchConfig
 	// UseKernel selects the SEA-via-kernel backend instead of Thrift. See the

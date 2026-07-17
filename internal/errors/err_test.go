@@ -36,6 +36,25 @@ func TestDbSqlErrors(t *testing.T) {
 		assert.Equal(t, ee, execError)
 	})
 
+	t.Run("NewExecutionErrorWithState carries the queryId and sqlstate", func(t *testing.T) {
+		// The kernel backend has no Thrift TGetOperationStatusResp; it passes an
+		// already-extracted queryId and sqlstate. The value must satisfy
+		// DBExecutionError and surface both — the parity property with
+		// NewExecutionError.
+		cause := errors.New("cause")
+		execError := NewExecutionErrorWithState(context.TODO(), "exec error", cause, "q-123", "42P01")
+		e := errors.Wrap(execError, "is wrapped")
+
+		assert.Equal(t, "is wrapped: databricks: execution error: exec error: cause", e.Error())
+		assert.True(t, errors.Is(e, dbsqlerr.ExecutionError))
+		assert.True(t, errors.Is(e, cause))
+
+		var ee dbsqlerr.DBExecutionError
+		assert.True(t, errors.As(e, &ee))
+		assert.Equal(t, "q-123", ee.QueryId())
+		assert.Equal(t, "42P01", ee.SqlState())
+	})
+
 	t.Run("errors.Is/As works with driver error values", func(t *testing.T) {
 		// Create a driver error and wrap it in a regular error
 		cause := errors.New("cause")

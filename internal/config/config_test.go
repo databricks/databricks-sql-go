@@ -645,6 +645,48 @@ func TestParseConfig(t *testing.T) {
 	}
 }
 
+func TestEffectiveSessionParams(t *testing.T) {
+	t.Run("no metric view leaves params unchanged", func(t *testing.T) {
+		c := &Config{UserConfig: UserConfig{SessionParams: map[string]string{"QUERY_TAGS": "a:1"}}}
+		got := c.EffectiveSessionParams()
+		if len(got) != 1 || got["QUERY_TAGS"] != "a:1" {
+			t.Errorf("EffectiveSessionParams() = %v, want only QUERY_TAGS", got)
+		}
+		if _, ok := got[MetricViewMetadataConfKey]; ok {
+			t.Errorf("metric-view conf must not be set when EnableMetricViewMetadata is false")
+		}
+	})
+	t.Run("metric view adds the derived conf", func(t *testing.T) {
+		c := &Config{UserConfig: UserConfig{
+			SessionParams:            map[string]string{"QUERY_TAGS": "a:1"},
+			EnableMetricViewMetadata: true,
+		}}
+		got := c.EffectiveSessionParams()
+		if got[MetricViewMetadataConfKey] != "true" {
+			t.Errorf("metric-view conf = %q, want \"true\"", got[MetricViewMetadataConfKey])
+		}
+		if got["QUERY_TAGS"] != "a:1" {
+			t.Errorf("user SessionParams must be preserved, got %v", got)
+		}
+	})
+	t.Run("returns a fresh copy the caller may mutate", func(t *testing.T) {
+		orig := map[string]string{"QUERY_TAGS": "a:1"}
+		c := &Config{UserConfig: UserConfig{SessionParams: orig}}
+		got := c.EffectiveSessionParams()
+		got["QUERY_TAGS"] = "mutated"
+		if orig["QUERY_TAGS"] != "a:1" {
+			t.Errorf("mutating the result mutated the source SessionParams: %v", orig)
+		}
+	})
+	t.Run("nil SessionParams with metric view", func(t *testing.T) {
+		c := &Config{UserConfig: UserConfig{EnableMetricViewMetadata: true}}
+		got := c.EffectiveSessionParams()
+		if got[MetricViewMetadataConfKey] != "true" {
+			t.Errorf("metric-view conf must be set even with nil SessionParams, got %v", got)
+		}
+	})
+}
+
 func TestUserConfig_DeepCopy(t *testing.T) {
 	t.Run("copy empty config", func(t *testing.T) {
 		cfg := UserConfig{}
@@ -727,11 +769,23 @@ func TestConfig_DeepCopy(t *testing.T) {
 			ThriftTransport:           "http",
 			ThriftProtocolVersion:     cli_service.TProtocolVersion_SPARK_CLI_SERVICE_PROTOCOL_V8,
 			ThriftDebugClientProtocol: false,
+			KernelExperimental: &KernelExperimentalConfig{
+				TLSTrustedCertsPEM:    []byte("ca-bundle"),
+				TLSSkipHostnameVerify: true,
+			},
 		}
 
 		cfg_copy := cfg.DeepCopy()
 		if !reflect.DeepEqual(cfg, cfg_copy) {
 			t.Errorf("DeepCopy() = %v, want %v", cfg_copy, cfg)
+		}
+		// The experimental block must be deep-copied, not aliased.
+		if cfg_copy.KernelExperimental == cfg.KernelExperimental {
+			t.Error("DeepCopy aliased KernelExperimental pointer")
+		}
+		cfg_copy.KernelExperimental.TLSTrustedCertsPEM[0] = 'X'
+		if cfg.KernelExperimental.TLSTrustedCertsPEM[0] == 'X' {
+			t.Error("DeepCopy aliased the KernelExperimental CA byte slice")
 		}
 	})
 }

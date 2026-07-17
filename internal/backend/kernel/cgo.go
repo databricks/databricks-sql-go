@@ -34,44 +34,72 @@ package kernel
 import "C"
 
 import (
+	"context"
 	"fmt"
-	"os"
 	"runtime"
 	"sync"
 	"unsafe"
 
+	"github.com/databricks/databricks-sql-go/driverctx"
 	"github.com/databricks/databricks-sql-go/logger"
+	"github.com/rs/zerolog"
 )
 
 // ─── Debug logging ───────────────────────────────────────────────────────────
 //
-// Gated on DBSQL_KERNEL_DEBUG so it is OFF by default and, in particular, OFF
-// during benchmarks (debug logging perturbs latency). Every binding step logs
-// through klog when enabled — entry, status codes, handle addresses, batch
-// counts — which is what makes a failing e2e cheap to diagnose. The same flag
-// also installs the kernel's own Rust (tracing) logs via initKernelLogging, so
-// binding and kernel logs interleave on stderr as one stream.
-var kdebug = os.Getenv("DBSQL_KERNEL_DEBUG") != ""
+// Binding-level debug lines (entry, status codes, handle addresses, batch counts)
+// go through the driver's shared logger.Logger at Debug level, so the SAME knob
+// that controls the rest of the driver — DATABRICKS_LOG_LEVEL / dbsql.SetLogLevel
+// — turns kernel binding logs on and off, and each line carries the structured
+// connId/corrId/queryId fields (via klogCtx) that let it be correlated in a
+// multi-conn process. zerolog no-ops a Debug() event when the level is above debug,
+// so this stays zero-work (no allocation, no formatting) at the default Warn level
+// — including during benchmarks, which run at the default level.
+//
+// DBSQL_KERNEL_DEBUG is retained only as an advanced override for the *kernel's own
+// Rust logs* (see initKernelLogging): it forces the kernel subscriber on and lets
+// RUST_LOG tune the kernel's verbosity independently. It no longer gates the Go
+// binding lines — those follow the driver log level.
 
-// Deferred (tracked): klog writes raw to stderr, NOT through the driver's
-// logger.Logger, so its lines carry no connId/corrId/queryId and can't be
-// correlated in a multi-conn process; it's also gated on its own
-// DBSQL_KERNEL_DEBUG rather than the driver's DATABRICKS_LOG_LEVEL knob. Unifying
-// kernel logging onto logger.Logger (which no-ops below its level, so no
-// benchmark cost) is a tracked logging-unification follow-up, kept separate from
-// this PR because it changes the debug-logging surface.
+// kernelDebugOff reports whether the driver log level is above Debug, i.e. kernel
+// binding lines would be discarded. This is the cheap front gate for klog/klogCtx:
+// GetLevel() is a plain field read, whereas building the event (and, for klogCtx,
+// logger.WithContext → zerolog's With(), which eagerly make([]byte, 0, 500)s and
+// formats the correlation keys) allocates BEFORE .Debug() consults the level. So we
+// must short-circuit here to keep the hot path (per-batch nextBatch) allocation-free
+// at the default Warn level — including during benchmarks. zerolog's own .Debug()
+// no-op is not enough because the argument expressions run first.
+func kernelDebugOff() bool { return logger.Logger.GetLevel() > zerolog.DebugLevel }
+
+// klog emits a binding-level debug line with no request context. Prefer klogCtx
+// where a ctx is in scope so the line carries connId/corrId/queryId. Gated by the
+// driver log level (Debug): a no-op — no formatting, no allocation — at the default.
 func klog(format string, args ...any) {
-	if !kdebug {
+	if kernelDebugOff() {
 		return
 	}
-	fmt.Fprintf(os.Stderr, "[kernel] "+format+"\n", args...)
+	logger.Logger.Debug().Msgf("[kernel] "+format, args...)
 }
 
-// KernelDebugEnabled reports whether binding-level debug logging is on (i.e.
-// DBSQL_KERNEL_DEBUG is set). Exposed so a benchmark can assert the flag is off
-// before measuring — debug logging perturbs latency; there is no such benchmark
-// in-tree yet, so this currently has no callers.
-func KernelDebugEnabled() bool { return kdebug }
+// klogCtx is klog with request correlation: it pulls connId/corrId/queryId off ctx
+// (the conn layer stuffs them in before calling the backend, exactly as the Thrift
+// path does) so a kernel binding line can be joined to the rest of a request's logs
+// in a multi-conn process. A nil ctx degrades to klog. Level-gated up front so the
+// logger.WithContext allocation never happens below Debug (see kernelDebugOff).
+func klogCtx(ctx context.Context, format string, args ...any) {
+	if kernelDebugOff() {
+		return
+	}
+	if ctx == nil {
+		logger.Logger.Debug().Msgf("[kernel] "+format, args...)
+		return
+	}
+	logger.WithContext(
+		driverctx.ConnIdFromContext(ctx),
+		driverctx.CorrelationIdFromContext(ctx),
+		driverctx.QueryIdFromContext(ctx),
+	).Debug().Msgf("[kernel] "+format, args...)
+}
 
 // initLoggingOnce guards kernel_init_logging, which is process-wide and
 // first-call-wins in the kernel. We install the kernel subscriber lazily on the
@@ -79,33 +107,48 @@ func KernelDebugEnabled() bool { return kdebug }
 // kernel session installs nothing.
 var initLoggingOnce sync.Once
 
-// initKernelLogging turns on the kernel's own Rust (tracing) logs, gated on the
-// same DBSQL_KERNEL_DEBUG flag as klog so both are OFF by default and, in
-// particular, OFF during benchmarks — the subscriber is never installed in a
-// benchmark run. level=NULL lets the kernel honor RUST_LOG (default warn);
-// file_path=NULL sends kernel logs to stderr so they interleave with klog on one
-// stream. Best-effort: Internal (e.g. the host already installed a global
-// subscriber) is a documented, benign outcome — logged, never fatal to connect.
+// initKernelLogging turns on the kernel's own Rust (tracing) logs and points their
+// verbosity at the driver's log level, so DATABRICKS_LOG_LEVEL drives both the Go
+// binding lines and the kernel's Rust lines from one knob. The mapped level is
+// passed to kernel_init_logging (Go zerolog level → the kernel's OFF/ERROR/WARN/
+// INFO/DEBUG/TRACE string); DBSQL_KERNEL_DEBUG forces the subscriber on with a
+// NULL level so the kernel honors RUST_LOG instead (the advanced override for
+// tuning kernel-only verbosity). file_path=NULL sends kernel logs to stderr — the
+// kernel ABI has no sink hook, so the Rust lines always go to stderr and are NOT
+// routed through logger.SetLogOutput (unlike the Go binding lines).
+//
+// Best-effort: an Internal return (e.g. the host already installed a global
+// subscriber) is a documented, benign outcome — logged at Warn, never fatal to
+// connect. The subscriber installs at whatever level is mapped in; a driver left at
+// the default Warn level (benchmarks included, and never having set
+// DBSQL_KERNEL_DEBUG) installs it at WARN, so the kernel emits nothing below Warn
+// and there is no hot-path cost.
 //
 // Scope caveat: the kernel subscriber is PROCESS-WIDE, first-call-wins, and never
-// uninstalled. Because kdebug is read once from DBSQL_KERNEL_DEBUG at package
-// init, the switch is process-global, not per-connection: in a long-lived
-// multi-tenant process, the first kernel session opened with the flag set
-// installs the subscriber (and its stderr output) for ALL subsequent kernel
-// sessions in that process, and there is no way to scope it to one connection or
-// turn it off afterward. The "off during benchmarks" guarantee therefore depends
-// on DBSQL_KERNEL_DEBUG being unset before package init. Making this a
-// per-process runtime knob (rather than an init-time env read) is tracked with
-// the logging-unification follow-up.
+// uninstalled — in a long-lived multi-tenant process the first kernel session's
+// level/destination applies to ALL subsequent kernel sessions, with no way to
+// re-scope or turn it off afterward. That is a kernel-ABI property, not a Go one.
+// A direct consequence: the driver level is sampled HERE, once, at the first kernel
+// session — a later dbsql.SetLogLevel re-levels the Go binding lines (klog/klogCtx
+// re-read GetLevel per call) but NOT the already-installed Rust subscriber. Set the
+// level before opening the first kernel connection to govern the Rust logs.
 func initKernelLogging() {
-	if !kdebug {
-		return
-	}
 	initLoggingOnce.Do(func() {
+		// resolveKernelLogArg decides the level (or NULL for the DBSQL_KERNEL_DEBUG
+		// override, which lets the kernel honor RUST_LOG). The pure decision lives in
+		// logging_level.go so it's unit-tested without cgo.
+		var level cStr
+		if lvl, useNULL := resolveKernelLogArg(); !useNULL {
+			level = newCStr(lvl)
+			defer level.free()
+		} // else level stays {c: nil} → NULL → kernel honors RUST_LOG
 		if err := call(func() C.KernelStatusCode {
-			return C.kernel_init_logging(nil, nil)
+			return C.kernel_init_logging(level.c, nil)
 		}); err != nil {
-			klog("kernel_init_logging: %v (kernel logs unavailable; proceeding)", err)
+			// The kernel subscriber didn't install (commonly: the host already
+			// installed a global tracing subscriber). Non-fatal — surface it through
+			// the shared logger so it's visible without a separate stderr scrape.
+			logger.Logger.Warn().Msgf("databricks: kernel_init_logging: %v (kernel logs unavailable; proceeding)", err)
 		}
 	})
 }
@@ -205,8 +248,44 @@ type cStr struct{ c *C.char }
 
 func newCStr(s string) cStr { return cStr{c: C.CString(s)} }
 
+// newCStrOrNull is like newCStr but yields a NULL C pointer for an empty string,
+// for kernel args whose "unset" sentinel is NULL (e.g. the optional U2M client id /
+// scopes, where NULL selects the kernel's own default). C.CString("") would instead
+// pass a non-NULL pointer to an empty string, which the kernel treats as a real
+// (empty) value rather than "use the default".
+func newCStrOrNull(s string) cStr {
+	if s == "" {
+		return cStr{c: nil}
+	}
+	return cStr{c: C.CString(s)}
+}
+
 func (s cStr) free() {
 	if s.c != nil {
 		C.free(unsafe.Pointer(s.c))
+	}
+}
+
+// cBytes wraps C.CBytes with a guaranteed free, for the byte-buffer setters (e.g.
+// a PEM CA bundle) that take a (*C.uint8_t, C.size_t) pair. The kernel copies the
+// bytes into owned Rust memory on receipt, so freeing right after the call is
+// safe. An empty slice yields a NULL pointer + 0 length (the setters reject that,
+// which is what we want — an empty buffer is never valid).
+// Use: cb := newCBytes(b); defer cb.free(); ...C.fn(cb.ptr, cb.len)...
+type cBytes struct {
+	ptr *C.uint8_t
+	len C.size_t
+}
+
+func newCBytes(b []byte) cBytes {
+	if len(b) == 0 {
+		return cBytes{}
+	}
+	return cBytes{ptr: (*C.uint8_t)(C.CBytes(b)), len: C.size_t(len(b))}
+}
+
+func (b cBytes) free() {
+	if b.ptr != nil {
+		C.free(unsafe.Pointer(b.ptr))
 	}
 }

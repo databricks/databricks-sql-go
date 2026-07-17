@@ -17,6 +17,7 @@ import (
 	"database/sql/driver"
 	"fmt"
 	"io"
+	"time"
 	"unsafe"
 
 	"github.com/apache/arrow/go/v12/arrow"
@@ -47,6 +48,10 @@ type kernelRows struct {
 	chunkCount int          // cumulative batches fetched, for OnChunkFetched
 	closed     bool
 	eof        bool
+	// iterationErr is the first non-EOF error seen during Next(), reported to the
+	// OnClose telemetry callback so a failed statement is recorded (matching the
+	// Thrift path's rows.iterationErr). io.EOF is normal termination, not an error.
+	iterationErr error
 	// keyCache memoizes struct field-name JSON keys for this result set so
 	// per-row rendering doesn't re-marshal constant names. Scoped to this Rows
 	// (freed with it) — not a process-global, which would leak.
@@ -56,7 +61,14 @@ type kernelRows struct {
 // newKernelRows fetches the schema up front (for Columns()) and returns the row
 // iterator; batches are pulled lazily on Next.
 func newKernelRows(ctx context.Context, op *kernelOp, stream *C.kernel_result_stream_t, cb *dbsqlrows.TelemetryCallbacks) (driver.Rows, error) {
-	r := &kernelRows{ctx: ctx, op: op, stream: stream, callbacks: cb, keyCache: arrowscan.NewStructKeyCache()}
+	// The telemetry callback is deliberately NOT set on r yet: the two cleanup
+	// r.Close() calls below run when construction FAILS (schema fetch/import), and a
+	// Close() with the callback set would fire OnClose as a *successful* close for a
+	// statement that never produced rows — masking the failure in CLOSE_STATEMENT
+	// telemetry. Assign it only on the success path so cleanup Close() on a
+	// schema/import failure does not record a falsely successful CLOSE_STATEMENT; the
+	// construction error itself is surfaced to and recorded by the conn execute path.
+	r := &kernelRows{ctx: ctx, op: op, stream: stream, keyCache: arrowscan.NewStructKeyCache()}
 
 	var csch C.struct_ArrowSchema
 	if err := call(func() C.KernelStatusCode {
@@ -76,7 +88,10 @@ func newKernelRows(ctx context.Context, op *kernelOp, stream *C.kernel_result_st
 	for i, f := range fields {
 		r.cols[i] = f.Name
 	}
-	klog("newKernelRows: %d columns", len(r.cols))
+	// Construction succeeded — now arm the close telemetry callback so a normal
+	// Close() (after row iteration) records CLOSE_STATEMENT.
+	r.callbacks = cb
+	klogCtx(ctx, "newKernelRows: %d columns", len(r.cols))
 	return r, nil
 }
 
@@ -90,6 +105,7 @@ func (r *kernelRows) Close() error {
 		return nil
 	}
 	r.closed = true
+	closeStart := time.Now()
 	if r.cur != nil {
 		r.cur.Release()
 		r.cur = nil
@@ -101,13 +117,31 @@ func (r *kernelRows) Close() error {
 	if r.op != nil {
 		r.op.close()
 	}
-	klog("kernelRows closed")
+	// Fire the close telemetry callback so the kernel path records CLOSE_STATEMENT /
+	// execution latency / statement success-or-failure like the Thrift path does
+	// (conn gates this on OnClose being called). The kernel teardown has no fallible
+	// close RPC — the C stream/statement closes don't surface an error — so closeErr
+	// is nil; iterationErr carries any failure seen during Next().
+	if r.callbacks != nil && r.callbacks.OnClose != nil {
+		r.callbacks.OnClose(time.Since(closeStart).Milliseconds(), r.chunkCount, r.iterationErr, nil)
+	}
+	klogCtx(r.ctx, "kernelRows closed")
 	return nil
 }
 
 // Next fills dest with the next row's values, advancing across batches. Returns
 // io.EOF when the stream is drained.
 func (r *kernelRows) Next(dest []driver.Value) error {
+	err := r.next(dest)
+	// Record the first non-EOF error for the OnClose telemetry callback (io.EOF is
+	// normal drain, not a failure). Mirrors the Thrift path's iterationErr capture.
+	if err != nil && err != io.EOF && r.iterationErr == nil {
+		r.iterationErr = err
+	}
+	return err
+}
+
+func (r *kernelRows) next(dest []driver.Value) error {
 	if r.closed {
 		return io.EOF
 	}
@@ -161,7 +195,7 @@ func (r *kernelRows) nextBatch() error {
 	}
 	if carr.release == nil {
 		r.eof = true
-		klog("nextBatch: EOF")
+		klogCtx(r.ctx, "nextBatch: EOF")
 		return io.EOF
 	}
 	// Zero-copy import. The kernel exports self-contained batches (Rust to_ffi
@@ -189,6 +223,6 @@ func (r *kernelRows) nextBatch() error {
 		// reports — a fabricated number would be worse than a truthful zero.
 		r.callbacks.OnChunkFetched(r.chunkCount, 0, 0, 0, 0)
 	}
-	klog("nextBatch: %d rows (chunk %d)", rec.NumRows(), r.chunkCount)
+	klogCtx(r.ctx, "nextBatch: %d rows (chunk %d)", rec.NumRows(), r.chunkCount)
 	return nil
 }

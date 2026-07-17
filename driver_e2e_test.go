@@ -259,15 +259,7 @@ func TestWorkflowExample(t *testing.T) {
 }
 
 func TestE2EArrowBatchesSurviveQueryContextCancellation(t *testing.T) {
-	host := os.Getenv("DATABRICKS_PECOTESTING_SERVER_HOSTNAME")
-	httpPath := os.Getenv("DATABRICKS_PECOTESTING_HTTP_PATH2")
-	token := os.Getenv("DATABRICKS_PECOTESTING_TOKEN")
-	if token == "" {
-		token = os.Getenv("DATABRICKS_PECOTESTING_TOKEN_PERSONAL")
-	}
-	if host == "" || httpPath == "" || token == "" {
-		t.Skip("set DATABRICKS_PECOTESTING_SERVER_HOSTNAME, DATABRICKS_PECOTESTING_HTTP_PATH2, and DATABRICKS_PECOTESTING_TOKEN to run")
-	}
+	host, httpPath, token := pecoTestingCreds(t)
 
 	connector, err := NewConnector(
 		WithServerHostname(host),
@@ -668,15 +660,7 @@ func TestE2ECloudFetchExactRowCount(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping large CloudFetch drain in -short mode")
 	}
-	host := os.Getenv("DATABRICKS_PECOTESTING_SERVER_HOSTNAME")
-	httpPath := os.Getenv("DATABRICKS_PECOTESTING_HTTP_PATH2")
-	token := os.Getenv("DATABRICKS_PECOTESTING_TOKEN")
-	if token == "" {
-		token = os.Getenv("DATABRICKS_PECOTESTING_TOKEN_PERSONAL")
-	}
-	if host == "" || httpPath == "" || token == "" {
-		t.Skip("set DATABRICKS_PECOTESTING_SERVER_HOSTNAME, DATABRICKS_PECOTESTING_HTTP_PATH2, and DATABRICKS_PECOTESTING_TOKEN to run")
-	}
+	host, httpPath, token := pecoTestingCreds(t)
 
 	const wantRows = 2000000
 

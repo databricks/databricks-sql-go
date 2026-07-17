@@ -3,6 +3,7 @@ package kernel
 import (
 	"database/sql/driver"
 	"errors"
+	"fmt"
 	"testing"
 )
 
@@ -127,6 +128,24 @@ func TestKernelErrorString(t *testing.T) {
 	noState := (&KernelError{Code: statusUnavailable, Message: "gone"}).Error()
 	if contains(noState, "sqlstate=") || contains(noState, "queryId=") {
 		t.Errorf("Error() = %q, should omit empty sqlstate/queryId", noState)
+	}
+}
+
+// statementIDFromError feeds the execute-error telemetry gate: it must pull the
+// query id off a KernelError (even when wrapped) and return "" otherwise.
+func TestStatementIDFromError(t *testing.T) {
+	if got := statementIDFromError(&KernelError{QueryID: "q-1"}); got != "q-1" {
+		t.Errorf("KernelError: got %q, want q-1", got)
+	}
+	wrapped := fmt.Errorf("kernel: execute: %w", &KernelError{QueryID: "q-2"})
+	if got := statementIDFromError(wrapped); got != "q-2" {
+		t.Errorf("wrapped KernelError: got %q, want q-2", got)
+	}
+	if got := statementIDFromError(errors.New("plain")); got != "" {
+		t.Errorf("non-KernelError: got %q, want \"\"", got)
+	}
+	if got := statementIDFromError(nil); got != "" {
+		t.Errorf("nil: got %q, want \"\"", got)
 	}
 }
 

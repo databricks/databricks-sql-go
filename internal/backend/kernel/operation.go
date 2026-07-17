@@ -32,12 +32,21 @@ import (
 //  5. drain the watcher before returning, so a late cancel cannot land on a
 //     statement that reuses this handle
 //
-// Executes SQL text only; bound parameters are rejected up front by Execute.
+// Binds any query parameters (bindParams) before executing; staging statements
+// are rejected up front by Execute, so none reach here.
 func (k *KernelBackend) execute(ctx context.Context, req backend.ExecRequest) (backend.Operation, error) {
 	// Log the SQL length, not the text: query bodies can carry PII/secrets in
 	// WHERE/INSERT/SET, and this goes to stderr. Matches the driver's own
 	// debuglog convention (conn.ExecContext logs sql.len=%d).
-	klog("Execute sql.len=%d", len(req.Query))
+	klogCtx(ctx, "Execute sql.len=%d", len(req.Query))
+
+	// Reject statement text with an interior NUL before touching the kernel: set_sql
+	// takes a NUL-terminated C string with no length, so a NUL would silently
+	// truncate the query (the same reason bound params are guarded by
+	// checkParamValue). Fail loudly rather than run a shorter statement than Thrift.
+	if err := checkQueryText(req.Query); err != nil {
+		return &kernelOp{}, fmt.Errorf("kernel: %w", err)
+	}
 
 	var stmt *C.kernel_statement_t
 	if err := call(func() C.KernelStatusCode {
@@ -58,6 +67,17 @@ func (k *KernelBackend) execute(ctx context.Context, req backend.ExecRequest) (b
 	}
 	sql.free()
 
+	// Bind parameters. The driver hands us backend.Param{Name, Type, Value}: the
+	// value is already stringified, Type is the Databricks SQL type name, and a nil
+	// Value is SQL NULL (Type "VOID"). Each maps 1:1 onto
+	// kernel_statement_bind_parameter, which builds the SEA wire parameter directly
+	// (name/ordinal + type + string), matching the Thrift path's toSparkParameters.
+	if err := bindParams(stmt, req.Params); err != nil {
+		C.kernel_statement_close(stmt)
+		k.evictIfSessionFatal(err)
+		return &kernelOp{}, fmt.Errorf("kernel: bind params: %w", toStatementError(err))
+	}
+
 	// Detached canceller, obtained before execute so it observes the server
 	// statement id the moment execute publishes it. Non-fatal on failure: proceed
 	// without cancellation rather than failing the query.
@@ -65,7 +85,7 @@ func (k *KernelBackend) execute(ctx context.Context, req backend.ExecRequest) (b
 	if err := call(func() C.KernelStatusCode {
 		return C.kernel_statement_canceller_new(stmt, &canceller)
 	}); err != nil {
-		klog("canceller_new failed (proceeding without cancel): %v", err)
+		klogCtx(ctx, "canceller_new failed (proceeding without cancel): %v", err)
 		canceller = nil
 	}
 
@@ -100,11 +120,11 @@ func (k *KernelBackend) execute(ctx context.Context, req backend.ExecRequest) (b
 				return
 			default:
 			}
-			klog("ctx.Done (%v) → firing canceller (with retry until dispatched)", ctx.Err())
+			klogCtx(ctx, "ctx.Done (%v) → firing canceller (with retry until dispatched)", ctx.Err())
 			ticker := time.NewTicker(250 * time.Millisecond)
 			defer ticker.Stop()
 			if fireCancel(canceller) {
-				klog("cancel dispatched on first fire")
+				klogCtx(ctx, "cancel dispatched on first fire")
 				return
 			}
 			for {
@@ -113,7 +133,7 @@ func (k *KernelBackend) execute(ctx context.Context, req backend.ExecRequest) (b
 					return
 				case <-ticker.C:
 					if fireCancel(canceller) {
-						klog("cancel dispatched, watcher stopping")
+						klogCtx(ctx, "cancel dispatched, watcher stopping")
 						return
 					}
 				}
@@ -138,25 +158,42 @@ func (k *KernelBackend) execute(ctx context.Context, req backend.ExecRequest) (b
 
 	op := &kernelOp{backend: k, stmt: stmt, location: k.cfg.Location}
 	if execErr != nil {
-		// Prefer the caller's ctx error when the ctx was cancelled (database/sql
-		// convention), keeping the kernel error as the cause.
-		if ctx.Err() != nil {
-			klog("Execute failed under cancelled ctx: kernelErr=%v ctxErr=%v", execErr, ctx.Err())
-			op.close()
-			return op, fmt.Errorf("kernel: execute cancelled: %w", ctx.Err())
-		}
-		klog("Execute failed: %v", execErr)
 		// A session-fatal status (expired token, dropped/unavailable session) means
-		// this conn is unusable: evict it so the pool doesn't hand it out again. We
-		// still return the PLAIN error (toStatementError, never ErrBadConn), so the
-		// conn is discarded without database/sql re-running the statement.
+		// this conn is unusable: evict it so the pool doesn't hand it out again. This
+		// runs BEFORE the ctx-cancelled branch below because a session-fatal failure
+		// racing a ctx cancel is still session-fatal — skipping eviction there would
+		// leave a dead conn marked valid in the pool. Eviction only flips the conn's
+		// validity flag; it never turns the error into driver.ErrBadConn (the returned
+		// error stays a plain toStatementError / ctx error), so database/sql discards
+		// the conn without re-running the statement (no duplicate write).
 		k.evictIfSessionFatal(execErr)
+		// Surface the server query id from the error so failure telemetry fires:
+		// there is no exec handle here, but a post-submit failure (e.g. a SQL
+		// error) still carries a query id on the KernelError. conn gates
+		// EXECUTE_STATEMENT on StatementID() != "", so without this a failed
+		// kernel query records no metric while the same Thrift failure does.
+		op.statementID = statementIDFromError(execErr)
+		// Prefer the caller's ctx error when the ctx was cancelled (database/sql
+		// convention). Wrap BOTH the ctx error and the kernel error so
+		// errors.Is(err, context.Canceled/DeadlineExceeded) still matches (the
+		// cancellation contract) AND the *KernelError stays reachable via errors.As —
+		// otherwise a session-fatal failure racing a cancel would lose its
+		// sqlstate/queryId, the one handle to what actually went wrong server-side.
+		if ctx.Err() != nil {
+			klogCtx(ctx, "Execute failed under cancelled ctx: kernelErr=%v ctxErr=%v", execErr, ctx.Err())
+			op.close()
+			return op, fmt.Errorf("kernel: execute cancelled: %w (kernel error: %w)", ctx.Err(), toStatementError(execErr))
+		}
+		klogCtx(ctx, "Execute failed: %v", execErr)
+		// We still return the PLAIN error (toStatementError, never ErrBadConn), so the
+		// conn is discarded without database/sql re-running the statement.
 		op.close()
 		return op, fmt.Errorf("kernel: execute: %w", toStatementError(execErr))
 	}
 	op.exec = exec
-	// Capture the modified-row count now, while exec is live — the operation is
-	// closed (nulling exec) before AffectedRows is read on the ExecContext path.
+	// Capture the modified-row count and server query id now, while exec is live —
+	// the operation is closed (nulling exec) before these are read on the
+	// ExecContext path, and the query-id pointer is only valid while exec lives.
 	op.affectedRows = int64(C.kernel_executed_statement_num_modified_rows(exec))
 	// A nil execErr means the statement reached a terminal state server-side (it
 	// committed). We deliberately do NOT re-check ctx.Err() here to convert a
@@ -167,8 +204,45 @@ func (k *KernelBackend) execute(ctx context.Context, req backend.ExecRequest) (b
 	// arrives before completion is still honored via the watcher → execErr branch
 	// above; one that loses the race to a committed statement yields that statement's
 	// result, same as Thrift.
-	klog("Execute OK stmt=%p exec=%p affectedRows=%d", stmt, exec, op.affectedRows)
+	if qid := C.kernel_executed_statement_query_id(exec); qid != nil {
+		op.statementID = C.GoString(qid) // deep-copies out of the borrowed C string
+	}
+	klogCtx(ctx, "Execute OK stmt=%p exec=%p affectedRows=%d statementID=%q", stmt, exec, op.affectedRows, op.statementID)
 	return op, nil
+}
+
+// bindParams binds the driver's backend.Param list onto the statement via the
+// kernel's raw-param bind. Each Param is already stringified with its Databricks
+// SQL type name; an empty Name is a positional param (ordinal assigned kernel-side
+// in push order) and a nil Value is SQL NULL (Type "VOID"). Runs before execute,
+// so the params are set on the fresh statement (set_sql clears any prior binds).
+func bindParams(stmt *C.kernel_statement_t, params []backend.Param) error {
+	for i, p := range params {
+		// The positional/named + NULL/empty-string decision is the pure paramBindArg
+		// (unit-tested under CGO_ENABLED=0 in bindparams_test.go); this loop only does
+		// the C-string marshaling of that decision.
+		a := paramBindArg(p)
+		if err := checkParamValue(a); err != nil {
+			return fmt.Errorf("param %d (name=%q type=%q): %w", i, p.Name, p.Type, err)
+		}
+		name := newCStrOrNull(a.name) // empty name → NULL → positional
+		typ := newCStr(a.typ)
+		val := newCStrOrNull("") // NULL pointer: the SQL-NULL wire form
+		if !a.isNull {
+			val = newCStr(a.value) // a real value (empty string included), never NULL
+		}
+		err := call(func() C.KernelStatusCode {
+			return C.kernel_statement_bind_parameter(stmt, name.c, typ.c, val.c)
+		})
+		name.free()
+		typ.free()
+		val.free()
+		if err != nil {
+			return fmt.Errorf("param %d (name=%q type=%q): %w", i, p.Name, p.Type, err)
+		}
+		klog("bound param %d name=%q type=%q null=%v", i, p.Name, p.Type, a.isNull)
+	}
+	return nil
 }
 
 // kernelOp implements backend.Operation over a sync executed statement.
@@ -184,6 +258,11 @@ type kernelOp struct {
 	// cached (not read live from exec) because the caller closes the operation —
 	// which nulls exec — before reading AffectedRows (see conn.ExecContext).
 	affectedRows int64
+	// statementID is the server query id, captured at execute time. Cached (not
+	// read live) because kernel_executed_statement_query_id returns a pointer
+	// borrowed from the exec handle, valid only while exec is alive — the same
+	// lifetime discipline as affectedRows.
+	statementID string
 	// location renders DATE / TIMESTAMP values in the session time zone, matching
 	// the Thrift path; nil means UTC. Carried onto the rows built by Results.
 	location *time.Location
@@ -191,14 +270,11 @@ type kernelOp struct {
 
 var _ backend.Operation = (*kernelOp)(nil)
 
-// StatementID returns "": the kernel C ABI exposes no success-path statement/query
-// id accessor (only the error path carries a query_id, on KernelError). Because
-// conn.ExecContext/QueryContext gate per-statement telemetry on
-// StatementID() != "", kernel queries currently emit no EXECUTE_STATEMENT metric
-// and their query-id log field is empty — there is no session-id fallback on that
-// gate. Surfacing an id needs a kernel accessor (e.g.
-// kernel_executed_statement_query_id); tracked as a follow-up.
-func (o *kernelOp) StatementID() string { return "" }
+// StatementID returns the server query id — captured at execute time on success,
+// or from the KernelError on an execute failure (empty only when the server
+// returned none). A non-empty id ungates EXECUTE_STATEMENT telemetry and drives
+// QueryIdCallback, matching the Thrift path.
+func (o *kernelOp) StatementID() string { return o.statementID }
 
 // AffectedRows is the modified-row count for ExecContext. It returns the value
 // cached at execute time, so it is correct even after the operation is closed
@@ -271,11 +347,19 @@ func (o *kernelOp) close() bool {
 // ExecutionError wraps cause as the driver's execution error so it satisfies the
 // same public contract as the Thrift path: errors.Is(err, dbsqlerr.ExecutionError)
 // matches, and errors.As(err, &dbExecErr) exposes SqlState()/QueryId() — the recipe
-// documented in doc.go. The kernel carries BOTH sqlState and the server query id in
-// its own *KernelError (not a Thrift TGetOperationStatusResp, and unlike Thrift the
-// kernel path has no ctx query id — StatementID() is ""), so pull both out and hand
-// them to NewExecutionErrorWithState, keeping the *KernelError as the cause so its
-// detail stays reachable via Unwrap.
+// documented in doc.go. The kernel carries both sqlState and the server query id in
+// its own *KernelError (not a Thrift TGetOperationStatusResp), so pull both out and
+// hand them to NewExecutionErrorWithState, keeping the *KernelError as the cause so
+// its detail stays reachable via Unwrap.
+//
+// This is exclusively the post-submission (execute / result-read) error path, so it
+// deliberately does NOT surface the kernel's Retryable flag: like the Thrift path
+// (which always builds a non-retryable execution error here), a failure seen after
+// the statement was sent may have already committed a non-idempotent
+// INSERT/UPDATE/MERGE server-side, and an app keying retry on IsRetryable() would
+// re-run it → silent double write. This mirrors toStatementError, which refuses
+// driver.ErrBadConn for the same reason. Connect-phase failures — where the kernel's
+// retryable signal IS safe — go through toConnError, not here.
 func (o *kernelOp) ExecutionError(ctx context.Context, cause error) error {
 	if cause == nil {
 		return nil

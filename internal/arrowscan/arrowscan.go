@@ -14,7 +14,7 @@
 //   - nested NULL → null
 //   - time.Time   → quoted .String()  (matches the Thrift marshal() special-case)
 //   - nested decimal → exact scale-applied JSON number literal (never a lossy
-//     float64), matching Thrift's marshalScalar → ValueString (#253/#274)
+//     float64), matching Thrift's marshalScalar → ValueString
 //   - float32     → native float32 (not widened to float64), so JSON renders
 //     3.14, not 3.140000104904175
 package arrowscan
@@ -34,13 +34,15 @@ import (
 // ScanCell extracts one cell as a driver.Value. Scalars map to their Go value:
 // bool, all int/uint widths, float (native float32/float64), string, binary,
 // date, timestamp, and top-level decimal (as an exact fixed-point string,
-// matching the Thrift path — a float64 would lose precision beyond ~17 digits;
-// see databricks-sql-go#274). Nested types (List/Map/Struct, and VARIANT which
+// matching the Thrift path — a float64 would lose precision beyond ~17 digits).
+// Nested types (List/Map/Struct, and VARIANT which
 // arrives nested) render to a JSON string byte-identical to the Thrift path;
-// GEOMETRY arrives as a WKB/WKT string and is handled by the string arm. NULLs
-// map to nil. A genuinely unhandled type (e.g. interval/duration) returns an
-// error rather than a silently wrong value. loc renders DATE / TIMESTAMP in the
-// session time zone (nil = UTC, arrow's ToTime default).
+// GEOMETRY arrives as a WKB/WKT string and is handled by the string arm. INTERVAL
+// day-time/year-month arrive as native arrow duration/month-interval and format to
+// the same string the Thrift path receives pre-formatted from the server. NULLs
+// map to nil. A genuinely unhandled type returns an error rather than a silently
+// wrong value. loc renders DATE / TIMESTAMP in the session time zone (nil = UTC,
+// arrow's ToTime default).
 func ScanCell(col arrow.Array, row int, loc *time.Location) (driver.Value, error) {
 	return ScanCellCached(col, row, loc, nil)
 }
@@ -175,14 +177,103 @@ func ScanCellCached(col arrow.Array, row int, loc *time.Location, keys *StructKe
 	case *array.Decimal128:
 		dt := col.DataType().(*arrow.Decimal128Type)
 		return decimalfmt.ExactString(c.Value(row), dt.Scale), nil
+	case *array.Duration:
+		// INTERVAL DAY TO SECOND arrives as an arrow duration. The kernel returns the
+		// native arrow value, so we format it Go-side to the same "D HH:MM:SS.nnnnnnnnn"
+		// string the Thrift path gets pre-formatted from the server (its native-interval
+		// config is off in prod, so it never scans a duration array — hence there is no
+		// shared renderer to reuse, and this stays kernel-side).
+		dt := col.DataType().(*arrow.DurationType)
+		return formatDayTimeInterval(int64(c.Value(row)), dt.Unit), nil
+	case *array.MonthInterval:
+		// INTERVAL YEAR TO MONTH arrives as a month count; Thrift's server string is
+		// "years-months".
+		return formatYearMonthInterval(int32(c.Value(row))), nil
 	case *array.List, *array.LargeList, *array.FixedSizeList, *array.Map, *array.Struct:
 		// Nested types (and VARIANT, which arrives as a nested value) render to a
 		// JSON string matching the Thrift path.
 		return renderJSONString(col, row, loc, keys)
 	default:
-		return nil, fmt.Errorf("scanning arrow type %s is not supported "+
-			"(intervals are not yet handled)", col.DataType())
+		return nil, fmt.Errorf("scanning arrow type %s is not supported", col.DataType())
 	}
+}
+
+// formatDayTimeInterval renders an arrow duration (in the given time unit) as the
+// Thrift path's "D HH:MM:SS.nnnnnnnnn" — days, then zero-padded hours:minutes:seconds
+// with 9 fractional digits, negated with a leading '-'.
+func formatDayTimeInterval(v int64, unit arrow.TimeUnit) string {
+	neg := v < 0
+	// Derive every component from the SIGNED value (Go integer division/modulo
+	// truncate toward zero, so each component simply carries v's sign), then take
+	// the magnitude of each bounded component when formatting. We deliberately do
+	// NOT negate the full magnitude up front (`v = -v`): at math.MinInt64 that
+	// wraps back to a negative value, so the components would come out negative
+	// *and* a '-' would be prepended — a doubly-negated garbage string — and
+	// math.MinInt64 μs is a representable Spark day-time bound.
+	//
+	// We also must NOT scale the full magnitude up to nanoseconds first: Spark
+	// day-time intervals run up to ~Long.MaxValue microseconds (~292 years), so
+	// v*1e3 (or *1e6/*1e9) would overflow int64 and silently produce a wrong
+	// string. Deriving seconds by dividing keeps every intermediate in range; only
+	// the bounded sub-second remainder is scaled up.
+	var secs, frac int64
+	switch unit {
+	case arrow.Second:
+		secs = v
+	case arrow.Millisecond:
+		secs = v / 1e3
+		frac = (v % 1e3) * 1e6
+	case arrow.Microsecond:
+		secs = v / 1e6
+		frac = (v % 1e6) * 1e3
+	default: // Nanosecond
+		secs = v / 1e9
+		frac = v % 1e9
+	}
+	days := secs / 86400
+	rem := secs % 86400
+	h := rem / 3600
+	rem %= 3600
+	m := rem / 60
+	s := rem % 60
+	sign := ""
+	if neg {
+		sign = "-"
+	}
+	// Every component is bounded well within int64 (days ≤ ~1.07e8, h < 24, m/s <
+	// 60, frac < 1e9), so abs64 here can never hit the math.MinInt64 abs overflow.
+	return fmt.Sprintf("%s%d %02d:%02d:%02d.%09d", sign, abs64(days), abs64(h), abs64(m), abs64(s), abs64(frac))
+}
+
+// formatYearMonthInterval renders a month count as the Thrift path's "years-months",
+// negated with a leading '-'.
+func formatYearMonthInterval(months int32) string {
+	neg := months < 0
+	// Widen to int64 BEFORE negating: negating math.MinInt32 as an int32 overflows
+	// (wraps back negative → doubly-negated garbage), but math.MinInt32 fits in
+	// int64 where the negation is exact. math.MinInt32 months is a representable
+	// Spark year-month bound.
+	m := int64(months)
+	if neg {
+		m = -m
+	}
+	y := m / 12
+	mo := m % 12
+	sign := ""
+	if neg {
+		sign = "-"
+	}
+	return fmt.Sprintf("%s%d-%d", sign, y, mo)
+}
+
+// abs64 returns the absolute value of x. It is only ever called on components
+// already bounded well within int64 (see formatDayTimeInterval), so the classic
+// abs(math.MinInt64) overflow can't arise; the trivial form is intentional.
+func abs64(x int64) int64 {
+	if x < 0 {
+		return -x
+	}
+	return x
 }
 
 // inLocation renders t in loc, matching the Thrift path's .In(location); a nil
@@ -240,7 +331,7 @@ func writeJSON(b *strings.Builder, col arrow.Array, row int, loc *time.Location,
 		// Emit the exact scale-applied decimal as a raw JSON number literal, not a
 		// float64 — a float64 would render DECIMAL(5,2) 19.99 as 19.990000000000002
 		// and corrupt high-precision values. Matches the Thrift path's marshalScalar
-		// → ValueString (databricks-sql-go#253/#274).
+		// → ValueString.
 		b.WriteString(decimalfmt.ExactString(c.Value(row), col.DataType().(*arrow.Decimal128Type).Scale))
 		return nil
 	case *array.Float32:

@@ -16,34 +16,23 @@ import (
 // connection config, so the user-facing options are unchanged — only the routing
 // differs. The public API adds nothing beyond WithUseKernel.
 func newKernelBackend(_ context.Context, cfg *config.Config) (backend.Backend, error) {
-	// Reject options the kernel path can't honor yet + resolve the PAT. The
+	// Reject options the kernel path can't honor yet + resolve the auth form. The
 	// validation is pure Go and lives in kernel_config.go (untagged) so its tests —
 	// including the exhaustiveness guard against a dropped Config field — run in the
-	// default CGO_ENABLED=0 build.
-	token, err := validateKernelConfig(cfg)
+	// default CGO_ENABLED=0 build. It returns kernel.Auth directly.
+	kauth, err := validateKernelConfig(cfg)
 	if err != nil {
 		return nil, err
 	}
 
-	kc := kernel.Config{
-		Host:        cfg.Host,
-		HTTPPath:    cfg.HTTPPath,
-		WarehouseID: cfg.WarehouseID,
-		Token:       token,
-		Location:    cfg.Location,
-		// Session confs (STATEMENT_TIMEOUT, QUERY_TAGS, TIMEZONE, …) — the same
-		// SessionParams map the Thrift backend forwards, so they flow to the
-		// server identically with no per-backend translation. SPOG org routing
-		// rides in HTTPPath's ?o= and is parsed kernel-side.
-		SessionConf: cfg.SessionParams,
-	}
-	// TLS: the driver honors TLSConfig only for InsecureSkipVerify (see
-	// internal/client), so map exactly that knob to the kernel.
-	if cfg.TLSConfig != nil && cfg.TLSConfig.InsecureSkipVerify {
-		kc.TLSSkipVerify = true
-	}
+	// Assemble the flat kernel.Config from the driver config. The field-by-field
+	// mapping (including the experimental TLS forwarding) is the pure, cgo-free
+	// buildKernelConfig in kernel_config.go, unit-tested under CGO_ENABLED=0.
+	// SPOG org routing rides in HTTPPath's ?o= and is parsed kernel-side.
+	kc := buildKernelConfig(cfg, kauth)
 	// Proxy: the Thrift path uses http.ProxyFromEnvironment; mirror it by reading
-	// the same HTTP(S)_PROXY / NO_PROXY environment for the kernel.
+	// the same HTTP(S)_PROXY / NO_PROXY environment for the kernel. Resolved here
+	// (not in buildKernelConfig) since proxyForEndpoint has its own unit coverage.
 	kc.ProxyURL = proxyForEndpoint(cfg)
 	return kernel.New(kc), nil
 }

@@ -101,17 +101,98 @@ func TestScanCellScalars(t *testing.T) {
 	})
 
 	t.Run("unsupported_type_errors", func(t *testing.T) {
-		// A duration (INTERVAL) is not yet handled: must error, not return a
-		// wrong value.
-		b := array.NewDurationBuilder(pool, &arrow.DurationType{Unit: arrow.Microsecond})
+		// An unhandled arrow type must error, not return a silently wrong value.
+		// Duration/MonthInterval are now handled (see TestScanCellInterval); use a
+		// type with no scan arm.
+		b := array.NewTime32Builder(pool, &arrow.Time32Type{Unit: arrow.Second})
 		defer b.Release()
 		b.Append(1000)
 		arr := b.NewArray()
 		defer arr.Release()
 		if _, err := ScanCell(arr, 0, nil); err == nil {
-			t.Error("scanning a Duration should return an unsupported-type error")
+			t.Error("scanning an unhandled arrow type should return an error")
 		}
 	})
+}
+
+// INTERVAL day-time (arrow duration) and year-month (arrow month-interval) arrive
+// as native arrow values on the kernel path and must format to the exact string the
+// Thrift path receives pre-formatted from the server: "D HH:MM:SS.nnnnnnnnn" and
+// "years-months", with negatives signed.
+func TestScanCellInterval(t *testing.T) {
+	pool := memory.NewGoAllocator()
+
+	dayTime := []struct {
+		name string
+		unit arrow.TimeUnit
+		v    int64
+		want string
+	}{
+		{"one_day_us", arrow.Microsecond, 86400 * 1_000_000, "1 00:00:00.000000000"},
+		{"day_to_sec_us", arrow.Microsecond, 90061_500000, "1 01:01:01.500000000"},
+		{"seconds_unit", arrow.Second, 3661, "0 01:01:01.000000000"},
+		{"negative_us", arrow.Microsecond, -90061_500000, "-1 01:01:01.500000000"},
+		// A large microsecond magnitude (~106.75M days, near Long.MaxValue μs) must
+		// NOT overflow int64 while scaling to nanoseconds — regression guard for the
+		// prior multiply-first bug that produced a wrong/negative string here.
+		{"large_us_no_overflow", arrow.Microsecond, 9223372036854775807, "106751991 04:00:54.775807000"},
+		// math.MinInt64 μs is a representable negative bound. Negating the full
+		// magnitude (`v = -v`) wraps it back negative, doubly-negating into garbage;
+		// deriving components from the signed value renders it correctly. Its
+		// magnitude is exactly one μs past MaxInt64, so the last fractional digit is
+		// 8 where the MaxInt64 case above is 7.
+		{"min_int64_us", arrow.Microsecond, -9223372036854775808, "-106751991 04:00:54.775808000"},
+		// Same MinInt64 wrap-on-negate hazard at the nanosecond unit (no scaling
+		// involved — this isolates the negation bug from the multiply-overflow one).
+		{"min_int64_ns", arrow.Nanosecond, -9223372036854775808, "-106751 23:47:16.854775808"},
+	}
+	for _, tc := range dayTime {
+		t.Run("daytime_"+tc.name, func(t *testing.T) {
+			b := array.NewDurationBuilder(pool, &arrow.DurationType{Unit: tc.unit})
+			defer b.Release()
+			b.Append(arrow.Duration(tc.v))
+			arr := b.NewArray()
+			defer arr.Release()
+			v, err := ScanCell(arr, 0, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if v.(string) != tc.want {
+				t.Errorf("got %q, want %q", v, tc.want)
+			}
+		})
+	}
+
+	yearMonth := []struct {
+		name   string
+		months int32
+		want   string
+	}{
+		{"two_years", 24, "2-0"},
+		{"year_and_month", 13, "1-1"},
+		{"months_only", 5, "0-5"},
+		{"negative", -13, "-1-1"},
+		// math.MinInt32 months is a representable negative bound. Negating it as an
+		// int32 (`months = -months`) overflows and wraps back negative, doubly-
+		// negating into garbage; widening to int64 before negating renders it right.
+		{"min_int32", -2147483648, "-178956970-8"},
+	}
+	for _, tc := range yearMonth {
+		t.Run("yearmonth_"+tc.name, func(t *testing.T) {
+			b := array.NewMonthIntervalBuilder(pool)
+			defer b.Release()
+			b.Append(arrow.MonthInterval(tc.months))
+			arr := b.NewArray()
+			defer arr.Release()
+			v, err := ScanCell(arr, 0, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if v.(string) != tc.want {
+				t.Errorf("got %q, want %q", v, tc.want)
+			}
+		})
+	}
 }
 
 // ScanCell renders DATE / TIMESTAMP in the requested location, matching the

@@ -12,8 +12,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync/atomic"
-	"time"
 
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 	"github.com/databricks/databricks-sql-go/internal/backend"
@@ -26,36 +26,10 @@ import (
 // log correlation across sequential connections).
 var kernelSessionSeq atomic.Uint64
 
-// Config is the flat connection config for the kernel backend. The connector
-// fills it from the driver's config so the user-facing options are unchanged
-// (this mirrors how the kernel's pyo3/napi bindings take flat connection
-// params). Zero-valued fields are simply not applied.
-type Config struct {
-	Host        string // workspace hostname, no scheme
-	HTTPPath    string // e.g. /sql/1.0/warehouses/abc123 (carries ?o= org routing)
-	WarehouseID string // bare warehouse id; preferred over HTTPPath when set
-	Token       string // PAT (dapi...)
-
-	// SessionConf carries server-bound session confs verbatim — the same map the
-	// Thrift backend forwards (STATEMENT_TIMEOUT, QUERY_TAGS, TIMEZONE, …).
-	SessionConf map[string]string
-
-	// TLSSkipVerify accepts any server cert (maps the driver's
-	// WithSkipTLSHostVerify / TLSConfig.InsecureSkipVerify). crypto/tls's
-	// InsecureSkipVerify disables both chain validation and the hostname check,
-	// so the kernel path relaxes both to match.
-	TLSSkipVerify bool
-
-	// ProxyURL configures an HTTP proxy, already resolved for this endpoint from
-	// the same HTTP(S)_PROXY / NO_PROXY environment the Thrift path uses (NO_PROXY
-	// is applied during resolution). Empty leaves the kernel on a direct
-	// connection.
-	ProxyURL string
-
-	// Location is the session time zone used to render DATE / TIMESTAMP values,
-	// matching the Thrift path which returns them in this location. nil means UTC.
-	Location *time.Location
-}
+// Config (the flat connection config for the kernel backend) is defined in the
+// untagged config.go so the connector's pure config-assembly can name it in the
+// default CGO_ENABLED=0 build; OpenSession below maps it onto the kernel's C
+// setters.
 
 // KernelBackend implements backend.Backend over the kernel C ABI. One backend
 // backs one conn, which database/sql serializes to a single goroutine at a time,
@@ -97,7 +71,7 @@ func (k *KernelBackend) OpenSession(ctx context.Context) error {
 		return err
 	}
 	initKernelLogging()
-	klog("OpenSession host=%s httpPath=%s warehouse=%s", k.cfg.Host, k.cfg.HTTPPath, k.cfg.WarehouseID)
+	klogCtx(ctx, "OpenSession host=%s httpPath=%s warehouse=%s", k.cfg.Host, k.cfg.HTTPPath, k.cfg.WarehouseID)
 
 	var cfg *C.KernelSessionConfig
 	if err := call(func() C.KernelStatusCode { return C.kernel_session_config_new(&cfg) }); err != nil {
@@ -137,12 +111,8 @@ func (k *KernelBackend) OpenSession(ctx context.Context) error {
 		}
 	}
 
-	tok := newCStr(k.cfg.Token)
-	defer tok.free()
-	if err := call(func() C.KernelStatusCode {
-		return C.kernel_session_config_set_auth_pat(cfg, tok.c)
-	}); err != nil {
-		return fmt.Errorf("kernel: set_auth_pat: %w", toConnError(err))
+	if err := k.setAuth(cfg); err != nil {
+		return err
 	}
 
 	// TLS: crypto/tls's InsecureSkipVerify accepts any server cert, so relax both
@@ -160,6 +130,14 @@ func (k *KernelBackend) OpenSession(ctx context.Context) error {
 		}); err != nil {
 			return fmt.Errorf("kernel: set_tls_skip_hostname_verification: %w", toConnError(err))
 		}
+	}
+
+	// Experimental kernel-only TLS: a custom CA bundle and an independent hostname
+	// skip (finer-grained than the blanket InsecureSkipVerify above). The kernel's
+	// rustls stack ignores SSL_CERT_FILE, so a custom CA must be handed over
+	// explicitly.
+	if err := k.applyKernelTLS(cfg); err != nil {
+		return err
 	}
 
 	// Proxy: only when the environment configured one for this endpoint. NO_PROXY
@@ -211,8 +189,160 @@ func (k *KernelBackend) OpenSession(ctx context.Context) error {
 	// for logging / telemetry correlation. NOT derived from the handle pointer —
 	// a freed pointer's address can be reused and collide across connections.
 	k.sessionID = fmt.Sprintf("kernel-%d", kernelSessionSeq.Add(1))
-	klog("OpenSession OK session=%s", k.sessionID)
+
+	// Initial namespace: the kernel C ABI has no catalog/schema config setter, so
+	// select it post-connect with USE CATALOG / USE SCHEMA. A failure here means
+	// the session is not in the requested namespace
+	// — a correctness precondition, like Thrift's InitialNamespace — so fail the
+	// connect and close the session we just opened (the connector does not call
+	// CloseSession on an OpenSession error).
+	if err := k.applyInitialNamespace(ctx); err != nil {
+		// Close the session we just opened, routing through call() so a failed close
+		// is logged (via lastError's Warn) rather than silently discarded — mirroring
+		// CloseSession. The namespace error is authoritative and returned as-is.
+		if closeErr := call(func() C.KernelStatusCode { return C.kernel_session_close(sess) }); closeErr != nil {
+			klogCtx(ctx, "close after initial-namespace failure also failed: %v", closeErr)
+		}
+		k.session = nil
+		k.valid = false
+		return err
+	}
+
+	klogCtx(ctx, "OpenSession OK session=%s", k.sessionID)
 	return nil
+}
+
+// applyKernelTLS forwards the experimental kernel-only TLS knobs to the session
+// config: a custom CA bundle and an independent hostname-skip. Each is a no-op
+// when its field is unset, so this is safe to call unconditionally. (mTLS client
+// cert/key is a separate follow-up — it needs a kernel C-ABI setter that is not
+// yet on kernel main.)
+func (k *KernelBackend) applyKernelTLS(cfg *C.KernelSessionConfig) error {
+	if len(k.cfg.TLSTrustedCertsPEM) > 0 {
+		ca := newCBytes(k.cfg.TLSTrustedCertsPEM)
+		defer ca.free()
+		if err := call(func() C.KernelStatusCode {
+			return C.kernel_session_config_set_tls_trusted_certs(cfg, ca.ptr, ca.len)
+		}); err != nil {
+			return fmt.Errorf("kernel: set_tls_trusted_certs: %w", toConnError(err))
+		}
+	}
+	if k.cfg.TLSSkipHostnameVerify {
+		if err := call(func() C.KernelStatusCode {
+			return C.kernel_session_config_set_tls_skip_hostname_verification(cfg, C.bool(true))
+		}); err != nil {
+			return fmt.Errorf("kernel: set_tls_skip_hostname_verification: %w", toConnError(err))
+		}
+	}
+	return nil
+}
+
+// setAuth applies the resolved auth form to the session config via exactly one
+// kernel_session_config_set_auth_* call. PAT and M2M are plain value setters; U2M
+// records the client id / redirect port / scopes and the kernel owns the browser
+// (PKCE) flow, started when the session opens. Empty string args are passed as NULL
+// so the kernel applies its own defaults (e.g. U2M's public client / default port).
+func (k *KernelBackend) setAuth(cfg *C.KernelSessionConfig) error {
+	switch k.cfg.Auth.Mode {
+	case AuthM2M:
+		clientID := newCStr(k.cfg.Auth.ClientID)
+		defer clientID.free()
+		secret := newCStr(k.cfg.Auth.ClientSecret)
+		defer secret.free()
+		if err := call(func() C.KernelStatusCode {
+			return C.kernel_session_config_set_auth_m2m(cfg, clientID.c, secret.c)
+		}); err != nil {
+			return fmt.Errorf("kernel: set_auth_m2m: %w", toConnError(err))
+		}
+	case AuthU2M:
+		// client id / scopes are optional: NULL when empty lets the kernel use its
+		// public client / default scopes. We pass Go's cloud-inferred client id when
+		// set, so the kernel uses the same client id the Thrift path would.
+		clientID := newCStrOrNull(k.cfg.Auth.ClientID)
+		defer clientID.free()
+		scopes := newCStrOrNull(joinScopes(k.cfg.Auth.Scopes))
+		defer scopes.free()
+		if err := call(func() C.KernelStatusCode {
+			return C.kernel_session_config_set_auth_u2m(cfg, clientID.c, C.uint16_t(k.cfg.Auth.RedirectPort), scopes.c)
+		}); err != nil {
+			return fmt.Errorf("kernel: set_auth_u2m: %w", toConnError(err))
+		}
+	default: // AuthPAT
+		tok := newCStr(k.cfg.Auth.Token)
+		defer tok.free()
+		if err := call(func() C.KernelStatusCode {
+			return C.kernel_session_config_set_auth_pat(cfg, tok.c)
+		}); err != nil {
+			return fmt.Errorf("kernel: set_auth_pat: %w", toConnError(err))
+		}
+	}
+	return nil
+}
+
+// joinScopes renders U2M scopes as the comma-separated form the kernel U2M setter
+// expects. Empty (no scopes) yields "" so setAuth passes NULL and the kernel
+// applies its default scope set.
+func joinScopes(scopes []string) string {
+	return strings.Join(scopes, ",")
+}
+
+// trySetAuth allocates a throwaway session config, applies auth to it, and frees
+// it — a test seam so TestSetAuthByMode can exercise the real cgo setter path
+// without putting cgo in a _test.go file (which Go forbids). Not used in
+// production. Returns the setter error (nil on success).
+func trySetAuth(auth Auth) error {
+	var cfg *C.KernelSessionConfig
+	if err := call(func() C.KernelStatusCode { return C.kernel_session_config_new(&cfg) }); err != nil {
+		return fmt.Errorf("config_new: %w", err)
+	}
+	defer C.kernel_session_config_free(cfg)
+	k := &KernelBackend{cfg: Config{Auth: auth}}
+	return k.setAuth(cfg)
+}
+
+// trySetKernelTLS allocates a throwaway session config, applies the experimental
+// TLS knobs from cfg to it, and frees it — the analogous test seam to trySetAuth,
+// so a tagged test can exercise the real byte-buffer cgo setter (trusted certs)
+// and the hostname-skip setter end to end. Not used in production.
+func trySetKernelTLS(cfg Config) error {
+	var c *C.KernelSessionConfig
+	if err := call(func() C.KernelStatusCode { return C.kernel_session_config_new(&c) }); err != nil {
+		return fmt.Errorf("config_new: %w", err)
+	}
+	defer C.kernel_session_config_free(c)
+	k := &KernelBackend{cfg: cfg}
+	return k.applyKernelTLS(c)
+}
+
+// applyInitialNamespace runs USE CATALOG / USE SCHEMA to select the configured
+// initial namespace, since the kernel C ABI exposes no catalog/schema setter.
+// Identifiers are backtick-quoted (quoteIdent) so arbitrary names are safe. A
+// no-op when neither is set.
+func (k *KernelBackend) applyInitialNamespace(ctx context.Context) error {
+	if k.cfg.Catalog != "" {
+		if err := k.runNamespaceStmt(ctx, "USE CATALOG "+quoteIdent(k.cfg.Catalog)); err != nil {
+			return fmt.Errorf("kernel: set initial catalog %q: %w", k.cfg.Catalog, err)
+		}
+	}
+	if k.cfg.Schema != "" {
+		if err := k.runNamespaceStmt(ctx, "USE SCHEMA "+quoteIdent(k.cfg.Schema)); err != nil {
+			return fmt.Errorf("kernel: set initial schema %q: %w", k.cfg.Schema, err)
+		}
+	}
+	return nil
+}
+
+// runNamespaceStmt executes a single side-effecting statement (USE …) and closes
+// the operation. USE produces no rows, so the result stream is not read. execute
+// always returns a non-nil Operation (the Backend contract), so it is closed on
+// both the success and error paths; the execute error is authoritative.
+func (k *KernelBackend) runNamespaceStmt(ctx context.Context, sql string) error {
+	op, err := k.execute(ctx, backend.ExecRequest{Query: sql})
+	_, closeErr := op.Close(ctx)
+	if err != nil {
+		return err
+	}
+	return closeErr
 }
 
 // CloseSession tears down the server-side session. Best-effort: the kernel's
@@ -222,13 +352,12 @@ func (k *KernelBackend) OpenSession(ctx context.Context) error {
 // kernel_session_close returns, with no deadline — a stalled kernel-side close
 // (e.g. a shutdown-time network partition) can block database/sql pool cleanup.
 // A bounded close needs either a kernel_session_close_blocking with a deadline or
-// a Go-side watchdog; grouped with the kernel C-ABI follow-ups. Not fixed here to
-// keep this PR scoped to the opt-in backend rather than add a watchdog.
+// a Go-side watchdog; grouped with the kernel C-ABI follow-ups.
 func (k *KernelBackend) CloseSession(ctx context.Context) error {
 	if k.session == nil {
 		return nil
 	}
-	klog("CloseSession session=%s", k.sessionID)
+	klogCtx(ctx, "CloseSession session=%s", k.sessionID)
 	err := call(func() C.KernelStatusCode { return C.kernel_session_close(k.session) })
 	k.session = nil
 	k.valid = false
@@ -265,21 +394,16 @@ func (k *KernelBackend) SessionID() string { return k.sessionID }
 
 // Execute runs a statement to a terminal state via the blocking execute path.
 // Per the Backend contract it returns a non-nil Operation even on error so the
-// caller can read StatementID / wrap the error / Close uniformly.
+// caller can read StatementID / wrap the error / Close uniformly. Bound
+// parameters (req.Params) are bound onto the statement in execute (see
+// bindParams).
 func (k *KernelBackend) Execute(ctx context.Context, req backend.ExecRequest) (backend.Operation, error) {
-	// Bound parameters are not yet wired for the kernel backend. Reject them with
-	// a clear error rather than silently shipping the query with unbound
-	// placeholders (which would behave differently than Thrift). Parameters arrive
-	// per-query, so this is an execute-time error, not a connect-time one. Return a
-	// non-nil Operation per the Backend contract.
-	if len(req.Params) > 0 {
-		return &kernelOp{}, fmt.Errorf("databricks: query parameters are %w; "+
-			"inline the values or use the default (Thrift) backend", dbsqlerr.ErrNotSupportedByKernel)
-	}
 	// Staging (Unity Catalog volume PUT/GET/REMOVE) needs a local file transfer the
 	// kernel path can't perform, and the kernel C ABI surfaces no IsStagingOperation
 	// signal to drive conn.execStagingOperation. Reject it here rather than let
 	// IsStaging return false and report success with no file moved (silent data loss).
+	// (Bound parameters, by contrast, ARE now supported — bound in execute via the
+	// kernel's raw-param C ABI.)
 	if isStagingStatement(req.Query) {
 		return &kernelOp{}, fmt.Errorf("databricks: staging operations (PUT/GET/REMOVE on a volume) are %w; "+
 			"use the default (Thrift) backend", dbsqlerr.ErrNotSupportedByKernel)

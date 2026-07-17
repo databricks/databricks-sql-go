@@ -5,6 +5,7 @@ package dbsql
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/databricks/databricks-sql-go/internal/config"
 )
@@ -32,7 +33,7 @@ func TestNewKernelBackend(t *testing.T) {
 
 	t.Run("validation error propagates", func(t *testing.T) {
 		c := base()
-		c.Catalog = "main" // rejected by validateKernelConfig
+		c.QueryTimeout = 30 * time.Second // rejected by validateKernelConfig
 		if _, err := newKernelBackend(context.Background(), c); err == nil {
 			t.Error("newKernelBackend should propagate the validation error")
 		}

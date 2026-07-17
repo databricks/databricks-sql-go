@@ -380,7 +380,31 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 		OnClose:          closeCallback,
 		OnCloudFetchFile: cloudFetchCallback,
 	})
-	return rows, err
+	if err != nil {
+		// Results failed AFTER a successful server execute (e.g. result-schema
+		// fetch / Arrow import). The completing EXECUTE_STATEMENT telemetry
+		// (AfterExecute/CompleteStatement) lives in closeCallback, which fires
+		// from Rows.Close() — but no Rows is armed on this path (the kernel
+		// returns nil rows, and the Thrift rows we'd get here is discarded on
+		// error), so the callback never runs. Finalize the metric now, mirroring
+		// the execute-error path above; otherwise the statement stays
+		// BeforeExecute'd + FinalizeLatency'd but never completed — a dangling
+		// metric for a query that ran server-side. Return nil rows so the
+		// discarded Rows can never later fire closeCallback and double-count.
+		//
+		// Use telemetryCtx (detached from the caller's cancellation, line 313),
+		// not the raw ctx, exactly as the three callbacks above do: a
+		// Results-after-execute failure is commonly triggered by caller
+		// cancellation/timeout, and the export path threads this ctx down to the
+		// metric's HTTP request — a cancelled ctx would abort the export and drop
+		// the very completing metric this branch exists to emit.
+		if c.telemetry != nil && statementID != "" {
+			c.telemetry.AfterExecute(telemetryCtx, err)
+			c.telemetry.CompleteStatement(telemetryCtx, statementID, true)
+		}
+		return nil, err
+	}
+	return rows, nil
 
 }
 
