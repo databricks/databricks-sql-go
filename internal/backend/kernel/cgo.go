@@ -133,13 +133,10 @@ func klogCtx(ctx context.Context, format string, args ...any) {
 // already-installed Rust subscriber. Set the level before opening the first kernel
 // connection to govern the Rust logs.
 func initKernelLogging() {
-	// resolveKernelLogArg decides the level string (or the DBSQL_KERNEL_DEBUG
-	// override → useNULL → "" → NULL, so the kernel honors RUST_LOG). The pure
+	// resolveKernelLogArg decides the level string (or "" for the
+	// DBSQL_KERNEL_DEBUG override, so the kernel honors RUST_LOG). The pure
 	// decision lives in logging_level.go so it's unit-tested without cgo.
-	level, useNULL := resolveKernelLogArg()
-	if useNULL {
-		level = ""
-	}
+	level, _ := resolveKernelLogArg()
 	// installKernelLogCallback self-guards with logCallbackOnce (process-wide,
 	// first-call-wins), so no extra sync.Once here.
 	installKernelLogCallback(level)
