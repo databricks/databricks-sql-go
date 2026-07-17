@@ -87,17 +87,24 @@ func validateKernelConfig(cfg *config.Config) (kernel.Auth, error) {
 			"(the kernel retries internally); omit it or use the default (Thrift) backend", dbsqlerr.ErrNotSupportedByKernel)
 	}
 	// mTLS client identity (WithKernelClientCertificate) must be a complete pair:
-	// mTLS needs both a client cert and its private key. Reject an unpaired
-	// credential loudly at connect — otherwise applyKernelTLS (which gates the mTLS
-	// forward on the cert being present) would silently drop a lone key and connect
-	// with no client identity, contradicting the "both halves required together /
-	// never silently dropped" contract. The cert-without-key case would fail at the
-	// kernel setter (it rejects a null/empty key), but validating both directions
-	// here surfaces the error earlier and with a clearer message.
+	// mTLS needs both a non-empty client cert and its private key. Reject any
+	// incomplete request loudly at connect — otherwise applyKernelTLS (which gates
+	// the mTLS forward on the cert being non-empty) would silently skip the setter
+	// and connect with no client identity, a fail-open that contradicts the "both
+	// halves required together / never silently dropped" contract.
+	//
+	// "Incomplete" covers three cases: cert-without-key, key-without-cert, and —
+	// critically — the option being invoked with both halves empty/nil (e.g. from
+	// a failed PEM load), which the marker distinguishes from the option never
+	// being called. We also treat a bare cert/key present as a request even
+	// without the marker, so a config assembled without the option can't fail open
+	// either.
 	if ke := cfg.KernelExperimental; ke != nil {
-		if (len(ke.TLSClientCertPEM) == 0) != (len(ke.TLSClientKeyPEM) == 0) {
+		certLen, keyLen := len(ke.TLSClientCertPEM), len(ke.TLSClientKeyPEM)
+		mtlsRequested := ke.TLSClientCertConfigured || certLen > 0 || keyLen > 0
+		if mtlsRequested && (certLen == 0 || keyLen == 0) {
 			return kernel.Auth{}, fmt.Errorf("databricks: WithKernelClientCertificate requires " +
-				"both a client certificate and a private key; one was empty")
+				"both a non-empty client certificate and a non-empty private key")
 		}
 	}
 	return kauth, nil

@@ -620,6 +620,13 @@ func WithKernelClientCertificate(cert, key []byte) ConnOption {
 		// caller mutating the buffers between NewConnector and Connect can't change
 		// the identity out from under us.
 		k := kernelExperimental(c)
+		// Record that mTLS was explicitly requested, independent of whether the
+		// caller passed non-empty bytes. Without this marker an empty cert+key
+		// pair (e.g. from a failed PEM load) is indistinguishable from the option
+		// never being called, and validateKernelConfig would accept it while
+		// applyKernelTLS silently skipped the setter — connecting with no client
+		// identity. The marker lets validation reject the incomplete request loudly.
+		k.TLSClientCertConfigured = true
 		if len(cert) > 0 {
 			k.TLSClientCertPEM = append([]byte(nil), cert...)
 		} else {

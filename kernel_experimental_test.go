@@ -17,19 +17,22 @@ import (
 // kernel_config tests.
 
 // kernelExperimentalFieldDisposition records how each experimental (kernel-only)
-// option is handled. Every experimental field is forwarded to the kernel C ABI
-// (there is no "inert" experimental knob — they exist precisely because the kernel
-// supports them) and rejected on the Thrift path (the connector fails loud when
-// KernelExperimental is non-nil). A new field on config.KernelExperimentalConfig
-// without an entry here fails TestKernelExperimentalFieldsClassified, forcing a
-// deliberate decision and a setter in KernelBackend.OpenSession so it can't be
+// option is handled. Most experimental fields are "forwarded" to the kernel C ABI
+// (they exist precisely because the kernel supports them) and rejected on the
+// Thrift path (the connector fails loud when KernelExperimental is non-nil). The
+// lone exception is "validation-only" metadata (TLSClientCertConfigured), which is
+// consumed by validateKernelConfig and deliberately never forwarded. A new field
+// on config.KernelExperimentalConfig without an entry here fails
+// TestKernelExperimentalFieldsClassified, forcing a deliberate decision (and, for
+// a forwarded field, a setter in KernelBackend.OpenSession) so it can't be
 // silently dropped.
 var kernelExperimentalFieldDisposition = map[string]string{
-	"TLSTrustedCertsPEM":    "forwarded", // set_tls_trusted_certs
-	"TLSSkipHostnameVerify": "forwarded", // set_tls_skip_hostname_verification
-	"TLSClientCertPEM":      "forwarded", // set_tls_client_certificate (cert half)
-	"TLSClientKeyPEM":       "forwarded", // set_tls_client_certificate (key half)
-	"CloudFetchEnabled":     "forwarded", // set_cloudfetch_enabled
+	"TLSTrustedCertsPEM":      "forwarded",       // set_tls_trusted_certs
+	"TLSSkipHostnameVerify":   "forwarded",       // set_tls_skip_hostname_verification
+	"TLSClientCertPEM":        "forwarded",       // set_tls_client_certificate (cert half)
+	"TLSClientKeyPEM":         "forwarded",       // set_tls_client_certificate (key half)
+	"TLSClientCertConfigured": "validation-only", // consumed by validateKernelConfig; never forwarded
+	"CloudFetchEnabled":       "forwarded",       // set_cloudfetch_enabled
 }
 
 func TestKernelExperimentalFieldsClassified(t *testing.T) {
@@ -70,7 +73,13 @@ func TestWithKernelTLSOptionsSetExperimental(t *testing.T) {
 			return k.TLSSkipHostnameVerify
 		}},
 		{"client certificate", WithKernelClientCertificate([]byte("cert"), []byte("key")), func(k *config.KernelExperimentalConfig) bool {
-			return string(k.TLSClientCertPEM) == "cert" && string(k.TLSClientKeyPEM) == "key"
+			return string(k.TLSClientCertPEM) == "cert" && string(k.TLSClientKeyPEM) == "key" && k.TLSClientCertConfigured
+		}},
+		{"client certificate empty still marks configured", WithKernelClientCertificate(nil, nil), func(k *config.KernelExperimentalConfig) bool {
+			// Even with empty bytes the option must mark itself configured, so
+			// validateKernelConfig can reject the incomplete mTLS request rather
+			// than fail open (connect with no client identity).
+			return k.TLSClientCertConfigured && len(k.TLSClientCertPEM) == 0 && len(k.TLSClientKeyPEM) == 0
 		}},
 		{"cloudfetch off", WithKernelCloudFetch(false), func(k *config.KernelExperimentalConfig) bool {
 			return k.CloudFetchEnabled != nil && !*k.CloudFetchEnabled
@@ -158,11 +167,12 @@ func TestWithKernelTrustedCertsCopiesPEM(t *testing.T) {
 func TestKernelExperimentalDeepCopy(t *testing.T) {
 	cf := false
 	orig := &config.KernelExperimentalConfig{
-		TLSTrustedCertsPEM:    []byte("ca-bundle"),
-		TLSSkipHostnameVerify: true,
-		TLSClientCertPEM:      []byte("cert-pem"),
-		TLSClientKeyPEM:       []byte("key-pem"),
-		CloudFetchEnabled:     &cf,
+		TLSTrustedCertsPEM:      []byte("ca-bundle"),
+		TLSSkipHostnameVerify:   true,
+		TLSClientCertPEM:        []byte("cert-pem"),
+		TLSClientKeyPEM:         []byte("key-pem"),
+		TLSClientCertConfigured: true,
+		CloudFetchEnabled:       &cf,
 	}
 	cp := orig.DeepCopy()
 	if cp == nil || string(cp.TLSTrustedCertsPEM) != "ca-bundle" || !cp.TLSSkipHostnameVerify {
@@ -170,6 +180,9 @@ func TestKernelExperimentalDeepCopy(t *testing.T) {
 	}
 	if string(cp.TLSClientCertPEM) != "cert-pem" || string(cp.TLSClientKeyPEM) != "key-pem" {
 		t.Fatalf("DeepCopy lost the mTLS cert/key: %+v", cp)
+	}
+	if !cp.TLSClientCertConfigured {
+		t.Fatalf("DeepCopy lost the TLSClientCertConfigured marker: %+v", cp)
 	}
 	if cp.CloudFetchEnabled == nil || *cp.CloudFetchEnabled != false {
 		t.Fatalf("DeepCopy lost CloudFetchEnabled: %+v", cp)

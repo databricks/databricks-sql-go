@@ -154,6 +154,36 @@ func TestValidateKernelConfig(t *testing.T) {
 			t.Errorf("a complete mTLS pair should validate, got %v", err)
 		}
 	})
+	// Fail-open guard: WithKernelClientCertificate invoked with empty bytes (e.g.
+	// a failed PEM load) sets the configured marker with no cert/key. Validation
+	// must reject it rather than let applyKernelTLS silently skip the setter and
+	// connect with no client identity.
+	t.Run("mTLS configured but empty rejected", func(t *testing.T) {
+		c := baseKernelConfig()
+		c.KernelExperimental = &config.KernelExperimentalConfig{TLSClientCertConfigured: true}
+		if _, err := validateKernelConfig(c); err == nil {
+			t.Fatal("expected an error when WithKernelClientCertificate was used with empty cert/key")
+		}
+	})
+	// The same request expressed through the public option (nil, nil): it must be
+	// rejected all the way through, not just when the config is hand-built.
+	t.Run("mTLS via option with empty args rejected", func(t *testing.T) {
+		c := baseKernelConfig()
+		WithKernelClientCertificate(nil, nil)(c)
+		if _, err := validateKernelConfig(c); err == nil {
+			t.Fatal("expected an error when WithKernelClientCertificate(nil, nil) is used")
+		}
+	})
+	// A non-mTLS experimental config (only some other WithKernel* option set) must
+	// still validate — the marker, not merely a non-nil KernelExperimental, gates
+	// the mTLS completeness check.
+	t.Run("non-mTLS experimental config validates", func(t *testing.T) {
+		c := baseKernelConfig()
+		c.KernelExperimental = &config.KernelExperimentalConfig{TLSSkipHostnameVerify: true}
+		if _, err := validateKernelConfig(c); err != nil {
+			t.Errorf("a non-mTLS experimental config should validate, got %v", err)
+		}
+	})
 
 	t.Run("PAT via WithAuthenticator resolves the token", func(t *testing.T) {
 		c := baseKernelConfig()
