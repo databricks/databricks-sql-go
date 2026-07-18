@@ -266,6 +266,13 @@ On the read path, context cancellation is honored at result-batch boundaries, no
 mid-fetch: an in-flight CloudFetch batch runs to completion before the cancel takes
 effect.
 
+OAuth token caching and HTTP client reuse are inherited from the kernel and need no
+driver configuration: the kernel caches U2M tokens on disk
+(~/.config/databricks-sql-kernel/oauth/, with refresh-token lifecycle) and M2M
+tokens in-memory with background refresh, and reuses a single pooled HTTP client per
+session across the control-plane, CloudFetch, and auth-refresh calls. There is no
+driver-side cache or pool knob because these live below the C ABI.
+
 # Programmatically Retrieving Connection and Query Id
 
 Use the driverctx package under driverctx/ctx.go to add callbacks to the query context to receive the connection id and query id.
