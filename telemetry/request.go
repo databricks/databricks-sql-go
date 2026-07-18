@@ -218,6 +218,15 @@ func createTelemetryRequest(metrics []*telemetryMetric, driverVersion string) (*
 			}
 		}
 
+		// Add connection-configuration params if present (a "connection" metric).
+		// Only set when populated, so a statement/operation/error metric — which
+		// leaves connParams nil — serializes exactly as before. AuthType mirrors the
+		// AuthMech onto the top-level event field the schema also carries.
+		if metric.connParams != nil {
+			frontendLog.Entry.SQLDriverLog.DriverConnectionParameters = metric.connParams
+			frontendLog.Entry.SQLDriverLog.AuthType = metric.connParams.AuthMech
+		}
+
 		jsonBytes, err := json.Marshal(frontendLog)
 		if err != nil {
 			return nil, err

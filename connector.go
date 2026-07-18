@@ -97,6 +97,15 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 	if conn.telemetry != nil {
 		log.Debug().Msg("telemetry initialized for connection")
 		conn.telemetry.RecordOperation(ctx, conn.id, "", telemetry.OperationTypeCreateSession, sessionLatencyMs, nil)
+		// Connection-configuration telemetry on the kernel path only, so the
+		// default (Thrift) path's emitted telemetry stays byte-identical (the
+		// Thrift path has never populated DriverConnectionParameters). Emits mode /
+		// auth mech+flow / proxy / arrow / query-tags / metric-view for the
+		// just-opened session. Gated on the kernel backend, not just WithUseKernel,
+		// so it never fires when the kernel wasn't actually selected.
+		if _, ok := be.(*thrift.Backend); !ok {
+			conn.telemetry.RecordConnectionConfig(ctx, conn.id, kernelConnectionTelemetry(c.cfg))
+		}
 	}
 
 	// ServerProtocolVersion is Thrift-specific (not on the neutral backend

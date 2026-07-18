@@ -165,11 +165,17 @@ func (agg *metricsAggregator) recordMetric(ctx context.Context, metric *telemetr
 			// Flush terminal errors immediately
 			agg.batch = append(agg.batch, metric)
 			agg.flushUnlocked(ctx)
+		} else if stmt, exists := agg.statements[metric.statementID]; exists {
+			// Buffer a non-terminal error onto its statement, flushed when the
+			// statement completes.
+			stmt.errors = append(stmt.errors, metric.errorType)
 		} else {
-			// Buffer non-terminal errors with statement
-			if stmt, exists := agg.statements[metric.statementID]; exists {
-				stmt.errors = append(stmt.errors, metric.errorType)
-			}
+			// A non-terminal error with no statement to attach to — e.g. a
+			// connection-scoped error (empty statementID), or one whose statement
+			// was already flushed. Emit it standalone (flushed immediately) rather
+			// than dropping it silently, so a connection-level error still lands.
+			agg.batch = append(agg.batch, metric)
+			agg.flushUnlocked(ctx)
 		}
 	}
 }

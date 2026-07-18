@@ -252,7 +252,10 @@ sentinel ErrRequiresKernelBackend, detectable with errors.Is.
 
 Features above the backend seam are inherited unchanged: the database/sql connection
 pool, per-connection telemetry (CREATE_SESSION / EXECUTE_STATEMENT / DELETE_SESSION),
-and the telemetry circuit breaker. Result types render byte-for-byte identical to the
+and the telemetry circuit breaker. The kernel path additionally emits a
+connection-configuration telemetry event at connect (mode=SEA, auth mechanism/flow,
+proxy usage, arrow, query tags, metric-view metadata); this is kernel-only, so the
+default (Thrift) path's telemetry is unchanged. Result types render byte-for-byte identical to the
 Thrift backend: scalars, DECIMAL (exact string), TIMESTAMP / TIMESTAMP_NTZ (shifted
 into the session time zone), INTERVAL, nested Array/Map/Struct and VARIANT (as JSON),
 and GEOMETRY / GEOGRAPHY (WKT). The server query id is surfaced on the success path, so a

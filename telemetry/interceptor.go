@@ -172,24 +172,29 @@ func (i *Interceptor) AddTag(ctx context.Context, key string, value interface{})
 	}
 }
 
-// recordConnection records a connection event.
-//
-//nolint:unused // Will be used in Phase 8+
-func (i *Interceptor) recordConnection(ctx context.Context, tags map[string]interface{}) {
-	if !i.enabled {
+// RecordConnectionConfig records a connection-configuration event: the connection
+// parameters (mode, auth mechanism/flow, proxy usage, arrow, query tags, …) the
+// backend connected with. It fires once per connection, at connect, carrying only
+// the session id (no statement id — this is connection-scoped, not per-statement).
+// A "connection" metric flushes immediately (the connection may close before the
+// next batch). Panic-firewalled and gated on enabled, like the other Record*
+// methods. Exported for use by the driver package.
+func (i *Interceptor) RecordConnectionConfig(ctx context.Context, sessionID string, params *DriverConnectionParameters) {
+	if !i.enabled || params == nil {
 		return
 	}
 
 	defer func() {
 		if r := recover(); r != nil {
-			logger.Debug().Msgf("telemetry: recordConnection panic: %v", r)
+			logger.Debug().Msgf("telemetry: recordConnectionConfig panic: %v", r)
 		}
 	}()
 
 	metric := &telemetryMetric{
 		metricType: "connection",
 		timestamp:  time.Now(),
-		tags:       tags,
+		sessionID:  sessionID,
+		connParams: params,
 	}
 
 	i.aggregator.recordMetric(ctx, metric)
