@@ -76,6 +76,31 @@ func TestSetKernelTLS(t *testing.T) {
 	}
 }
 
+// TestSetProxy exercises the real kernel_session_config_set_proxy cgo setter via
+// the trySetProxy seam across every field combination — proving the arg
+// marshalling and the NULL-for-empty handling of the optional username / password
+// / bypass_hosts args (newCStrOrNull). The "no proxy" case is a no-op (ProxyURL
+// empty). A failure here means the field→setter wiring or the C signature drifted.
+func TestSetProxy(t *testing.T) {
+	cases := []struct {
+		name string
+		cfg  Config
+	}{
+		{"url only", Config{ProxyURL: "http://proxy:3128"}},
+		{"url + credentials", Config{ProxyURL: "http://proxy:3128", ProxyUsername: "u", ProxyPassword: "p"}},
+		{"url + bypass", Config{ProxyURL: "http://proxy:3128", ProxyBypassHosts: "localhost,*.internal"}},
+		{"all fields", Config{ProxyURL: "http://proxy:3128", ProxyUsername: "u", ProxyPassword: "p", ProxyBypassHosts: "localhost,*.internal"}},
+		{"none (no-op)", Config{}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if err := trySetProxy(c.cfg); err != nil {
+				t.Errorf("applyProxy(%s) = %v, want nil", c.name, err)
+			}
+		})
+	}
+}
+
 // TestKernelLogLevel and TestResolveKernelLogArg — the pure level-resolution tests —
 // live in the untagged logging_level_test.go so they run under CGO_ENABLED=0. The
 // tests below exercise klog/klogCtx and so need the cgo build.

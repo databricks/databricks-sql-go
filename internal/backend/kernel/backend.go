@@ -140,18 +140,9 @@ func (k *KernelBackend) OpenSession(ctx context.Context) error {
 		return err
 	}
 
-	// Proxy: only when the environment configured one for this endpoint. NO_PROXY
-	// was already applied during resolution, so no bypass list is needed here;
-	// any credentials are carried in the URL userinfo (Go's proxy-env convention),
-	// so username/password are NULL.
-	if k.cfg.ProxyURL != "" {
-		url := newCStr(k.cfg.ProxyURL)
-		defer url.free()
-		if err := call(func() C.KernelStatusCode {
-			return C.kernel_session_config_set_proxy(cfg, url.c, nil, nil, nil)
-		}); err != nil {
-			return fmt.Errorf("kernel: set_proxy: %w", toConnError(err))
-		}
+	// Proxy: env-derived or explicit (WithKernelProxy). See applyProxy.
+	if err := k.applyProxy(cfg); err != nil {
+		return err
 	}
 
 	// Session confs (STATEMENT_TIMEOUT, QUERY_TAGS, TIMEZONE, …) — the same map
@@ -237,6 +228,34 @@ func (k *KernelBackend) applyKernelTLS(cfg *C.KernelSessionConfig) error {
 	return nil
 }
 
+// applyProxy forwards the HTTP proxy config to the session config. The URL is set
+// when either the environment configured one for this endpoint or the caller
+// supplied one via WithKernelProxy (resolveKernelProxy decides which). The
+// optional basic-auth credentials and bypass list ride along; each is NULL when
+// empty (the env path folds credentials into the URL and consumes NO_PROXY during
+// resolution, so it leaves them empty — Go's proxy-env convention). A no-op when
+// ProxyURL is empty (direct connection). The kernel applies the URL as an explicit
+// override of its own env-var behavior.
+func (k *KernelBackend) applyProxy(cfg *C.KernelSessionConfig) error {
+	if k.cfg.ProxyURL == "" {
+		return nil
+	}
+	url := newCStr(k.cfg.ProxyURL)
+	defer url.free()
+	user := newCStrOrNull(k.cfg.ProxyUsername)
+	defer user.free()
+	pass := newCStrOrNull(k.cfg.ProxyPassword)
+	defer pass.free()
+	bypass := newCStrOrNull(k.cfg.ProxyBypassHosts)
+	defer bypass.free()
+	if err := call(func() C.KernelStatusCode {
+		return C.kernel_session_config_set_proxy(cfg, url.c, user.c, pass.c, bypass.c)
+	}); err != nil {
+		return fmt.Errorf("kernel: set_proxy: %w", toConnError(err))
+	}
+	return nil
+}
+
 // setAuth applies the resolved auth form to the session config via exactly one
 // kernel_session_config_set_auth_* call. PAT and M2M are plain value setters; U2M
 // records the client id / redirect port / scopes and the kernel owns the browser
@@ -312,6 +331,21 @@ func trySetKernelTLS(cfg Config) error {
 	defer C.kernel_session_config_free(c)
 	k := &KernelBackend{cfg: cfg}
 	return k.applyKernelTLS(c)
+}
+
+// trySetProxy allocates a throwaway session config, applies the proxy config from
+// cfg to it, and frees it — the analogous test seam to trySetKernelTLS, so a
+// tagged test can exercise the real kernel_session_config_set_proxy cgo setter
+// (URL + optional NULL-for-empty username / password / bypass) end to end. Not
+// used in production.
+func trySetProxy(cfg Config) error {
+	var c *C.KernelSessionConfig
+	if err := call(func() C.KernelStatusCode { return C.kernel_session_config_new(&c) }); err != nil {
+		return fmt.Errorf("config_new: %w", err)
+	}
+	defer C.kernel_session_config_free(c)
+	k := &KernelBackend{cfg: cfg}
+	return k.applyProxy(c)
 }
 
 // applyInitialNamespace runs USE CATALOG / USE SCHEMA to select the configured

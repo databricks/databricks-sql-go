@@ -35,11 +35,21 @@ type Config struct {
 	TLSTrustedCertsPEM    []byte
 	TLSSkipHostnameVerify bool
 
-	// ProxyURL configures an HTTP proxy, already resolved for this endpoint from
-	// the same HTTP(S)_PROXY / NO_PROXY environment the Thrift path uses (NO_PROXY
-	// is applied during resolution). Empty leaves the kernel on a direct
-	// connection.
-	ProxyURL string
+	// ProxyURL configures an HTTP proxy. It is either resolved for this endpoint
+	// from the same HTTP(S)_PROXY / NO_PROXY environment the Thrift path uses
+	// (NO_PROXY applied during resolution), or set explicitly via WithKernelProxy.
+	// Empty leaves the kernel on a direct connection.
+	//
+	// ProxyUsername / ProxyPassword are out-of-band basic-auth credentials (an
+	// alternative to embedding them in ProxyURL's userinfo). ProxyBypassHosts is
+	// a comma-separated no-proxy list honored kernel-side. All three are only
+	// meaningful with an explicit WithKernelProxy — the env-var path folds
+	// credentials into the URL and consumes NO_PROXY during resolution, so it
+	// leaves these empty. Empty fields are passed as NULL (kernel default).
+	ProxyURL         string
+	ProxyUsername    string
+	ProxyPassword    string
+	ProxyBypassHosts string
 
 	// Location is the session time zone used to render DATE / TIMESTAMP values,
 	// matching the Thrift path which returns them in this location. nil means UTC.

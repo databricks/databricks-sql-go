@@ -128,6 +128,26 @@ func buildKernelConfig(cfg *config.Config, kauth kernel.Auth) kernel.Config {
 	return kc
 }
 
+// resolveKernelProxy fills the kernel Config's proxy fields. An explicit
+// WithKernelProxy (KernelExperimental.ProxyURL non-empty) wins verbatim,
+// including its out-of-band credentials and bypass list; otherwise the
+// endpoint's environment-derived proxy URL is used (with no credentials or
+// bypass list — the env path folds credentials into the URL userinfo and
+// consumes NO_PROXY during resolution, per Go's proxy-env convention). Kept
+// untagged here (like buildKernelConfig) so the explicit-over-env precedence is
+// asserted under CGO_ENABLED=0 (see TestResolveKernelProxy); newKernelBackend
+// calls it after buildKernelConfig so it stays a thin assembler.
+func resolveKernelProxy(cfg *config.Config, kc *kernel.Config) {
+	if ke := cfg.KernelExperimental; ke != nil && ke.ProxyURL != "" {
+		kc.ProxyURL = ke.ProxyURL
+		kc.ProxyUsername = ke.ProxyUsername
+		kc.ProxyPassword = ke.ProxyPassword
+		kc.ProxyBypassHosts = ke.ProxyBypassHosts
+		return
+	}
+	kc.ProxyURL = proxyForEndpoint(cfg)
+}
+
 // resolveKernelAuth picks the kernel auth form from the config. The kernel backend
 // drives the kernel's own OAuth flow from raw credentials rather than reusing the Go
 // authenticator's Authenticate method. It reads those credentials off

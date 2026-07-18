@@ -27,6 +27,10 @@ import (
 var kernelExperimentalFieldDisposition = map[string]string{
 	"TLSTrustedCertsPEM":    "forwarded", // set_tls_trusted_certs
 	"TLSSkipHostnameVerify": "forwarded", // set_tls_skip_hostname_verification
+	"ProxyURL":              "forwarded", // set_proxy (url)
+	"ProxyUsername":         "forwarded", // set_proxy (username)
+	"ProxyPassword":         "forwarded", // set_proxy (password)
+	"ProxyBypassHosts":      "forwarded", // set_proxy (bypass_hosts)
 }
 
 func TestKernelExperimentalFieldsClassified(t *testing.T) {
@@ -66,6 +70,10 @@ func TestWithKernelTLSOptionsSetExperimental(t *testing.T) {
 		{"skip hostname", WithKernelSkipHostnameVerify(), func(k *config.KernelExperimentalConfig) bool {
 			return k.TLSSkipHostnameVerify
 		}},
+		{"proxy", WithKernelProxy("http://proxy:3128", "u", "p", "*.internal"), func(k *config.KernelExperimentalConfig) bool {
+			return k.ProxyURL == "http://proxy:3128" && k.ProxyUsername == "u" &&
+				k.ProxyPassword == "p" && k.ProxyBypassHosts == "*.internal"
+		}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -95,6 +103,7 @@ func TestWithKernelOptionsRejectedOnThriftPath(t *testing.T) {
 	}{
 		{"trusted certs", WithKernelTrustedCerts([]byte("ca"))},
 		{"skip hostname", WithKernelSkipHostnameVerify()},
+		{"proxy", WithKernelProxy("http://proxy:3128", "", "", "")},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -145,10 +154,18 @@ func TestKernelExperimentalDeepCopy(t *testing.T) {
 	orig := &config.KernelExperimentalConfig{
 		TLSTrustedCertsPEM:    []byte("ca-bundle"),
 		TLSSkipHostnameVerify: true,
+		ProxyURL:              "http://proxy:3128",
+		ProxyUsername:         "u",
+		ProxyPassword:         "p",
+		ProxyBypassHosts:      "*.internal",
 	}
 	cp := orig.DeepCopy()
 	if cp == nil || string(cp.TLSTrustedCertsPEM) != "ca-bundle" || !cp.TLSSkipHostnameVerify {
 		t.Fatalf("DeepCopy lost data: %+v", cp)
+	}
+	if cp.ProxyURL != "http://proxy:3128" || cp.ProxyUsername != "u" ||
+		cp.ProxyPassword != "p" || cp.ProxyBypassHosts != "*.internal" {
+		t.Errorf("DeepCopy lost proxy fields: %+v", cp)
 	}
 	cp.TLSTrustedCertsPEM[0] = 'X'
 	if orig.TLSTrustedCertsPEM[0] == 'X' {

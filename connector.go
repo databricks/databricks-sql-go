@@ -603,3 +603,30 @@ func WithKernelSkipHostnameVerify() ConnOption {
 		kernelExperimental(c).TLSSkipHostnameVerify = true
 	}
 }
+
+// WithKernelProxy configures an explicit HTTP proxy for the kernel backend, with
+// optional out-of-band basic-auth credentials and a comma-separated bypass
+// (no-proxy) host list. It overrides the HTTP(S)_PROXY / NO_PROXY environment the
+// kernel path otherwise mirrors from the Thrift path.
+//
+// Use this instead of the proxy environment when you need the "advanced" fields
+// the env-var path can't express: a structured bypass list (NO_PROXY is consumed
+// during environment resolution, not forwarded to the kernel) or basic-auth
+// credentials supplied out of band rather than embedded in the URL userinfo.
+// username / password / bypassHosts may be empty (passed to the kernel as NULL,
+// i.e. unset). An empty url is a no-op — the environment-derived proxy, if any,
+// stays in effect.
+//
+// An explicit WithKernelProxy takes precedence over the environment: consulting
+// both would be ambiguous, and an explicit proxy is a deliberate override.
+//
+// EXPERIMENTAL, kernel-only: the default (Thrift) backend rejects this at connect.
+func WithKernelProxy(url, username, password, bypassHosts string) ConnOption {
+	return func(c *config.Config) {
+		ke := kernelExperimental(c)
+		ke.ProxyURL = url
+		ke.ProxyUsername = username
+		ke.ProxyPassword = password
+		ke.ProxyBypassHosts = bypassHosts
+	}
+}

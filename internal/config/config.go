@@ -76,6 +76,18 @@ type KernelExperimentalConfig struct {
 	// of the blanket InsecureSkipVerify (which relaxes both chain and hostname).
 	// Maps to kernel_session_config_set_tls_skip_hostname_verification.
 	TLSSkipHostnameVerify bool
+
+	// ProxyURL / ProxyUsername / ProxyPassword / ProxyBypassHosts configure an
+	// explicit HTTP proxy on the kernel path (WithKernelProxy), overriding the
+	// HTTP(S)_PROXY / NO_PROXY environment the driver otherwise mirrors. The
+	// credentials and bypass list are the "advanced" fields the env-var path
+	// can't express (a structured no-proxy list, out-of-band basic auth). Empty
+	// ProxyURL leaves the environment-derived proxy in effect. Maps to
+	// kernel_session_config_set_proxy(url, username, password, bypass_hosts).
+	ProxyURL         string
+	ProxyUsername    string
+	ProxyPassword    string
+	ProxyBypassHosts string
 }
 
 // DeepCopy returns a deep copy of the experimental config, or nil for a nil
@@ -85,7 +97,13 @@ func (k *KernelExperimentalConfig) DeepCopy() *KernelExperimentalConfig {
 	if k == nil {
 		return nil
 	}
-	cp := &KernelExperimentalConfig{TLSSkipHostnameVerify: k.TLSSkipHostnameVerify}
+	cp := &KernelExperimentalConfig{
+		TLSSkipHostnameVerify: k.TLSSkipHostnameVerify,
+		ProxyURL:              k.ProxyURL,
+		ProxyUsername:         k.ProxyUsername,
+		ProxyPassword:         k.ProxyPassword,
+		ProxyBypassHosts:      k.ProxyBypassHosts,
+	}
 	if k.TLSTrustedCertsPEM != nil {
 		cp.TLSTrustedCertsPEM = append([]byte(nil), k.TLSTrustedCertsPEM...)
 	}

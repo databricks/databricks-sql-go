@@ -233,15 +233,21 @@ backend exposes a U2M-scopes option, so this is a fixed difference between the t
 default sets, not a dropped setting; both authorize against the built-in public
 client.
 
-Experimental kernel-only TLS options (rejected by the default backend; the
+Experimental kernel-only options (rejected by the default backend; the
 WithKernel* prefix marks them experimental):
   - WithKernelTrustedCerts(pem) adds a PEM CA bundle on top of the system roots (for
     a re-signing proxy or on-prem CA). Required because the kernel's TLS stack does
     not read SSL_CERT_FILE.
   - WithKernelSkipHostnameVerify() skips only the hostname check while keeping chain
     validation (finer-grained than WithSkipTLSHostVerify).
+  - WithKernelProxy(url, username, password, bypassHosts) sets an explicit HTTP
+    proxy, overriding the HTTP(S)_PROXY / NO_PROXY environment the kernel path
+    otherwise mirrors. Use it for the advanced fields the env-var path can't express:
+    a structured bypass (no-proxy) list, or basic-auth credentials supplied out of
+    band rather than embedded in the URL. An explicit proxy takes precedence over the
+    environment; empty credentials / bypass are passed to the kernel as unset.
 
-Setting either without WithUseKernel fails Connect with an error wrapping the
+Setting any of these without WithUseKernel fails Connect with an error wrapping the
 sentinel ErrRequiresKernelBackend, detectable with errors.Is.
 
 Features above the backend seam are inherited unchanged: the database/sql connection
