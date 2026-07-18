@@ -255,7 +255,7 @@ pool, per-connection telemetry (CREATE_SESSION / EXECUTE_STATEMENT / DELETE_SESS
 and the telemetry circuit breaker. Result types render byte-for-byte identical to the
 Thrift backend: scalars, DECIMAL (exact string), TIMESTAMP / TIMESTAMP_NTZ (shifted
 into the session time zone), INTERVAL, nested Array/Map/Struct and VARIANT (as JSON),
-and GEOMETRY (WKT). The server query id is surfaced on the success path, so a
+and GEOMETRY / GEOGRAPHY (WKT). The server query id is surfaced on the success path, so a
 QueryIdCallback (see below) fires with the real id and EXECUTE_STATEMENT telemetry
 carries it.
 

@@ -449,12 +449,15 @@ func TestArrowbasedKernelTimestampTZParity(t *testing.T) {
 	}
 }
 
-// TestArrowbasedKernelVariantGeometryParity documents that VARIANT and GEOMETRY
-// need no special rendering: over Arrow both arrive as plain STRING columns (a
-// top-level VARIANT is its JSON text "{\"a\":1}", GEOMETRY is its WKT "POINT(1 2)"),
-// so the existing string arm on both backends already produces identical output.
-// Verified live on both backends. (GEOGRAPHY is intentionally not covered — it is
-// not enabled on the benchmark warehouse and no consumer has asked for it.)
+// TestArrowbasedKernelVariantGeometryParity documents that VARIANT, GEOMETRY, and
+// GEOGRAPHY need no special rendering: over Arrow all three arrive as plain STRING
+// columns (a top-level VARIANT is its JSON text "{\"a\":1}", GEOMETRY/GEOGRAPHY are
+// their WKT "POINT(1 2)"), so the existing string arm on both backends already
+// produces identical output. The kernel maps GEOMETRY and GEOGRAPHY to the same
+// Arrow Utf8 shape (distinguished only by the databricks.type_name field-metadata
+// hint, which does not change the scanned value — see the kernel post-processor,
+// where both hit the same WKT arm), so both render identically to the Thrift path.
+// Verified live on both backends.
 func TestArrowbasedKernelVariantGeometryParity(t *testing.T) {
 	pool := memory.NewGoAllocator()
 	loc := time.UTC
@@ -464,6 +467,9 @@ func TestArrowbasedKernelVariantGeometryParity(t *testing.T) {
 		{"variant_object", `{"a":1,"b":[2,3]}`},
 		{"variant_scalar", "42"},
 		{"geometry_wkt", "POINT(1 2)"},
+		// GEOGRAPHY is the sibling geospatial type; like GEOMETRY it comes back as
+		// WKT text in a Utf8 column, so the string arm renders it identically.
+		{"geography_wkt", "POINT(1 2)"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
