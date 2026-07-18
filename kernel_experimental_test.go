@@ -5,6 +5,7 @@ import (
 	"errors"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/databricks/databricks-sql-go/internal/config"
 
@@ -31,6 +32,7 @@ var kernelExperimentalFieldDisposition = map[string]string{
 	"ProxyUsername":         "forwarded", // set_proxy (username)
 	"ProxyPassword":         "forwarded", // set_proxy (password)
 	"ProxyBypassHosts":      "forwarded", // set_proxy (bypass_hosts)
+	"RetryOverallTimeout":   "forwarded", // set_retry_config (overall_timeout_ms, 4th knob)
 }
 
 func TestKernelExperimentalFieldsClassified(t *testing.T) {
@@ -74,6 +76,9 @@ func TestWithKernelTLSOptionsSetExperimental(t *testing.T) {
 			return k.ProxyURL == "http://proxy:3128" && k.ProxyUsername == "u" &&
 				k.ProxyPassword == "p" && k.ProxyBypassHosts == "*.internal"
 		}},
+		{"retry overall timeout", WithKernelRetryOverallTimeout(5 * time.Minute), func(k *config.KernelExperimentalConfig) bool {
+			return k.RetryOverallTimeout == 5*time.Minute
+		}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -104,6 +109,7 @@ func TestWithKernelOptionsRejectedOnThriftPath(t *testing.T) {
 		{"trusted certs", WithKernelTrustedCerts([]byte("ca"))},
 		{"skip hostname", WithKernelSkipHostnameVerify()},
 		{"proxy", WithKernelProxy("http://proxy:3128", "", "", "")},
+		{"retry overall timeout", WithKernelRetryOverallTimeout(5 * time.Minute)},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -158,6 +164,7 @@ func TestKernelExperimentalDeepCopy(t *testing.T) {
 		ProxyUsername:         "u",
 		ProxyPassword:         "p",
 		ProxyBypassHosts:      "*.internal",
+		RetryOverallTimeout:   5 * time.Minute,
 	}
 	cp := orig.DeepCopy()
 	if cp == nil || string(cp.TLSTrustedCertsPEM) != "ca-bundle" || !cp.TLSSkipHostnameVerify {
@@ -166,6 +173,9 @@ func TestKernelExperimentalDeepCopy(t *testing.T) {
 	if cp.ProxyURL != "http://proxy:3128" || cp.ProxyUsername != "u" ||
 		cp.ProxyPassword != "p" || cp.ProxyBypassHosts != "*.internal" {
 		t.Errorf("DeepCopy lost proxy fields: %+v", cp)
+	}
+	if cp.RetryOverallTimeout != 5*time.Minute {
+		t.Errorf("DeepCopy lost RetryOverallTimeout: %v", cp.RetryOverallTimeout)
 	}
 	cp.TLSTrustedCertsPEM[0] = 'X'
 	if orig.TLSTrustedCertsPEM[0] == 'X' {

@@ -3,6 +3,7 @@ package dbsql
 import (
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/databricks/databricks-sql-go/auth/noop"
 	"github.com/databricks/databricks-sql-go/auth/pat"
@@ -78,14 +79,11 @@ func validateKernelConfig(cfg *config.Config) (kernel.Auth, error) {
 		return kernel.Auth{}, fmt.Errorf("databricks: WithTimeout (server query timeout) is %w; "+
 			"omit it or use the default (Thrift) backend", dbsqlerr.ErrNotSupportedByKernel)
 	}
-	// WithRetries(-1) explicitly disables retries, but the kernel retries
-	// internally below the C ABI with no user-facing toggle — so a disable request
-	// would be silently violated. Reject it. Positive/default RetryMax is fine: the
-	// kernel provides retries (just not user-tunable), documented in doc.go.
-	if cfg.RetryMax < 0 {
-		return kernel.Auth{}, fmt.Errorf("databricks: disabling retries via WithRetries is %w "+
-			"(the kernel retries internally); omit it or use the default (Thrift) backend", dbsqlerr.ErrNotSupportedByKernel)
-	}
+	// WithRetries (RetryWaitMin / RetryWaitMax / RetryMax) is honored on the kernel
+	// path: newKernelBackend forwards it via kernelRetryConfig →
+	// kernel_session_config_set_retry_config, and a negative RetryMax (the disable
+	// form) maps to zero kernel retries. So it is neither rejected nor silently
+	// ignored here (it was rejected before the kernel exposed a retry-config setter).
 	return kauth, nil
 }
 
@@ -125,7 +123,69 @@ func buildKernelConfig(cfg *config.Config, kauth kernel.Auth) kernel.Config {
 		kc.TLSTrustedCertsPEM = ke.TLSTrustedCertsPEM
 		kc.TLSSkipHostnameVerify = ke.TLSSkipHostnameVerify
 	}
+	// Retry / backoff policy from WithRetries (+ the kernel-only overall budget).
+	// nil leaves the kernel's own default policy in place.
+	kc.Retry = kernelRetryConfig(cfg)
 	return kc
+}
+
+// kernelRetryDisableWaits are placeholder backoff bounds used when the caller
+// disables retries (RetryMax < 0) without valid waits: with zero retries the
+// backoff is never applied, but the kernel setter still validates the range (it
+// rejects min == 0 / max < min), so a valid range must be passed. Any positive
+// min<=max works; the kernel's own defaults (1s / 60s) are the natural choice.
+const (
+	kernelRetryDisableWaitMin = 1 * time.Second
+	kernelRetryDisableWaitMax = 60 * time.Second
+)
+
+// kernelRetryConfig resolves the driver's WithRetries policy (RetryWaitMin /
+// RetryWaitMax / RetryMax) into the kernel retry descriptor so the caller's
+// backoff/attempt policy is authoritative on the kernel path — matching the Thrift
+// path, which applies exactly these values via go-retryablehttp, and the same
+// "retries after the initial attempt" semantics the kernel setter uses. The
+// connector's WithDefaults guarantees positive waits (1s / 30s) and RetryMax 4.
+//
+// A negative RetryMax is the WithRetries disable form (retryablehttp treats it as
+// zero retries); it maps to MaxRetries == 0 and is honored EVEN when the waits are
+// zero (WithRetries(-1, 0, 0) is the idiomatic disable), by substituting a valid
+// placeholder range the setter accepts — the backoff is unused with no retries.
+//
+// Returns nil — leaving the kernel's own default policy in place — only for a
+// non-disabling degenerate range (a Config assembled without WithDefaults, unusual
+// outside tests) the kernel setter would reject, so a stray zero can never fail the
+// connect.
+func kernelRetryConfig(cfg *config.Config) *kernel.RetryConfig {
+	// Kernel-only overall retry budget (WithKernelRetryOverallTimeout), carried on
+	// KernelExperimental rather than WithRetries. Zero = keep the kernel default;
+	// only a positive value overrides it.
+	var overall time.Duration
+	if ke := cfg.KernelExperimental; ke != nil && ke.RetryOverallTimeout > 0 {
+		overall = ke.RetryOverallTimeout
+	}
+
+	// Disable form: honor it regardless of the (often zero) waits. Substitute a
+	// valid placeholder range so the setter accepts it; with 0 retries it's unused.
+	if cfg.RetryMax < 0 {
+		return &kernel.RetryConfig{
+			MinWait:        kernelRetryDisableWaitMin,
+			MaxWait:        kernelRetryDisableWaitMax,
+			MaxRetries:     0,
+			OverallTimeout: overall,
+		}
+	}
+
+	// Non-disabling: a degenerate range means WithDefaults didn't run — leave the
+	// kernel's default policy in place rather than fail the connect on a bad range.
+	if cfg.RetryWaitMin <= 0 || cfg.RetryWaitMax < cfg.RetryWaitMin {
+		return nil
+	}
+	return &kernel.RetryConfig{
+		MinWait:        cfg.RetryWaitMin,
+		MaxWait:        cfg.RetryWaitMax,
+		MaxRetries:     uint32(cfg.RetryMax), //nolint:gosec // RetryMax >= 0 here (negative handled above)
+		OverallTimeout: overall,
+	}
 }
 
 // resolveKernelProxy fills the kernel Config's proxy fields. An explicit

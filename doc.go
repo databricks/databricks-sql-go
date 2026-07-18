@@ -214,13 +214,14 @@ via the authType=oauthU2M DSN param); reading scalar, nested, and complex-typed
 results (CloudFetch is transparent); bound query parameters (positional and named);
 context cancellation during execute; the initial namespace (WithInitialNamespace,
 applied post-connect via USE CATALOG / USE SCHEMA); metric-view metadata
-(WithEnableMetricViewMetadata); and the TLS, proxy, and session-conf (query tags,
-statement timeout, time zone) options. Nothing is silently ignored: WithTimeout, a
-retries-disabling WithRetries, token-provider / external / federated
-authenticators, and custom M2M OAuth scopes (the kernel applies its own) are
-rejected at connect; staging (PUT/GET/REMOVE on a Unity Catalog volume) is
-rejected at execute. WithMaxRows and positive-limit WithRetries are
-accepted but inert (the kernel manages fetching and retries below the C ABI).
+(WithEnableMetricViewMetadata); the retry / backoff policy (WithRetries:
+RetryWaitMin / RetryWaitMax / RetryMax, including the disable form, forwarded to the
+kernel's HTTP retry config); and the TLS, proxy, and session-conf (query tags,
+statement timeout, time zone) options. Nothing is silently ignored: WithTimeout,
+token-provider / external / federated authenticators, and custom M2M OAuth scopes
+(the kernel applies its own) are rejected at connect; staging (PUT/GET/REMOVE on a
+Unity Catalog volume) is rejected at execute. WithMaxRows is accepted but inert (the
+kernel manages fetching below the C ABI).
 
 OAuth U2M is interactive: on a cache miss, connecting launches the system browser and
 blocks until login completes or the kernel's ~120s callback timeout expires. Because
@@ -246,6 +247,12 @@ WithKernel* prefix marks them experimental):
     a structured bypass (no-proxy) list, or basic-auth credentials supplied out of
     band rather than embedded in the URL. An explicit proxy takes precedence over the
     environment; empty credentials / bypass are passed to the kernel as unset.
+  - WithKernelRetryOverallTimeout(d) sets the cumulative retry budget across all
+    attempts — the 4th retry knob, alongside the backoff bounds and max attempts
+    carried by the backend-neutral WithRetries (also honored on the kernel path). It
+    is kernel-only because the Thrift WithRetries surface has no overall-budget
+    equivalent; it mirrors the pyo3/napi retry_overall_timeout knob. Zero keeps the
+    kernel's default budget (900s).
 
 Setting any of these without WithUseKernel fails Connect with an error wrapping the
 sentinel ErrRequiresKernelBackend, detectable with errors.Is.

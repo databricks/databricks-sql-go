@@ -5,6 +5,23 @@ package kernel
 /*
 #include <stdlib.h>
 #include "databricks_kernel.h"
+
+// go_kernel_set_retry_config wraps kernel_session_config_set_retry_config. cgo's
+// C parser silently drops the direct declaration of that symbol (a known cgo
+// quirk: the declaration is valid C — it compiles under gcc and links from the
+// archive — but cgo omits it from the generated bindings, so a direct
+// C.kernel_session_config_set_retry_config call fails to build with "could not
+// determine what … refers to"). A static inline shim forwarding to it IS parsed
+// and links fine. The shim must live in the SAME file's preamble as its caller
+// (applyRetry, below): a shim placed in another file's cgo preamble in this
+// package is itself dropped the same way. Keeps the kernel header unchanged (it
+// is valid C, used verbatim by the C-only ODBC consumer).
+static inline KernelStatusCode go_kernel_set_retry_config(
+    KernelSessionConfig* config, uint64_t min_wait_ms, uint64_t max_wait_ms,
+    uint32_t max_retries, uint64_t overall_timeout_ms) {
+  return kernel_session_config_set_retry_config(
+      config, min_wait_ms, max_wait_ms, max_retries, overall_timeout_ms);
+}
 */
 import "C"
 
@@ -145,6 +162,11 @@ func (k *KernelBackend) OpenSession(ctx context.Context) error {
 		return err
 	}
 
+	// Retry / backoff policy (WithRetries). See applyRetry.
+	if err := k.applyRetry(cfg); err != nil {
+		return err
+	}
+
 	// Session confs (STATEMENT_TIMEOUT, QUERY_TAGS, TIMEZONE, …) — the same map
 	// the Thrift backend forwards, applied one key at a time.
 	for key, val := range k.cfg.SessionConf {
@@ -256,6 +278,28 @@ func (k *KernelBackend) applyProxy(cfg *C.KernelSessionConfig) error {
 	return nil
 }
 
+// applyRetry forwards the driver's HTTP retry / backoff policy to the session
+// config. A no-op when Config.Retry is nil, so the kernel's own default policy
+// (exponential backoff with jitter, 5 retries, 1s..60s, 900s budget) is preserved
+// otherwise. MaxRetries == 0 disables retries; OverallTimeout == 0 keeps the
+// kernel's default budget (the setter maps a 0 ms budget to "keep default").
+func (k *KernelBackend) applyRetry(cfg *C.KernelSessionConfig) error {
+	r := k.cfg.Retry
+	if r == nil {
+		return nil
+	}
+	if err := call(func() C.KernelStatusCode {
+		// Via the go_kernel_set_retry_config shim in cgo.go — cgo drops the direct
+		// declaration of the underlying symbol (see the shim's comment).
+		return C.go_kernel_set_retry_config(cfg,
+			C.uint64_t(r.MinWait.Milliseconds()), C.uint64_t(r.MaxWait.Milliseconds()),
+			C.uint32_t(r.MaxRetries), C.uint64_t(r.OverallTimeout.Milliseconds()))
+	}); err != nil {
+		return fmt.Errorf("kernel: set_retry_config: %w", toConnError(err))
+	}
+	return nil
+}
+
 // setAuth applies the resolved auth form to the session config via exactly one
 // kernel_session_config_set_auth_* call. PAT and M2M are plain value setters; U2M
 // records the client id / redirect port / scopes and the kernel owns the browser
@@ -346,6 +390,21 @@ func trySetProxy(cfg Config) error {
 	defer C.kernel_session_config_free(c)
 	k := &KernelBackend{cfg: cfg}
 	return k.applyProxy(c)
+}
+
+// trySetRetry allocates a throwaway session config, applies the retry config from
+// cfg to it, and frees it — the analogous test seam to trySetProxy, so a tagged
+// test can exercise the real kernel_session_config_set_retry_config cgo setter
+// (the 4 knobs, plus the InvalidArgument rejections for a degenerate range) end to
+// end. Not used in production.
+func trySetRetry(cfg Config) error {
+	var c *C.KernelSessionConfig
+	if err := call(func() C.KernelStatusCode { return C.kernel_session_config_new(&c) }); err != nil {
+		return fmt.Errorf("config_new: %w", err)
+	}
+	defer C.kernel_session_config_free(c)
+	k := &KernelBackend{cfg: cfg}
+	return k.applyRetry(c)
 }
 
 // applyInitialNamespace runs USE CATALOG / USE SCHEMA to select the configured

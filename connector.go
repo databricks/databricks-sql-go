@@ -639,3 +639,20 @@ func WithKernelProxy(url, username, password, bypassHosts string) ConnOption {
 		ke.ProxyBypassHosts = bypassHosts
 	}
 }
+
+// WithKernelRetryOverallTimeout sets the cumulative retry budget across all
+// attempts on the kernel backend — the total time the kernel may spend retrying a
+// single logical request before giving up. This is the 4th retry knob, alongside
+// the backoff bounds and max attempts carried by the backend-neutral WithRetries
+// (RetryWaitMin / RetryWaitMax / RetryMax, which the kernel path also honors).
+//
+// It is a kernel-only option because the Thrift-path WithRetries surface has no
+// overall-budget equivalent; it mirrors the pyo3/napi retry_overall_timeout knob.
+// Zero (the default) keeps the kernel's built-in budget (900s).
+//
+// EXPERIMENTAL, kernel-only: the default (Thrift) backend rejects this at connect.
+func WithKernelRetryOverallTimeout(d time.Duration) ConnOption {
+	return func(c *config.Config) {
+		kernelExperimental(c).RetryOverallTimeout = d
+	}
+}

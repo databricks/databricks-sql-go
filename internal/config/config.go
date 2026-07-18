@@ -88,6 +88,16 @@ type KernelExperimentalConfig struct {
 	ProxyUsername    string
 	ProxyPassword    string
 	ProxyBypassHosts string
+
+	// RetryOverallTimeout is the cumulative retry budget across all attempts on
+	// the kernel path (WithKernelRetryOverallTimeout). Zero = keep the kernel
+	// default (900s). WithRetries only carries the per-attempt backoff bounds +
+	// max attempts (mirroring the Thrift RetryWaitMin/Max/RetryMax surface); the
+	// overall budget is a kernel-only knob the Thrift path has no equivalent for,
+	// so it lives here and maps to the 4th arg of
+	// kernel_session_config_set_retry_config (matching the pyo3/napi
+	// retry_overall_timeout knob).
+	RetryOverallTimeout time.Duration
 }
 
 // DeepCopy returns a deep copy of the experimental config, or nil for a nil
@@ -103,6 +113,7 @@ func (k *KernelExperimentalConfig) DeepCopy() *KernelExperimentalConfig {
 		ProxyUsername:         k.ProxyUsername,
 		ProxyPassword:         k.ProxyPassword,
 		ProxyBypassHosts:      k.ProxyBypassHosts,
+		RetryOverallTimeout:   k.RetryOverallTimeout,
 	}
 	if k.TLSTrustedCertsPEM != nil {
 		cp.TLSTrustedCertsPEM = append([]byte(nil), k.TLSTrustedCertsPEM...)

@@ -38,3 +38,51 @@ func TestKernelE2EProxyRejectsBadURL(t *testing.T) {
 	}
 	t.Logf("connect through unreachable proxy failed as expected: %v", err)
 }
+
+// TestKernelE2ERetryConfig proves a tuned WithRetries policy (backoff bounds + max
+// attempts) reaches the kernel's HTTP retry config and the connection still works:
+// the setter accepts the range and a normal query succeeds.
+func TestKernelE2ERetryConfig(t *testing.T) {
+	db := kernelTestDBWith(t, WithRetries(6, 500*time.Millisecond, 20*time.Second))
+	defer db.Close()
+
+	var got int64
+	if err := db.QueryRowContext(context.Background(), "SELECT 1").Scan(&got); err != nil {
+		t.Fatalf("query with tuned retries: %v", err)
+	}
+	if got != 1 {
+		t.Errorf("SELECT 1 = %d, want 1", got)
+	}
+}
+
+// TestKernelE2ERetryDisabled proves the disable form (WithRetries(-1)) is accepted
+// on the kernel path — previously it was rejected at connect. It maps to zero
+// kernel retries, and a normal query still succeeds.
+func TestKernelE2ERetryDisabled(t *testing.T) {
+	db := kernelTestDBWith(t, WithRetries(-1, 0, 0))
+	defer db.Close()
+
+	var got int64
+	if err := db.QueryRowContext(context.Background(), "SELECT 1").Scan(&got); err != nil {
+		t.Fatalf("query with retries disabled: %v", err)
+	}
+	if got != 1 {
+		t.Errorf("SELECT 1 = %d, want 1", got)
+	}
+}
+
+// TestKernelE2ERetryOverallTimeout proves the kernel-only overall-budget knob
+// (WithKernelRetryOverallTimeout, the 4th retry control) is accepted at connect and
+// the connection works with it set.
+func TestKernelE2ERetryOverallTimeout(t *testing.T) {
+	db := kernelTestDBWith(t, WithKernelRetryOverallTimeout(5*time.Minute))
+	defer db.Close()
+
+	var got int64
+	if err := db.QueryRowContext(context.Background(), "SELECT 1").Scan(&got); err != nil {
+		t.Fatalf("query with overall retry budget: %v", err)
+	}
+	if got != 1 {
+		t.Errorf("SELECT 1 = %d, want 1", got)
+	}
+}

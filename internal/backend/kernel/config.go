@@ -51,6 +51,13 @@ type Config struct {
 	ProxyPassword    string
 	ProxyBypassHosts string
 
+	// Retry carries the driver's WithRetries backoff/attempt policy (RetryWaitMin
+	// / RetryWaitMax / RetryMax) plus the kernel-only overall retry budget. nil
+	// leaves the kernel on its own default retry policy; non-nil forwards to
+	// set_retry_config so the caller's policy is authoritative. A pointer so
+	// "unset" is distinct from an explicit zero-retry (disable) request.
+	Retry *RetryConfig
+
 	// Location is the session time zone used to render DATE / TIMESTAMP values,
 	// matching the Thrift path which returns them in this location. nil means UTC.
 	Location *time.Location
@@ -61,4 +68,20 @@ type Config struct {
 	// default namespace.
 	Catalog string
 	Schema  string
+}
+
+// RetryConfig is the driver's HTTP retry policy forwarded to the kernel: the
+// backoff-wait bounds, the maximum number of retries after the initial attempt
+// (MaxRetries == 0 disables retries), and the cumulative retry budget across all
+// attempts (OverallTimeout; zero keeps the kernel's default 900s budget). The
+// connector fills MinWait/MaxWait/MaxRetries from WithRetries and OverallTimeout
+// from WithKernelRetryOverallTimeout; the kernel's own retry policy applies when
+// Config.Retry is nil. Maps to kernel_session_config_set_retry_config.
+type RetryConfig struct {
+	MinWait    time.Duration
+	MaxWait    time.Duration
+	MaxRetries uint32
+	// OverallTimeout is the cumulative retry budget; zero => keep the kernel
+	// default (900s). Mirrors the pyo3/napi retry_overall_timeout knob.
+	OverallTimeout time.Duration
 }
