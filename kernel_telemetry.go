@@ -76,7 +76,7 @@ func kernelAuthMech(cfg *config.Config) (mech, flow string) {
 		authMechPAT   = "PAT"
 		authMechOAuth = "OAUTH"
 
-		authFlowClientCreds = "CLIENT_CREDENTIALS"
+		authFlowClientCreds = "CLIENT_CREDENTIALS" //nolint:gosec // G101: telemetry auth_flow enum value, not a credential
 		authFlowBrowser     = "BROWSER_BASED_AUTHENTICATION"
 	)
 	ka, err := resolveKernelAuth(cfg)

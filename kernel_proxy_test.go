@@ -103,7 +103,7 @@ func TestResolveKernelProxy(t *testing.T) {
 		c.Host = "my-workspace.databricks.com"
 		c.Port = 443
 		c.WarehouseID = "abc"
-		c.KernelExperimental = &config.KernelExperimentalConfig{
+		c.KernelExperimental = &config.KernelExperimentalConfig{ //nolint:gosec // G101: test literals (ProxyPassword), not real credentials
 			ProxyURL:         "http://explicit-proxy:8080",
 			ProxyUsername:    "user",
 			ProxyPassword:    "pass",

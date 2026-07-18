@@ -89,8 +89,8 @@ func TestSetProxy(t *testing.T) {
 	}{
 		{"url only", Config{ProxyURL: "http://proxy:3128"}},
 		{"url + credentials", Config{ProxyURL: "http://proxy:3128", ProxyUsername: "u", ProxyPassword: "p"}},
-		{"url + bypass", Config{ProxyURL: "http://proxy:3128", ProxyBypassHosts: "localhost,*.internal"}},
-		{"all fields", Config{ProxyURL: "http://proxy:3128", ProxyUsername: "u", ProxyPassword: "p", ProxyBypassHosts: "localhost,*.internal"}},
+		{"url + bypass", Config{ProxyURL: "http://proxy:3128", ProxyBypassHosts: "localhost,*.internal"}}, //nolint:gosec // G101: test literals, not real credentials
+		{"all fields", Config{ProxyURL: "http://proxy:3128", ProxyUsername: "u", ProxyPassword: "p", ProxyBypassHosts: "localhost,*.internal"}}, //nolint:gosec // G101: test literals, not real credentials
 		{"none (no-op)", Config{}},
 	}
 	for _, c := range cases {
