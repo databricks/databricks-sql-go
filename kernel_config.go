@@ -3,6 +3,7 @@ package dbsql
 import (
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/databricks/databricks-sql-go/auth/noop"
@@ -122,6 +123,15 @@ func buildKernelConfig(cfg *config.Config, kauth kernel.Auth) kernel.Config {
 	if ke := cfg.KernelExperimental; ke != nil {
 		kc.TLSTrustedCertsPEM = ke.TLSTrustedCertsPEM
 		kc.TLSSkipHostnameVerify = ke.TLSSkipHostnameVerify
+		// Kernel-only CloudFetch in-memory-chunk knob (WithKernelMaxChunksInMemory).
+		// Injected into the kernel backend's own SessionConf ONLY (not via
+		// EffectiveSessionParams, which both backends share) as the client-only key
+		// the kernel reads and strips before the SEA wire — so it never leaks to the
+		// server or the Thrift path. Zero/negative keeps the kernel default (16).
+		if ke.MaxChunksInMemory > 0 {
+			// EffectiveSessionParams returned a fresh map, so mutating it is safe.
+			kc.SessionConf[config.KernelMaxChunksInMemoryConfKey] = strconv.Itoa(ke.MaxChunksInMemory)
+		}
 	}
 	// Retry / backoff policy from WithRetries (+ the kernel-only overall budget).
 	// nil leaves the kernel's own default policy in place.

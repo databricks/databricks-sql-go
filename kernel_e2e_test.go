@@ -327,6 +327,44 @@ func TestKernelE2ECloudFetch(t *testing.T) {
 	}
 }
 
+// TestKernelE2EMaxChunksInMemory drives a CloudFetch-sized result with the
+// in-memory-chunk knob lowered (WithKernelMaxChunksInMemory), proving the knob
+// flows through the C-ABI set_session_conf, is accepted by the kernel, and is
+// stripped before the SEA wire — a wrong/unrecognized session conf would surface
+// as a server error, and the kernel would reject an invalid client key. The
+// result must be complete and correct regardless of the chunk bound (it only
+// changes peak memory, not output).
+func TestKernelE2EMaxChunksInMemory(t *testing.T) {
+	db := kernelTestDBWith(t, WithKernelMaxChunksInMemory(4))
+	defer db.Close()
+
+	const want = 1_000_000
+	rows, err := db.QueryContext(context.Background(), "SELECT id FROM range(0, 1000000)")
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	defer rows.Close()
+
+	var count, last int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			t.Fatalf("scan at row %d: %v", count, err)
+		}
+		count++
+		last = id
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iteration: %v", err)
+	}
+	if count != want {
+		t.Errorf("row count = %d, want %d (result must be complete regardless of chunk bound)", count, want)
+	}
+	if last != want-1 {
+		t.Errorf("last id = %d, want %d", last, want-1)
+	}
+}
+
 // TestKernelE2EStatementID proves the kernel backend surfaces the server query id
 // on the success path: a registered QueryIdCallback fires with a non-empty id
 // (driven by kernelOp.StatementID() → kernel_executed_statement_query_id). This is

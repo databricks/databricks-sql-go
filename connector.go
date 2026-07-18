@@ -656,3 +656,21 @@ func WithKernelRetryOverallTimeout(d time.Duration) ConnOption {
 		kernelExperimental(c).RetryOverallTimeout = d
 	}
 }
+
+// WithKernelMaxChunksInMemory bounds how many decompressed CloudFetch chunks the
+// kernel holds in memory at once on the kernel backend — the knob that trades
+// large-result throughput for peak RSS. Lower it (e.g. 4) to cap memory on wide,
+// row-heavy result sets; raise it for more download parallelism at higher memory.
+// A value <= 0 (the default) leaves the kernel's built-in default (16) in place.
+//
+// It is forwarded as the kernel's client-only "cloudfetch_max_chunks_in_memory"
+// session conf, which the kernel applies to its result config and strips before
+// the SEA wire — so it never reaches the server.
+//
+// EXPERIMENTAL, kernel-only: the default (Thrift) backend has no in-memory-chunk
+// knob and rejects this at connect.
+func WithKernelMaxChunksInMemory(n int) ConnOption {
+	return func(c *config.Config) {
+		kernelExperimental(c).MaxChunksInMemory = n
+	}
+}

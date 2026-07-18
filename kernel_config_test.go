@@ -412,6 +412,39 @@ func TestBuildKernelConfig(t *testing.T) {
 			t.Errorf("auth not forwarded: got %+v, want %+v", kc.Auth, kauth)
 		}
 	})
+
+	t.Run("MaxChunksInMemory injected into kernel SessionConf", func(t *testing.T) {
+		c := baseKernelConfig()
+		c.KernelExperimental = &config.KernelExperimentalConfig{MaxChunksInMemory: 4}
+		kc := buildKernelConfig(c, kernel.Auth{Mode: kernel.AuthPAT, Token: "dapi-x"})
+		if got := kc.SessionConf[config.KernelMaxChunksInMemoryConfKey]; got != "4" {
+			t.Errorf("SessionConf[%q] = %q, want %q", config.KernelMaxChunksInMemoryConfKey, got, "4")
+		}
+	})
+
+	t.Run("MaxChunksInMemory unset leaves the key absent (kernel default)", func(t *testing.T) {
+		c := baseKernelConfig() // KernelExperimental nil
+		kc := buildKernelConfig(c, kernel.Auth{Mode: kernel.AuthPAT, Token: "dapi-x"})
+		if _, ok := kc.SessionConf[config.KernelMaxChunksInMemoryConfKey]; ok {
+			t.Errorf("SessionConf should not carry %q when unset (kernel keeps its default)", config.KernelMaxChunksInMemoryConfKey)
+		}
+		// A zero/negative explicit value is also a no-op.
+		c.KernelExperimental = &config.KernelExperimentalConfig{MaxChunksInMemory: 0}
+		kc = buildKernelConfig(c, kernel.Auth{Mode: kernel.AuthPAT, Token: "dapi-x"})
+		if _, ok := kc.SessionConf[config.KernelMaxChunksInMemoryConfKey]; ok {
+			t.Errorf("SessionConf should not carry %q for a zero value", config.KernelMaxChunksInMemoryConfKey)
+		}
+	})
+
+	t.Run("MaxChunksInMemory is not leaked to the shared server params", func(t *testing.T) {
+		// The knob is kernel-only: it must NOT appear in EffectiveSessionParams
+		// (which the Thrift path also sends to the server).
+		c := baseKernelConfig()
+		c.KernelExperimental = &config.KernelExperimentalConfig{MaxChunksInMemory: 4}
+		if _, ok := c.EffectiveSessionParams()[config.KernelMaxChunksInMemoryConfKey]; ok {
+			t.Errorf("%q must not be in EffectiveSessionParams (kernel-only, not a server param)", config.KernelMaxChunksInMemoryConfKey)
+		}
+	})
 }
 
 // TestKernelRetryConfig covers the pure resolution of the driver's WithRetries

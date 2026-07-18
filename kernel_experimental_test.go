@@ -33,6 +33,7 @@ var kernelExperimentalFieldDisposition = map[string]string{
 	"ProxyPassword":         "forwarded", // set_proxy (password)
 	"ProxyBypassHosts":      "forwarded", // set_proxy (bypass_hosts)
 	"RetryOverallTimeout":   "forwarded", // set_retry_config (overall_timeout_ms, 4th knob)
+	"MaxChunksInMemory":     "forwarded", // set_session_conf (cloudfetch_max_chunks_in_memory, client-only)
 }
 
 func TestKernelExperimentalFieldsClassified(t *testing.T) {
@@ -79,6 +80,9 @@ func TestWithKernelTLSOptionsSetExperimental(t *testing.T) {
 		{"retry overall timeout", WithKernelRetryOverallTimeout(5 * time.Minute), func(k *config.KernelExperimentalConfig) bool {
 			return k.RetryOverallTimeout == 5*time.Minute
 		}},
+		{"max chunks in memory", WithKernelMaxChunksInMemory(4), func(k *config.KernelExperimentalConfig) bool {
+			return k.MaxChunksInMemory == 4
+		}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -110,6 +114,7 @@ func TestWithKernelOptionsRejectedOnThriftPath(t *testing.T) {
 		{"skip hostname", WithKernelSkipHostnameVerify()},
 		{"proxy", WithKernelProxy("http://proxy:3128", "", "", "")},
 		{"retry overall timeout", WithKernelRetryOverallTimeout(5 * time.Minute)},
+		{"max chunks in memory", WithKernelMaxChunksInMemory(4)},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -165,6 +170,7 @@ func TestKernelExperimentalDeepCopy(t *testing.T) {
 		ProxyPassword:         "p",
 		ProxyBypassHosts:      "*.internal",
 		RetryOverallTimeout:   5 * time.Minute,
+		MaxChunksInMemory:     4,
 	}
 	cp := orig.DeepCopy()
 	if cp == nil || string(cp.TLSTrustedCertsPEM) != "ca-bundle" || !cp.TLSSkipHostnameVerify {
@@ -176,6 +182,9 @@ func TestKernelExperimentalDeepCopy(t *testing.T) {
 	}
 	if cp.RetryOverallTimeout != 5*time.Minute {
 		t.Errorf("DeepCopy lost RetryOverallTimeout: %v", cp.RetryOverallTimeout)
+	}
+	if cp.MaxChunksInMemory != 4 {
+		t.Errorf("DeepCopy lost MaxChunksInMemory: %v", cp.MaxChunksInMemory)
 	}
 	cp.TLSTrustedCertsPEM[0] = 'X'
 	if orig.TLSTrustedCertsPEM[0] == 'X' {
