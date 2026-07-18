@@ -224,13 +224,15 @@ benign, logged failure and kernel events simply won't forward.
 Supported on the kernel backend: PAT and OAuth (M2M via WithClientCredentials, U2M
 via the authType=oauthU2M DSN param); reading scalar, nested, and complex-typed
 results (CloudFetch is transparent); bound query parameters (positional and named);
-context cancellation during execute; the initial namespace (WithInitialNamespace,
-applied post-connect via USE CATALOG / USE SCHEMA); metric-view metadata
-(WithEnableMetricViewMetadata); and the TLS, proxy, and session-conf (query tags,
-statement timeout, time zone) options. Nothing is silently ignored: WithTimeout, a
-retries-disabling WithRetries, token-provider / external / federated
-authenticators, and custom M2M OAuth scopes (the kernel applies its own) are
-rejected at connect; staging (PUT/GET/REMOVE on a Unity Catalog volume) is
+context cancellation during execute and mid-fetch; the initial namespace
+(WithInitialNamespace, applied post-connect via USE CATALOG / USE SCHEMA);
+metric-view metadata (WithEnableMetricViewMetadata); and the TLS, proxy, and
+session-conf (query tags, statement timeout, time zone) options. Nothing is silently
+ignored: WithTimeout, a retries-disabling WithRetries, a CloudFetch-disabling
+WithCloudFetch(false) (use WithKernelCloudFetch(false) instead), a non-default
+WithPort, a non-https protocol, a custom WithTransport, token-provider / external /
+federated authenticators, and custom M2M OAuth scopes (the kernel applies its own)
+are rejected at connect; staging (PUT/GET/REMOVE on a Unity Catalog volume) is
 rejected at execute. WithMaxRows and positive-limit WithRetries are
 accepted but inert (the kernel manages fetching and retries below the C ABI).
 
@@ -272,9 +274,11 @@ and GEOMETRY (WKT). The server query id is surfaced on the success path, so a
 QueryIdCallback (see below) fires with the real id and EXECUTE_STATEMENT telemetry
 carries it.
 
-On the read path, context cancellation is honored at result-batch boundaries, not
-mid-fetch: an in-flight CloudFetch batch runs to completion before the cancel takes
-effect.
+On the read path, context cancellation is honored both at result-batch boundaries
+and mid-fetch: a cancel or deadline firing while a CloudFetch batch is in flight
+aborts that fetch (a hung S3 / pre-signed-URL GET does not block the caller past its
+deadline), rather than running the batch to completion first. A non-cancellable
+context (e.g. context.Background) takes the plain fetch path with no added overhead.
 
 # Programmatically Retrieving Connection and Query Id
 

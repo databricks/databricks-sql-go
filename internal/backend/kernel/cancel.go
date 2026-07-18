@@ -10,6 +10,7 @@ import "C"
 
 import (
 	"context"
+	"fmt"
 	"sync"
 )
 
@@ -70,6 +71,30 @@ func newCtxWatcher(ctx context.Context) *ctxWatcher {
 		}
 	}()
 	return w
+}
+
+// cancelledErr builds the error returned when a blocking kernel call (connect,
+// execute, or a result-stream fetch) was interrupted by the caller's context. It
+// is the single home for the subtle dual-%w wrap the three cancellable call sites
+// (OpenSession, execute, nextBatch) share, so the contract lives in one place
+// rather than being re-derived — and re-risked — at each site.
+//
+// It prefers the ctx error (database/sql convention: a cancelled call reports the
+// cancellation) while keeping the kernel error reachable: BOTH are wrapped with %w
+// so errors.Is(err, context.Canceled / context.DeadlineExceeded) still matches AND
+// the underlying *KernelError stays reachable via errors.As. Without the second
+// wrap, a session-fatal failure racing a cancel would lose its sqlstate / queryId —
+// the one handle to what actually went wrong server-side.
+//
+// op names the interrupted call ("session_open", "execute", "next_batch") for the
+// message. kernelErr is the already-classified kernel error (toConnError on the
+// connect path, toStatementError on the statement path); ctxErr is ctx.Err().
+//
+// It lives here (a tagged file) rather than in the untagged errors_classify.go
+// because its only callers are the tagged cgo call sites — under the default
+// CGO_ENABLED=0 build the linter would see it as unused.
+func cancelledErr(op string, ctxErr, kernelErr error) error {
+	return fmt.Errorf("kernel: %s cancelled: %w (kernel error: %w)", op, ctxErr, kernelErr)
 }
 
 // tokenPtr returns the underlying token pointer to pass to a *_cancellable

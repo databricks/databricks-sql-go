@@ -41,6 +41,16 @@ type kernelRows struct {
 	op        *kernelOp
 	stream    *C.kernel_result_stream_t
 	callbacks *dbsqlrows.TelemetryCallbacks
+	// watcher bridges r.ctx onto ONE kernel cancel token for the whole result set,
+	// created once here rather than per nextBatch: a cancellable request-scoped ctx
+	// is the common service case, and a multi-GB CloudFetch stream is thousands of
+	// batches, so a fresh token + goroutine + teardown per batch would be pure churn
+	// on the driver's known-sensitive large-result path. Amortizing to one watcher
+	// matches the execute path's once-per-statement canceller. Firing the token
+	// aborts the in-flight fetch and, since it stays fired, any subsequent one — which
+	// is correct: iteration stops on the returned error. nil for a non-cancellable ctx
+	// (NULL token → the plain fetch path, zero overhead). Stopped in Close.
+	watcher *ctxWatcher
 
 	cols       []string
 	cur        arrow.Record // current batch (nil until first Next)
@@ -69,6 +79,11 @@ func newKernelRows(ctx context.Context, op *kernelOp, stream *C.kernel_result_st
 	// schema/import failure does not record a falsely successful CLOSE_STATEMENT; the
 	// construction error itself is surfaced to and recorded by the conn execute path.
 	r := &kernelRows{ctx: ctx, op: op, stream: stream, keyCache: arrowscan.NewStructKeyCache()}
+	// One cancel-token watcher for the whole result set (see kernelRows.watcher),
+	// nil on a non-cancellable ctx. Created before the fallible schema fetch so the
+	// two construction-failure r.Close() calls below tear it down too; Close is
+	// idempotent and stop() is nil-safe.
+	r.watcher = newCtxWatcher(ctx)
 
 	var csch C.struct_ArrowSchema
 	if err := call(func() C.KernelStatusCode {
@@ -106,6 +121,10 @@ func (r *kernelRows) Close() error {
 	}
 	r.closed = true
 	closeStart := time.Now()
+	// Drain the ctx watcher and free its token first: it may be mid-fire (inside
+	// kernel_cancel_token_cancel) and its token must not be freed out from under a
+	// concurrent fire. stop() is nil-safe (non-cancellable ctx).
+	r.watcher.stop()
 	if r.cur != nil {
 		r.cur.Release()
 		r.cur = nil
@@ -169,14 +188,14 @@ func (r *kernelRows) next(dest []driver.Value) error {
 // kernel's end-of-stream sentinel.
 func (r *kernelRows) nextBatch() error {
 	// Honor cancellation both at the batch boundary AND mid-fetch. The pre-fetch
-	// ctx check fast-fails an already-cancelled ctx without dialing; the ctx
-	// watcher then bridges the deadline onto a kernel cancel token so a fetch
-	// already in flight — a hung CloudFetch chunk (a wedged S3 / pre-signed-URL
-	// GET) — is aborted rather than blocking Next forever. Firing the token drops
-	// the in-flight download future in the kernel, a real abort. A NULL token
-	// (uncancellable ctx) makes the cancellable fetch behave exactly like the
-	// plain kernel_result_stream_next_batch, so there is no watcher overhead on
-	// the common background-context path.
+	// ctx check fast-fails an already-cancelled ctx without dialing; the result-set
+	// cancel token (r.watcher, created once in newKernelRows) then bridges the
+	// deadline into the kernel so a fetch already in flight — a hung CloudFetch chunk
+	// (a wedged S3 / pre-signed-URL GET) — is aborted rather than blocking Next
+	// forever. Firing the token drops the in-flight download future in the kernel, a
+	// real abort. A NULL token (uncancellable ctx) makes the cancellable fetch behave
+	// exactly like the plain kernel_result_stream_next_batch, so there is no watcher
+	// overhead on the common background-context path.
 	if r.ctx != nil {
 		if err := r.ctx.Err(); err != nil {
 			return err
@@ -186,15 +205,10 @@ func (r *kernelRows) nextBatch() error {
 		r.cur.Release()
 		r.cur = nil
 	}
-	// Bridge ctx onto a cancel token for the duration of this fetch, so a deadline
-	// firing mid-fetch drops the in-flight download future. A non-cancellable ctx
-	// yields a nil watcher → NULL token → the plain fetch path (no overhead).
-	watcher := newCtxWatcher(r.ctx)
-	defer watcher.stop()
 	var carr C.struct_ArrowArray
 	var csch C.struct_ArrowSchema
 	if err := call(func() C.KernelStatusCode {
-		return C.kernel_result_stream_next_batch_cancellable(r.stream, &carr, &csch, watcher.tokenPtr())
+		return C.kernel_result_stream_next_batch_cancellable(r.stream, &carr, &csch, r.watcher.tokenPtr())
 	}); err != nil {
 		// Evict a session-fatal conn BEFORE the ctx-cancelled branch below: a
 		// session-fatal fetch failure (expired token, dropped/unavailable session)
@@ -202,14 +216,11 @@ func (r *kernelRows) nextBatch() error {
 		// error first would leave a dead conn marked valid in the pool. Mirrors the
 		// execute path's evict-before-ctx ordering in operation.go.
 		r.op.backend.evictIfSessionFatal(err)
-		// Prefer the caller's ctx error when the fetch was interrupted by the
-		// deadline (database/sql convention). Wrap BOTH the ctx error and the kernel
-		// error so errors.Is(err, context.Canceled/DeadlineExceeded) still matches
-		// AND the *KernelError stays reachable via errors.As — otherwise a
-		// session-fatal failure racing a cancel would lose its sqlstate/queryId, the
-		// one handle to what went wrong server-side. Mirrors the execute path.
+		// Prefer the caller's ctx error when the fetch was interrupted; cancelledErr
+		// holds the shared dual-%w wrap (see its doc) so errors.Is still matches the
+		// ctx error AND the *KernelError stays reachable via errors.As.
 		if r.ctx != nil && r.ctx.Err() != nil {
-			return fmt.Errorf("kernel: next_batch cancelled: %w (kernel error: %w)", r.ctx.Err(), toStatementError(err))
+			return cancelledErr("next_batch", r.ctx.Err(), toStatementError(err))
 		}
 		return fmt.Errorf("kernel: next_batch: %w", toStatementError(err))
 	}

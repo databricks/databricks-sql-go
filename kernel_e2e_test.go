@@ -407,11 +407,15 @@ func TestKernelE2ECancellation(t *testing.T) {
 	t.Logf("cancelled after %v with err=%v", elapsed, err)
 }
 
-// TestKernelE2EConnectHonorsCancelledCtx proves the connect-side ctx bridge:
-// opening a session under an already-cancelled ctx must fail, not connect. This
-// covers the OpenSession → kernel_session_open_cancellable path (the execute-path
-// TestKernelE2ECancellation above does not reach connect, which happens before any
-// statement runs).
+// TestKernelE2EConnectHonorsCancelledCtx proves the connect-side pre-connect guard
+// against a live warehouse: opening a session under an already-cancelled ctx must
+// fail fast, not connect. It exercises the OpenSession entry guard (ctx.Err() before
+// any dialing) — NOT the mid-connect cancellable path, which fires the cancel token
+// WHILE kernel_session_open_cancellable is blocked; that path is proven
+// deterministically and hermetically (no live warehouse) by
+// TestOpenSessionHonorsCtxDeadlineMidConnect in the kernel package's tagged unit
+// tests. (The execute-path TestKernelE2ECancellation does not reach connect, which
+// happens before any statement runs.)
 func TestKernelE2EConnectHonorsCancelledCtx(t *testing.T) {
 	db := kernelTestDB(t)
 	defer db.Close()
