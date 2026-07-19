@@ -185,20 +185,22 @@ func TestValidateKernelConfig(t *testing.T) {
 		}
 	})
 
-	// CloudFetch: a bare WithCloudFetch(false) can't be honored on the kernel path
-	// (UseCloudFetch is not forwarded), so it must be rejected loudly — not silently
-	// dropped, leaving CloudFetch on — and steer the caller to WithKernelCloudFetch.
-	// When the kernel-specific knob IS set it is authoritative, so a redundant or
-	// contradictory WithCloudFetch is not consulted and not rejected.
-	t.Run("bare WithCloudFetch(false) rejected", func(t *testing.T) {
+	// CloudFetch: a bare WithCloudFetch(false) is an unambiguous disable (UseCloudFetch
+	// defaults to true), so validateKernelConfig honors it by forwarding it to the
+	// kernel CloudFetch toggle rather than dropping it (which would leave CloudFetch on)
+	// or rejecting it. When the kernel-specific knob IS set it is authoritative, so a
+	// redundant or contradictory WithCloudFetch does not override it.
+	t.Run("bare WithCloudFetch(false) forwarded to the kernel toggle", func(t *testing.T) {
 		c := baseKernelConfig()
 		c.UseCloudFetch = false // what WithCloudFetch(false) sets
-		_, err := validateKernelConfig(c)
-		if err == nil {
-			t.Fatal("expected WithCloudFetch(false) to be rejected on the kernel path")
+		if _, err := validateKernelConfig(c); err != nil {
+			t.Fatalf("WithCloudFetch(false) should be honored on the kernel path, got %v", err)
 		}
-		if !errors.Is(err, dbsqlerr.ErrNotSupportedByKernel) {
-			t.Errorf("WithCloudFetch(false) rejection should wrap ErrNotSupportedByKernel, got %v", err)
+		if c.KernelExperimental == nil || c.KernelExperimental.CloudFetchEnabled == nil {
+			t.Fatal("WithCloudFetch(false) should set the kernel CloudFetch toggle")
+		}
+		if *c.KernelExperimental.CloudFetchEnabled {
+			t.Error("WithCloudFetch(false) should forward CloudFetchEnabled=false, got true")
 		}
 	})
 	t.Run("default UseCloudFetch(true) accepted", func(t *testing.T) {
@@ -215,6 +217,15 @@ func TestValidateKernelConfig(t *testing.T) {
 			if _, err := validateKernelConfig(c); err != nil {
 				t.Errorf("WithKernelCloudFetch(%v) should make the config valid despite WithCloudFetch(false), got %v",
 					kernelEnabled, err)
+			}
+			// The explicit knob must survive: the bare WithCloudFetch(false) forward
+			// must not overwrite an already-set kernel toggle.
+			if c.KernelExperimental == nil || c.KernelExperimental.CloudFetchEnabled == nil {
+				t.Fatalf("WithKernelCloudFetch(%v) should leave the kernel toggle set", kernelEnabled)
+			}
+			if got := *c.KernelExperimental.CloudFetchEnabled; got != kernelEnabled {
+				t.Errorf("kernel toggle = %v, want %v (WithCloudFetch(false) must not override the explicit knob)",
+					got, kernelEnabled)
 			}
 		}
 	})
@@ -390,10 +401,10 @@ var kernelConfigFieldDisposition = map[string]string{
 	// Fields promoted from the embedded CloudFetchConfig. The kernel does
 	// CloudFetch internally (below the C ABI), so the tuning knobs are inert — but
 	// each is classified individually so a new CloudFetch option can't slip the guard.
-	// UseCloudFetch is the exception: a bare WithCloudFetch(false) is rejected on the
-	// kernel path (steering to WithKernelCloudFetch), since silently keeping CloudFetch
-	// on would violate the "nothing silently ignored" contract — see validateKernelConfig.
-	"UseCloudFetch":                "rejected",
+	// UseCloudFetch is the exception: a bare WithCloudFetch(false) is forwarded to the
+	// kernel CloudFetch toggle (an unambiguous disable, since the default is true), so
+	// it is honored rather than dropped or rejected — see validateKernelConfig.
+	"UseCloudFetch":                "forwarded",
 	"MaxDownloadThreads":           "inert",
 	"MaxFilesInMemory":             "inert",
 	"MinTimeToExpiry":              "inert",
