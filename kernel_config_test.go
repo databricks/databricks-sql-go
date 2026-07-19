@@ -239,12 +239,12 @@ func TestValidateKernelConfig(t *testing.T) {
 	})
 
 	t.Run("disable retries (WithRetries(-1)) accepted", func(t *testing.T) {
-		// Previously rejected — the kernel now exposes a retry-config setter, so the
-		// disable form (RetryMax < 0) maps to zero kernel retries instead of erroring.
+		// The disable form (RetryMax < 0) maps to zero kernel retries via the
+		// retry-config setter, so it validates rather than erroring.
 		c := baseKernelConfig()
 		c.RetryMax = -1
 		if _, err := validateKernelConfig(c); err != nil {
-			t.Errorf("WithRetries(-1) (disable) should now validate, got %v", err)
+			t.Errorf("WithRetries(-1) (disable) should validate, got %v", err)
 		}
 	})
 
@@ -449,9 +449,11 @@ func TestBuildKernelConfig(t *testing.T) {
 
 // TestKernelRetryConfig covers the pure resolution of the driver's WithRetries
 // policy into the kernel retry descriptor: the defaults forward the connector's
-// positive backoff bounds + max attempts; the disable form maps to zero retries; a
-// degenerate range (a Config without WithDefaults) returns nil so a stray zero
-// can't fail the connect; and the kernel-only overall-timeout knob is read from
+// positive backoff bounds + max attempts; the disable form maps to zero retries;
+// WithRetries(n, 0, 0) still forwards the caller's attempt count (with placeholder
+// waits) rather than silently dropping to the kernel default; a fully zero-value
+// range (a Config without WithDefaults and no attempt count) returns nil so a stray
+// zero can't fail the connect; and the kernel-only overall-timeout knob is read from
 // KernelExperimental. Runs in the default CGO_ENABLED=0 build.
 func TestKernelRetryConfig(t *testing.T) {
 	t.Run("defaults forward backoff + max attempts, no overall budget", func(t *testing.T) {
@@ -501,6 +503,26 @@ func TestKernelRetryConfig(t *testing.T) {
 		}
 	})
 
+	t.Run("WithRetries(n,0,0) honors the attempt count despite zero waits", func(t *testing.T) {
+		// The regression this guards: WithDefaults() runs before options, so
+		// WithRetries(10, 0, 0) — valid per its godoc, which promises sane wait
+		// defaults — overwrites the waits to zero. The resolver must still forward the
+		// caller's RetryMax (with placeholder waits), not return nil (which would drop
+		// to the kernel's default policy and silently ignore the requested attempts).
+		c := baseKernelConfig()
+		WithRetries(10, 0, 0)(c)
+		r := kernelRetryConfig(c)
+		if r == nil {
+			t.Fatal("WithRetries(10,0,0) must forward the caller's RetryMax, got nil (kernel default would apply)")
+		}
+		if r.MaxRetries != 10 {
+			t.Errorf("MaxRetries = %d, want 10 (caller's attempt count honored)", r.MaxRetries)
+		}
+		if r.MinWait <= 0 || r.MaxWait < r.MinWait {
+			t.Errorf("placeholder waits = {%v, %v}, want a valid range the kernel setter accepts", r.MinWait, r.MaxWait)
+		}
+	})
+
 	t.Run("overall timeout forwarded from KernelExperimental", func(t *testing.T) {
 		c := baseKernelConfig()
 		WithKernelRetryOverallTimeout(5 * time.Minute)(c)
@@ -510,12 +532,13 @@ func TestKernelRetryConfig(t *testing.T) {
 		}
 	})
 
-	t.Run("degenerate range returns nil (keep kernel default)", func(t *testing.T) {
-		// A Config assembled without WithDefaults: zero waits are a nonsense range
-		// the kernel setter would reject, so resolve to nil rather than fail connect.
+	t.Run("zero-value range with no attempt count returns nil (keep kernel default)", func(t *testing.T) {
+		// A Config assembled without WithDefaults and no RetryMax: zero waits are a
+		// nonsense range the kernel setter would reject and there is no caller attempt
+		// count to preserve, so resolve to nil rather than fail connect.
 		c := &config.Config{UserConfig: config.UserConfig{RetryWaitMin: 0, RetryWaitMax: 0}}
 		if r := kernelRetryConfig(c); r != nil {
-			t.Errorf("degenerate range should return nil, got %+v", r)
+			t.Errorf("zero-value range with RetryMax 0 should return nil, got %+v", r)
 		}
 	})
 }

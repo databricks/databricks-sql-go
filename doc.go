@@ -253,6 +253,13 @@ WithKernel* prefix marks them experimental):
     is kernel-only because the Thrift WithRetries surface has no overall-budget
     equivalent; it mirrors the pyo3/napi retry_overall_timeout knob. Zero keeps the
     kernel's default budget (900s).
+  - WithKernelMaxChunksInMemory(n) bounds how many decompressed CloudFetch chunks the
+    kernel holds in memory at once — the knob that trades large-result download
+    throughput for peak RSS. Lower it (e.g. 4) to cap memory on wide, row-heavy result
+    sets; raise it for more parallelism at higher memory. It is forwarded as the
+    kernel's client-only cloudfetch_max_chunks_in_memory session conf, stripped before
+    the SEA wire so it never reaches the server. A value <= 0 keeps the kernel's
+    default (16).
 
 Setting any of these without WithUseKernel fails Connect with an error wrapping the
 sentinel ErrRequiresKernelBackend, detectable with errors.Is.

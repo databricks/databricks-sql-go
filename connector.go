@@ -45,14 +45,16 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 	if c.cfg.UseKernel {
 		be, err = newKernelBackend(ctx, c.cfg)
 	} else {
-		// The experimental WithKernel* TLS options have no Thrift-path equivalent —
-		// reject them loudly rather than silently ignore, so a caller who sets a
-		// trusted-CA bundle / an independent hostname skip and forgets WithUseKernel
-		// learns the option had no effect instead of connecting with a
-		// weaker-than-intended (or unconfigured) TLS trust store.
+		// The experimental WithKernel* options have no Thrift-path equivalent — reject
+		// them loudly rather than silently ignore, so a caller who sets one (a
+		// trusted-CA bundle, a hostname-verify skip, a proxy, a retry budget, or a
+		// CloudFetch chunk cap) and forgets WithUseKernel learns the option had no
+		// effect instead of connecting as if it were never set. Every WithKernel*
+		// option allocates KernelExperimental, so this one gate covers them all; the
+		// message names the family rather than a stale subset that drifts as options
+		// are added.
 		if c.cfg.KernelExperimental != nil {
-			return nil, fmt.Errorf("databricks: a WithKernel* option "+
-				"(WithKernelTrustedCerts / WithKernelSkipHostnameVerify) %w; "+
+			return nil, fmt.Errorf("databricks: a WithKernel* option %w; "+
 				"add WithUseKernel(true) or remove it", dbsqlerr.ErrRequiresKernelBackend)
 		}
 		be, err = thrift.New(ctx, c.cfg, c.client)

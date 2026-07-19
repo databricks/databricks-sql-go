@@ -160,20 +160,27 @@ func (agg *metricsAggregator) recordMetric(ctx context.Context, metric *telemetr
 		}
 
 	case "error":
-		// Check if terminal error
+		// Defensive: no exported API currently emits a standalone "error" metric —
+		// errors ride along on "operation" (errorType set) and "statement" metrics
+		// instead — so this arm is unreachable from production code today and its
+		// routing is exercised only by direct recordMetric unit tests. It is kept so
+		// that if a producer is ever added the routing is already correct rather than
+		// silently dropping. NOTE for a future producer: each non-terminal
+		// connection-scoped error here triggers an immediate un-batched flushUnlocked
+		// (one export per error) — batch at the producer if that volume matters.
 		if metric.errorType != "" && isTerminalError(&simpleError{msg: metric.errorType}) {
-			// Flush terminal errors immediately
+			// Terminal error: flush immediately.
 			agg.batch = append(agg.batch, metric)
 			agg.flushUnlocked(ctx)
 		} else if stmt, exists := agg.statements[metric.statementID]; exists {
-			// Buffer a non-terminal error onto its statement, flushed when the
-			// statement completes.
+			// Non-terminal error with a live statement: buffer onto it, flushed when
+			// the statement completes.
 			stmt.errors = append(stmt.errors, metric.errorType)
 		} else {
-			// A non-terminal error with no statement to attach to — e.g. a
-			// connection-scoped error (empty statementID), or one whose statement
-			// was already flushed. Emit it standalone (flushed immediately) rather
-			// than dropping it silently, so a connection-level error still lands.
+			// Non-terminal error with no statement to attach to — a connection-scoped
+			// error (empty statementID), or one whose statement was already flushed.
+			// Emit it standalone rather than dropping it, so a connection-level error
+			// would still land if a producer existed.
 			agg.batch = append(agg.batch, metric)
 			agg.flushUnlocked(ctx)
 		}

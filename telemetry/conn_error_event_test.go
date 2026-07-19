@@ -137,10 +137,12 @@ func TestRecordConnectionConfig_EndToEnd(t *testing.T) {
 	}
 }
 
-// A standalone connection-scoped error (empty statementID, non-terminal) must NOT
-// be silently dropped by the aggregator — it must flush immediately and land. This
-// is the latent-bug fix: the old "error" branch dropped a non-terminal error whose
-// statementID matched no buffered statement.
+// TestConnectionScopedError_NotDropped pins the routing of the aggregator's
+// defensive "error" arm: a non-terminal error with no buffered statement to attach
+// to (empty statementID) is emitted standalone and flushes immediately, rather than
+// being dropped. No exported API emits a standalone "error" metric today, so this
+// drives recordMetric directly — it guards the routing for a future producer, not a
+// currently-reachable production path.
 func TestConnectionScopedError_NotDropped(t *testing.T) {
 	cfg := DefaultConfig()
 	var mu sync.Mutex

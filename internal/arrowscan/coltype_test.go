@@ -35,6 +35,12 @@ func TestColumnTypeInfoFor(t *testing.T) {
 		{"int16", arrow.PrimitiveTypes.Int16, "SMALLINT", reflect.TypeOf(int16(0)), 0, false},
 		{"int32", arrow.PrimitiveTypes.Int32, "INT", reflect.TypeOf(int32(0)), 0, false},
 		{"int64", arrow.PrimitiveTypes.Int64, "BIGINT", reflect.TypeOf(int64(0)), 0, false},
+		// Unsigned types don't occur in Databricks SQL, but ScanCellCached widens them
+		// to int64, so the metadata reports BIGINT/int64 to match (not the fallthrough).
+		{"uint8", arrow.PrimitiveTypes.Uint8, "BIGINT", reflect.TypeOf(int64(0)), 0, false},
+		{"uint16", arrow.PrimitiveTypes.Uint16, "BIGINT", reflect.TypeOf(int64(0)), 0, false},
+		{"uint32", arrow.PrimitiveTypes.Uint32, "BIGINT", reflect.TypeOf(int64(0)), 0, false},
+		{"uint64", arrow.PrimitiveTypes.Uint64, "BIGINT", reflect.TypeOf(int64(0)), 0, false},
 		{"float32", arrow.PrimitiveTypes.Float32, "FLOAT", reflect.TypeOf(float32(0)), 0, false},
 		{"float64", arrow.PrimitiveTypes.Float64, "DOUBLE", reflect.TypeOf(float64(0)), 0, false},
 		{"string", arrow.BinaryTypes.String, "STRING", str, math.MaxInt64, true},
@@ -78,6 +84,8 @@ func TestColumnTypeInfoScanTypeCoversScanner(t *testing.T) {
 		arrow.FixedWidthTypes.Boolean,
 		arrow.PrimitiveTypes.Int8, arrow.PrimitiveTypes.Int16,
 		arrow.PrimitiveTypes.Int32, arrow.PrimitiveTypes.Int64,
+		arrow.PrimitiveTypes.Uint8, arrow.PrimitiveTypes.Uint16,
+		arrow.PrimitiveTypes.Uint32, arrow.PrimitiveTypes.Uint64,
 		arrow.PrimitiveTypes.Float32, arrow.PrimitiveTypes.Float64,
 		arrow.BinaryTypes.String, arrow.BinaryTypes.Binary,
 		arrow.FixedWidthTypes.Date32, arrow.FixedWidthTypes.Timestamp_us,

@@ -84,7 +84,7 @@ func validateKernelConfig(cfg *config.Config) (kernel.Auth, error) {
 	// path: newKernelBackend forwards it via kernelRetryConfig →
 	// kernel_session_config_set_retry_config, and a negative RetryMax (the disable
 	// form) maps to zero kernel retries. So it is neither rejected nor silently
-	// ignored here (it was rejected before the kernel exposed a retry-config setter).
+	// ignored here.
 	return kauth, nil
 }
 
@@ -139,14 +139,16 @@ func buildKernelConfig(cfg *config.Config, kauth kernel.Auth) kernel.Config {
 	return kc
 }
 
-// kernelRetryDisableWaits are placeholder backoff bounds used when the caller
-// disables retries (RetryMax < 0) without valid waits: with zero retries the
-// backoff is never applied, but the kernel setter still validates the range (it
-// rejects min == 0 / max < min), so a valid range must be passed. Any positive
-// min<=max works; the kernel's own defaults (1s / 60s) are the natural choice.
+// kernelRetryPlaceholderWaits are the backoff bounds substituted when the caller
+// gave no valid wait range but a definite attempt count to honor — the disable form
+// (RetryMax < 0), or WithRetries(n, 0, 0) where WithDefaults' waits were overwritten
+// to zero. The kernel setter validates the range (it rejects min == 0 / max < min),
+// so a valid one must be passed even when the attempts make the backoff moot; any
+// positive min<=max works, and the kernel's own defaults (1s / 60s) are the natural
+// choice.
 const (
-	kernelRetryDisableWaitMin = 1 * time.Second
-	kernelRetryDisableWaitMax = 60 * time.Second
+	kernelRetryPlaceholderWaitMin = 1 * time.Second
+	kernelRetryPlaceholderWaitMax = 60 * time.Second
 )
 
 // kernelRetryConfig resolves the driver's WithRetries policy (RetryWaitMin /
@@ -161,10 +163,20 @@ const (
 // zero (WithRetries(-1, 0, 0) is the idiomatic disable), by substituting a valid
 // placeholder range the setter accepts — the backoff is unused with no retries.
 //
-// Returns nil — leaving the kernel's own default policy in place — only for a
-// non-disabling degenerate range (a Config assembled without WithDefaults, unusual
-// outside tests) the kernel setter would reject, so a stray zero can never fail the
-// connect.
+// A positive RetryMax with a degenerate wait range is honored the same way: the
+// caller's attempt count is authoritative and the placeholder waits are substituted
+// so the setter accepts the range. This case is reachable on the NORMAL option path,
+// not just from a hand-built Config: WithDefaults() runs before options, so
+// WithRetries(n, 0, 0) — valid per its own godoc, which promises sane wait defaults —
+// overwrites the waits back to zero and lands here with the caller's RetryMax. Without
+// this the caller's RetryMax would be silently dropped to the kernel's default policy.
+//
+// Returns nil — leaving the kernel's own default policy in place — only when RetryMax
+// is also zero on a degenerate range: the zero-value signature of a Config assembled
+// without WithDefaults (unusual outside tests), where there is no caller attempt count
+// to preserve. Substituting placeholders there would force zero retries onto a
+// hand-built config; the kernel default is the safer choice, and a stray zero can
+// never fail the connect either way.
 func kernelRetryConfig(cfg *config.Config) *kernel.RetryConfig {
 	// Kernel-only overall retry budget (WithKernelRetryOverallTimeout), carried on
 	// KernelExperimental rather than WithRetries. Zero = keep the kernel default;
@@ -178,21 +190,28 @@ func kernelRetryConfig(cfg *config.Config) *kernel.RetryConfig {
 	// valid placeholder range so the setter accepts it; with 0 retries it's unused.
 	if cfg.RetryMax < 0 {
 		return &kernel.RetryConfig{
-			MinWait:        kernelRetryDisableWaitMin,
-			MaxWait:        kernelRetryDisableWaitMax,
+			MinWait:        kernelRetryPlaceholderWaitMin,
+			MaxWait:        kernelRetryPlaceholderWaitMax,
 			MaxRetries:     0,
 			OverallTimeout: overall,
 		}
 	}
 
-	// Non-disabling: a degenerate range means WithDefaults didn't run — leave the
-	// kernel's default policy in place rather than fail the connect on a bad range.
-	if cfg.RetryWaitMin <= 0 || cfg.RetryWaitMax < cfg.RetryWaitMin {
-		return nil
+	// Degenerate wait range (WithRetries(n, 0, 0), or a Config assembled without
+	// WithDefaults). If the caller asked for a positive attempt count, honor it with
+	// the placeholder waits — dropping it to the kernel default would silently ignore
+	// the caller's RetryMax. Only a zero RetryMax (no attempt count to preserve) falls
+	// back to the kernel's default policy.
+	minWait, maxWait := cfg.RetryWaitMin, cfg.RetryWaitMax
+	if minWait <= 0 || maxWait < minWait {
+		if cfg.RetryMax <= 0 {
+			return nil
+		}
+		minWait, maxWait = kernelRetryPlaceholderWaitMin, kernelRetryPlaceholderWaitMax
 	}
 	return &kernel.RetryConfig{
-		MinWait:        cfg.RetryWaitMin,
-		MaxWait:        cfg.RetryWaitMax,
+		MinWait:        minWait,
+		MaxWait:        maxWait,
 		MaxRetries:     uint32(cfg.RetryMax), //nolint:gosec // RetryMax >= 0 here (negative handled above)
 		OverallTimeout: overall,
 	}

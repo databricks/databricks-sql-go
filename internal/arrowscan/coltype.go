@@ -19,8 +19,10 @@ import (
 // The mapping mirrors the Thrift backend (internal/rows/rows.go getScanType /
 // ColumnTypeDatabaseTypeName / ColumnTypeLength) so a query reports byte-identical
 // column metadata on either backend — the same "identical results across backends"
-// contract the value renderers hold. TestColumnTypeInfoMatchesThrift and the live
-// TestKernelThriftColumnTypeParity are the guards.
+// contract the value renderers hold. The pure-Go guards are TestColumnTypeInfoFor,
+// TestColumnTypeInfoScanTypeCoversScanner, and TestColumnTypeInfoMatchesThriftMapping
+// (which cross-checks this mapping against the Thrift functions directly); the live
+// TestKernelThriftColumnTypeParity confirms it against a real warehouse.
 type ColumnTypeInfo struct {
 	// DatabaseTypeName is the Databricks type name (e.g. "BIGINT", "DECIMAL",
 	// "ARRAY"), matching what the Thrift path reports; "" for a type with no
@@ -75,6 +77,13 @@ func ColumnTypeInfoFor(dt arrow.DataType) ColumnTypeInfo {
 	case arrow.INT32:
 		return ColumnTypeInfo{DatabaseTypeName: "INT", ScanType: scanTypeInt32}
 	case arrow.INT64:
+		return ColumnTypeInfo{DatabaseTypeName: "BIGINT", ScanType: scanTypeInt64}
+	case arrow.UINT8, arrow.UINT16, arrow.UINT32, arrow.UINT64:
+		// Databricks SQL has no unsigned types, so these do not occur in practice;
+		// this arm is defensive and stays in lockstep with ScanCellCached, which
+		// widens every unsigned integer to int64 (driver.Value has no uint64). Report
+		// BIGINT/int64 to match that scanned value rather than falling through to the
+		// generic *interface{} default.
 		return ColumnTypeInfo{DatabaseTypeName: "BIGINT", ScanType: scanTypeInt64}
 	case arrow.FLOAT32:
 		return ColumnTypeInfo{DatabaseTypeName: "FLOAT", ScanType: scanTypeFloat32}

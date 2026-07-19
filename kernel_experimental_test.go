@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -129,10 +130,21 @@ func TestWithKernelOptionsRejectedOnThriftPath(t *testing.T) {
 				t.Fatalf("NewConnector: %v", err)
 			}
 			// No WithUseKernel — the Thrift path must reject the kernel-only option.
-			if _, err = c.Connect(context.Background()); err == nil {
+			_, err = c.Connect(context.Background())
+			if err == nil {
 				t.Fatal("Connect should reject a WithKernel* option on the Thrift path, got nil")
-			} else if !errors.Is(err, dbsqlerr.ErrRequiresKernelBackend) {
+			}
+			if !errors.Is(err, dbsqlerr.ErrRequiresKernelBackend) {
 				t.Errorf("error should wrap ErrRequiresKernelBackend; got: %v", err)
+			}
+			// The message must name the WithKernel* family generically, not a stale
+			// subset (it used to hardcode the two TLS options, misdirecting a caller who
+			// set proxy / retry / chunk options). Guard against that regression.
+			if msg := err.Error(); !strings.Contains(msg, "WithKernel* option") {
+				t.Errorf("rejection message should name the WithKernel* family; got: %q", msg)
+			}
+			if msg := err.Error(); strings.Contains(msg, "WithKernelTrustedCerts") || strings.Contains(msg, "WithKernelSkipHostnameVerify") {
+				t.Errorf("rejection message should not name a stale option subset; got: %q", msg)
 			}
 		})
 	}
