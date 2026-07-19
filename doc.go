@@ -227,13 +227,12 @@ results (CloudFetch is transparent); bound query parameters (positional and name
 context cancellation during execute and mid-fetch; the initial namespace
 (WithInitialNamespace, applied post-connect via USE CATALOG / USE SCHEMA);
 metric-view metadata (WithEnableMetricViewMetadata); and the TLS, proxy, and
-session-conf (query tags, statement timeout, time zone) options. A CloudFetch-disabling
-WithCloudFetch(false) is honored too: it is forwarded to the kernel CloudFetch toggle
-(equivalent to WithKernelCloudFetch(false)), which stays authoritative if both are set.
-Nothing else is silently ignored: WithTimeout, a retries-disabling WithRetries, a
-non-default WithPort, a non-https protocol, a custom WithTransport, token-provider /
-external / federated authenticators, and custom M2M OAuth scopes (the kernel applies
-its own) are rejected at connect; staging (PUT/GET/REMOVE on a Unity Catalog volume) is
+session-conf (query tags, statement timeout, time zone) options. Nothing is silently
+ignored: WithTimeout, a retries-disabling WithRetries, a CloudFetch-disabling
+WithCloudFetch(false) (use WithKernelCloudFetch(false) instead), a non-default
+WithPort, a non-https protocol, a custom WithTransport, token-provider / external /
+federated authenticators, and custom M2M OAuth scopes (the kernel applies its own)
+are rejected at connect; staging (PUT/GET/REMOVE on a Unity Catalog volume) is
 rejected at execute. WithMaxRows and positive-limit WithRetries are
 accepted but inert (the kernel manages fetching and retries below the C ABI).
 
@@ -261,9 +260,7 @@ prefix marks them experimental):
   - WithKernelCloudFetch(enabled) toggles CloudFetch. Tri-state: leaving it unset
     keeps the kernel default (on); false forces the inline-Arrow path for all result
     sizes. Distinct from the backend-neutral WithCloudFetch, whose plain-bool unset
-    state can't be told apart from false — though a bare WithCloudFetch(false) is still
-    honored on the kernel path (forwarded to this toggle), and this explicit knob wins
-    when both are set.
+    state can't be told apart from false.
 
 Setting any of these without WithUseKernel fails Connect with an error wrapping the
 sentinel ErrRequiresKernelBackend, detectable with errors.Is.

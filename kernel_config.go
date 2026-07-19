@@ -87,19 +87,19 @@ func validateKernelConfig(cfg *config.Config) (kernel.Auth, error) {
 			"(the kernel retries internally); omit it or use the default (Thrift) backend", dbsqlerr.ErrNotSupportedByKernel)
 	}
 	// CloudFetch on the kernel path is controlled by the tri-state WithKernelCloudFetch
-	// (forwarded to kernel_session_config_set_cloudfetch_enabled). The backend-neutral
-	// plain-bool WithCloudFetch is not forwarded on its own, but a bare
-	// WithCloudFetch(false) is still an unambiguous disable request — UseCloudFetch
-	// defaults to true, so false can only come from an explicit WithCloudFetch(false).
-	// Rather than reject it (a surprising hard connect error) or drop it silently
-	// (CloudFetch would stay on, violating "nothing silently ignored"), honor it by
-	// forwarding it to the kernel toggle. When WithKernelCloudFetch WAS used
-	// (CloudFetchEnabled != nil) that explicit kernel knob is authoritative, so a
-	// redundant/contradictory WithCloudFetch is not consulted and does not override it.
+	// (forwarded to kernel_session_config_set_cloudfetch_enabled), NOT the
+	// backend-neutral plain-bool WithCloudFetch. UseCloudFetch defaults to true, so an
+	// explicit WithCloudFetch(false) is distinguishable from unset — but the kernel
+	// path does not read it (it is not forwarded), so honoring it silently is
+	// impossible. Rather than let a disable request be dropped (CloudFetch would stay
+	// on), reject it loudly and steer the caller to the kernel option, keeping the
+	// "nothing silently ignored" contract literally true. When WithKernelCloudFetch
+	// WAS used (CloudFetchEnabled != nil) that explicit kernel knob is authoritative,
+	// so a redundant/contradictory WithCloudFetch is not consulted and not rejected.
 	kernelCloudFetchSet := cfg.KernelExperimental != nil && cfg.KernelExperimental.CloudFetchEnabled != nil
 	if !cfg.UseCloudFetch && !kernelCloudFetchSet {
-		disabled := false
-		kernelExperimental(cfg).CloudFetchEnabled = &disabled
+		return kernel.Auth{}, fmt.Errorf("databricks: disabling CloudFetch via WithCloudFetch(false) is %w "+
+			"on the kernel path; use WithKernelCloudFetch(false) instead, or the default (Thrift) backend", dbsqlerr.ErrNotSupportedByKernel)
 	}
 	// mTLS client identity (WithKernelClientCertificate) must be a complete pair:
 	// mTLS needs both a non-empty client cert and its private key. Reject any
