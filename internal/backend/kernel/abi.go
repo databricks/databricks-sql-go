@@ -12,7 +12,8 @@ import "fmt"
 // the default CGO_ENABLED=0 build. The negative path can't otherwise be reached
 // from a test: a real build always links a .a and header produced together, and
 // abiVersions() reads fixed cgo constants with no injection seam. checkABIVersion
-// runs abiVersions() through this on every connect.
+// runs abiVersions() through this once per process (sync.Once-cached), on the
+// first connect.
 func compareABI(got, want uint32) error {
 	if got != want {
 		return fmt.Errorf("databricks: kernel ABI version mismatch: linked library reports %d, "+

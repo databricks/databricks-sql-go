@@ -191,11 +191,15 @@ func (r *kernelRows) nextBatch() error {
 	// ctx check fast-fails an already-cancelled ctx without dialing; the result-set
 	// cancel token (r.watcher, created once in newKernelRows) then bridges the
 	// deadline into the kernel so a fetch already in flight — a hung CloudFetch chunk
-	// (a wedged S3 / pre-signed-URL GET) — is aborted rather than blocking Next
-	// forever. Firing the token drops the in-flight download future in the kernel, a
-	// real abort. A NULL token (uncancellable ctx) makes the cancellable fetch behave
-	// exactly like the plain kernel_result_stream_next_batch, so there is no watcher
-	// overhead on the common background-context path.
+	// (a wedged S3 / pre-signed-URL GET) — no longer blocks Next past the deadline.
+	// Firing the token unblocks this call promptly (it stops waiting on the batch);
+	// the kernel's background download of that chunk continues to completion or its
+	// own read-timeout (~60s) rather than being torn down mid-flight, so the caller's
+	// deadline is honored while the socket is reclaimed shortly after — see the scope
+	// note on kernel_result_stream_next_batch_cancellable in databricks_kernel.h. A
+	// NULL token (uncancellable ctx) makes the cancellable fetch behave exactly like
+	// the plain kernel_result_stream_next_batch, so there is no watcher overhead on
+	// the common background-context path.
 	if r.ctx != nil {
 		if err := r.ctx.Err(); err != nil {
 			return err
@@ -220,6 +224,7 @@ func (r *kernelRows) nextBatch() error {
 		// holds the shared dual-%w wrap (see its doc) so errors.Is still matches the
 		// ctx error AND the *KernelError stays reachable via errors.As.
 		if r.ctx != nil && r.ctx.Err() != nil {
+			klogCtx(r.ctx, "nextBatch interrupted by ctx: kernelErr=%v ctxErr=%v", err, r.ctx.Err())
 			return cancelledErr("next_batch", r.ctx.Err(), toStatementError(err))
 		}
 		return fmt.Errorf("kernel: next_batch: %w", toStatementError(err))

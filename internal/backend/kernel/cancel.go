@@ -21,9 +21,14 @@ import (
 // The kernel's C ABI cannot observe a Go ctx mid-call: kernel_session_open and
 // kernel_result_stream_next_batch block the calling OS thread inside Rust until
 // the operation completes. The *_cancellable variants take a
-// kernel_cancel_token_t that a *different* thread fires; firing drops the
-// in-flight request future in the kernel (a real abort, not just a stop-waiting
-// — the kernel's HTTP futures cancel on drop). This helper owns that token plus
+// kernel_cancel_token_t that a *different* thread fires; firing drops the raced
+// future in the kernel and unblocks the calling thread promptly. On connect that
+// is a real abort — kernel_session_open awaits its request inline, so the
+// in-flight reqwest future cancels on drop. On mid-fetch it is a prompt
+// stop-waiting: the CloudFetch download runs on a detached kernel task, so the
+// call returns at the deadline but that chunk's download drains in the
+// background (bounded by its ~60s read-timeout). Either way the caller's OS
+// thread / goroutine is freed at the deadline. This helper owns that token plus
 // a watcher goroutine that fires it on ctx.Done().
 //
 // It mirrors the execute-path canceller watcher in operation.go (same

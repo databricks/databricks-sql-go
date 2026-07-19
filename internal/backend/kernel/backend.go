@@ -208,6 +208,7 @@ func (k *KernelBackend) OpenSession(ctx context.Context) error {
 		// errors.Is still matches the ctx error AND the connect failure's server
 		// diagnostics stay reachable via errors.As.
 		if ctxErr := ctx.Err(); ctxErr != nil {
+			klogCtx(ctx, "OpenSession interrupted by ctx: kernelErr=%v ctxErr=%v", err, ctxErr)
 			return cancelledErr("session_open", ctxErr, toConnError(err))
 		}
 		return fmt.Errorf("kernel: session_open: %w", toConnError(err))
