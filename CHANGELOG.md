@@ -1,7 +1,7 @@
 # Release History
 
 ## Unreleased
-- Add an internal `ErrorCategory` type and category constants in `internal/errors` as the first step of enriching telemetry error classification (PECOBLR-3537). No behavior change yet: the type is not read or attached anywhere in this change (databricks/databricks-sql-go#XXXX)
+- Add an internal `ErrorCategory` type and category constants in `internal/errors` for telemetry error classification. No behavior change: the type is not read or attached anywhere yet (databricks/databricks-sql-go#414)
 
 ## v1.14.0 (2026-07-13)
 - **Minimum Go version is now 1.25.0** (previously 1.20): the `go` directive was raised to 1.25.0 while clearing OSV-Scanner findings and updating dependencies. Consumers building with an older toolchain will need to upgrade Go (databricks/databricks-sql-go#368)
