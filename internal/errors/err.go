@@ -25,6 +25,7 @@ type databricksError struct {
 	errType       string
 	isRetryable   bool
 	retryAfter    time.Duration
+	category      ErrorCategory
 }
 
 var _ error = (*databricksError)(nil)
@@ -95,6 +96,11 @@ func (e databricksError) ConnectionId() string {
 	return e.connectionId
 }
 
+// Category returns the source-declared error category, or "" if none was set.
+func (e databricksError) Category() ErrorCategory {
+	return e.category
+}
+
 func (e databricksError) Is(err error) bool {
 	return err == dbsqlerr.DatabricksError
 }
@@ -128,6 +134,12 @@ func NewDriverError(ctx context.Context, msg string, err error) *driverError {
 	return &driverError{databricksError: dbErr}
 }
 
+// WithCategory sets the category and returns the error, for chaining on a constructor.
+func (e *driverError) WithCategory(c ErrorCategory) *driverError {
+	e.category = c
+	return e
+}
+
 // requestError are errors caused by invalid requests, e.g. permission denied, warehouse not found
 type requestError struct {
 	databricksError
@@ -147,6 +159,12 @@ func NewRequestError(ctx context.Context, msg string, err error) *requestError {
 	dbErr := newDatabricksError(ctx, msg, err)
 	dbErr.errType = "request error"
 	return &requestError{databricksError: dbErr}
+}
+
+// WithCategory sets the category and returns the error, for chaining on a constructor.
+func (e *requestError) WithCategory(c ErrorCategory) *requestError {
+	e.category = c
+	return e
 }
 
 // executionError are errors occurring after the query has been submitted, e.g. invalid syntax, missing table, etc.
@@ -198,6 +216,12 @@ func NewExecutionErrorWithState(ctx context.Context, msg string, err error, quer
 		queryId = driverctx.QueryIdFromContext(ctx)
 	}
 	return &executionError{databricksError: dbErr, queryId: queryId, sqlState: sqlState}
+}
+
+// WithCategory sets the category and returns the error, for chaining on a constructor.
+func (e *executionError) WithCategory(c ErrorCategory) *executionError {
+	e.category = c
+	return e
 }
 
 // wraps an error and adds trace if not already present

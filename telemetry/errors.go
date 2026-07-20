@@ -3,6 +3,8 @@ package telemetry
 import (
 	"errors"
 	"strings"
+
+	dbsqlerrint "github.com/databricks/databricks-sql-go/internal/errors"
 )
 
 // isTerminalError returns true if error is terminal (non-retryable).
@@ -48,6 +50,11 @@ func isTerminalError(err error) bool {
 func classifyError(err error) string {
 	if err == nil {
 		return ""
+	}
+
+	// Prefer a category declared at the error source, else match the message.
+	if category := dbsqlerrint.CategoryFromError(err); category != "" {
+		return string(category)
 	}
 
 	errMsg := strings.ToLower(err.Error())

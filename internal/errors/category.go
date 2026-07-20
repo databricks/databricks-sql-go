@@ -1,9 +1,30 @@
 package errors
 
+import "errors"
+
 // ErrorCategory is a source-declared classification for a driver error, so
 // telemetry can read the category directly instead of inferring it from the
 // error message.
 type ErrorCategory string
+
+type categorizer interface {
+	Category() ErrorCategory
+}
+
+// CategoryFromError returns the first non-empty category in the error chain.
+// It walks the chain rather than using errors.As because an untagged error can
+// wrap a tagged one, and errors.As would stop at the untagged outer error.
+func CategoryFromError(err error) ErrorCategory {
+	for err != nil {
+		if c, ok := err.(categorizer); ok {
+			if cat := c.Category(); cat != "" {
+				return cat
+			}
+		}
+		err = errors.Unwrap(err)
+	}
+	return ""
+}
 
 const (
 	CategoryTimeout              ErrorCategory = "timeout"
