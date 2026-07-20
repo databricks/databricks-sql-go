@@ -1,7 +1,7 @@
 # Release History
 
 ## Unreleased
-- Read a source-declared error category in telemetry error classification: `classifyError` now returns the category attached to an error (via `internal/errors.CategoryFromError`, which walks the error chain) and falls back to the existing message-matching only when none is set. No source sites are tagged yet, so classification output is unchanged (databricks/databricks-sql-go#XXXX)
+- Read a source-declared error category in telemetry error classification: `classifyError` now returns the category attached to an error (via `internal/errors.CategoryFromError`, which walks the error chain) and falls back to the existing message-matching only when none is set. No source sites are tagged yet, so classification output is unchanged (databricks/databricks-sql-go#415)
 - Add an internal `ErrorCategory` type and category constants in `internal/errors` for telemetry error classification. No behavior change: the type is not read or attached anywhere yet (databricks/databricks-sql-go#414)
 
 ## v1.14.0 (2026-07-13)
