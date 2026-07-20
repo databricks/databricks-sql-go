@@ -615,6 +615,25 @@ func WithKernelSkipHostnameVerify() ConnOption {
 	}
 }
 
+// KernelProxy is the explicit-proxy configuration for WithKernelProxy. Its fields
+// are named so a call site can't transpose the credentials — the four values are
+// all strings, so a positional signature would let a Username/Password swap (or a
+// misplaced BypassHosts) compile cleanly and fail only at runtime with wrong proxy
+// credentials.
+type KernelProxy struct {
+	// URL is the proxy URL (e.g. "http://proxy.internal:3128"). Required; empty is a
+	// no-op, leaving the environment-derived proxy (if any) in effect.
+	URL string
+	// Username / Password are optional out-of-band basic-auth credentials, supplied
+	// here rather than embedded in the URL userinfo. Empty means unset.
+	Username string
+	Password string
+	// BypassHosts is an optional comma-separated no-proxy host list. NO_PROXY is
+	// consumed during environment resolution and not forwarded to the kernel, so this
+	// is the only way to give the kernel a structured bypass list. Empty means unset.
+	BypassHosts string
+}
+
 // WithKernelProxy configures an explicit HTTP proxy for the kernel backend, with
 // optional out-of-band basic-auth credentials and a comma-separated bypass
 // (no-proxy) host list. It overrides the HTTP(S)_PROXY / NO_PROXY environment the
@@ -624,21 +643,22 @@ func WithKernelSkipHostnameVerify() ConnOption {
 // the env-var path can't express: a structured bypass list (NO_PROXY is consumed
 // during environment resolution, not forwarded to the kernel) or basic-auth
 // credentials supplied out of band rather than embedded in the URL userinfo.
-// username / password / bypassHosts may be empty (passed to the kernel as NULL,
-// i.e. unset). An empty url is a no-op — the environment-derived proxy, if any,
-// stays in effect.
+// KernelProxy.Username / Password / BypassHosts may be empty (passed to the kernel
+// as NULL, i.e. unset). An empty KernelProxy.URL is a no-op — the environment-derived
+// proxy, if any, stays in effect. A malformed URL is rejected at connect
+// (errors.Is ErrInvalidKernelConfig).
 //
 // An explicit WithKernelProxy takes precedence over the environment: consulting
 // both would be ambiguous, and an explicit proxy is a deliberate override.
 //
 // EXPERIMENTAL, kernel-only: the default (Thrift) backend rejects this at connect.
-func WithKernelProxy(url, username, password, bypassHosts string) ConnOption {
+func WithKernelProxy(p KernelProxy) ConnOption {
 	return func(c *config.Config) {
 		ke := kernelExperimental(c)
-		ke.ProxyURL = url
-		ke.ProxyUsername = username
-		ke.ProxyPassword = password
-		ke.ProxyBypassHosts = bypassHosts
+		ke.ProxyURL = p.URL
+		ke.ProxyUsername = p.Username
+		ke.ProxyPassword = p.Password
+		ke.ProxyBypassHosts = p.BypassHosts
 	}
 }
 

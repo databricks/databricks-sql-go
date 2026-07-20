@@ -241,12 +241,14 @@ WithKernel* prefix marks them experimental):
     not read SSL_CERT_FILE.
   - WithKernelSkipHostnameVerify() skips only the hostname check while keeping chain
     validation (finer-grained than WithSkipTLSHostVerify).
-  - WithKernelProxy(url, username, password, bypassHosts) sets an explicit HTTP
-    proxy, overriding the HTTP(S)_PROXY / NO_PROXY environment the kernel path
-    otherwise mirrors. Use it for the advanced fields the env-var path can't express:
-    a structured bypass (no-proxy) list, or basic-auth credentials supplied out of
-    band rather than embedded in the URL. An explicit proxy takes precedence over the
-    environment; empty credentials / bypass are passed to the kernel as unset.
+  - WithKernelProxy(KernelProxy{URL, Username, Password, BypassHosts}) sets an explicit
+    HTTP proxy, overriding the HTTP(S)_PROXY / NO_PROXY environment the kernel path
+    otherwise mirrors. The fields are named (not positional) so the four same-typed
+    strings can't be transposed at the call site. Use it for the advanced fields the
+    env-var path can't express: a structured bypass (no-proxy) list, or basic-auth
+    credentials supplied out of band rather than embedded in the URL. An explicit proxy
+    takes precedence over the environment; empty credentials / bypass are passed to the
+    kernel as unset, and a malformed URL is rejected at connect.
   - WithKernelRetryOverallTimeout(d) sets the cumulative retry budget across all
     attempts — the 4th retry knob, alongside the backoff bounds and max attempts
     carried by the backend-neutral WithRetries (also honored on the kernel path). It

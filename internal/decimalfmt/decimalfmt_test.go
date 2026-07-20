@@ -161,16 +161,37 @@ func TestAppendMatchesExactString(t *testing.T) {
 	}
 }
 
-// BenchmarkExactString / BenchmarkAppendReused document the alloc profile the fix
-// targets: ExactString allocates only the returned string, and Append into a
-// reused buffer allocates nothing (the digit scratch stays on the stack). Run:
+// BenchmarkExactString / BenchmarkExactStringSink / BenchmarkAppendReused document
+// the alloc profile the fix targets. Run:
 //
 //	go test -run '^$' -bench 'ExactString|AppendReused' -benchmem ./internal/decimalfmt/
+//
+// Read the two ExactString benchmarks together: the discard form (result unused)
+// lets escape analysis prove the string never leaves the frame and elides its heap
+// allocation, reporting 0 B/0 allocs — which flatters but does not reflect
+// production, where every caller keeps the result. The Sink form assigns to a
+// package-level var so the string escapes, reporting the real 1-alloc-per-cell
+// profile the render path actually pays. Both are still a large win over the old
+// renderer (which allocated the big.Int scratch on top of the returned string).
+// AppendReused is the genuinely zero-alloc form, available to callers that render
+// into a reused buffer (no production caller does today).
 func BenchmarkExactString(b *testing.B) {
 	n := decimal128.FromI64(1999) // DECIMAL(6,2) 19.99 — the common small case
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		_ = ExactString(n, 2)
+	}
+}
+
+// benchSink keeps the ExactString result escaping so BenchmarkExactStringSink
+// measures the real production alloc profile (see the note above).
+var benchSink string
+
+func BenchmarkExactStringSink(b *testing.B) {
+	n := decimal128.FromI64(1999)
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		benchSink = ExactString(n, 2)
 	}
 }
 

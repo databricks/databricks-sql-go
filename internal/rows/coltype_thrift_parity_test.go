@@ -1,7 +1,6 @@
 package rows
 
 import (
-	"math"
 	"testing"
 
 	"github.com/apache/arrow/go/v12/arrow"
@@ -41,23 +40,6 @@ func TestColumnTypeInfoMatchesThriftMapping(t *testing.T) {
 		}
 	}
 
-	// thriftLength mirrors rows.ColumnTypeLength's variable-length classification
-	// (the method needs a *rows with a live client, so replicate its switch here on
-	// the same TTypeId set — the exact list the method checks).
-	thriftLength := func(id cli_service.TTypeId) (int64, bool) {
-		switch id {
-		case cli_service.TTypeId_STRING_TYPE,
-			cli_service.TTypeId_VARCHAR_TYPE,
-			cli_service.TTypeId_BINARY_TYPE,
-			cli_service.TTypeId_ARRAY_TYPE,
-			cli_service.TTypeId_MAP_TYPE,
-			cli_service.TTypeId_STRUCT_TYPE:
-			return math.MaxInt64, true
-		default:
-			return 0, false
-		}
-	}
-
 	// Each shared Databricks type as it arrives on each backend: the Arrow type the
 	// kernel receives, and the Thrift TTypeId the server declares for the SAME logical
 	// column. ColumnTypeInfoFor(arrow) must match the Thrift functions on thriftID.
@@ -81,6 +63,14 @@ func TestColumnTypeInfoMatchesThriftMapping(t *testing.T) {
 		{"array", arrow.ListOf(arrow.PrimitiveTypes.Int64), cli_service.TTypeId_ARRAY_TYPE},
 		{"map", arrow.MapOf(arrow.BinaryTypes.String, arrow.PrimitiveTypes.Int64), cli_service.TTypeId_MAP_TYPE},
 		{"struct", arrow.StructOf(arrow.Field{Name: "x", Type: arrow.PrimitiveTypes.Int64}), cli_service.TTypeId_STRUCT_TYPE},
+		// Interval types: in the prod default (native-interval Arrow off) the server
+		// pre-formats intervals to text and declares the column STRING_TYPE, so the
+		// kernel — which receives native arrow.DURATION / arrow.INTERVAL_MONTHS and
+		// formats them Go-side to the same string — must report the STRING metadata the
+		// Thrift path reports for STRING_TYPE. Pairing them with STRING_TYPE here pins
+		// exactly that (see the arrowscan DURATION / INTERVAL_MONTHS arms).
+		{"interval_day_time", arrow.FixedWidthTypes.Duration_us, cli_service.TTypeId_STRING_TYPE},
+		{"interval_year_month", arrow.FixedWidthTypes.MonthInterval, cli_service.TTypeId_STRING_TYPE},
 		{"null", arrow.Null, cli_service.TTypeId_NULL_TYPE},
 	}
 
@@ -101,8 +91,12 @@ func TestColumnTypeInfoMatchesThriftMapping(t *testing.T) {
 				t.Errorf("DatabaseTypeName = %q, Thrift GetDBTypeName = %q", info.DatabaseTypeName, want)
 			}
 
-			// Length: only variable-length types report an (unbounded) length.
-			wantLen, wantOk := thriftLength(c.thriftID)
+			// Length: only variable-length types report an (unbounded) length. Drive the
+			// expectation from the SAME classifier ColumnTypeLength uses
+			// (columnTypeLengthForID), not a hand-copied switch, so a change to the
+			// Thrift-side length rule fails this test instead of the two copies drifting
+			// together and staying green.
+			wantLen, wantOk := columnTypeLengthForID(c.thriftID)
 			if info.Length != wantLen || info.HasLength != wantOk {
 				t.Errorf("Length = (%d,%v), Thrift = (%d,%v)", info.Length, info.HasLength, wantLen, wantOk)
 			}

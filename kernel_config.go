@@ -3,6 +3,7 @@ package dbsql
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"strconv"
 	"time"
 
@@ -85,6 +86,19 @@ func validateKernelConfig(cfg *config.Config) (kernel.Auth, error) {
 	// kernel_session_config_set_retry_config, and a negative RetryMax (the disable
 	// form) maps to zero kernel retries. So it is neither rejected nor silently
 	// ignored here.
+	// WithKernelProxy URL: validate it in the Go layer so a malformed URL is a clear,
+	// errors.Is-able config error (ErrInvalidKernelConfig) here rather than an opaque
+	// "kernel: set_proxy: …" wrap from the C ABI at connect. url.Parse is lenient, so
+	// also require a scheme and host — the shape kernel_session_config_set_proxy needs.
+	if ke := cfg.KernelExperimental; ke != nil && ke.ProxyURL != "" {
+		if u, perr := url.Parse(ke.ProxyURL); perr != nil {
+			return kernel.Auth{}, fmt.Errorf("databricks: the WithKernelProxy URL %q is %w: %v",
+				ke.ProxyURL, dbsqlerr.ErrInvalidKernelConfig, perr)
+		} else if u.Scheme == "" || u.Host == "" {
+			return kernel.Auth{}, fmt.Errorf("databricks: the WithKernelProxy URL %q is %w "+
+				"(want a scheme and host, e.g. http://proxy:3128)", ke.ProxyURL, dbsqlerr.ErrInvalidKernelConfig)
+		}
+	}
 	return kauth, nil
 }
 
@@ -149,6 +163,12 @@ func buildKernelConfig(cfg *config.Config, kauth kernel.Auth) kernel.Config {
 const (
 	kernelRetryPlaceholderWaitMin = 1 * time.Second
 	kernelRetryPlaceholderWaitMax = 60 * time.Second
+
+	// kernelRetryMinWaitFloor is the smallest wait the kernel setter accepts once the
+	// driver forwards it in milliseconds (kernel_session_config_set_retry_config rejects
+	// min_wait_ms == 0). A positive wait below this floor would truncate to 0ms and fail
+	// the connect, so kernelRetryConfig clamps up to it.
+	kernelRetryMinWaitFloor = 1 * time.Millisecond
 )
 
 // kernelRetryConfig resolves the driver's WithRetries policy (RetryWaitMin /
@@ -171,12 +191,20 @@ const (
 // overwrites the waits back to zero and lands here with the caller's RetryMax. Without
 // this the caller's RetryMax would be silently dropped to the kernel's default policy.
 //
-// Returns nil — leaving the kernel's own default policy in place — only when RetryMax
-// is also zero on a degenerate range: the zero-value signature of a Config assembled
-// without WithDefaults (unusual outside tests), where there is no caller attempt count
-// to preserve. Substituting placeholders there would force zero retries onto a
-// hand-built config; the kernel default is the safer choice, and a stray zero can
-// never fail the connect either way.
+// Returns nil — leaving the kernel's own default policy in place — only when a
+// degenerate range carries NEITHER a caller attempt count (RetryMax > 0) NOR an
+// explicit overall budget (WithKernelRetryOverallTimeout): the zero-value signature
+// of a Config assembled without WithDefaults (unusual outside tests), where there is
+// nothing to preserve. Substituting placeholders there would force zero retries onto
+// a hand-built config; the kernel default is the safer choice. When only the overall
+// budget is set, it is still forwarded (placeholder waits + zero retries) rather than
+// dropped.
+//
+// Sub-millisecond waits are clamped up to a 1ms floor before they are returned:
+// applyRetry forwards RetryConfig waits via time.Duration.Milliseconds(), so a valid
+// wait in (0, 1ms) would truncate to 0ms, which the kernel setter rejects
+// (min_wait_ms must be > 0) — a connect failure the Thrift path (go-retryablehttp,
+// which accepts any Duration) does not have.
 func kernelRetryConfig(cfg *config.Config) *kernel.RetryConfig {
 	// Kernel-only overall retry budget (WithKernelRetryOverallTimeout), carried on
 	// KernelExperimental rather than WithRetries. Zero = keep the kernel default;
@@ -198,16 +226,26 @@ func kernelRetryConfig(cfg *config.Config) *kernel.RetryConfig {
 	}
 
 	// Degenerate wait range (WithRetries(n, 0, 0), or a Config assembled without
-	// WithDefaults). If the caller asked for a positive attempt count, honor it with
-	// the placeholder waits — dropping it to the kernel default would silently ignore
-	// the caller's RetryMax. Only a zero RetryMax (no attempt count to preserve) falls
-	// back to the kernel's default policy.
+	// WithDefaults). If the caller asked for a positive attempt count OR an explicit
+	// overall budget, honor it with the placeholder waits — dropping it to the kernel
+	// default would silently ignore the caller's RetryMax / RetryOverallTimeout. Only
+	// when there is nothing to preserve (no attempt count and no overall budget) do we
+	// fall back to the kernel's default policy.
 	minWait, maxWait := cfg.RetryWaitMin, cfg.RetryWaitMax
 	if minWait <= 0 || maxWait < minWait {
-		if cfg.RetryMax <= 0 {
+		if cfg.RetryMax <= 0 && overall <= 0 {
 			return nil
 		}
 		minWait, maxWait = kernelRetryPlaceholderWaitMin, kernelRetryPlaceholderWaitMax
+	}
+	// Clamp waits up to a 1ms floor: applyRetry forwards them via
+	// time.Duration.Milliseconds(), so a valid sub-ms wait would truncate to 0ms and
+	// the setter would reject the connect. maxWait is floored too so it stays >= minWait.
+	if minWait < kernelRetryMinWaitFloor {
+		minWait = kernelRetryMinWaitFloor
+	}
+	if maxWait < minWait {
+		maxWait = minWait
 	}
 	return &kernel.RetryConfig{
 		MinWait:        minWait,

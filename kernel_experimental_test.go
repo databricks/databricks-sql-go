@@ -74,7 +74,7 @@ func TestWithKernelTLSOptionsSetExperimental(t *testing.T) {
 		{"skip hostname", WithKernelSkipHostnameVerify(), func(k *config.KernelExperimentalConfig) bool {
 			return k.TLSSkipHostnameVerify
 		}},
-		{"proxy", WithKernelProxy("http://proxy:3128", "u", "p", "*.internal"), func(k *config.KernelExperimentalConfig) bool {
+		{"proxy", WithKernelProxy(KernelProxy{URL: "http://proxy:3128", Username: "u", Password: "p", BypassHosts: "*.internal"}), func(k *config.KernelExperimentalConfig) bool {
 			return k.ProxyURL == "http://proxy:3128" && k.ProxyUsername == "u" &&
 				k.ProxyPassword == "p" && k.ProxyBypassHosts == "*.internal"
 		}},
@@ -113,7 +113,7 @@ func TestWithKernelOptionsRejectedOnThriftPath(t *testing.T) {
 	}{
 		{"trusted certs", WithKernelTrustedCerts([]byte("ca"))},
 		{"skip hostname", WithKernelSkipHostnameVerify()},
-		{"proxy", WithKernelProxy("http://proxy:3128", "", "", "")},
+		{"proxy", WithKernelProxy(KernelProxy{URL: "http://proxy:3128"})},
 		{"retry overall timeout", WithKernelRetryOverallTimeout(5 * time.Minute)},
 		{"max chunks in memory", WithKernelMaxChunksInMemory(4)},
 	}

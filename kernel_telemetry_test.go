@@ -62,7 +62,7 @@ func TestKernelConnectionTelemetry(t *testing.T) {
 	t.Run("explicit WithKernelProxy marks UseProxy", func(t *testing.T) {
 		cfg := config.WithDefaults()
 		cfg.AccessToken = "dapi-x"
-		WithKernelProxy("http://proxy:3128", "", "", "")(cfg)
+		WithKernelProxy(KernelProxy{URL: "http://proxy:3128"})(cfg)
 
 		if p := kernelConnectionTelemetry(cfg); !p.UseProxy {
 			t.Error("UseProxy = false, want true when WithKernelProxy is set")
@@ -79,6 +79,30 @@ func TestKernelAuthMech(t *testing.T) {
 		mech, flow := kernelAuthMech(cfg)
 		if mech != "PAT" || flow != "" {
 			t.Errorf("PAT -> (%q, %q), want (PAT, \"\")", mech, flow)
+		}
+	})
+
+	// M2M and U2M are the values that silently NULL server-side if the (mech, flow)
+	// enums are wrong, so assert both arms explicitly — not just PAT. resolveKernelAuth
+	// selects the arm by asserting the M2M/U2M provider interfaces on cfg.Authenticator,
+	// which the fake authenticators satisfy (see kernel_config_test.go).
+	t.Run("M2M -> OAUTH / CLIENT_CREDENTIALS", func(t *testing.T) {
+		cfg := config.WithDefaults()
+		cfg.AccessToken = ""
+		cfg.Authenticator = fakeM2MAuth{id: "cid", secret: "sec", scopes: []string{"all-apis"}}
+		mech, flow := kernelAuthMech(cfg)
+		if mech != "OAUTH" || flow != "CLIENT_CREDENTIALS" {
+			t.Errorf("M2M -> (%q, %q), want (OAUTH, CLIENT_CREDENTIALS)", mech, flow)
+		}
+	})
+
+	t.Run("U2M -> OAUTH / BROWSER_BASED_AUTHENTICATION", func(t *testing.T) {
+		cfg := config.WithDefaults()
+		cfg.AccessToken = ""
+		cfg.Authenticator = fakeU2MAuth{id: "databricks-sql-connector"}
+		mech, flow := kernelAuthMech(cfg)
+		if mech != "OAUTH" || flow != "BROWSER_BASED_AUTHENTICATION" {
+			t.Errorf("U2M -> (%q, %q), want (OAUTH, BROWSER_BASED_AUTHENTICATION)", mech, flow)
 		}
 	})
 }

@@ -29,7 +29,7 @@ import (
 func TestKernelE2EProxyRejectsBadURL(t *testing.T) {
 	// A routable-but-dead proxy address: connections are refused/time out rather
 	// than silently bypassed. 127.0.0.1:1 has no listener.
-	db := kernelTestDBWith(t, WithKernelProxy("http://127.0.0.1:1", "", "", ""))
+	db := kernelTestDBWith(t, WithKernelProxy(KernelProxy{URL: "http://127.0.0.1:1"}))
 	defer db.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -109,7 +109,7 @@ func TestKernelE2EProxyForwardsCredentials(t *testing.T) {
 	}()
 
 	proxyURL := "http://" + ln.Addr().String()
-	db := kernelTestDBWith(t, WithKernelProxy(proxyURL, wantUser, wantPass, ""))
+	db := kernelTestDBWith(t, WithKernelProxy(KernelProxy{URL: proxyURL, Username: wantUser, Password: wantPass}))
 	defer db.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -147,8 +147,10 @@ func TestKernelE2EProxyForwardsCredentials(t *testing.T) {
 }
 
 // TestKernelE2ERetryConfig proves a tuned WithRetries policy (backoff bounds + max
-// attempts) reaches the kernel's HTTP retry config and the connection still works:
-// the setter accepts the range and a normal query succeeds.
+// attempts) is accepted at connect and the connection still works. It is a
+// connect-succeeds smoke test — a happy-path query exercises no retry, so it can't
+// observe whether the policy is actually applied vs ignored; the pure-Go
+// TestKernelRetryConfig is what pins the WithRetries -> kernel.RetryConfig mapping.
 func TestKernelE2ERetryConfig(t *testing.T) {
 	db := kernelTestDBWith(t, WithRetries(6, 500*time.Millisecond, 20*time.Second))
 	defer db.Close()
@@ -180,7 +182,10 @@ func TestKernelE2ERetryDisabled(t *testing.T) {
 
 // TestKernelE2ERetryOverallTimeout proves the kernel-only overall-budget knob
 // (WithKernelRetryOverallTimeout, the 4th retry control) is accepted at connect and
-// the connection works with it set.
+// the connection works with it set. Like TestKernelE2ERetryConfig this is a
+// connect-succeeds smoke test — the happy path triggers no retry, so it can't
+// distinguish budget-applied from budget-ignored; TestKernelRetryConfig pins the
+// forwarding in pure Go.
 func TestKernelE2ERetryOverallTimeout(t *testing.T) {
 	db := kernelTestDBWith(t, WithKernelRetryOverallTimeout(5*time.Minute))
 	defer db.Close()

@@ -254,6 +254,36 @@ func TestValidateKernelConfig(t *testing.T) {
 			t.Errorf("the default https/443 endpoint should validate, got %v", err)
 		}
 	})
+
+	t.Run("valid WithKernelProxy URL accepted", func(t *testing.T) {
+		c := baseKernelConfig()
+		WithKernelProxy(KernelProxy{URL: "http://proxy.internal:3128", Username: "u", Password: "p", BypassHosts: "*.internal"})(c)
+		if _, err := validateKernelConfig(c); err != nil {
+			t.Errorf("a well-formed proxy URL should validate, got %v", err)
+		}
+	})
+
+	t.Run("malformed WithKernelProxy URL rejected as ErrInvalidKernelConfig", func(t *testing.T) {
+		// A malformed URL must be caught in the Go layer with an errors.Is-able
+		// config error, not surface as an opaque "kernel: set_proxy: …" wrap at
+		// connect (or, worse, a URL missing a scheme/host that the C ABI can't use).
+		for _, tc := range []struct {
+			name, proxyURL string
+		}{
+			{"control chars", "http://a\x7f:3128"}, // url.Parse returns an error
+			{"no scheme or host", "proxy:3128"},    // parses, but unusable shape
+			{"scheme only", "http://"},             // parses, empty host
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				c := baseKernelConfig()
+				WithKernelProxy(KernelProxy{URL: tc.proxyURL})(c)
+				_, err := validateKernelConfig(c)
+				if !errors.Is(err, dbsqlerr.ErrInvalidKernelConfig) {
+					t.Errorf("proxy URL %q should be rejected as ErrInvalidKernelConfig, got %v", tc.proxyURL, err)
+				}
+			})
+		}
+	})
 }
 
 // kernelConfigFieldDisposition records, for every UserConfig field, how the kernel
@@ -445,6 +475,24 @@ func TestBuildKernelConfig(t *testing.T) {
 			t.Errorf("%q must not be in EffectiveSessionParams (kernel-only, not a server param)", config.KernelMaxChunksInMemoryConfKey)
 		}
 	})
+
+	t.Run("MaxChunksInMemory conf key matches the kernel's cross-repo contract", func(t *testing.T) {
+		// Unlike the sibling retry knob (a typed C setter whose signature drift is a
+		// link/compile error), this knob rides a stringly-typed session-conf key whose
+		// only consumer is the kernel's apply_client_result_overrides
+		// (CLIENT_CONF_CLOUDFETCH_MAX_CHUNKS in databricks-sql-kernel src/session.rs).
+		// There is no build-time coupling, so pin the exact literal here: an accidental
+		// edit to the Go constant fails in CGO_ENABLED=0 PR CI (not just the
+		// warehouse-gated nightly), and this test is the greppable anchor a kernel-side
+		// rename must update in lockstep.
+		const wantKey = "cloudfetch_max_chunks_in_memory"
+		if config.KernelMaxChunksInMemoryConfKey != wantKey {
+			t.Errorf("KernelMaxChunksInMemoryConfKey = %q, want %q — the kernel's "+
+				"apply_client_result_overrides reads this exact key; a mismatch silently "+
+				"no-ops the knob or leaks it to the server",
+				config.KernelMaxChunksInMemoryConfKey, wantKey)
+		}
+	})
 }
 
 // TestKernelRetryConfig covers the pure resolution of the driver's WithRetries
@@ -539,6 +587,54 @@ func TestKernelRetryConfig(t *testing.T) {
 		c := &config.Config{UserConfig: config.UserConfig{RetryWaitMin: 0, RetryWaitMax: 0}}
 		if r := kernelRetryConfig(c); r != nil {
 			t.Errorf("zero-value range with RetryMax 0 should return nil, got %+v", r)
+		}
+	})
+
+	t.Run("overall budget forwarded even when retries are zeroed", func(t *testing.T) {
+		// The regression this guards: WithRetries(0,0,0) leaves RetryMax==0 and a
+		// degenerate wait range, but an explicit WithKernelRetryOverallTimeout must
+		// still reach the kernel. Returning nil here (the old behavior) discarded the
+		// caller's overall budget and left the kernel's 900s default — the exact
+		// "silently ignored option" failure the kernel gate was built to prevent.
+		c := baseKernelConfig()
+		WithRetries(0, 0, 0)(c)
+		WithKernelRetryOverallTimeout(5 * time.Minute)(c)
+		r := kernelRetryConfig(c)
+		if r == nil {
+			t.Fatal("overall budget with zeroed retries must forward a config, got nil (5m budget dropped, kernel default would apply)")
+		}
+		if r.OverallTimeout != 5*time.Minute {
+			t.Errorf("OverallTimeout = %v, want 5m (forwarded despite zero retries)", r.OverallTimeout)
+		}
+		if r.MaxRetries != 0 {
+			t.Errorf("MaxRetries = %d, want 0", r.MaxRetries)
+		}
+		if r.MinWait <= 0 || r.MaxWait < r.MinWait {
+			t.Errorf("placeholder waits = {%v, %v}, want a valid range the kernel setter accepts", r.MinWait, r.MaxWait)
+		}
+	})
+
+	t.Run("sub-millisecond waits are clamped up to a 1ms floor", func(t *testing.T) {
+		// The regression this guards: kernelRetryConfig validates waits in Duration
+		// space, but applyRetry forwards them via time.Duration.Milliseconds(). A valid
+		// wait in (0, 1ms) passes the guard yet truncates to min_wait_ms == 0, which the
+		// kernel setter rejects (InvalidArgument) — a connect failure the Thrift path,
+		// which accepts any Duration, does not have. The resolver must clamp up so the
+		// forwarded millisecond value stays > 0.
+		c := baseKernelConfig()
+		WithRetries(5, 999*time.Microsecond, 30*time.Second)(c)
+		r := kernelRetryConfig(c)
+		if r == nil {
+			t.Fatal("sub-ms MinWait should still resolve a config, got nil")
+		}
+		if r.MinWait.Milliseconds() < 1 {
+			t.Errorf("MinWait = %v (%d ms), want clamped to >= 1ms so the kernel setter accepts it", r.MinWait, r.MinWait.Milliseconds())
+		}
+		if r.MaxWait < r.MinWait {
+			t.Errorf("MaxWait = %v < MinWait = %v after clamp", r.MaxWait, r.MinWait)
+		}
+		if r.MaxRetries != 5 {
+			t.Errorf("MaxRetries = %d, want 5 (attempt count preserved)", r.MaxRetries)
 		}
 	})
 }
