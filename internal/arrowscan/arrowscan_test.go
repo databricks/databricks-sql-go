@@ -274,6 +274,40 @@ func TestScanCellTimestampUnits(t *testing.T) {
 	}
 }
 
+// TestScanCellTimestampOutOfNanoRange pins the fix for the microsecond→nanosecond
+// overflow: arrow's ToTime forms value*multiplier as an int64 ns count, which
+// overflows for instants outside ~1678–2262 and silently wraps to a wrong time
+// (TIMESTAMP '0001-01-01' scanned back as 1754, '9999-12-31' as 1816). The
+// unit-split constructors used by ScanCell must round-trip the full 0001–9999
+// range that Databricks TIMESTAMP allows.
+func TestScanCellTimestampOutOfNanoRange(t *testing.T) {
+	pool := memory.NewGoAllocator()
+	cases := []time.Time{
+		time.Date(1, time.January, 1, 0, 0, 0, 0, time.UTC),         // TIMESTAMP '0001-01-01 00:00:00'
+		time.Date(9999, time.December, 31, 23, 59, 59, 0, time.UTC), // TIMESTAMP '9999-12-31 23:59:59'
+		time.Date(1677, time.January, 1, 0, 0, 0, 0, time.UTC),      // just below the int64-ns floor
+		time.Date(2263, time.January, 1, 0, 0, 0, 0, time.UTC),      // just above the int64-ns ceiling
+	}
+	for _, want := range cases {
+		t.Run(want.Format("2006-01-02"), func(t *testing.T) {
+			// Databricks TIMESTAMP is always microseconds on the wire.
+			b := array.NewTimestampBuilder(pool, &arrow.TimestampType{Unit: arrow.Microsecond})
+			defer b.Release()
+			b.Append(arrow.Timestamp(want.UnixMicro()))
+			arr := b.NewArray()
+			defer arr.Release()
+
+			v, err := ScanCell(arr, 0, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := v.(time.Time); !got.Equal(want) {
+				t.Errorf("got %v, want %v (arrow ToTime would have wrapped this)", got.UTC(), want)
+			}
+		})
+	}
+}
+
 // ScanCell renders nested types (list/struct/map) to a JSON string matching the
 // Thrift path.
 func TestScanCellNested(t *testing.T) {
