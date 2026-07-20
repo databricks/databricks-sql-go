@@ -194,7 +194,14 @@ func (k *KernelBackend) execute(ctx context.Context, req backend.ExecRequest) (b
 	// Capture the modified-row count and server query id now, while exec is live —
 	// the operation is closed (nulling exec) before these are read on the
 	// ExecContext path, and the query-id pointer is only valid while exec lives.
-	op.affectedRows = int64(C.kernel_executed_statement_num_modified_rows(exec))
+	//
+	// The C ABI returns -1 for "not applicable / unknown" (DDL, SELECT, or a
+	// warehouse that doesn't surface the counter — the kernel's Option<i64> None).
+	// The Thrift path reports 0 in that case (TGetOperationStatusResp defaults
+	// NumModifiedRows to 0), so normalize the sentinel to 0 to keep RowsAffected()
+	// identical across backends; real DML counts (>= 0) pass through unchanged.
+	// normalizeAffectedRows is the pure (CGO_ENABLED=0-testable) form of this rule.
+	op.affectedRows = normalizeAffectedRows(int64(C.kernel_executed_statement_num_modified_rows(exec)))
 	// A nil execErr means the statement reached a terminal state server-side (it
 	// committed). We deliberately do NOT re-check ctx.Err() here to convert a
 	// completed statement into a cancellation: for a non-idempotent DML that would
