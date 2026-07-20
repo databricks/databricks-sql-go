@@ -56,11 +56,14 @@ func New(cfg Config) *KernelBackend {
 // time. The config handle is consumed by kernel_session_open on success and
 // freed by us on any earlier failure.
 func (k *KernelBackend) OpenSession(ctx context.Context) error {
-	// Fail fast on an already-cancelled context before doing any work, then honor
-	// a deadline that fires mid-connect via the ctxWatcher below: kernel_session
-	// _open blocks the calling thread inside the C ABI, so a slow warehouse
-	// cold-start or a connect-time network partition can't be interrupted by the
-	// caller's ctx unless a cancel token is fired from another thread.
+	// Fail fast on an already-cancelled context before the blocking kernel_session
+	// _open (which the C ABI does not let us interrupt mid-call).
+	//
+	// Deferred (tracked): this ctx is only checked here, at entry — once inside the
+	// blocking kernel_session_open there is no way to honor a deadline/cancel that
+	// fires mid-connect (a slow warehouse cold-start or a connect-time network
+	// partition blocks until the kernel returns on its own). The fix is a kernel-side
+	// change (a deadline arg or cancel handle); tracked as a follow-up.
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -155,19 +158,6 @@ func (k *KernelBackend) OpenSession(ctx context.Context) error {
 		}
 	}
 
-	// Experimental kernel-only CloudFetch toggle (WithKernelCloudFetch). Tri-state:
-	// only set it when the caller did, so an unset value leaves the kernel default
-	// (CloudFetch on). Do NOT route this through set_session_conf — the kernel owns
-	// the can_cloud_download conf and the server rejects it as not user-settable.
-	if k.cfg.CloudFetchEnabled != nil {
-		enabled := C.bool(*k.cfg.CloudFetchEnabled)
-		if err := call(func() C.KernelStatusCode {
-			return C.kernel_session_config_set_cloudfetch_enabled(cfg, enabled)
-		}); err != nil {
-			return fmt.Errorf("kernel: set_cloudfetch_enabled: %w", toConnError(err))
-		}
-	}
-
 	// Session confs (STATEMENT_TIMEOUT, QUERY_TAGS, TIMEZONE, …) — the same map
 	// the Thrift backend forwards, applied one key at a time.
 	for key, val := range k.cfg.SessionConf {
@@ -192,25 +182,9 @@ func (k *KernelBackend) OpenSession(ctx context.Context) error {
 	// args and returned before consuming, this would leak, so the contract must be
 	// re-verified against the header when KERNEL_REV is bumped.
 	var sess *C.kernel_session_t
-	// Bridge ctx onto a cancel token so a deadline firing mid-connect drops the
-	// in-flight connect request rather than blocking until the kernel returns. A
-	// non-cancellable ctx yields a nil watcher → NULL token → the plain open path,
-	// so there is no watcher overhead on a background context.
-	watcher := newCtxWatcher(ctx)
-	defer watcher.stop()
-	err := call(func() C.KernelStatusCode {
-		return C.kernel_session_open_cancellable(cfg, &sess, watcher.tokenPtr())
-	})
+	err := call(func() C.KernelStatusCode { return C.kernel_session_open(cfg, &sess) })
 	consumed = true
 	if err != nil {
-		// Prefer the caller's ctx error when the connect was interrupted by the
-		// deadline; cancelledErr holds the shared dual-%w wrap (see its doc) so
-		// errors.Is still matches the ctx error AND the connect failure's server
-		// diagnostics stay reachable via errors.As.
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			klogCtx(ctx, "OpenSession interrupted by ctx: kernelErr=%v ctxErr=%v", err, ctxErr)
-			return cancelledErr("session_open", ctxErr, toConnError(err))
-		}
 		return fmt.Errorf("kernel: session_open: %w", toConnError(err))
 	}
 	k.session = sess
@@ -392,13 +366,11 @@ func (k *KernelBackend) runNamespaceStmt(ctx context.Context, sql string) error 
 // _close initiates the delete without waiting (see the C header), so it does not
 // block and an error is logged, not hard-failed.
 //
-// Stays fire-and-forget deliberately. The C ABI also offers
-// kernel_session_close_blocking (awaits DeleteSession, for Python/Node parity),
-// but adopting it here would make close a blocking network round-trip with no
-// deadline honored — a stalled close (shutdown-time network partition) would then
-// block database/sql pool cleanup. Swapping to it is grouped with the
-// cancellable-close follow-up so the blocking close ships with a ctx bridge; until
-// then fire-and-forget is the safer default.
+// Deferred (tracked): this ignores ctx and blocks in the synchronous call() until
+// kernel_session_close returns, with no deadline — a stalled kernel-side close
+// (e.g. a shutdown-time network partition) can block database/sql pool cleanup.
+// A bounded close needs a kernel C-ABI deadline/cancel handle; tracked as a
+// follow-up.
 func (k *KernelBackend) CloseSession(ctx context.Context) error {
 	if k.session == nil {
 		return nil

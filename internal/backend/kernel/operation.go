@@ -173,13 +173,16 @@ func (k *KernelBackend) execute(ctx context.Context, req backend.ExecRequest) (b
 		// EXECUTE_STATEMENT on StatementID() != "", so without this a failed
 		// kernel query records no metric while the same Thrift failure does.
 		op.statementID = statementIDFromError(execErr)
-		// Prefer the caller's ctx error when the ctx was cancelled; cancelledErr
-		// holds the shared dual-%w wrap (see its doc) so errors.Is still matches the
-		// ctx error AND the *KernelError stays reachable via errors.As.
+		// Prefer the caller's ctx error when the ctx was cancelled (database/sql
+		// convention). Wrap BOTH the ctx error and the kernel error so
+		// errors.Is(err, context.Canceled/DeadlineExceeded) still matches (the
+		// cancellation contract) AND the *KernelError stays reachable via errors.As —
+		// otherwise a session-fatal failure racing a cancel would lose its
+		// sqlstate/queryId, the one handle to what actually went wrong server-side.
 		if ctx.Err() != nil {
 			klogCtx(ctx, "Execute failed under cancelled ctx: kernelErr=%v ctxErr=%v", execErr, ctx.Err())
 			op.close()
-			return op, cancelledErr("execute", ctx.Err(), toStatementError(execErr))
+			return op, fmt.Errorf("kernel: execute cancelled: %w (kernel error: %w)", ctx.Err(), toStatementError(execErr))
 		}
 		klogCtx(ctx, "Execute failed: %v", execErr)
 		// We still return the PLAIN error (toStatementError, never ErrBadConn), so the

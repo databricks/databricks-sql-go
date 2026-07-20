@@ -86,21 +86,6 @@ func validateKernelConfig(cfg *config.Config) (kernel.Auth, error) {
 		return kernel.Auth{}, fmt.Errorf("databricks: disabling retries via WithRetries is %w "+
 			"(the kernel retries internally); omit it or use the default (Thrift) backend", dbsqlerr.ErrNotSupportedByKernel)
 	}
-	// CloudFetch on the kernel path is controlled by the tri-state WithKernelCloudFetch
-	// (forwarded to kernel_session_config_set_cloudfetch_enabled), NOT the
-	// backend-neutral plain-bool WithCloudFetch. UseCloudFetch defaults to true, so an
-	// explicit WithCloudFetch(false) is distinguishable from unset — but the kernel
-	// path does not read it (it is not forwarded), so honoring it silently is
-	// impossible. Rather than let a disable request be dropped (CloudFetch would stay
-	// on), reject it loudly and steer the caller to the kernel option, keeping the
-	// "nothing silently ignored" contract literally true. When WithKernelCloudFetch
-	// WAS used (CloudFetchEnabled != nil) that explicit kernel knob is authoritative,
-	// so a redundant/contradictory WithCloudFetch is not consulted and not rejected.
-	kernelCloudFetchSet := cfg.KernelExperimental != nil && cfg.KernelExperimental.CloudFetchEnabled != nil
-	if !cfg.UseCloudFetch && !kernelCloudFetchSet {
-		return kernel.Auth{}, fmt.Errorf("databricks: disabling CloudFetch via WithCloudFetch(false) is %w "+
-			"on the kernel path; use WithKernelCloudFetch(false) instead, or the default (Thrift) backend", dbsqlerr.ErrNotSupportedByKernel)
-	}
 	// mTLS client identity (WithKernelClientCertificate) must be a complete pair:
 	// mTLS needs both a non-empty client cert and its private key. Reject any
 	// incomplete request loudly at connect — otherwise applyKernelTLS (which gates
@@ -154,16 +139,14 @@ func buildKernelConfig(cfg *config.Config, kauth kernel.Auth) kernel.Config {
 		kc.TLSSkipVerify = true
 	}
 	// Experimental kernel-only knobs (WithKernelTrustedCerts /
-	// WithKernelSkipHostnameVerify / WithKernelClientCertificate /
-	// WithKernelCloudFetch), if any. These have no Thrift-path equivalent (the
-	// connector rejects them on that path) and are forwarded verbatim to the
-	// kernel C ABI in OpenSession.
+	// WithKernelSkipHostnameVerify / WithKernelClientCertificate), if any. These
+	// have no Thrift-path equivalent (the connector rejects them on that path) and
+	// are forwarded verbatim to the kernel C ABI in OpenSession.
 	if ke := cfg.KernelExperimental; ke != nil {
 		kc.TLSTrustedCertsPEM = ke.TLSTrustedCertsPEM
 		kc.TLSSkipHostnameVerify = ke.TLSSkipHostnameVerify
 		kc.TLSClientCertPEM = ke.TLSClientCertPEM
 		kc.TLSClientKeyPEM = ke.TLSClientKeyPEM
-		kc.CloudFetchEnabled = ke.CloudFetchEnabled
 	}
 	return kc
 }

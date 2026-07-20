@@ -185,40 +185,6 @@ func TestValidateKernelConfig(t *testing.T) {
 		}
 	})
 
-	// CloudFetch: a bare WithCloudFetch(false) can't be honored on the kernel path
-	// (UseCloudFetch is not forwarded), so it must be rejected loudly — not silently
-	// dropped, leaving CloudFetch on — and steer the caller to WithKernelCloudFetch.
-	// When the kernel-specific knob IS set it is authoritative, so a redundant or
-	// contradictory WithCloudFetch is not consulted and not rejected.
-	t.Run("bare WithCloudFetch(false) rejected", func(t *testing.T) {
-		c := baseKernelConfig()
-		c.UseCloudFetch = false // what WithCloudFetch(false) sets
-		_, err := validateKernelConfig(c)
-		if err == nil {
-			t.Fatal("expected WithCloudFetch(false) to be rejected on the kernel path")
-		}
-		if !errors.Is(err, dbsqlerr.ErrNotSupportedByKernel) {
-			t.Errorf("WithCloudFetch(false) rejection should wrap ErrNotSupportedByKernel, got %v", err)
-		}
-	})
-	t.Run("default UseCloudFetch(true) accepted", func(t *testing.T) {
-		c := baseKernelConfig() // WithDefaults sets UseCloudFetch=true
-		if _, err := validateKernelConfig(c); err != nil {
-			t.Errorf("the CloudFetch-on default should validate, got %v", err)
-		}
-	})
-	t.Run("WithCloudFetch(false) + WithKernelCloudFetch authoritative, accepted", func(t *testing.T) {
-		for _, kernelEnabled := range []bool{false, true} {
-			c := baseKernelConfig()
-			c.UseCloudFetch = false                // the neutral bool says off...
-			WithKernelCloudFetch(kernelEnabled)(c) // ...but the explicit kernel knob wins
-			if _, err := validateKernelConfig(c); err != nil {
-				t.Errorf("WithKernelCloudFetch(%v) should make the config valid despite WithCloudFetch(false), got %v",
-					kernelEnabled, err)
-			}
-		}
-	})
-
 	t.Run("PAT via WithAuthenticator resolves the token", func(t *testing.T) {
 		c := baseKernelConfig()
 		c.AccessToken = ""
@@ -388,12 +354,9 @@ var kernelConfigFieldDisposition = map[string]string{
 	"UseArrowNativeDecimalDSN": "inert", // DSN carrier; kernel renders decimals exactly regardless
 
 	// Fields promoted from the embedded CloudFetchConfig. The kernel does
-	// CloudFetch internally (below the C ABI), so the tuning knobs are inert — but
-	// each is classified individually so a new CloudFetch option can't slip the guard.
-	// UseCloudFetch is the exception: a bare WithCloudFetch(false) is rejected on the
-	// kernel path (steering to WithKernelCloudFetch), since silently keeping CloudFetch
-	// on would violate the "nothing silently ignored" contract — see validateKernelConfig.
-	"UseCloudFetch":                "rejected",
+	// CloudFetch internally (below the C ABI), so none is forwarded — but each is
+	// classified individually so a new CloudFetch option can't slip the guard.
+	"UseCloudFetch":                "inert",
 	"MaxDownloadThreads":           "inert",
 	"MaxFilesInMemory":             "inert",
 	"MinTimeToExpiry":              "inert",
@@ -461,17 +424,13 @@ func TestBuildKernelConfig(t *testing.T) {
 		}
 	})
 
-	// mTLS client cert/key and the tri-state CloudFetch toggle are the other three
-	// fields buildKernelConfig forwards; each is copied ONLY here, so a dropped line
-	// (e.g. deleting kc.CloudFetchEnabled = ke.CloudFetchEnabled, silently leaving
-	// CloudFetch on for WithKernelCloudFetch(false)) would pass every other test.
-	t.Run("experimental mTLS + CloudFetch fields forwarded", func(t *testing.T) {
+	// mTLS client cert/key are the other two fields buildKernelConfig forwards;
+	// each is copied ONLY here, so a dropped line would pass every other test.
+	t.Run("experimental mTLS fields forwarded", func(t *testing.T) {
 		c := baseKernelConfig()
-		disabled := false
 		c.KernelExperimental = &config.KernelExperimentalConfig{
-			TLSClientCertPEM:  []byte("client-cert"),
-			TLSClientKeyPEM:   []byte("client-key"),
-			CloudFetchEnabled: &disabled,
+			TLSClientCertPEM: []byte("client-cert"),
+			TLSClientKeyPEM:  []byte("client-key"),
 		}
 		kc := buildKernelConfig(c, kernel.Auth{Mode: kernel.AuthPAT, Token: "dapi-x"})
 		if got := string(kc.TLSClientCertPEM); got != "client-cert" {
@@ -479,24 +438,6 @@ func TestBuildKernelConfig(t *testing.T) {
 		}
 		if got := string(kc.TLSClientKeyPEM); got != "client-key" {
 			t.Errorf("TLSClientKeyPEM = %q, want %q (WithKernelClientCertificate key not forwarded)", got, "client-key")
-		}
-		if kc.CloudFetchEnabled == nil {
-			t.Fatal("CloudFetchEnabled = nil, want a non-nil false (WithKernelCloudFetch not forwarded)")
-		}
-		if *kc.CloudFetchEnabled {
-			t.Error("CloudFetchEnabled = true, want false (WithKernelCloudFetch(false) not forwarded)")
-		}
-	})
-
-	t.Run("unset CloudFetchEnabled stays nil (kernel default)", func(t *testing.T) {
-		c := baseKernelConfig()
-		// An experimental block with mTLS but no CloudFetch toggle: CloudFetchEnabled
-		// must remain nil so OpenSession leaves the kernel default (CloudFetch on)
-		// rather than forwarding a false.
-		c.KernelExperimental = &config.KernelExperimentalConfig{TLSSkipHostnameVerify: true}
-		kc := buildKernelConfig(c, kernel.Auth{Mode: kernel.AuthPAT, Token: "dapi-x"})
-		if kc.CloudFetchEnabled != nil {
-			t.Errorf("CloudFetchEnabled = %v, want nil (unset must not forward a value)", *kc.CloudFetchEnabled)
 		}
 	})
 
@@ -507,9 +448,9 @@ func TestBuildKernelConfig(t *testing.T) {
 			t.Errorf("expected zero experimental TLS fields with nil KernelExperimental, got certs=%v skipHost=%v",
 				kc.TLSTrustedCertsPEM, kc.TLSSkipHostnameVerify)
 		}
-		if kc.TLSClientCertPEM != nil || kc.TLSClientKeyPEM != nil || kc.CloudFetchEnabled != nil {
-			t.Errorf("expected zero experimental mTLS/CloudFetch fields with nil KernelExperimental, got cert=%v key=%v cloudfetch=%v",
-				kc.TLSClientCertPEM, kc.TLSClientKeyPEM, kc.CloudFetchEnabled)
+		if kc.TLSClientCertPEM != nil || kc.TLSClientKeyPEM != nil {
+			t.Errorf("expected zero experimental mTLS fields with nil KernelExperimental, got cert=%v key=%v",
+				kc.TLSClientCertPEM, kc.TLSClientKeyPEM)
 		}
 	})
 

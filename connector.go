@@ -47,14 +47,13 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 	} else {
 		// The experimental WithKernel* options have no Thrift-path equivalent —
 		// reject them loudly rather than silently ignore, so a caller who sets one
-		// (a trusted-CA bundle, an independent hostname skip, an mTLS client
-		// certificate, or a CloudFetch toggle) and forgets WithUseKernel learns the
-		// option had no effect instead of connecting with a weaker-than-intended
-		// (or unconfigured) setup.
+		// (a trusted-CA bundle, an independent hostname skip, or an mTLS client
+		// certificate) and forgets WithUseKernel learns the option had no effect
+		// instead of connecting with a weaker-than-intended (or unconfigured) setup.
 		if c.cfg.KernelExperimental != nil {
 			return nil, fmt.Errorf("databricks: a WithKernel* option "+
 				"(WithKernelTrustedCerts / WithKernelSkipHostnameVerify / "+
-				"WithKernelClientCertificate / WithKernelCloudFetch) %w; "+
+				"WithKernelClientCertificate) %w; "+
 				"add WithUseKernel(true) or remove it", dbsqlerr.ErrRequiresKernelBackend)
 		}
 		be, err = thrift.New(ctx, c.cfg, c.client)
@@ -637,19 +636,5 @@ func WithKernelClientCertificate(cert, key []byte) ConnOption {
 		} else {
 			k.TLSClientKeyPEM = key
 		}
-	}
-}
-
-// WithKernelCloudFetch toggles CloudFetch (cloud-storage-backed download of large
-// result sets) on the kernel backend. Passing false forces the inline-Arrow path
-// for all result sizes. Unlike the backend-neutral WithCloudFetch (a plain bool
-// whose unset state is indistinguishable from false), this is tri-state: not
-// calling it leaves the kernel default (CloudFetch on), and it maps to
-// kernel_session_config_set_cloudfetch_enabled only when set.
-//
-// EXPERIMENTAL, kernel-only: the default (Thrift) backend rejects this at connect.
-func WithKernelCloudFetch(enabled bool) ConnOption {
-	return func(c *config.Config) {
-		kernelExperimental(c).CloudFetchEnabled = &enabled
 	}
 }

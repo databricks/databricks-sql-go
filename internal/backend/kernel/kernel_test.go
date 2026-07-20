@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
-	"runtime/cgo"
 	"testing"
 
 	"github.com/databricks/databricks-sql-go/driverctx"
@@ -98,110 +97,6 @@ func TestABIVersionMatches(t *testing.T) {
 	}
 	if err := checkABIVersion(); err != nil {
 		t.Errorf("checkABIVersion() = %v, want nil for the linked (matching) library", err)
-	}
-}
-
-// TestLogCallbackRoundTrip exercises the full reverse-call path: wrap an
-// observable *logSink in a cgo.Handle, drive the C→Go trampoline exactly as the
-// kernel's drain thread would (via the test seam), and assert the event arrived
-// with the handle correctly unwrapped and the fields intact. This proves the
-// cgo.Handle round-trip + recover firewall + sink dispatch that a real kernel log
-// event flows through (kernel-side delivery itself is covered by the kernel's own
-// integration tests).
-func TestLogCallbackRoundTrip(t *testing.T) {
-	type got struct {
-		level           int
-		target, message string
-	}
-	ch := make(chan got, 1)
-	sink := &logSink{observe: func(level int, target, message string) {
-		ch <- got{level, target, message}
-	}}
-	h := cgo.NewHandle(sink)
-	defer h.Delete()
-
-	invokeLogTrampolineForTest(h, kernelLevelWarn, "databricks::sql::kernel", "retrying request")
-
-	select {
-	case g := <-ch:
-		if g.level != kernelLevelWarn || g.target != "databricks::sql::kernel" || g.message != "retrying request" {
-			t.Errorf("delivered event = %+v, want level=WARN target=databricks::sql::kernel msg='retrying request'", g)
-		}
-	default:
-		t.Fatal("the trampoline did not deliver the event to the sink")
-	}
-}
-
-// captureDriverLog points the global driver logger at a buffer (TraceLevel) for
-// the duration of a test, returning the buffer and restoring the logger after.
-// Used to assert a trampoline guard branch delivered NOTHING (the branches bail
-// before reaching a sink, so there's no observe hook to check — the driver
-// logger output is the observable).
-func captureDriverLog(t *testing.T) *bytes.Buffer {
-	t.Helper()
-	var buf bytes.Buffer
-	prev := logger.Logger.GetLevel()
-	logger.SetLogOutput(&buf)
-	_ = logger.SetLogLevel("trace")
-	t.Cleanup(func() {
-		logger.SetLogOutput(os.Stderr)
-		logger.Logger.Logger = logger.Logger.Level(prev)
-	})
-	return &buf
-}
-
-// A zero ctx must be a no-op (no crash, no delivery). cgo.Handle(0) casts to a
-// NULL void* ctx, so the trampoline returns at its `ctx == nil` guard before ever
-// calling Value() (calling Value() on the zero handle would itself panic — the
-// recover firewall would catch it, but the nil guard means we never reach it).
-func TestLogCallbackTrampolineNilCtxSafe(t *testing.T) {
-	buf := captureDriverLog(t)
-	invokeLogTrampolineForTest(cgo.Handle(0), kernelLevelError, "databricks::sql::kernel", "should-not-appear")
-	if buf.Len() != 0 {
-		t.Errorf("nil-ctx trampoline delivered a line, want none: %q", buf.String())
-	}
-}
-
-// TestLogCallbackTrampolineWrongTypeSafe covers the "handle holds a non-*logSink
-// value" branch: a live, non-nil handle whose Value() type-asserts to false. The
-// trampoline must return without panicking AND without delivering (asserted via
-// the captured driver logger staying empty).
-func TestLogCallbackTrampolineWrongTypeSafe(t *testing.T) {
-	buf := captureDriverLog(t)
-	h := cgo.NewHandle("not a logSink")
-	defer h.Delete()
-	invokeLogTrampolineForTest(h, kernelLevelError, "databricks::sql::kernel", "should-not-appear")
-	if buf.Len() != 0 {
-		t.Errorf("wrong-type trampoline delivered a line, want none: %q", buf.String())
-	}
-}
-
-// TestLogCallbackPanicFirewall is the load-bearing safety test: a sink whose
-// routing panics must NOT crash the process — the trampoline's defer recover()
-// converts it into a dropped line (a panic unwinding across the cgo boundary
-// would abort). We drive a panicking observe hook, assert the call returns, and
-// assert a subsequent well-formed sink still delivers (the firewall didn't wedge
-// anything process-global).
-func TestLogCallbackPanicFirewall(t *testing.T) {
-	panicSink := &logSink{observe: func(int, string, string) { panic("boom in the sink") }}
-	ph := cgo.NewHandle(panicSink)
-	defer ph.Delete()
-	// Must not crash the test binary.
-	invokeLogTrampolineForTest(ph, kernelLevelError, "databricks::sql::kernel", "will panic")
-
-	// A subsequent well-formed delivery still works.
-	ch := make(chan string, 1)
-	okSink := &logSink{observe: func(_ int, _, message string) { ch <- message }}
-	oh := cgo.NewHandle(okSink)
-	defer oh.Delete()
-	invokeLogTrampolineForTest(oh, kernelLevelWarn, "databricks::sql::kernel", "recovered")
-	select {
-	case got := <-ch:
-		if got != "recovered" {
-			t.Errorf("post-panic delivery = %q, want 'recovered'", got)
-		}
-	default:
-		t.Fatal("delivery after a panicking callback did not work — firewall wedged")
 	}
 }
 

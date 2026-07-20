@@ -93,12 +93,6 @@ type KernelExperimentalConfig struct {
 	// validateKernelConfig uses this marker to reject an incomplete mTLS request
 	// loudly instead of failing open. Never forwarded to the kernel C ABI.
 	TLSClientCertConfigured bool
-	// CloudFetchEnabled toggles CloudFetch on the kernel path. Tri-state: nil
-	// keeps the kernel default (on); a non-nil *false forces the inline-Arrow
-	// path. A *bool (not a plain bool) so "unset" is distinguishable from
-	// "explicitly false" — maps to kernel_session_config_set_cloudfetch_enabled.
-	// Deliberately NOT the plain-bool WithCloudFetch (which can't express unset).
-	CloudFetchEnabled *bool
 }
 
 // DeepCopy returns a deep copy of the experimental config, or nil for a nil
@@ -120,10 +114,6 @@ func (k *KernelExperimentalConfig) DeepCopy() *KernelExperimentalConfig {
 	}
 	if k.TLSClientKeyPEM != nil {
 		cp.TLSClientKeyPEM = append([]byte(nil), k.TLSClientKeyPEM...)
-	}
-	if k.CloudFetchEnabled != nil {
-		v := *k.CloudFetchEnabled
-		cp.CloudFetchEnabled = &v
 	}
 	return cp
 }

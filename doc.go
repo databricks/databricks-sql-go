@@ -195,44 +195,30 @@ level the lines are suppressed with no cost.
 
 	dbsql.SetLogLevel("debug") // or DATABRICKS_LOG_LEVEL=debug
 
-The same level is mapped into the kernel's internal (Rust) log subscriber, which is
-routed into the driver's logger via a reverse-call callback (kernel_set_log_callback):
-kernel-internal tracing events are forwarded into the SAME unified sink as the Go
-binding lines — including a custom logger.SetLogOutput — rather than going to stderr.
-One caveat specific to the Rust lines: BOTH their verbosity AND their output
-destination are captured when the first kernel session in the process is opened (the
-forwarding sink snapshots the logger then). A later dbsql.SetLogLevel or
-logger.SetLogOutput re-targets the Go binding lines but NOT the already-forwarded
-kernel lines, so set the level and any custom output before that first connect to
-govern them.
+The same level is mapped into the kernel's internal (Rust) log subscriber, with two
+caveats specific to the Rust lines: they go to stderr directly (not affected by
+logger.SetLogOutput), and their verbosity is fixed when the first kernel session in
+the process is opened — set the level before that first connect to control them.
 
 For finer control of the Rust verbosity independent of the driver level, set
-DBSQL_KERNEL_DEBUG to any non-empty value: the callback then defers its level to
-RUST_LOG. Filter on the target databricks::sql::kernel (note the colons):
+DBSQL_KERNEL_DEBUG to any non-empty value: it forces the kernel subscriber on and
+defers to RUST_LOG. Filter on the target databricks::sql::kernel (note the colons):
 
-	# kernel logs at the kernel's own verbosity, forwarded into the driver logger:
-	DBSQL_KERNEL_DEBUG=1 RUST_LOG=databricks::sql::kernel=debug ./your_app
+	# kernel logs only, at the kernel's own verbosity:
+	DBSQL_KERNEL_DEBUG=1 RUST_LOG=databricks::sql::kernel=debug ./your_app 2>&1
 	# kernel logs plus its HTTP stack:
-	DBSQL_KERNEL_DEBUG=1 RUST_LOG=debug ./your_app
-
-The kernel exposes one process-global tracing subscriber reachable two mutually
-exclusive ways over the C ABI (kernel_init_logging → stderr, kernel_set_log_callback
-→ the driver logger); the driver installs the callback. A host that has already
-installed its own global tracing subscriber will see the registration report a
-benign, logged failure and kernel events simply won't forward.
+	DBSQL_KERNEL_DEBUG=1 RUST_LOG=debug ./your_app 2>&1
 
 Supported on the kernel backend: PAT and OAuth (M2M via WithClientCredentials, U2M
 via the authType=oauthU2M DSN param); reading scalar, nested, and complex-typed
 results (CloudFetch is transparent); bound query parameters (positional and named);
-context cancellation during execute and mid-fetch; the initial namespace
-(WithInitialNamespace, applied post-connect via USE CATALOG / USE SCHEMA);
-metric-view metadata (WithEnableMetricViewMetadata); and the TLS, proxy, and
-session-conf (query tags, statement timeout, time zone) options. Nothing is silently
-ignored: WithTimeout, a retries-disabling WithRetries, a CloudFetch-disabling
-WithCloudFetch(false) (use WithKernelCloudFetch(false) instead), a non-default
-WithPort, a non-https protocol, a custom WithTransport, token-provider / external /
-federated authenticators, and custom M2M OAuth scopes (the kernel applies its own)
-are rejected at connect; staging (PUT/GET/REMOVE on a Unity Catalog volume) is
+context cancellation during execute; the initial namespace (WithInitialNamespace,
+applied post-connect via USE CATALOG / USE SCHEMA); metric-view metadata
+(WithEnableMetricViewMetadata); and the TLS, proxy, and session-conf (query tags,
+statement timeout, time zone) options. Nothing is silently ignored: WithTimeout, a
+retries-disabling WithRetries, token-provider / external / federated
+authenticators, and custom M2M OAuth scopes (the kernel applies its own) are
+rejected at connect; staging (PUT/GET/REMOVE on a Unity Catalog volume) is
 rejected at execute. WithMaxRows and positive-limit WithRetries are
 accepted but inert (the kernel manages fetching and retries below the C ABI).
 
@@ -247,8 +233,8 @@ backend exposes a U2M-scopes option, so this is a fixed difference between the t
 default sets, not a dropped setting; both authorize against the built-in public
 client.
 
-Experimental kernel-only options (rejected by the default backend; the WithKernel*
-prefix marks them experimental):
+Experimental kernel-only TLS options (rejected by the default backend; the
+WithKernel* prefix marks them experimental):
   - WithKernelTrustedCerts(pem) adds a PEM CA bundle on top of the system roots (for
     a re-signing proxy or on-prem CA). Required because the kernel's TLS stack does
     not read SSL_CERT_FILE.
@@ -257,10 +243,6 @@ prefix marks them experimental):
   - WithKernelClientCertificate(cert, key) configures a client certificate + private
     key for mutual TLS (mTLS). Both PEM halves are required together; the key is
     never logged.
-  - WithKernelCloudFetch(enabled) toggles CloudFetch. Tri-state: leaving it unset
-    keeps the kernel default (on); false forces the inline-Arrow path for all result
-    sizes. Distinct from the backend-neutral WithCloudFetch, whose plain-bool unset
-    state can't be told apart from false.
 
 Setting any of these without WithUseKernel fails Connect with an error wrapping the
 sentinel ErrRequiresKernelBackend, detectable with errors.Is.
@@ -274,11 +256,9 @@ and GEOMETRY (WKT). The server query id is surfaced on the success path, so a
 QueryIdCallback (see below) fires with the real id and EXECUTE_STATEMENT telemetry
 carries it.
 
-On the read path, context cancellation is honored both at result-batch boundaries
-and mid-fetch: a cancel or deadline firing while a CloudFetch batch is in flight
-aborts that fetch (a hung S3 / pre-signed-URL GET does not block the caller past its
-deadline), rather than running the batch to completion first. A non-cancellable
-context (e.g. context.Background) takes the plain fetch path with no added overhead.
+On the read path, context cancellation is honored at result-batch boundaries, not
+mid-fetch: an in-flight CloudFetch batch runs to completion before the cancel takes
+effect.
 
 # Programmatically Retrieving Connection and Query Id
 

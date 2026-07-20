@@ -26,10 +26,9 @@ func newKernelBackend(_ context.Context, cfg *config.Config) (backend.Backend, e
 	}
 
 	// Assemble the flat kernel.Config from the driver config. The field-by-field
-	// mapping (including the experimental TLS / mTLS / CloudFetch forwarding) is the
-	// pure, cgo-free buildKernelConfig in kernel_config.go, unit-tested under
-	// CGO_ENABLED=0. SPOG org routing rides in HTTPPath's ?o= and is parsed
-	// kernel-side.
+	// mapping (including the experimental TLS forwarding) is the pure, cgo-free
+	// buildKernelConfig in kernel_config.go, unit-tested under CGO_ENABLED=0.
+	// SPOG org routing rides in HTTPPath's ?o= and is parsed kernel-side.
 	kc := buildKernelConfig(cfg, kauth)
 	// Proxy: the Thrift path uses http.ProxyFromEnvironment; mirror it by reading
 	// the same HTTP(S)_PROXY / NO_PROXY environment for the kernel. Resolved here
