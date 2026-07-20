@@ -47,6 +47,23 @@ func kernelConnectionTelemetry(cfg *config.Config) *telemetry.DriverConnectionPa
 	mech, flow := kernelAuthMech(cfg)
 	params.AuthMech = mech
 	params.AuthFlow = flow
+
+	// Resolved retry policy + CloudFetch memory cap, so a hung-connect or
+	// large-result-OOM report can be diagnosed from telemetry. Only positive values
+	// are emitted (omitempty): a non-positive RetryMax is the disable/default form,
+	// and a zero timeout / chunk cap means "keep the kernel default". Mirrors what
+	// buildKernelConfig / kernelRetryConfig forward to the kernel.
+	if cfg.RetryMax > 0 {
+		params.RetryMaxAttempts = int32(cfg.RetryMax) //nolint:gosec // small positive attempt count
+	}
+	if ke := cfg.KernelExperimental; ke != nil {
+		if ke.RetryOverallTimeout > 0 {
+			params.RetryOverallTimeoutMs = ke.RetryOverallTimeout.Milliseconds()
+		}
+		if ke.MaxChunksInMemory > 0 {
+			params.MaxChunksInMemory = int32(ke.MaxChunksInMemory) //nolint:gosec // small positive chunk count
+		}
+	}
 	return params
 }
 

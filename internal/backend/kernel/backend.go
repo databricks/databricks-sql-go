@@ -182,6 +182,13 @@ func (k *KernelBackend) OpenSession(ctx context.Context) error {
 		}
 	}
 
+	// Log the resolved retry policy + CloudFetch chunk cap before connecting, so if a
+	// customer reports a hung connect or a large-result OOM, on-call can see from the
+	// debug log what was actually applied (these are otherwise silent — forwarded to
+	// the kernel with no observable trace). Kept at Debug and cheap to format.
+	klogCtx(ctx, "OpenSession resolved: retry=%s cloudfetchMaxChunksInMemory=%s",
+		describeRetry(k.cfg.Retry), k.cfg.SessionConf[kernelMaxChunksInMemoryConfKey])
+
 	// kernel_session_open takes ownership of cfg here. Its documented C-ABI
 	// contract (databricks_kernel.h: "CONSUMES config on both success and failure
 	// — do not use or free config afterwards") is what makes the unconditional
@@ -298,6 +305,24 @@ func (k *KernelBackend) applyRetry(cfg *C.KernelSessionConfig) error {
 		return fmt.Errorf("kernel: set_retry_config: %w", toConnError(err))
 	}
 	return nil
+}
+
+// kernelMaxChunksInMemoryConfKey mirrors config.KernelMaxChunksInMemoryConfKey —
+// the client-only session conf carrying WithKernelMaxChunksInMemory. Duplicated as
+// a local const rather than importing internal/config, which this cgo backend
+// otherwise has no dependency on; it is read here only to log the resolved cap.
+const kernelMaxChunksInMemoryConfKey = "cloudfetch_max_chunks_in_memory"
+
+// describeRetry renders the resolved retry policy for the OpenSession debug log.
+// "kernel-default" means Config.Retry is nil, so the kernel keeps its own policy
+// (5 retries, 1s..60s, 900s budget); otherwise it shows the forwarded values, with
+// maxRetries=0 being the disable form and overallTimeout=0 meaning "keep default".
+func describeRetry(r *RetryConfig) string {
+	if r == nil {
+		return "kernel-default"
+	}
+	return fmt.Sprintf("maxRetries=%d minWait=%s maxWait=%s overallTimeout=%s",
+		r.MaxRetries, r.MinWait, r.MaxWait, r.OverallTimeout)
 }
 
 // setAuth applies the resolved auth form to the session config via exactly one

@@ -2,6 +2,7 @@ package dbsql
 
 import (
 	"testing"
+	"time"
 
 	"github.com/databricks/databricks-sql-go/auth/pat"
 	"github.com/databricks/databricks-sql-go/internal/config"
@@ -66,6 +67,42 @@ func TestKernelConnectionTelemetry(t *testing.T) {
 
 		if p := kernelConnectionTelemetry(cfg); !p.UseProxy {
 			t.Error("UseProxy = false, want true when WithKernelProxy is set")
+		}
+	})
+
+	t.Run("resolved retry policy + chunk cap are reflected", func(t *testing.T) {
+		cfg := config.WithDefaults()
+		cfg.AccessToken = "dapi-x"
+		WithRetries(7, 0, 0)(cfg)
+		WithKernelRetryOverallTimeout(90 * time.Second)(cfg)
+		WithKernelMaxChunksInMemory(4)(cfg)
+
+		p := kernelConnectionTelemetry(cfg)
+		if p.RetryMaxAttempts != 7 {
+			t.Errorf("RetryMaxAttempts = %d, want 7", p.RetryMaxAttempts)
+		}
+		if p.RetryOverallTimeoutMs != 90_000 {
+			t.Errorf("RetryOverallTimeoutMs = %d, want 90000", p.RetryOverallTimeoutMs)
+		}
+		if p.MaxChunksInMemory != 4 {
+			t.Errorf("MaxChunksInMemory = %d, want 4", p.MaxChunksInMemory)
+		}
+	})
+
+	t.Run("retry/chunk fields stay zero (omitted) at defaults", func(t *testing.T) {
+		// WithDefaults sets RetryMax=4, but the disable/default form and the unset
+		// kernel-only knobs must not fabricate telemetry: only an explicit positive
+		// RetryMax is emitted, so document that the default RetryMax IS surfaced while
+		// the kernel-only knobs stay zero when unset.
+		cfg := config.WithDefaults()
+		cfg.AccessToken = "dapi-x"
+		p := kernelConnectionTelemetry(cfg)
+		if int(p.RetryMaxAttempts) != cfg.RetryMax {
+			t.Errorf("RetryMaxAttempts = %d, want %d (the resolved RetryMax)", p.RetryMaxAttempts, cfg.RetryMax)
+		}
+		if p.RetryOverallTimeoutMs != 0 || p.MaxChunksInMemory != 0 {
+			t.Errorf("kernel-only knobs should be zero when unset: overall=%d chunks=%d",
+				p.RetryOverallTimeoutMs, p.MaxChunksInMemory)
 		}
 	})
 }
