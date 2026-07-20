@@ -1,5 +1,8 @@
 # Release History
 
+## Unreleased
+- Add an internal `ErrorCategory` type and category constants in `internal/errors` as the first step of enriching telemetry error classification (PECOBLR-3537). No behavior change yet: the type is not read or attached anywhere in this change (databricks/databricks-sql-go#XXXX)
+
 ## v1.14.0 (2026-07-13)
 - **Minimum Go version is now 1.25.0** (previously 1.20): the `go` directive was raised to 1.25.0 while clearing OSV-Scanner findings and updating dependencies. Consumers building with an older toolchain will need to upgrade Go (databricks/databricks-sql-go#368)
 - Fix panic in `InitThriftClient` when the endpoint URL is malformed: the thrift transport was type-asserted to `*thrift.THttpClient` before the error from `NewTHttpClientWithOptions` was checked, so a URL that fails to parse (nil transport) caused `interface conversion: thrift.TTransport is nil, not *thrift.THttpClient`; the error is now returned instead (databricks/databricks-sql-go#394)
