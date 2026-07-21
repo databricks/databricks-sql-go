@@ -26,7 +26,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"database/sql"
 	"encoding/pem"
 	"math/big"
 	"net"
@@ -154,62 +153,53 @@ func startTLSProbe(t *testing.T, serverCert tls.Certificate, clientCAs *x509.Cer
 	return p
 }
 
-// runKernelConnect opens a kernel-backed connection to host and drives a query in a
-// goroutine to force the TLS handshake. It returns as soon as onReached() reports
-// the outcome is decided (the handshake succeeded, observed via the probe) OR the
-// query returns on its own OR settle elapses — whichever first — then cancels the
-// query. This avoids waiting out the kernel's connect-retry budget on the negative
-// (handshake-should-fail) cases. It does not assert; the caller inspects the probe.
-func runKernelConnect(t *testing.T, host string, settle time.Duration, onReached func() bool, extra ...ConnOption) {
+// runKernelConnect makes ONE synchronous kernel-backed connect to host to force the
+// TLS handshake, then returns. It does not assert; the caller inspects the probe
+// (which records, as a side effect of the handshake, whether its handler was reached
+// and whether a client cert was presented).
+//
+// It drives the connect directly through driver.Connector.Connect rather than
+// sql.OpenDB + a query, deliberately: database/sql's background connectionOpener
+// would spawn a connect goroutine this function does not own and db.Close() does not
+// synchronously drain. Because kernel_session_open is a blocking cgo call that cannot
+// observe a Go ctx cancel mid-call, such a connect can still be in flight — writing
+// kernel debug logs — after the test returns and `go test` has closed the test pipe,
+// which surfaces as a "signal: broken pipe" package failure. A single synchronous
+// Connect has no background opener: when it returns, the connect is complete and
+// nothing lingers. The connect chain exercised (Connect → newKernelBackend →
+// OpenSession → applyKernelTLS → the C-ABI TLS setters) is identical to the query
+// path, so the handshake — the property under test — is covered the same way.
+//
+// The connect itself always fails at the application layer (the httptest probe is not
+// a SEA endpoint), so Connect returns an error even on the positive cases; that is
+// expected and ignored. connectTimeout bounds the call as a safety net; WithRetries
+// disable keeps it to a single attempt so a handshake-should-fail case returns at once
+// rather than riding the kernel's default retry budget.
+func runKernelConnect(t *testing.T, host string, connectTimeout time.Duration, extra ...ConnOption) {
 	t.Helper()
 	opts := append([]ConnOption{
 		WithServerHostname(host),
 		WithHTTPPath("/sql/1.0/warehouses/hermetic"),
 		WithAccessToken("dapi-hermetic-placeholder"),
 		WithUseKernel(true),
-		// Disable connect retries (the WithRetries disable form, honored on the
-		// kernel path). These hermetic cases assert the TLS handshake OUTCOME, not
-		// retry behaviour, and the negative cases (handshake must fail) would
-		// otherwise ride the kernel's default retry budget (5 attempts, escalating
-		// backoff): kernel_session_open is a blocking cgo call that cannot observe
-		// the Go ctx cancel mid-retry, so the query goroutine would outlive the test
-		// by tens of seconds and write to the torn-down test pipe. A single attempt
-		// makes every case settle promptly.
+		// One attempt only (the WithRetries disable form, honored on the kernel
+		// path): these cases assert the handshake OUTCOME, not retry behaviour, so a
+		// failing handshake should return immediately instead of retrying.
 		WithRetries(-1, 0, 0),
 	}, extra...)
 	connector, err := NewConnector(opts...)
 	if err != nil {
 		t.Fatalf("NewConnector: %v", err)
 	}
-	db := sql.OpenDB(connector)
-	defer db.Close()
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), connectTimeout)
 	defer cancel()
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		var x int64
-		_ = db.QueryRowContext(ctx, "SELECT 1").Scan(&x)
-	}()
-
-	// Poll the decision signal frequently; bail (cancel) the instant it flips so a
-	// positive case finishes sub-second instead of riding the retry budget. On a
-	// negative case the signal never flips, so we wait out `settle` — long enough
-	// for at least one handshake attempt to complete-or-fail — then cancel.
-	deadline := time.Now().Add(settle)
-	for time.Now().Before(deadline) {
-		if onReached() {
-			break
-		}
-		select {
-		case <-done:
-			return
-		case <-time.After(20 * time.Millisecond):
-		}
+	// Synchronous: returns only when the connect (and thus the TLS handshake) is
+	// done. The error is expected (non-SEA endpoint) and irrelevant — the caller
+	// reads the probe for the handshake outcome.
+	if conn, err := connector.Connect(ctx); err == nil {
+		_ = conn.Close()
 	}
-	cancel()
-	<-done
 }
 
 // TestKernelMTLSHandshake proves WithKernelClientCertificate is forwarded and
@@ -225,7 +215,7 @@ func TestKernelMTLSHandshake(t *testing.T) {
 
 	t.Run("client cert forwarded -> handshake succeeds", func(t *testing.T) {
 		p := startTLSProbe(t, server.tlsCert, clientCAs, tls.RequireAndVerifyClientCert)
-		runKernelConnect(t, p.host(), 10*time.Second, p.reached.Load,
+		runKernelConnect(t, p.host(), 10*time.Second,
 			WithKernelTrustedCerts(caPEM),
 			WithKernelClientCertificate(client.certPEM, client.keyPEM),
 		)
@@ -241,7 +231,7 @@ func TestKernelMTLSHandshake(t *testing.T) {
 		p := startTLSProbe(t, server.tlsCert, clientCAs, tls.RequireAndVerifyClientCert)
 		// Trust the CA so the SERVER cert validates; present no client identity. The
 		// server demands one, so the handshake must fail before the handler runs.
-		runKernelConnect(t, p.host(), 3*time.Second, p.reached.Load,
+		runKernelConnect(t, p.host(), 3*time.Second,
 			WithKernelTrustedCerts(caPEM),
 		)
 		if p.reached.Load() {
@@ -258,7 +248,7 @@ func TestKernelCustomCATrust(t *testing.T) {
 
 	t.Run("CA trusted -> TLS validates", func(t *testing.T) {
 		p := startTLSProbe(t, server.tlsCert, nil, tls.NoClientCert)
-		runKernelConnect(t, p.host(), 10*time.Second, p.reached.Load,
+		runKernelConnect(t, p.host(), 10*time.Second,
 			WithKernelTrustedCerts(caPEM))
 		if !p.reached.Load() {
 			t.Fatal("handler not reached with the CA trusted — WithKernelTrustedCerts not forwarded")
@@ -268,7 +258,7 @@ func TestKernelCustomCATrust(t *testing.T) {
 	t.Run("CA untrusted -> TLS fails", func(t *testing.T) {
 		p := startTLSProbe(t, server.tlsCert, nil, tls.NoClientCert)
 		// No trusted certs: the private CA is unknown, so the chain must not validate.
-		runKernelConnect(t, p.host(), 3*time.Second, p.reached.Load)
+		runKernelConnect(t, p.host(), 3*time.Second)
 		if p.reached.Load() {
 			t.Error("handler reached without trusting the CA — an unknown issuer was accepted")
 		}
@@ -285,7 +275,7 @@ func TestKernelSkipHostnameVerify(t *testing.T) {
 
 	t.Run("wrong SAN, no skip -> hostname check fails", func(t *testing.T) {
 		p := startTLSProbe(t, wrongHost.tlsCert, nil, tls.NoClientCert)
-		runKernelConnect(t, p.host(), 3*time.Second, p.reached.Load,
+		runKernelConnect(t, p.host(), 3*time.Second,
 			WithKernelTrustedCerts(caPEM)) // chain trusted, but hostname won't match
 		if p.reached.Load() {
 			t.Error("handler reached despite a hostname mismatch and no skip — hostname verification not enforced")
@@ -294,7 +284,7 @@ func TestKernelSkipHostnameVerify(t *testing.T) {
 
 	t.Run("wrong SAN, skip on -> handshake succeeds", func(t *testing.T) {
 		p := startTLSProbe(t, wrongHost.tlsCert, nil, tls.NoClientCert)
-		runKernelConnect(t, p.host(), 10*time.Second, p.reached.Load,
+		runKernelConnect(t, p.host(), 10*time.Second,
 			WithKernelTrustedCerts(caPEM), WithKernelSkipHostnameVerify())
 		if !p.reached.Load() {
 			t.Fatal("handler not reached with hostname-skip on — WithKernelSkipHostnameVerify not forwarded")
