@@ -10,6 +10,7 @@ import (
 	"errors"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/databricks/databricks-sql-go/driverctx"
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
@@ -71,6 +72,63 @@ func TestSetKernelTLS(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			if err := trySetKernelTLS(c.cfg); err != nil {
 				t.Errorf("applyKernelTLS(%s) = %v, want nil", c.name, err)
+			}
+		})
+	}
+}
+
+// TestSetProxy exercises the real kernel_session_config_set_proxy cgo setter via
+// the trySetProxy seam across every field combination — proving the arg
+// marshalling and the NULL-for-empty handling of the optional username / password
+// / bypass_hosts args (newCStrOrNull). The "no proxy" case is a no-op (ProxyURL
+// empty). A failure here means the field→setter wiring or the C signature drifted.
+func TestSetProxy(t *testing.T) {
+	cases := []struct {
+		name string
+		cfg  Config
+	}{
+		{"url only", Config{ProxyURL: "http://proxy:3128"}},
+		{"url + credentials", Config{ProxyURL: "http://proxy:3128", ProxyUsername: "u", ProxyPassword: "p"}},
+		{"url + bypass", Config{ProxyURL: "http://proxy:3128", ProxyBypassHosts: "localhost,*.internal"}}, //nolint:gosec // G101: test literals, not real credentials
+		{"all fields", Config{ProxyURL: "http://proxy:3128", ProxyUsername: "u", ProxyPassword: "p", ProxyBypassHosts: "localhost,*.internal"}}, //nolint:gosec // G101: test literals, not real credentials
+		{"none (no-op)", Config{}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if err := trySetProxy(c.cfg); err != nil {
+				t.Errorf("applyProxy(%s) = %v, want nil", c.name, err)
+			}
+		})
+	}
+}
+
+// TestSetRetry exercises the real kernel_session_config_set_retry_config cgo setter
+// via the trySetRetry seam: a valid range succeeds (incl. the disable form,
+// MaxRetries=0, and a non-zero overall budget), and a degenerate range (min=0 or
+// max<min) is rejected by the kernel as InvalidArgument. A no-op when Config.Retry
+// is nil. Proves the 4-arg marshalling and the C signature.
+func TestSetRetry(t *testing.T) {
+	cases := []struct {
+		name    string
+		cfg     Config
+		wantErr bool
+	}{
+		{"tuned", Config{Retry: &RetryConfig{MinWait: 500 * time.Millisecond, MaxWait: 30 * time.Second, MaxRetries: 6}}, false},
+		{"disable (0 retries)", Config{Retry: &RetryConfig{MinWait: time.Second, MaxWait: 30 * time.Second, MaxRetries: 0}}, false},
+		{"with overall budget", Config{Retry: &RetryConfig{MinWait: time.Second, MaxWait: 30 * time.Second, MaxRetries: 4, OverallTimeout: 5 * time.Minute}}, false},
+		{"none (no-op)", Config{}, false},
+		// The kernel setter rejects a degenerate range: min==0 and max<min.
+		{"min zero rejected", Config{Retry: &RetryConfig{MinWait: 0, MaxWait: time.Second, MaxRetries: 3}}, true},
+		{"max below min rejected", Config{Retry: &RetryConfig{MinWait: 5 * time.Second, MaxWait: time.Second, MaxRetries: 3}}, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := trySetRetry(c.cfg)
+			if c.wantErr && err == nil {
+				t.Errorf("applyRetry(%s) = nil, want an InvalidArgument error", c.name)
+			}
+			if !c.wantErr && err != nil {
+				t.Errorf("applyRetry(%s) = %v, want nil", c.name, err)
 			}
 		})
 	}

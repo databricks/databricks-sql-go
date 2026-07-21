@@ -45,14 +45,16 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 	if c.cfg.UseKernel {
 		be, err = newKernelBackend(ctx, c.cfg)
 	} else {
-		// The experimental WithKernel* TLS options have no Thrift-path equivalent —
-		// reject them loudly rather than silently ignore, so a caller who sets a
-		// trusted-CA bundle / an independent hostname skip and forgets WithUseKernel
-		// learns the option had no effect instead of connecting with a
-		// weaker-than-intended (or unconfigured) TLS trust store.
+		// The experimental WithKernel* options have no Thrift-path equivalent — reject
+		// them loudly rather than silently ignore, so a caller who sets one (a
+		// trusted-CA bundle, a hostname-verify skip, a proxy, a retry budget, or a
+		// CloudFetch chunk cap) and forgets WithUseKernel learns the option had no
+		// effect instead of connecting as if it were never set. Every WithKernel*
+		// option allocates KernelExperimental, so this one gate covers them all; the
+		// message names the family rather than a stale subset that drifts as options
+		// are added.
 		if c.cfg.KernelExperimental != nil {
-			return nil, fmt.Errorf("databricks: a WithKernel* option "+
-				"(WithKernelTrustedCerts / WithKernelSkipHostnameVerify) %w; "+
+			return nil, fmt.Errorf("databricks: a WithKernel* option %w; "+
 				"add WithUseKernel(true) or remove it", dbsqlerr.ErrRequiresKernelBackend)
 		}
 		be, err = thrift.New(ctx, c.cfg, c.client)
@@ -97,6 +99,15 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 	if conn.telemetry != nil {
 		log.Debug().Msg("telemetry initialized for connection")
 		conn.telemetry.RecordOperation(ctx, conn.id, "", telemetry.OperationTypeCreateSession, sessionLatencyMs, nil)
+		// Connection-configuration telemetry on the kernel path only, so the
+		// default (Thrift) path's emitted telemetry stays byte-identical (the
+		// Thrift path has never populated DriverConnectionParameters). Emits mode /
+		// auth mech+flow / proxy / arrow / query-tags / metric-view for the
+		// just-opened session. Gated on the kernel backend, not just WithUseKernel,
+		// so it never fires when the kernel wasn't actually selected.
+		if _, ok := be.(*thrift.Backend); !ok {
+			conn.telemetry.RecordConnectionConfig(ctx, conn.id, kernelConnectionTelemetry(c.cfg))
+		}
 	}
 
 	// ServerProtocolVersion is Thrift-specific (not on the neutral backend
@@ -601,5 +612,87 @@ func WithKernelTrustedCerts(pem []byte) ConnOption {
 func WithKernelSkipHostnameVerify() ConnOption {
 	return func(c *config.Config) {
 		kernelExperimental(c).TLSSkipHostnameVerify = true
+	}
+}
+
+// KernelProxy is the explicit-proxy configuration for WithKernelProxy. Its fields
+// are named so a call site can't transpose the credentials — the four values are
+// all strings, so a positional signature would let a Username/Password swap (or a
+// misplaced BypassHosts) compile cleanly and fail only at runtime with wrong proxy
+// credentials.
+type KernelProxy struct {
+	// URL is the proxy URL (e.g. "http://proxy.internal:3128"). Required; empty is a
+	// no-op, leaving the environment-derived proxy (if any) in effect.
+	URL string
+	// Username / Password are optional out-of-band basic-auth credentials, supplied
+	// here rather than embedded in the URL userinfo. Empty means unset.
+	Username string
+	Password string
+	// BypassHosts is an optional comma-separated no-proxy host list. NO_PROXY is
+	// consumed during environment resolution and not forwarded to the kernel, so this
+	// is the only way to give the kernel a structured bypass list. Empty means unset.
+	BypassHosts string
+}
+
+// WithKernelProxy configures an explicit HTTP proxy for the kernel backend, with
+// optional out-of-band basic-auth credentials and a comma-separated bypass
+// (no-proxy) host list. It overrides the HTTP(S)_PROXY / NO_PROXY environment the
+// kernel path otherwise mirrors from the Thrift path.
+//
+// Use this instead of the proxy environment when you need the "advanced" fields
+// the env-var path can't express: a structured bypass list (NO_PROXY is consumed
+// during environment resolution, not forwarded to the kernel) or basic-auth
+// credentials supplied out of band rather than embedded in the URL userinfo.
+// KernelProxy.Username / Password / BypassHosts may be empty (passed to the kernel
+// as NULL, i.e. unset). An empty KernelProxy.URL is a no-op — the environment-derived
+// proxy, if any, stays in effect. A malformed URL is rejected at connect
+// (errors.Is ErrInvalidKernelConfig).
+//
+// An explicit WithKernelProxy takes precedence over the environment: consulting
+// both would be ambiguous, and an explicit proxy is a deliberate override.
+//
+// EXPERIMENTAL, kernel-only: the default (Thrift) backend rejects this at connect.
+func WithKernelProxy(p KernelProxy) ConnOption {
+	return func(c *config.Config) {
+		ke := kernelExperimental(c)
+		ke.ProxyURL = p.URL
+		ke.ProxyUsername = p.Username
+		ke.ProxyPassword = p.Password
+		ke.ProxyBypassHosts = p.BypassHosts
+	}
+}
+
+// WithKernelRetryOverallTimeout sets the cumulative retry budget across all
+// attempts on the kernel backend — the total time the kernel may spend retrying a
+// single logical request before giving up. This is the 4th retry knob, alongside
+// the backoff bounds and max attempts carried by the backend-neutral WithRetries
+// (RetryWaitMin / RetryWaitMax / RetryMax, which the kernel path also honors).
+//
+// It is a kernel-only option because the Thrift-path WithRetries surface has no
+// overall-budget equivalent; it mirrors the pyo3/napi retry_overall_timeout knob.
+// Zero (the default) keeps the kernel's built-in budget (900s).
+//
+// EXPERIMENTAL, kernel-only: the default (Thrift) backend rejects this at connect.
+func WithKernelRetryOverallTimeout(d time.Duration) ConnOption {
+	return func(c *config.Config) {
+		kernelExperimental(c).RetryOverallTimeout = d
+	}
+}
+
+// WithKernelMaxChunksInMemory bounds how many decompressed CloudFetch chunks the
+// kernel holds in memory at once on the kernel backend — the knob that trades
+// large-result throughput for peak RSS. Lower it (e.g. 4) to cap memory on wide,
+// row-heavy result sets; raise it for more download parallelism at higher memory.
+// A value <= 0 (the default) leaves the kernel's built-in default (16) in place.
+//
+// It is forwarded as the kernel's client-only "cloudfetch_max_chunks_in_memory"
+// session conf, which the kernel applies to its result config and strips before
+// the SEA wire — so it never reaches the server.
+//
+// EXPERIMENTAL, kernel-only: the default (Thrift) backend has no in-memory-chunk
+// knob and rejects this at connect.
+func WithKernelMaxChunksInMemory(n int) ConnOption {
+	return func(c *config.Config) {
+		kernelExperimental(c).MaxChunksInMemory = n
 	}
 }
