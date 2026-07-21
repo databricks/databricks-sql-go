@@ -2,6 +2,8 @@ package errors
 
 import (
 	"context"
+	stderrors "errors"
+	"fmt"
 	"testing"
 
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
@@ -33,11 +35,20 @@ func TestCategoryFromError(t *testing.T) {
 		assert.Equal(t, CategoryResultSet, CategoryFromError(wrapped))
 	})
 
-	t.Run("outermost non-empty category wins", func(t *testing.T) {
+	t.Run("innermost (source) category wins over an outer tag", func(t *testing.T) {
+		// Pins innermost-wins: a future outer-wrapper tag must not mask the source.
 		inner := NewRequestError(context.TODO(), "inner", errors.New("cause")).
 			WithCategory(CategoryResultSet)
 		outer := NewDriverError(context.TODO(), "outer", inner).
 			WithCategory(CategoryChunkDownload)
+		assert.Equal(t, CategoryResultSet, CategoryFromError(outer))
+	})
+
+	t.Run("a generic outer tag does not mask a specific inner one", func(t *testing.T) {
+		inner := NewRequestError(context.TODO(), "inner", errors.New("cause")).
+			WithCategory(CategoryChunkDownload)
+		outer := NewDriverError(context.TODO(), "outer", inner).
+			WithCategory(CategoryGeneric)
 		assert.Equal(t, CategoryChunkDownload, CategoryFromError(outer))
 	})
 
@@ -47,6 +58,58 @@ func TestCategoryFromError(t *testing.T) {
 		outer := NewExecutionError(context.TODO(), "outer", inner, nil)
 		assert.Equal(t, CategoryResultSet, CategoryFromError(outer))
 	})
+
+	t.Run("finds the tag through a fmt.Errorf %w wrapper", func(t *testing.T) {
+		inner := NewRequestError(context.TODO(), "inner", errors.New("cause")).
+			WithCategory(CategoryResultSet)
+		wrapped := fmt.Errorf("outer: %w", inner)
+		assert.Equal(t, CategoryResultSet, CategoryFromError(wrapped))
+	})
+
+	t.Run("finds the tag inside a tree-shaped chain", func(t *testing.T) {
+		inner := NewRequestError(context.TODO(), "inner", errors.New("cause")).
+			WithCategory(CategoryResultSet)
+		joined := stderrors.Join(errors.New("sibling"), inner)
+		assert.Equal(t, CategoryResultSet, CategoryFromError(joined))
+
+		multiWrap := fmt.Errorf("a: %w, b: %w", errors.New("sibling"), inner)
+		assert.Equal(t, CategoryResultSet, CategoryFromError(multiWrap))
+	})
+}
+
+// TestCategoryStringValues pins every category to its exact wire string (a
+// dashboard dimension) so a typo fails the build instead of shipping silently.
+func TestCategoryStringValues(t *testing.T) {
+	cases := []struct {
+		category ErrorCategory
+		want     string
+	}{
+		{CategoryTimeout, "timeout"},
+		{CategoryCancelled, "cancelled"},
+		{CategoryConnectionError, "connection_error"},
+		{CategoryAuthError, "auth_error"},
+		{CategoryPermissionError, "permission_error"},
+		{CategoryNotFound, "not_found"},
+		{CategorySyntaxError, "syntax_error"},
+		{CategoryInvalidRequest, "invalid_request"},
+		{CategoryGeneric, "error"},
+		{CategoryChunkDownload, "chunk_download_error"},
+		{CategoryDecompression, "decompression_error"},
+		{CategoryArrowSchemaParsing, "arrow_schema_parsing_error"},
+		{CategoryResultSet, "result_set_error"},
+		{CategoryUnsupportedOperation, "unsupported_operation"},
+		{CategoryRateLimitExceeded, "rate_limit_exceeded"},
+		{CategorySSLHandshake, "ssl_handshake_error"},
+		{CategoryStatementTimeout, "statement_execution_timeout"},
+		{CategoryExecuteStatement, "execute_statement_failed"},
+		{CategoryStatementCancelled, "execute_statement_cancelled"},
+		{CategorySessionClosed, "session_closed"},
+		{CategoryStatementClosed, "statement_closed"},
+	}
+	assert.Len(t, cases, 21, "every ErrorCategory constant must be pinned here")
+	for _, tc := range cases {
+		assert.Equal(t, tc.want, string(tc.category))
+	}
 }
 
 // WithCategory must not change the concrete type, so every public interface

@@ -59,30 +59,31 @@ func classifyError(err error) string {
 
 	errMsg := strings.ToLower(err.Error())
 
-	// Ordered patterns — first match wins, ensuring deterministic classification.
+	// Ordered patterns — first match wins. Emit the shared category constants
+	// so the wire strings live in one place.
 	patterns := []struct {
 		pattern   string
-		errorType string
+		errorType dbsqlerrint.ErrorCategory
 	}{
-		{"timeout", "timeout"},
-		{"context cancel", "cancelled"},
-		{"connection", "connection_error"},
-		{"authentication", "auth_error"},
-		{"unauthorized", "auth_error"},
-		{"forbidden", "permission_error"},
-		{"not found", "not_found"},
-		{"syntax", "syntax_error"},
-		{"invalid", "invalid_request"},
+		{"timeout", dbsqlerrint.CategoryTimeout},
+		{"context cancel", dbsqlerrint.CategoryCancelled},
+		{"connection", dbsqlerrint.CategoryConnectionError},
+		{"authentication", dbsqlerrint.CategoryAuthError},
+		{"unauthorized", dbsqlerrint.CategoryAuthError},
+		{"forbidden", dbsqlerrint.CategoryPermissionError},
+		{"not found", dbsqlerrint.CategoryNotFound},
+		{"syntax", dbsqlerrint.CategorySyntaxError},
+		{"invalid", dbsqlerrint.CategoryInvalidRequest},
 	}
 
 	for _, p := range patterns {
 		if strings.Contains(errMsg, p.pattern) {
-			return p.errorType
+			return string(p.errorType)
 		}
 	}
 
 	// Default to generic error
-	return "error"
+	return string(dbsqlerrint.CategoryGeneric)
 }
 
 // httpError represents an HTTP error with status code.

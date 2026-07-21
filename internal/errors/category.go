@@ -1,7 +1,5 @@
 package errors
 
-import "errors"
-
 // ErrorCategory is a source-declared classification for a driver error, so
 // telemetry can read the category directly instead of inferring it from the
 // error message.
@@ -11,17 +9,28 @@ type categorizer interface {
 	Category() ErrorCategory
 }
 
-// CategoryFromError returns the first non-empty category in the error chain.
-// It walks the chain rather than using errors.As because an untagged error can
-// wrap a tagged one, and errors.As would stop at the untagged outer error.
+// CategoryFromError returns the innermost (deepest) non-empty category in the
+// error chain, so a tag on an outer wrapper never masks the more specific one
+// at the source. Handles both single-error and tree-shaped (errors.Join /
+// multiple %w) Unwrap chains.
 func CategoryFromError(err error) ErrorCategory {
-	for err != nil {
-		if c, ok := err.(categorizer); ok {
-			if cat := c.Category(); cat != "" {
-				return cat
+	if err == nil {
+		return ""
+	}
+	switch x := err.(type) {
+	case interface{ Unwrap() error }:
+		if deeper := CategoryFromError(x.Unwrap()); deeper != "" {
+			return deeper
+		}
+	case interface{ Unwrap() []error }:
+		for _, e := range x.Unwrap() {
+			if deeper := CategoryFromError(e); deeper != "" {
+				return deeper
 			}
 		}
-		err = errors.Unwrap(err)
+	}
+	if c, ok := err.(categorizer); ok {
+		return c.Category()
 	}
 	return ""
 }

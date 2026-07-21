@@ -1,8 +1,7 @@
 # Release History
 
 ## Unreleased
-- Read a source-declared error category in telemetry error classification: `classifyError` now returns the category attached to an error (via `internal/errors.CategoryFromError`, which walks the error chain) and falls back to the existing message-matching only when none is set. No source sites are tagged yet, so classification output is unchanged (databricks/databricks-sql-go#415)
-- Add an internal `ErrorCategory` type and category constants in `internal/errors` for telemetry error classification. No behavior change: the type is not read or attached anywhere yet (databricks/databricks-sql-go#414)
+- Enrich telemetry error classification with source-declared error categories. No behavior change yet: the categories are defined and read by `classifyError` but not attached at any error source in this change (databricks/databricks-sql-go#414, #415)
 
 ## v1.14.0 (2026-07-13)
 - **Minimum Go version is now 1.25.0** (previously 1.20): the `go` directive was raised to 1.25.0 while clearing OSV-Scanner findings and updating dependencies. Consumers building with an older toolchain will need to upgrade Go (databricks/databricks-sql-go#368)
