@@ -91,6 +91,15 @@ type DriverConnectionParameters struct {
 	QueryTags            string       `json:"query_tags,omitempty"`
 	EnableMetricViewMeta bool         `json:"enable_metric_view_metadata,omitempty"`
 	SocketTimeout        int64        `json:"socket_timeout,omitempty"`
+	// Retry policy and CloudFetch memory cap resolved for the connection. Populated
+	// on the kernel path (the Thrift path leaves them zero for now); they surface
+	// what a customer actually configured so a hung-connect or large-result-OOM
+	// report can be diagnosed from telemetry, not just a debug log. RetryMaxAttempts
+	// / RetryOverallTimeoutMs zero means the backend default is in effect;
+	// MaxChunksInMemory zero means the kernel default (16).
+	RetryMaxAttempts      int32 `json:"retry_max_attempts,omitempty"`
+	RetryOverallTimeoutMs int64 `json:"retry_overall_timeout_ms,omitempty"`
+	MaxChunksInMemory     int32 `json:"max_chunks_in_memory,omitempty"`
 }
 
 // SQLExecutionEvent maps to SqlExecutionEvent in the proto schema.
@@ -216,6 +225,15 @@ func createTelemetryRequest(metrics []*telemetryMetric, driverVersion string) (*
 			frontendLog.Entry.SQLDriverLog.ErrorInfo = &DriverErrorInfo{
 				ErrorName: metric.errorType,
 			}
+		}
+
+		// Add connection-configuration params if present (a "connection" metric).
+		// Only set when populated, so a statement/operation/error metric — which
+		// leaves connParams nil — serializes exactly as before. AuthType mirrors the
+		// AuthMech onto the top-level event field the schema also carries.
+		if metric.connParams != nil {
+			frontendLog.Entry.SQLDriverLog.DriverConnectionParameters = metric.connParams
+			frontendLog.Entry.SQLDriverLog.AuthType = metric.connParams.AuthMech
 		}
 
 		jsonBytes, err := json.Marshal(frontendLog)

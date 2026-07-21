@@ -82,6 +82,15 @@ var ErrKernelNotCompiled error = errors.New("the SEA-via-kernel backend is not c
 // the case programmatically instead of matching on message text.
 var ErrRequiresKernelBackend error = errors.New("requires the SEA-via-kernel backend")
 
+// value to be used with errors.Is() to determine that a kernel-backend option was
+// itself malformed (e.g. a WithKernelProxy URL that does not parse) — as opposed to
+// unsupported (ErrNotSupportedByKernel) or a transient connect failure. The kernel
+// path validates such options in the Go layer before handing them to the kernel's C
+// ABI, where the failure would otherwise surface as an opaque wrapped string a
+// caller can't branch on. Lets a caller distinguish "fix your config" from a
+// retryable error instead of matching on message text.
+var ErrInvalidKernelConfig error = errors.New("invalid kernel backend configuration")
+
 // Base interface for driver errors
 type DBError interface {
 	// Descriptive message describing the error

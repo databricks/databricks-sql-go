@@ -381,10 +381,21 @@ func (r *rows) ColumnTypeLength(index int) (length int64, ok bool) {
 	if err != nil {
 		return 0, false
 	}
+	return columnTypeLengthForID(rowscanner.GetDBTypeID(columnInfo))
+}
 
-	typeName := rowscanner.GetDBTypeID(columnInfo)
-
-	switch typeName {
+// columnTypeLengthForID is the variable-length classification behind
+// ColumnTypeLength, factored out of the method (which needs a live *rows and a
+// server round-trip to reach it) so the exact rule can be reused verbatim — in
+// particular by the pure-Go coltype parity guard (TestColumnTypeInfoMatchesThriftMapping),
+// which asserts the kernel path's arrowscan mapping against this same classifier
+// rather than a hand-copied replica that could drift with it.
+//
+// Variable-length types (string/varchar/binary and the nested array/map/struct)
+// report an unbounded length (math.MaxInt64); every fixed-width type reports
+// (0, false).
+func columnTypeLengthForID(id cli_service.TTypeId) (length int64, ok bool) {
+	switch id {
 	case cli_service.TTypeId_STRING_TYPE,
 		cli_service.TTypeId_VARCHAR_TYPE,
 		cli_service.TTypeId_BINARY_TYPE,

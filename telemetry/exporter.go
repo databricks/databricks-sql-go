@@ -42,6 +42,12 @@ type telemetryMetric struct {
 	latencyMs   int64
 	errorType   string
 	tags        map[string]interface{}
+	// connParams carries connection-configuration telemetry (a "connection"
+	// metric). nil for every statement/operation/error metric, so a metric that
+	// does not set it serializes byte-identically to before (see
+	// createTelemetryRequest). Populated by Interceptor.RecordConnectionConfig on
+	// the kernel connect path.
+	connParams *DriverConnectionParameters
 }
 
 // ensureHTTPScheme adds https:// prefix to host if no scheme is present.

@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/databricks/databricks-sql-go/internal/config"
 
@@ -32,6 +34,12 @@ var kernelExperimentalFieldDisposition = map[string]string{
 	"TLSClientCertPEM":        "forwarded",       // set_tls_client_certificate (cert half)
 	"TLSClientKeyPEM":         "forwarded",       // set_tls_client_certificate (key half)
 	"TLSClientCertConfigured": "validation-only", // consumed by validateKernelConfig; never forwarded
+	"ProxyURL":                "forwarded",       // set_proxy (url)
+	"ProxyUsername":           "forwarded",       // set_proxy (username)
+	"ProxyPassword":           "forwarded",       // set_proxy (password)
+	"ProxyBypassHosts":        "forwarded",       // set_proxy (bypass_hosts)
+	"RetryOverallTimeout":     "forwarded",       // set_retry_config (overall_timeout_ms, 4th knob)
+	"MaxChunksInMemory":       "forwarded",       // set_session_conf (cloudfetch_max_chunks_in_memory, client-only)
 }
 
 func TestKernelExperimentalFieldsClassified(t *testing.T) {
@@ -80,6 +88,16 @@ func TestWithKernelTLSOptionsSetExperimental(t *testing.T) {
 			// than fail open (connect with no client identity).
 			return k.TLSClientCertConfigured && len(k.TLSClientCertPEM) == 0 && len(k.TLSClientKeyPEM) == 0
 		}},
+		{"proxy", WithKernelProxy(KernelProxy{URL: "http://proxy:3128", Username: "u", Password: "p", BypassHosts: "*.internal"}), func(k *config.KernelExperimentalConfig) bool {
+			return k.ProxyURL == "http://proxy:3128" && k.ProxyUsername == "u" &&
+				k.ProxyPassword == "p" && k.ProxyBypassHosts == "*.internal"
+		}},
+		{"retry overall timeout", WithKernelRetryOverallTimeout(5 * time.Minute), func(k *config.KernelExperimentalConfig) bool {
+			return k.RetryOverallTimeout == 5*time.Minute
+		}},
+		{"max chunks in memory", WithKernelMaxChunksInMemory(4), func(k *config.KernelExperimentalConfig) bool {
+			return k.MaxChunksInMemory == 4
+		}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -110,6 +128,9 @@ func TestWithKernelOptionsRejectedOnThriftPath(t *testing.T) {
 		{"trusted certs", WithKernelTrustedCerts([]byte("ca"))},
 		{"skip hostname", WithKernelSkipHostnameVerify()},
 		{"client certificate", WithKernelClientCertificate([]byte("cert"), []byte("key"))},
+		{"proxy", WithKernelProxy(KernelProxy{URL: "http://proxy:3128"})},
+		{"retry overall timeout", WithKernelRetryOverallTimeout(5 * time.Minute)},
+		{"max chunks in memory", WithKernelMaxChunksInMemory(4)},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -124,10 +145,21 @@ func TestWithKernelOptionsRejectedOnThriftPath(t *testing.T) {
 				t.Fatalf("NewConnector: %v", err)
 			}
 			// No WithUseKernel — the Thrift path must reject the kernel-only option.
-			if _, err = c.Connect(context.Background()); err == nil {
+			_, err = c.Connect(context.Background())
+			if err == nil {
 				t.Fatal("Connect should reject a WithKernel* option on the Thrift path, got nil")
-			} else if !errors.Is(err, dbsqlerr.ErrRequiresKernelBackend) {
+			}
+			if !errors.Is(err, dbsqlerr.ErrRequiresKernelBackend) {
 				t.Errorf("error should wrap ErrRequiresKernelBackend; got: %v", err)
+			}
+			// The message must name the WithKernel* family generically, not a stale
+			// subset (it used to hardcode the two TLS options, misdirecting a caller who
+			// set proxy / retry / chunk options). Guard against that regression.
+			if msg := err.Error(); !strings.Contains(msg, "WithKernel* option") {
+				t.Errorf("rejection message should name the WithKernel* family; got: %q", msg)
+			}
+			if msg := err.Error(); strings.Contains(msg, "WithKernelTrustedCerts") || strings.Contains(msg, "WithKernelSkipHostnameVerify") {
+				t.Errorf("rejection message should not name a stale option subset; got: %q", msg)
 			}
 		})
 	}
@@ -163,6 +195,12 @@ func TestKernelExperimentalDeepCopy(t *testing.T) {
 		TLSClientCertPEM:        []byte("cert-pem"),
 		TLSClientKeyPEM:         []byte("key-pem"),
 		TLSClientCertConfigured: true,
+		ProxyURL:                "http://proxy:3128",
+		ProxyUsername:           "u",
+		ProxyPassword:           "p",
+		ProxyBypassHosts:        "*.internal",
+		RetryOverallTimeout:     5 * time.Minute,
+		MaxChunksInMemory:       4,
 	}
 	cp := orig.DeepCopy()
 	if cp == nil || string(cp.TLSTrustedCertsPEM) != "ca-bundle" || !cp.TLSSkipHostnameVerify {
@@ -173,6 +211,16 @@ func TestKernelExperimentalDeepCopy(t *testing.T) {
 	}
 	if !cp.TLSClientCertConfigured {
 		t.Fatalf("DeepCopy lost the TLSClientCertConfigured marker: %+v", cp)
+	}
+	if cp.ProxyURL != "http://proxy:3128" || cp.ProxyUsername != "u" ||
+		cp.ProxyPassword != "p" || cp.ProxyBypassHosts != "*.internal" {
+		t.Errorf("DeepCopy lost proxy fields: %+v", cp)
+	}
+	if cp.RetryOverallTimeout != 5*time.Minute {
+		t.Errorf("DeepCopy lost RetryOverallTimeout: %v", cp.RetryOverallTimeout)
+	}
+	if cp.MaxChunksInMemory != 4 {
+		t.Errorf("DeepCopy lost MaxChunksInMemory: %v", cp.MaxChunksInMemory)
 	}
 	cp.TLSTrustedCertsPEM[0] = 'X'
 	if orig.TLSTrustedCertsPEM[0] == 'X' {

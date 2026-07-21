@@ -93,6 +93,37 @@ type KernelExperimentalConfig struct {
 	// validateKernelConfig uses this marker to reject an incomplete mTLS request
 	// loudly instead of failing open. Never forwarded to the kernel C ABI.
 	TLSClientCertConfigured bool
+
+	// ProxyURL / ProxyUsername / ProxyPassword / ProxyBypassHosts configure an
+	// explicit HTTP proxy on the kernel path (WithKernelProxy), overriding the
+	// HTTP(S)_PROXY / NO_PROXY environment the driver otherwise mirrors. The
+	// credentials and bypass list are the "advanced" fields the env-var path
+	// can't express (a structured no-proxy list, out-of-band basic auth). Empty
+	// ProxyURL leaves the environment-derived proxy in effect. Maps to
+	// kernel_session_config_set_proxy(url, username, password, bypass_hosts).
+	ProxyURL         string
+	ProxyUsername    string
+	ProxyPassword    string
+	ProxyBypassHosts string
+
+	// RetryOverallTimeout is the cumulative retry budget across all attempts on
+	// the kernel path (WithKernelRetryOverallTimeout). Zero = keep the kernel
+	// default (900s). WithRetries only carries the per-attempt backoff bounds +
+	// max attempts (mirroring the Thrift RetryWaitMin/Max/RetryMax surface); the
+	// overall budget is a kernel-only knob the Thrift path has no equivalent for,
+	// so it lives here and maps to the 4th arg of
+	// kernel_session_config_set_retry_config (matching the pyo3/napi
+	// retry_overall_timeout knob).
+	RetryOverallTimeout time.Duration
+
+	// MaxChunksInMemory bounds how many decompressed CloudFetch chunks the kernel
+	// holds in memory at once (WithKernelMaxChunksInMemory) — the knob that trades
+	// throughput for peak RSS on large result sets. Zero = keep the kernel default
+	// (16). A positive value is forwarded as the client-only
+	// "cloudfetch_max_chunks_in_memory" session conf, which the kernel folds into
+	// its result config and strips before the SEA wire; it is kernel-only because
+	// the Thrift path has no such in-memory-chunk knob.
+	MaxChunksInMemory int
 }
 
 // DeepCopy returns a deep copy of the experimental config, or nil for a nil
@@ -105,6 +136,12 @@ func (k *KernelExperimentalConfig) DeepCopy() *KernelExperimentalConfig {
 	cp := &KernelExperimentalConfig{
 		TLSSkipHostnameVerify:   k.TLSSkipHostnameVerify,
 		TLSClientCertConfigured: k.TLSClientCertConfigured,
+		ProxyURL:                k.ProxyURL,
+		ProxyUsername:           k.ProxyUsername,
+		ProxyPassword:           k.ProxyPassword,
+		ProxyBypassHosts:        k.ProxyBypassHosts,
+		RetryOverallTimeout:     k.RetryOverallTimeout,
+		MaxChunksInMemory:       k.MaxChunksInMemory,
 	}
 	if k.TLSTrustedCertsPEM != nil {
 		cp.TLSTrustedCertsPEM = append([]byte(nil), k.TLSTrustedCertsPEM...)
@@ -125,6 +162,15 @@ func (k *KernelExperimentalConfig) DeepCopy() *KernelExperimentalConfig {
 // backends send the identical key/value. Defined once here so no backend hardcodes
 // the literal (see EffectiveSessionParams).
 const MetricViewMetadataConfKey = "spark.sql.thriftserver.metadata.metricview.enabled"
+
+// KernelMaxChunksInMemoryConfKey is the CLIENT-only session conf the kernel reads
+// to bound how many decompressed CloudFetch chunks it holds in memory
+// (WithKernelMaxChunksInMemory). Unlike MetricViewMetadataConfKey this is NOT a
+// server SET parameter and is NOT added by EffectiveSessionParams: the kernel
+// backend injects it into its own SessionConf only, and the kernel strips it
+// before the SEA wire (it is absent from the kernel's server allowlist). It must
+// match the key the kernel's apply_client_result_overrides looks for.
+const KernelMaxChunksInMemoryConfKey = "cloudfetch_max_chunks_in_memory"
 
 // EffectiveSessionParams returns the session confs to send to the server: the
 // user-supplied SessionParams plus any conf derived from a higher-level option

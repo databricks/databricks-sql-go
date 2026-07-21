@@ -108,7 +108,6 @@ func TestValidateKernelConfig(t *testing.T) {
 		mut  func(*config.Config)
 	}{
 		{"query timeout", func(c *config.Config) { c.QueryTimeout = 30 * time.Second }},
-		{"disable retries", func(c *config.Config) { c.RetryMax = -1 }},
 		{"non-https protocol", func(c *config.Config) { c.Protocol = "http" }},
 		{"non-default port", func(c *config.Config) { c.Port = 8443 }},
 		{"custom transport", func(c *config.Config) { c.Transport = http.DefaultTransport }},
@@ -297,10 +296,50 @@ func TestValidateKernelConfig(t *testing.T) {
 		}
 	})
 
+	t.Run("disable retries (WithRetries(-1)) accepted", func(t *testing.T) {
+		// The disable form (RetryMax < 0) maps to zero kernel retries via the
+		// retry-config setter, so it validates rather than erroring.
+		c := baseKernelConfig()
+		c.RetryMax = -1
+		if _, err := validateKernelConfig(c); err != nil {
+			t.Errorf("WithRetries(-1) (disable) should validate, got %v", err)
+		}
+	})
+
 	t.Run("default https/443 accepted", func(t *testing.T) {
 		c := baseKernelConfig() // WithDefaults sets Protocol=https, Port=443
 		if _, err := validateKernelConfig(c); err != nil {
 			t.Errorf("the default https/443 endpoint should validate, got %v", err)
+		}
+	})
+
+	t.Run("valid WithKernelProxy URL accepted", func(t *testing.T) {
+		c := baseKernelConfig()
+		WithKernelProxy(KernelProxy{URL: "http://proxy.internal:3128", Username: "u", Password: "p", BypassHosts: "*.internal"})(c)
+		if _, err := validateKernelConfig(c); err != nil {
+			t.Errorf("a well-formed proxy URL should validate, got %v", err)
+		}
+	})
+
+	t.Run("malformed WithKernelProxy URL rejected as ErrInvalidKernelConfig", func(t *testing.T) {
+		// A malformed URL must be caught in the Go layer with an errors.Is-able
+		// config error, not surface as an opaque "kernel: set_proxy: …" wrap at
+		// connect (or, worse, a URL missing a scheme/host that the C ABI can't use).
+		for _, tc := range []struct {
+			name, proxyURL string
+		}{
+			{"control chars", "http://a\x7f:3128"}, // url.Parse returns an error
+			{"no scheme or host", "proxy:3128"},    // parses, but unusable shape
+			{"scheme only", "http://"},             // parses, empty host
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				c := baseKernelConfig()
+				WithKernelProxy(KernelProxy{URL: tc.proxyURL})(c)
+				_, err := validateKernelConfig(c)
+				if !errors.Is(err, dbsqlerr.ErrInvalidKernelConfig) {
+					t.Errorf("proxy URL %q should be rejected as ErrInvalidKernelConfig, got %v", tc.proxyURL, err)
+				}
+			})
 		}
 	})
 }
@@ -333,16 +372,19 @@ var kernelConfigFieldDisposition = map[string]string{
 
 	// Rejected loudly by validateKernelConfig.
 	"QueryTimeout": "rejected", // when > 0 (WithTimeout)
-	"RetryMax":     "rejected", // when < 0 (disable retries)
 	"Protocol":     "rejected", // kernel is https-only; non-default rejected
 	"Port":         "rejected", // kernel connects on 443; non-default rejected
 	"Transport":    "rejected", // custom RoundTripper; kernel uses its own HTTP stack, so reject rather than drop
 
+	// Forwarded to the kernel's HTTP retry config via kernelRetryConfig →
+	// set_retry_config (WithRetries: backoff bounds + max attempts, incl. disable).
+	"RetryMax":     "forwarded",
+	"RetryWaitMin": "forwarded",
+	"RetryWaitMax": "forwarded",
+
 	// Accepted but intentionally inert on the kernel path (documented in doc.go):
 	// the kernel manages these internally, below the C ABI, with no user knob.
 	"MaxRows":           "inert",
-	"RetryWaitMin":      "inert",
-	"RetryWaitMax":      "inert",
 	"UseLz4Compression": "inert", // kernel negotiates compression internally
 
 	// Not applicable to the kernel path (Thrift/HTTP-transport or telemetry knobs
@@ -477,6 +519,201 @@ func TestBuildKernelConfig(t *testing.T) {
 		}
 		if kc.Auth.Mode != kauth.Mode || kc.Auth.Token != kauth.Token {
 			t.Errorf("auth not forwarded: got %+v, want %+v", kc.Auth, kauth)
+		}
+	})
+
+	t.Run("MaxChunksInMemory injected into kernel SessionConf", func(t *testing.T) {
+		c := baseKernelConfig()
+		c.KernelExperimental = &config.KernelExperimentalConfig{MaxChunksInMemory: 4}
+		kc := buildKernelConfig(c, kernel.Auth{Mode: kernel.AuthPAT, Token: "dapi-x"})
+		if got := kc.SessionConf[config.KernelMaxChunksInMemoryConfKey]; got != "4" {
+			t.Errorf("SessionConf[%q] = %q, want %q", config.KernelMaxChunksInMemoryConfKey, got, "4")
+		}
+	})
+
+	t.Run("MaxChunksInMemory unset leaves the key absent (kernel default)", func(t *testing.T) {
+		c := baseKernelConfig() // KernelExperimental nil
+		kc := buildKernelConfig(c, kernel.Auth{Mode: kernel.AuthPAT, Token: "dapi-x"})
+		if _, ok := kc.SessionConf[config.KernelMaxChunksInMemoryConfKey]; ok {
+			t.Errorf("SessionConf should not carry %q when unset (kernel keeps its default)", config.KernelMaxChunksInMemoryConfKey)
+		}
+		// A zero/negative explicit value is also a no-op.
+		c.KernelExperimental = &config.KernelExperimentalConfig{MaxChunksInMemory: 0}
+		kc = buildKernelConfig(c, kernel.Auth{Mode: kernel.AuthPAT, Token: "dapi-x"})
+		if _, ok := kc.SessionConf[config.KernelMaxChunksInMemoryConfKey]; ok {
+			t.Errorf("SessionConf should not carry %q for a zero value", config.KernelMaxChunksInMemoryConfKey)
+		}
+	})
+
+	t.Run("MaxChunksInMemory is not leaked to the shared server params", func(t *testing.T) {
+		// The knob is kernel-only: it must NOT appear in EffectiveSessionParams
+		// (which the Thrift path also sends to the server).
+		c := baseKernelConfig()
+		c.KernelExperimental = &config.KernelExperimentalConfig{MaxChunksInMemory: 4}
+		if _, ok := c.EffectiveSessionParams()[config.KernelMaxChunksInMemoryConfKey]; ok {
+			t.Errorf("%q must not be in EffectiveSessionParams (kernel-only, not a server param)", config.KernelMaxChunksInMemoryConfKey)
+		}
+	})
+
+	t.Run("MaxChunksInMemory conf key matches the kernel's cross-repo contract", func(t *testing.T) {
+		// Unlike the sibling retry knob (a typed C setter whose signature drift is a
+		// link/compile error), this knob rides a stringly-typed session-conf key whose
+		// only consumer is the kernel's apply_client_result_overrides
+		// (CLIENT_CONF_CLOUDFETCH_MAX_CHUNKS in databricks-sql-kernel src/session.rs).
+		// There is no build-time coupling, so pin the exact literal here: an accidental
+		// edit to the Go constant fails in CGO_ENABLED=0 PR CI (not just the
+		// warehouse-gated nightly), and this test is the greppable anchor a kernel-side
+		// rename must update in lockstep.
+		const wantKey = "cloudfetch_max_chunks_in_memory"
+		if config.KernelMaxChunksInMemoryConfKey != wantKey {
+			t.Errorf("KernelMaxChunksInMemoryConfKey = %q, want %q — the kernel's "+
+				"apply_client_result_overrides reads this exact key; a mismatch silently "+
+				"no-ops the knob or leaks it to the server",
+				config.KernelMaxChunksInMemoryConfKey, wantKey)
+		}
+	})
+}
+
+// TestKernelRetryConfig covers the pure resolution of the driver's WithRetries
+// policy into the kernel retry descriptor: the defaults forward the connector's
+// positive backoff bounds + max attempts; the disable form maps to zero retries;
+// WithRetries(n, 0, 0) still forwards the caller's attempt count (with placeholder
+// waits) rather than silently dropping to the kernel default; a fully zero-value
+// range (a Config without WithDefaults and no attempt count) returns nil so a stray
+// zero can't fail the connect; and the kernel-only overall-timeout knob is read from
+// KernelExperimental. Runs in the default CGO_ENABLED=0 build.
+func TestKernelRetryConfig(t *testing.T) {
+	t.Run("defaults forward backoff + max attempts, no overall budget", func(t *testing.T) {
+		c := baseKernelConfig() // WithDefaults: RetryMax=4, RetryWaitMin=1s, RetryWaitMax=30s
+		r := kernelRetryConfig(c)
+		if r == nil {
+			t.Fatal("kernelRetryConfig returned nil for the default (positive) range")
+		}
+		if r.MinWait != time.Second || r.MaxWait != 30*time.Second || r.MaxRetries != 4 {
+			t.Errorf("resolved retry = %+v, want {1s, 30s, 4}", r)
+		}
+		if r.OverallTimeout != 0 {
+			t.Errorf("OverallTimeout = %v, want 0 (keep kernel default) when unset", r.OverallTimeout)
+		}
+	})
+
+	t.Run("disable form maps to zero retries", func(t *testing.T) {
+		c := baseKernelConfig()
+		c.RetryMax = -1 // WithRetries(-1) disable
+		r := kernelRetryConfig(c)
+		if r == nil {
+			t.Fatal("disable form should still forward a config (0 retries), got nil")
+		}
+		if r.MaxRetries != 0 {
+			t.Errorf("MaxRetries = %d, want 0 (disable maps to zero kernel retries)", r.MaxRetries)
+		}
+	})
+
+	t.Run("idiomatic disable WithRetries(-1,0,0) honored despite zero waits", func(t *testing.T) {
+		// The idiomatic disable zeroes the waits too. The resolver must still honor
+		// the disable (MaxRetries=0) and substitute a valid placeholder range so the
+		// kernel setter accepts it (it rejects min==0), rather than returning nil
+		// (which would leave the kernel's DEFAULT retry policy in place — not disabled).
+		c := baseKernelConfig()
+		c.RetryMax = -1
+		c.RetryWaitMin = 0
+		c.RetryWaitMax = 0
+		r := kernelRetryConfig(c)
+		if r == nil {
+			t.Fatal("WithRetries(-1,0,0) must forward a disable config, got nil (kernel default would apply — not disabled)")
+		}
+		if r.MaxRetries != 0 {
+			t.Errorf("MaxRetries = %d, want 0", r.MaxRetries)
+		}
+		if r.MinWait <= 0 || r.MaxWait < r.MinWait {
+			t.Errorf("placeholder waits = {%v, %v}, want a valid range the kernel setter accepts", r.MinWait, r.MaxWait)
+		}
+	})
+
+	t.Run("WithRetries(n,0,0) honors the attempt count despite zero waits", func(t *testing.T) {
+		// The regression this guards: WithDefaults() runs before options, so
+		// WithRetries(10, 0, 0) — valid per its godoc, which promises sane wait
+		// defaults — overwrites the waits to zero. The resolver must still forward the
+		// caller's RetryMax (with placeholder waits), not return nil (which would drop
+		// to the kernel's default policy and silently ignore the requested attempts).
+		c := baseKernelConfig()
+		WithRetries(10, 0, 0)(c)
+		r := kernelRetryConfig(c)
+		if r == nil {
+			t.Fatal("WithRetries(10,0,0) must forward the caller's RetryMax, got nil (kernel default would apply)")
+		}
+		if r.MaxRetries != 10 {
+			t.Errorf("MaxRetries = %d, want 10 (caller's attempt count honored)", r.MaxRetries)
+		}
+		if r.MinWait <= 0 || r.MaxWait < r.MinWait {
+			t.Errorf("placeholder waits = {%v, %v}, want a valid range the kernel setter accepts", r.MinWait, r.MaxWait)
+		}
+	})
+
+	t.Run("overall timeout forwarded from KernelExperimental", func(t *testing.T) {
+		c := baseKernelConfig()
+		WithKernelRetryOverallTimeout(5 * time.Minute)(c)
+		r := kernelRetryConfig(c)
+		if r == nil || r.OverallTimeout != 5*time.Minute {
+			t.Errorf("OverallTimeout not forwarded: %+v", r)
+		}
+	})
+
+	t.Run("zero-value range with no attempt count returns nil (keep kernel default)", func(t *testing.T) {
+		// A Config assembled without WithDefaults and no RetryMax: zero waits are a
+		// nonsense range the kernel setter would reject and there is no caller attempt
+		// count to preserve, so resolve to nil rather than fail connect.
+		c := &config.Config{UserConfig: config.UserConfig{RetryWaitMin: 0, RetryWaitMax: 0}}
+		if r := kernelRetryConfig(c); r != nil {
+			t.Errorf("zero-value range with RetryMax 0 should return nil, got %+v", r)
+		}
+	})
+
+	t.Run("overall budget forwarded even when retries are zeroed", func(t *testing.T) {
+		// The regression this guards: WithRetries(0,0,0) leaves RetryMax==0 and a
+		// degenerate wait range, but an explicit WithKernelRetryOverallTimeout must
+		// still reach the kernel. Returning nil here (the old behavior) discarded the
+		// caller's overall budget and left the kernel's 900s default — the exact
+		// "silently ignored option" failure the kernel gate was built to prevent.
+		c := baseKernelConfig()
+		WithRetries(0, 0, 0)(c)
+		WithKernelRetryOverallTimeout(5 * time.Minute)(c)
+		r := kernelRetryConfig(c)
+		if r == nil {
+			t.Fatal("overall budget with zeroed retries must forward a config, got nil (5m budget dropped, kernel default would apply)")
+		}
+		if r.OverallTimeout != 5*time.Minute {
+			t.Errorf("OverallTimeout = %v, want 5m (forwarded despite zero retries)", r.OverallTimeout)
+		}
+		if r.MaxRetries != 0 {
+			t.Errorf("MaxRetries = %d, want 0", r.MaxRetries)
+		}
+		if r.MinWait <= 0 || r.MaxWait < r.MinWait {
+			t.Errorf("placeholder waits = {%v, %v}, want a valid range the kernel setter accepts", r.MinWait, r.MaxWait)
+		}
+	})
+
+	t.Run("sub-millisecond waits are clamped up to a 1ms floor", func(t *testing.T) {
+		// The regression this guards: kernelRetryConfig validates waits in Duration
+		// space, but applyRetry forwards them via time.Duration.Milliseconds(). A valid
+		// wait in (0, 1ms) passes the guard yet truncates to min_wait_ms == 0, which the
+		// kernel setter rejects (InvalidArgument) — a connect failure the Thrift path,
+		// which accepts any Duration, does not have. The resolver must clamp up so the
+		// forwarded millisecond value stays > 0.
+		c := baseKernelConfig()
+		WithRetries(5, 999*time.Microsecond, 30*time.Second)(c)
+		r := kernelRetryConfig(c)
+		if r == nil {
+			t.Fatal("sub-ms MinWait should still resolve a config, got nil")
+		}
+		if r.MinWait.Milliseconds() < 1 {
+			t.Errorf("MinWait = %v (%d ms), want clamped to >= 1ms so the kernel setter accepts it", r.MinWait, r.MinWait.Milliseconds())
+		}
+		if r.MaxWait < r.MinWait {
+			t.Errorf("MaxWait = %v < MinWait = %v after clamp", r.MaxWait, r.MinWait)
+		}
+		if r.MaxRetries != 5 {
+			t.Errorf("MaxRetries = %d, want 5 (attempt count preserved)", r.MaxRetries)
 		}
 	})
 }

@@ -5,6 +5,23 @@ package kernel
 /*
 #include <stdlib.h>
 #include "databricks_kernel.h"
+
+// go_kernel_set_retry_config wraps kernel_session_config_set_retry_config. cgo's
+// C parser silently drops the direct declaration of that symbol (a known cgo
+// quirk: the declaration is valid C — it compiles under gcc and links from the
+// archive — but cgo omits it from the generated bindings, so a direct
+// C.kernel_session_config_set_retry_config call fails to build with "could not
+// determine what … refers to"). A static inline shim forwarding to it IS parsed
+// and links fine. The shim must live in the SAME file's preamble as its caller
+// (applyRetry, below): a shim placed in another file's cgo preamble in this
+// package is itself dropped the same way. Keeps the kernel header unchanged (it
+// is valid C, used verbatim by the C-only ODBC consumer).
+static inline KernelStatusCode go_kernel_set_retry_config(
+    KernelSessionConfig* config, uint64_t min_wait_ms, uint64_t max_wait_ms,
+    uint32_t max_retries, uint64_t overall_timeout_ms) {
+  return kernel_session_config_set_retry_config(
+      config, min_wait_ms, max_wait_ms, max_retries, overall_timeout_ms);
+}
 */
 import "C"
 
@@ -144,18 +161,14 @@ func (k *KernelBackend) OpenSession(ctx context.Context) error {
 		return err
 	}
 
-	// Proxy: only when the environment configured one for this endpoint. NO_PROXY
-	// was already applied during resolution, so no bypass list is needed here;
-	// any credentials are carried in the URL userinfo (Go's proxy-env convention),
-	// so username/password are NULL.
-	if k.cfg.ProxyURL != "" {
-		url := newCStr(k.cfg.ProxyURL)
-		defer url.free()
-		if err := call(func() C.KernelStatusCode {
-			return C.kernel_session_config_set_proxy(cfg, url.c, nil, nil, nil)
-		}); err != nil {
-			return fmt.Errorf("kernel: set_proxy: %w", toConnError(err))
-		}
+	// Proxy: env-derived or explicit (WithKernelProxy). See applyProxy.
+	if err := k.applyProxy(cfg); err != nil {
+		return err
+	}
+
+	// Retry / backoff policy (WithRetries). See applyRetry.
+	if err := k.applyRetry(cfg); err != nil {
+		return err
 	}
 
 	// Session confs (STATEMENT_TIMEOUT, QUERY_TAGS, TIMEZONE, …) — the same map
@@ -172,6 +185,13 @@ func (k *KernelBackend) OpenSession(ctx context.Context) error {
 			return fmt.Errorf("kernel: set_session_conf[%s]: %w", key, toConnError(errSet))
 		}
 	}
+
+	// Log the resolved retry policy + CloudFetch chunk cap before connecting, so if a
+	// customer reports a hung connect or a large-result OOM, on-call can see from the
+	// debug log what was actually applied (these are otherwise silent — forwarded to
+	// the kernel with no observable trace). Kept at Debug and cheap to format.
+	klogCtx(ctx, "OpenSession resolved: retry=%s cloudfetchMaxChunksInMemory=%s",
+		describeRetry(k.cfg.Retry), k.cfg.SessionConf[kernelMaxChunksInMemoryConfKey])
 
 	// kernel_session_open takes ownership of cfg here. Its documented C-ABI
 	// contract (databricks_kernel.h: "CONSUMES config on both success and failure
@@ -254,6 +274,74 @@ func (k *KernelBackend) applyKernelTLS(cfg *C.KernelSessionConfig) error {
 	return nil
 }
 
+// applyProxy forwards the HTTP proxy config to the session config. The URL is set
+// when either the environment configured one for this endpoint or the caller
+// supplied one via WithKernelProxy (resolveKernelProxy decides which). The
+// optional basic-auth credentials and bypass list ride along; each is NULL when
+// empty (the env path folds credentials into the URL and consumes NO_PROXY during
+// resolution, so it leaves them empty — Go's proxy-env convention). A no-op when
+// ProxyURL is empty (direct connection). The kernel applies the URL as an explicit
+// override of its own env-var behavior.
+func (k *KernelBackend) applyProxy(cfg *C.KernelSessionConfig) error {
+	if k.cfg.ProxyURL == "" {
+		return nil
+	}
+	url := newCStr(k.cfg.ProxyURL)
+	defer url.free()
+	user := newCStrOrNull(k.cfg.ProxyUsername)
+	defer user.free()
+	pass := newCStrOrNull(k.cfg.ProxyPassword)
+	defer pass.free()
+	bypass := newCStrOrNull(k.cfg.ProxyBypassHosts)
+	defer bypass.free()
+	if err := call(func() C.KernelStatusCode {
+		return C.kernel_session_config_set_proxy(cfg, url.c, user.c, pass.c, bypass.c)
+	}); err != nil {
+		return fmt.Errorf("kernel: set_proxy: %w", toConnError(err))
+	}
+	return nil
+}
+
+// applyRetry forwards the driver's HTTP retry / backoff policy to the session
+// config. A no-op when Config.Retry is nil, so the kernel's own default policy
+// (exponential backoff with jitter, 5 retries, 1s..60s, 900s budget) is preserved
+// otherwise. MaxRetries == 0 disables retries; OverallTimeout == 0 keeps the
+// kernel's default budget (the setter maps a 0 ms budget to "keep default").
+func (k *KernelBackend) applyRetry(cfg *C.KernelSessionConfig) error {
+	r := k.cfg.Retry
+	if r == nil {
+		return nil
+	}
+	if err := call(func() C.KernelStatusCode {
+		// Via the go_kernel_set_retry_config shim in cgo.go — cgo drops the direct
+		// declaration of the underlying symbol (see the shim's comment).
+		return C.go_kernel_set_retry_config(cfg,
+			C.uint64_t(r.MinWait.Milliseconds()), C.uint64_t(r.MaxWait.Milliseconds()),
+			C.uint32_t(r.MaxRetries), C.uint64_t(r.OverallTimeout.Milliseconds()))
+	}); err != nil {
+		return fmt.Errorf("kernel: set_retry_config: %w", toConnError(err))
+	}
+	return nil
+}
+
+// kernelMaxChunksInMemoryConfKey mirrors config.KernelMaxChunksInMemoryConfKey —
+// the client-only session conf carrying WithKernelMaxChunksInMemory. Duplicated as
+// a local const rather than importing internal/config, which this cgo backend
+// otherwise has no dependency on; it is read here only to log the resolved cap.
+const kernelMaxChunksInMemoryConfKey = "cloudfetch_max_chunks_in_memory"
+
+// describeRetry renders the resolved retry policy for the OpenSession debug log.
+// "kernel-default" means Config.Retry is nil, so the kernel keeps its own policy
+// (5 retries, 1s..60s, 900s budget); otherwise it shows the forwarded values, with
+// maxRetries=0 being the disable form and overallTimeout=0 meaning "keep default".
+func describeRetry(r *RetryConfig) string {
+	if r == nil {
+		return "kernel-default"
+	}
+	return fmt.Sprintf("maxRetries=%d minWait=%s maxWait=%s overallTimeout=%s",
+		r.MaxRetries, r.MinWait, r.MaxWait, r.OverallTimeout)
+}
+
 // setAuth applies the resolved auth form to the session config via exactly one
 // kernel_session_config_set_auth_* call. PAT and M2M are plain value setters; U2M
 // records the client id / redirect port / scopes and the kernel owns the browser
@@ -329,6 +417,36 @@ func trySetKernelTLS(cfg Config) error {
 	defer C.kernel_session_config_free(c)
 	k := &KernelBackend{cfg: cfg}
 	return k.applyKernelTLS(c)
+}
+
+// trySetProxy allocates a throwaway session config, applies the proxy config from
+// cfg to it, and frees it — the analogous test seam to trySetKernelTLS, so a
+// tagged test can exercise the real kernel_session_config_set_proxy cgo setter
+// (URL + optional NULL-for-empty username / password / bypass) end to end. Not
+// used in production.
+func trySetProxy(cfg Config) error {
+	var c *C.KernelSessionConfig
+	if err := call(func() C.KernelStatusCode { return C.kernel_session_config_new(&c) }); err != nil {
+		return fmt.Errorf("config_new: %w", err)
+	}
+	defer C.kernel_session_config_free(c)
+	k := &KernelBackend{cfg: cfg}
+	return k.applyProxy(c)
+}
+
+// trySetRetry allocates a throwaway session config, applies the retry config from
+// cfg to it, and frees it — the analogous test seam to trySetProxy, so a tagged
+// test can exercise the real kernel_session_config_set_retry_config cgo setter
+// (the 4 knobs, plus the InvalidArgument rejections for a degenerate range) end to
+// end. Not used in production.
+func trySetRetry(cfg Config) error {
+	var c *C.KernelSessionConfig
+	if err := call(func() C.KernelStatusCode { return C.kernel_session_config_new(&c) }); err != nil {
+		return fmt.Errorf("config_new: %w", err)
+	}
+	defer C.kernel_session_config_free(c)
+	k := &KernelBackend{cfg: cfg}
+	return k.applyRetry(c)
 }
 
 // applyInitialNamespace runs USE CATALOG / USE SCHEMA to select the configured
