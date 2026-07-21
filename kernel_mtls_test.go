@@ -167,6 +167,15 @@ func runKernelConnect(t *testing.T, host string, settle time.Duration, onReached
 		WithHTTPPath("/sql/1.0/warehouses/hermetic"),
 		WithAccessToken("dapi-hermetic-placeholder"),
 		WithUseKernel(true),
+		// Disable connect retries (the WithRetries disable form, honored on the
+		// kernel path). These hermetic cases assert the TLS handshake OUTCOME, not
+		// retry behaviour, and the negative cases (handshake must fail) would
+		// otherwise ride the kernel's default retry budget (5 attempts, escalating
+		// backoff): kernel_session_open is a blocking cgo call that cannot observe
+		// the Go ctx cancel mid-retry, so the query goroutine would outlive the test
+		// by tens of seconds and write to the torn-down test pipe. A single attempt
+		// makes every case settle promptly.
+		WithRetries(-1, 0, 0),
 	}, extra...)
 	connector, err := NewConnector(opts...)
 	if err != nil {
