@@ -132,6 +132,20 @@ func (k *KernelBackend) OpenSession(ctx context.Context) error {
 		return err
 	}
 
+	// User-Agent so query history attributes the kernel path to this driver.
+	if k.cfg.UserAgent != "" {
+		name := newCStr("User-Agent")
+		val := newCStr(k.cfg.UserAgent)
+		errSet := call(func() C.KernelStatusCode {
+			return C.kernel_session_config_set_custom_header(cfg, name.c, val.c)
+		})
+		name.free()
+		val.free()
+		if errSet != nil {
+			return fmt.Errorf("kernel: set_custom_header[User-Agent]: %w", toConnError(errSet))
+		}
+	}
+
 	// TLS: crypto/tls's InsecureSkipVerify accepts any server cert, so relax both
 	// chain validation and the hostname check — mapping only one would leave the
 	// kernel path stricter than the Thrift path it mirrors (a self-signed cert

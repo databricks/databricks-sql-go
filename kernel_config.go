@@ -11,6 +11,7 @@ import (
 	"github.com/databricks/databricks-sql-go/auth/pat"
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 	"github.com/databricks/databricks-sql-go/internal/backend/kernel"
+	"github.com/databricks/databricks-sql-go/internal/client"
 	"github.com/databricks/databricks-sql-go/internal/config"
 )
 
@@ -116,6 +117,8 @@ func buildKernelConfig(cfg *config.Config, kauth kernel.Auth) kernel.Config {
 		WarehouseID: cfg.WarehouseID,
 		Auth:        kauth,
 		Location:    cfg.Location,
+		// Same UA the Thrift path sends, so query history attributes both alike.
+		UserAgent: client.BuildUserAgent(cfg),
 		// Initial namespace: no kernel config setter, so the kernel backend applies
 		// these post-connect via USE CATALOG / USE SCHEMA.
 		Catalog: cfg.Catalog,

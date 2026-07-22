@@ -329,9 +329,11 @@ var kernelConfigFieldDisposition = map[string]string{
 	"MaxRows":           "inert",
 	"UseLz4Compression": "inert", // kernel negotiates compression internally
 
+	// Rides in the forwarded User-Agent header (set_custom_header).
+	"UserAgentEntry": "forwarded",
+
 	// Not applicable to the kernel path (Thrift/HTTP-transport or telemetry knobs
 	// that don't reach the kernel binding).
-	"UserAgentEntry":           "inert", // TODO: forward once the kernel exposes a UA setter
 	"EnableTelemetry":          "inert",
 	"TelemetryBatchSize":       "inert",
 	"TelemetryFlushInterval":   "inert",
