@@ -16,6 +16,7 @@ var errArrowRowsMakeColumnValueContainers = "databricks: failed creating column 
 var errArrowRowsNotArrowFormat = "databricks: result set is not in arrow format"
 
 const errArrowRowsCloudFetchDownloadFailure = "cloud fetch batch loader failed to download results"
+const errArrowRowsCloudFetchDecompression = "cloud fetch batch loader failed to decompress results"
 
 func errArrowRowsUnsupportedNativeType(t string) string {
 	return fmt.Sprintf("databricks: arrow native values not yet supported for %s", t)

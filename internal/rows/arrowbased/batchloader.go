@@ -353,7 +353,7 @@ func (cft *cloudFetchDownloadTask) Run() {
 			// corruption, not a transient network condition.
 			buf, err = io.ReadAll(lz4.NewReader(bytes.NewReader(rawBody)))
 			if err != nil {
-				cft.sendResult(cloudFetchDownloadTaskResult{data: nil, err: err})
+				cft.sendResult(cloudFetchDownloadTaskResult{data: nil, err: dbsqlerrint.NewDriverError(cft.ctx, errArrowRowsCloudFetchDecompression, err).WithCategory(dbsqlerrint.CategoryDecompression)})
 				return
 			}
 		}
