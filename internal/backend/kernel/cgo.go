@@ -242,6 +242,8 @@ const (
 	_ = uint(statusTimeout-int(C.KernelStatusCode_Timeout)) | uint(int(C.KernelStatusCode_Timeout)-statusTimeout)
 	_ = uint(statusCancelled-int(C.KernelStatusCode_Cancelled)) | uint(int(C.KernelStatusCode_Cancelled)-statusCancelled)
 	_ = uint(statusDataLoss-int(C.KernelStatusCode_DataLoss)) | uint(int(C.KernelStatusCode_DataLoss)-statusDataLoss)
+	_ = uint(statusInternal-int(C.KernelStatusCode_Internal)) | uint(int(C.KernelStatusCode_Internal)-statusInternal)
+	_ = uint(statusInvalidStmtHandle-int(C.KernelStatusCode_InvalidStatementHandle)) | uint(int(C.KernelStatusCode_InvalidStatementHandle)-statusInvalidStmtHandle)
 	_ = uint(statusNetworkError-int(C.KernelStatusCode_NetworkError)) | uint(int(C.KernelStatusCode_NetworkError)-statusNetworkError)
 	_ = uint(statusSqlError-int(C.KernelStatusCode_SqlError)) | uint(int(C.KernelStatusCode_SqlError)-statusSqlError)
 )

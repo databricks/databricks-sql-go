@@ -168,9 +168,11 @@ func TestKernelErrorCategory(t *testing.T) {
 		{statusTimeout, dbsqlerrint.CategoryTimeout},
 		{statusCancelled, dbsqlerrint.CategoryCancelled},
 		{statusDataLoss, dbsqlerrint.CategoryResultSet},
+		{statusInternal, dbsqlerrint.CategoryGeneric},
+		{statusInvalidStmtHandle, dbsqlerrint.CategoryStatementClosed},
 		{statusNetworkError, dbsqlerrint.CategoryConnectionError},
 		{statusSqlError, dbsqlerrint.CategoryExecuteStatement},
-		{9999, ""}, // unmapped → "" so classifyError falls back to the message
+		{9999, ""}, // outside the enum → "" so classifyError falls back to the message
 	}
 	for _, c := range cases {
 		if got := (&KernelError{Code: c.code}).Category(); got != c.want {

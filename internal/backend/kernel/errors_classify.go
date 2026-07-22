@@ -32,6 +32,8 @@ const (
 	statusTimeout           = 7
 	statusCancelled         = 8
 	statusDataLoss          = 9
+	statusInternal          = 10
+	statusInvalidStmtHandle = 11
 	statusNetworkError      = 12
 	statusSqlError          = 13
 )
@@ -66,8 +68,9 @@ func (e *KernelError) Error() string {
 // codeToCategory maps the kernel status code to a telemetry ErrorCategory. This is
 // the Go analog of the Python driver's _CODE_TO_EXCEPTION and Node's
 // mapKernelErrorToJsError: the kernel already hands us an authoritative code, so
-// telemetry keys off it instead of re-guessing from the message text. A code with
-// no precise category is omitted so classifyError falls back to message matching.
+// telemetry keys off it instead of re-guessing from the message text. Every kernel
+// status code is mapped (Internal / InvalidStatementHandle to generic buckets, as
+// Python/Node do) so a *KernelError never depends on the message-substring fallback.
 var codeToCategory = map[int]dbsqlerrint.ErrorCategory{
 	statusInvalidArgument:   dbsqlerrint.CategoryInvalidRequest,
 	statusUnauthenticated:   dbsqlerrint.CategoryAuthError,
@@ -79,16 +82,19 @@ var codeToCategory = map[int]dbsqlerrint.ErrorCategory{
 	// Cancelled is generic (caller cancel, dropped future, or server-side cancel)
 	// and classifyError also runs for session-lifecycle ops, so use the neutral
 	// cancelled category rather than the statement-specific one.
-	statusCancelled:    dbsqlerrint.CategoryCancelled,
-	statusDataLoss:     dbsqlerrint.CategoryResultSet,
-	statusNetworkError: dbsqlerrint.CategoryConnectionError,
-	statusSqlError:     dbsqlerrint.CategoryExecuteStatement,
+	statusCancelled: dbsqlerrint.CategoryCancelled,
+	statusDataLoss:  dbsqlerrint.CategoryResultSet,
+	statusInternal:  dbsqlerrint.CategoryGeneric,
+	// A closed/invalid statement handle is a use-after-close on the result path.
+	statusInvalidStmtHandle: dbsqlerrint.CategoryStatementClosed,
+	statusNetworkError:      dbsqlerrint.CategoryConnectionError,
+	statusSqlError:          dbsqlerrint.CategoryExecuteStatement,
 }
 
 // Category satisfies the telemetry categorizer interface (read via
 // CategoryFromError), so a kernel failure reports its code-derived category rather
-// than one inferred from the message. Returns "" for an unmapped code, leaving the
-// message-substring fallback in place.
+// than one inferred from the message. Every kernel code is mapped; a value outside
+// the enum returns "" and only then does classifyError fall back to the message.
 func (e *KernelError) Category() dbsqlerrint.ErrorCategory {
 	return codeToCategory[e.Code]
 }
