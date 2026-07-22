@@ -62,3 +62,12 @@ func TestClassifyErrorUntaggedDbErrorUsesFallback(t *testing.T) {
 	err := dbsqlerrint.NewRequestError(context.TODO(), "syntax error", errors.New("cause"))
 	assert.Equal(t, "syntax_error", classifyError(err))
 }
+
+// The staging unsupported-operation message classifies as the generic "error"
+// on its own; the source tag is what makes it report "unsupported_operation".
+func TestClassifyErrorUnsupportedOperation(t *testing.T) {
+	msg := "operation COPY is not supported. Supported operations are GET, PUT, and REMOVE"
+	assert.Equal(t, "error", classifyError(dbsqlerrint.NewDriverError(context.TODO(), msg, nil)))
+	assert.Equal(t, "unsupported_operation",
+		classifyError(dbsqlerrint.NewDriverError(context.TODO(), msg, nil).WithCategory(dbsqlerrint.CategoryUnsupportedOperation)))
+}

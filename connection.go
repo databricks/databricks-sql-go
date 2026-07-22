@@ -801,6 +801,6 @@ func (c *conn) execStagingOperation(
 	case "REMOVE":
 		return c.handleStagingRemove(ctx, presignedUrl, headers)
 	default:
-		return dbsqlerrint.NewDriverError(ctx, fmt.Sprintf("operation %s is not supported. Supported operations are GET, PUT, and REMOVE", operation), nil)
+		return dbsqlerrint.NewDriverError(ctx, fmt.Sprintf("operation %s is not supported. Supported operations are GET, PUT, and REMOVE", operation), nil).WithCategory(dbsqlerrint.CategoryUnsupportedOperation)
 	}
 }
