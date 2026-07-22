@@ -10,32 +10,18 @@ import (
 )
 
 // ColumnTypeInfo is the per-column metadata database/sql surfaces through
-// sql.ColumnType — the DatabaseTypeName, ScanType, and Length the optional
-// driver.RowsColumnType* interfaces return. The kernel backend derives it from
-// the result's Arrow schema; ColumnTypeInfoFor is the single mapping both the
-// value scanner (ScanCellCached) and the type-metadata reporter agree on, so a
-// column's reported type can never drift from what a row actually scans into.
-//
-// The mapping mirrors the Thrift backend (internal/rows/rows.go getScanType /
-// ColumnTypeDatabaseTypeName / ColumnTypeLength) so a query reports byte-identical
-// column metadata on either backend — the same "identical results across backends"
-// contract the value renderers hold. The pure-Go guards are TestColumnTypeInfoFor,
-// TestColumnTypeInfoScanTypeCoversScanner, and TestColumnTypeInfoMatchesThriftMapping
-// (which cross-checks this mapping against the Thrift functions directly); the live
-// TestKernelThriftColumnTypeParity confirms it against a real warehouse.
+// sql.ColumnType. The kernel derives it from the result's Arrow schema via
+// ColumnTypeInfoFor — the mapping the value scanner and type reporter share, kept
+// byte-identical to the Thrift backend (guarded by the coltype parity tests).
 type ColumnTypeInfo struct {
-	// DatabaseTypeName is the Databricks type name (e.g. "BIGINT", "DECIMAL",
-	// "ARRAY"), matching what the Thrift path reports; "" for a type with no
-	// Databricks name.
+	// DatabaseTypeName is the Databricks type name (e.g. "BIGINT", "DECIMAL"),
+	// matching the Thrift path; "" for a type with no Databricks name.
 	DatabaseTypeName string
 	// ScanType is the Go type database/sql recommends scanning the column into,
-	// matching the Thrift path. nil (only for the NULL type) makes database/sql
-	// fall back to interface{}, exactly as the Thrift path's nil scan type does.
+	// matching the Thrift path.
 	ScanType reflect.Type
-	// Length / HasLength report a variable-length column's length. As on the
-	// Thrift path, only variable-length types (string/binary/nested, and the
-	// server-stringified interval/geo types) report a length, and the reported
-	// value is math.MaxInt64 (unbounded); fixed-width types report (0, false).
+	// Length / HasLength report a variable-length column's unbounded length
+	// (math.MaxInt64), matching Thrift; fixed-width types report (0, false).
 	Length    int64
 	HasLength bool
 }
@@ -58,14 +44,8 @@ var (
 
 // ColumnTypeInfoFor maps an Arrow column type to the metadata database/sql
 // exposes, matching the Thrift backend for every Databricks type. The Arrow types
-// listed here are exactly those ScanCellCached scans, so the type reported for a
-// column and the value produced for its cells stay in lockstep.
-//
-// Notably: DECIMAL reports sql.RawBytes (the Thrift scan type for DECIMAL) even
-// though the value is rendered as an exact string — matching Thrift, which also
-// scans DECIMAL into RawBytes; and the interval / geo types report STRING because
-// the Thrift server pre-formats them to strings and the kernel formats them
-// Go-side to the same string, so both are indistinguishable to a caller.
+// here are exactly those ScanCellCached scans, so a column's reported type and its
+// scanned value stay in lockstep.
 func ColumnTypeInfoFor(dt arrow.DataType) ColumnTypeInfo {
 	switch dt.ID() {
 	case arrow.BOOL:
@@ -79,11 +59,8 @@ func ColumnTypeInfoFor(dt arrow.DataType) ColumnTypeInfo {
 	case arrow.INT64:
 		return ColumnTypeInfo{DatabaseTypeName: "BIGINT", ScanType: scanTypeInt64}
 	case arrow.UINT8, arrow.UINT16, arrow.UINT32, arrow.UINT64:
-		// Databricks SQL has no unsigned types, so these do not occur in practice;
-		// this arm is defensive and stays in lockstep with ScanCellCached, which
-		// widens every unsigned integer to int64 (driver.Value has no uint64). Report
-		// BIGINT/int64 to match that scanned value rather than falling through to the
-		// generic *interface{} default.
+		// Databricks SQL has no unsigned types; defensive arm matching ScanCellCached,
+		// which widens unsigned ints to int64 (driver.Value has no uint64).
 		return ColumnTypeInfo{DatabaseTypeName: "BIGINT", ScanType: scanTypeInt64}
 	case arrow.FLOAT32:
 		return ColumnTypeInfo{DatabaseTypeName: "FLOAT", ScanType: scanTypeFloat32}
@@ -100,10 +77,8 @@ func ColumnTypeInfoFor(dt arrow.DataType) ColumnTypeInfo {
 	case arrow.TIMESTAMP:
 		return ColumnTypeInfo{DatabaseTypeName: "TIMESTAMP", ScanType: scanTypeDateTime}
 	case arrow.DECIMAL128:
-		// Thrift scans DECIMAL into sql.RawBytes; match it even though the kernel
-		// renders the value as an exact fixed-point string (both convert cleanly to
-		// a caller's *string/*[]byte, and reporting the same scan type keeps the
-		// backends indistinguishable).
+		// Match Thrift's sql.RawBytes scan type even though the kernel renders the
+		// value as an exact string — both convert cleanly to a caller's *string/*[]byte.
 		return ColumnTypeInfo{DatabaseTypeName: "DECIMAL", ScanType: scanTypeRawBytes}
 	case arrow.LIST, arrow.LARGE_LIST, arrow.FIXED_SIZE_LIST:
 		return varLen("ARRAY", scanTypeRawBytes)
@@ -112,24 +87,17 @@ func ColumnTypeInfoFor(dt arrow.DataType) ColumnTypeInfo {
 	case arrow.STRUCT:
 		return varLen("STRUCT", scanTypeRawBytes)
 	case arrow.DURATION:
-		// INTERVAL DAY TO SECOND. Parity target is what the Thrift backend REPORTS,
-		// which is config-dependent: in the prod default (native-interval Arrow off)
-		// the server pre-formats intervals to text and declares the Thrift column
-		// STRING_TYPE, so Thrift's GetDBTypeName yields "STRING" and MaxInt64 length
-		// — verified live against both backends. We therefore report STRING here even
-		// though the kernel receives a native arrow.DURATION (which it formats Go-side
-		// to the identical string). If a warehouse ever enables native-interval Thrift
-		// the server would instead declare INTERVAL_DAY_TIME and Thrift would report
-		// that; matching STRING is correct for the default path the parity test pins,
-		// and the scanned VALUE is identical either way — only this label would differ.
+		// INTERVAL DAY TO SECOND: Thrift's prod default pre-formats intervals to text
+		// and declares STRING_TYPE (verified live), so match STRING; the kernel formats
+		// the native arrow.DURATION Go-side to the identical string.
 		return varLen("STRING", scanTypeString)
 	case arrow.INTERVAL_MONTHS:
 		// INTERVAL YEAR TO MONTH — same server-config reasoning as arrow.DURATION.
 		return varLen("STRING", scanTypeString)
 	case arrow.NULL:
-		// The NULL type has no scan type on the Thrift path (nil → database/sql
-		// falls back to interface{}); mirror that.
-		return ColumnTypeInfo{DatabaseTypeName: "NULL", ScanType: nil}
+		// VOID/NULL columns: the server stringifies them over Thrift (verified live:
+		// even bare SELECT NULL reports STRING), same as intervals — so match STRING.
+		return varLen("STRING", scanTypeString)
 	default:
 		// A type ScanCellCached does not handle: report the Thrift default scan type
 		// (*interface{}) and no database name, rather than inventing one.
@@ -137,9 +105,8 @@ func ColumnTypeInfoFor(dt arrow.DataType) ColumnTypeInfo {
 	}
 }
 
-// varLen builds a ColumnTypeInfo for a variable-length type, which reports an
-// unbounded length (math.MaxInt64) just as the Thrift path does for
-// string/binary/nested columns.
+// varLen builds a ColumnTypeInfo for a variable-length type, reporting the
+// unbounded length (math.MaxInt64) the Thrift path uses for such columns.
 func varLen(name string, scan reflect.Type) ColumnTypeInfo {
 	return ColumnTypeInfo{DatabaseTypeName: name, ScanType: scan, Length: math.MaxInt64, HasLength: true}
 }
