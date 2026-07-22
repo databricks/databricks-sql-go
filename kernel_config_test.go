@@ -11,6 +11,7 @@ import (
 	"github.com/databricks/databricks-sql-go/auth/pat"
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 	"github.com/databricks/databricks-sql-go/internal/backend/kernel"
+	"github.com/databricks/databricks-sql-go/internal/client"
 	"github.com/databricks/databricks-sql-go/internal/config"
 )
 
@@ -442,6 +443,11 @@ func TestBuildKernelConfig(t *testing.T) {
 		}
 		if kc.Auth.Mode != kauth.Mode || kc.Auth.Token != kauth.Token {
 			t.Errorf("auth not forwarded: got %+v, want %+v", kc.Auth, kauth)
+		}
+		// UserAgent must be the driver's composed UA, non-empty — else query
+		// history mis-attributes SEA-path queries to the kernel's built-in UA.
+		if want := client.BuildUserAgent(c); kc.UserAgent == "" || kc.UserAgent != want {
+			t.Errorf("UserAgent not forwarded: got %q, want %q", kc.UserAgent, want)
 		}
 	})
 
