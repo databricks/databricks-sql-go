@@ -5,6 +5,7 @@ package dbsql
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"testing"
 )
 
@@ -90,6 +91,164 @@ func TestKernelE2EInterval(t *testing.T) {
 			t.Errorf("col %d differs: kernel=%q thrift=%q", i, kernelRow[i], thriftRow[i])
 		}
 	}
+}
+
+// TestKernelThriftColumnTypeParity is the live guard for PECOBLR-3692: the kernel
+// backend must report the SAME sql.ColumnType metadata (DatabaseTypeName,
+// ScanType, Nullable, Length) as the Thrift backend for every type. The
+// value-parity suites above compare scanned VALUES and so are blind to this — the
+// gap was a Rows.ColumnType* omission (kernelRows implemented only driver.Rows),
+// which surfaces as "" / interface{} metadata, not a wrong value. Named
+// TestKernelThrift* / TestKernel* so the nightly kernel -run picks it up.
+func TestKernelThriftColumnTypeParity(t *testing.T) {
+	// One column per Databricks type the driver scans, mirroring the mixed-type
+	// query used to capture the ground truth. VARCHAR/CHAR/VARIANT/GEOMETRY all
+	// collapse to STRING on both backends (they arrive as Arrow Utf8), and both
+	// interval types are server/Go-stringified to STRING — included so the parity
+	// covers those collapses too.
+	const query = "SELECT " +
+		"CAST(1 AS TINYINT) a_tinyint, CAST(1 AS SMALLINT) a_smallint, " +
+		"CAST(1 AS INT) a_int, CAST(1 AS BIGINT) a_bigint, " +
+		"CAST(1 AS FLOAT) a_float, CAST(1 AS DOUBLE) a_double, " +
+		"CAST(1 AS BOOLEAN) a_bool, CAST('x' AS STRING) a_string, " +
+		"CAST('x' AS VARCHAR(10)) a_varchar, CAST('x' AS CHAR(3)) a_char, " +
+		"CAST(1.5 AS DECIMAL(10,2)) a_decimal, CAST('2020-01-01' AS DATE) a_date, " +
+		"CAST('2020-01-01 00:00:00' AS TIMESTAMP) a_ts, CAST('abc' AS BINARY) a_binary, " +
+		"array(1,2,3) a_array, map('k',1) a_map, named_struct('x',1) a_struct, " +
+		`parse_json('{"a":1}') a_variant, INTERVAL '1' DAY a_iv_dt, ` +
+		"INTERVAL '1' MONTH a_iv_ym, st_point(1,2) a_geom"
+
+	kernelDB := kernelTestDB(t)
+	defer kernelDB.Close()
+	thriftDB := thriftTestDB(t)
+	defer thriftDB.Close()
+
+	kernelCT := columnTypeStrings(t, kernelDB, query)
+	thriftCT := columnTypeStrings(t, thriftDB, query)
+
+	if len(kernelCT) != len(thriftCT) {
+		t.Fatalf("column count differs: kernel=%d thrift=%d", len(kernelCT), len(thriftCT))
+	}
+	for i := range kernelCT {
+		if kernelCT[i] != thriftCT[i] {
+			t.Errorf("col %d metadata differs:\n  kernel=%s\n  thrift=%s", i, kernelCT[i], thriftCT[i])
+		}
+	}
+}
+
+// columnTypeStrings renders each column's sql.ColumnType metadata to a stable
+// string (name, DatabaseTypeName, ScanType, Nullable, Length), so the kernel and
+// Thrift backends can be compared field-for-field. A nil ScanType renders as
+// "<nil>" so the pre-fix interface{} fallback would differ visibly.
+func columnTypeStrings(t *testing.T, db *sql.DB, query string) []string {
+	t.Helper()
+	rows, err := db.QueryContext(context.Background(), query)
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	defer rows.Close()
+	cts, err := rows.ColumnTypes()
+	if err != nil {
+		t.Fatalf("ColumnTypes: %v", err)
+	}
+	out := make([]string, len(cts))
+	for i, ct := range cts {
+		scan := "<nil>"
+		if ct.ScanType() != nil {
+			scan = ct.ScanType().String()
+		}
+		nl, nlok := ct.Nullable()
+		ln, lnok := ct.Length()
+		out[i] = fmt.Sprintf("name=%s db=%s scan=%s nullable=%v/%v len=%d/%v",
+			ct.Name(), ct.DatabaseTypeName(), scan, nl, nlok, ln, lnok)
+	}
+	return out
+}
+
+// TestKernelThriftDecimalScaleParity exercises the shared exact-decimal renderer
+// (decimalfmt, PECOBLR-3691) at scale against a live warehouse: it generates many
+// decimal rows so the kernel result spans multiple Arrow batches, and asserts
+// every rendered value matches the Thrift backend byte-for-byte — the guarantee
+// that the alloc-free ExactString rewrite changed only cost, not output, over a
+// real multi-batch stream and including magnitudes past float64 precision. The
+// pure-Go TestExactStringOracleParity pins the renderer against its own
+// pre-rewrite implementation; this pins the integrated kernel scan path against
+// Thrift. Named TestKernelThrift* for the nightly -run.
+func TestKernelThriftDecimalScaleParity(t *testing.T) {
+	// 50k rows × several DECIMALs, with a value beyond float64's exact range
+	// (DECIMAL(38,4)) so a lossy path would diverge. range() drives enough rows to
+	// cross batch boundaries on the kernel stream.
+	const rowCount = 50000
+	query := "SELECT " +
+		"CAST(id AS DECIMAL(10,2)) d1, " +
+		"CAST(id * -1.25 AS DECIMAL(20,4)) d2, " +
+		"CAST(id AS DECIMAL(38,4)) + 123456789012345678901234.5678 d3, " +
+		"CAST(id % 7 AS DECIMAL(5,3)) d4 " +
+		"FROM range(" + fmt.Sprint(rowCount) + ") ORDER BY id"
+
+	kernelDB := kernelTestDB(t)
+	defer kernelDB.Close()
+	thriftDB := thriftTestDB(t)
+	defer thriftDB.Close()
+
+	kernelRows := scanAllRowsAsStrings(t, kernelDB, query)
+	thriftRows := scanAllRowsAsStrings(t, thriftDB, query)
+
+	if len(kernelRows) != len(thriftRows) {
+		t.Fatalf("row count differs: kernel=%d thrift=%d", len(kernelRows), len(thriftRows))
+	}
+	if len(kernelRows) != rowCount {
+		t.Fatalf("expected %d rows, got %d", rowCount, len(kernelRows))
+	}
+	for i := range kernelRows {
+		if kernelRows[i] != thriftRows[i] {
+			t.Fatalf("row %d differs:\n  kernel=%s\n  thrift=%s", i, kernelRows[i], thriftRows[i])
+		}
+	}
+	t.Logf("verified %d decimal rows byte-identical across backends (arena spans multiple batches)", len(kernelRows))
+}
+
+// scanAllRowsAsStrings scans every row into a "|"-joined string of column wire
+// forms (via sql.RawBytes), so two backends can be compared row-by-row
+// independent of Go-type coercion.
+func scanAllRowsAsStrings(t *testing.T, db *sql.DB, query string) []string {
+	t.Helper()
+	rows, err := db.QueryContext(context.Background(), query)
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	defer rows.Close()
+	cols, err := rows.Columns()
+	if err != nil {
+		t.Fatalf("columns: %v", err)
+	}
+	var out []string
+	raw := make([]sql.RawBytes, len(cols))
+	dest := make([]any, len(cols))
+	for i := range raw {
+		dest[i] = &raw[i]
+	}
+	for rows.Next() {
+		if err := rows.Scan(dest...); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		line := ""
+		for i, b := range raw {
+			if i > 0 {
+				line += "|"
+			}
+			if b == nil {
+				line += "<nil>"
+			} else {
+				line += string(b)
+			}
+		}
+		out = append(out, line)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows err: %v", err)
+	}
+	return out
 }
 
 // paramCase is one parameterized-query parity case: the same SQL + args run on

@@ -180,6 +180,12 @@ func TestKernelE2EDataTypes(t *testing.T) {
 	db := kernelTestDB(t)
 	defer db.Close()
 
+	// skipOnErrCases lists subtests to skip (rather than fail) when the server
+	// rejects the expression — for a type that may be gated on some warehouses
+	// (GEOGRAPHY is not enabled everywhere). The value comes back identically to
+	// GEOMETRY when it IS enabled, which is what the case documents.
+	skipOnErrCases := map[string]bool{"geography": true}
+
 	cases := []struct {
 		name string
 		expr string       // the single SELECT expression
@@ -204,13 +210,19 @@ func TestKernelE2EDataTypes(t *testing.T) {
 		{"date", "CAST('2026-07-09' AS DATE)", time.Date(2026, time.July, 9, 0, 0, 0, 0, time.UTC)},
 		{"timestamp", "CAST('2026-07-09 12:34:56' AS TIMESTAMP)", time.Date(2026, time.July, 9, 12, 34, 56, 0, time.UTC)},
 		{"null", "CAST(NULL AS STRING)", nil},
-		// Nested types render to a JSON string; VARIANT arrives nested, GEOMETRY
-		// as a WKT/WKB string.
+		// Nested types render to a JSON string; VARIANT arrives nested,
+		// GEOMETRY/GEOGRAPHY as a WKT/WKB string.
 		{"array", "array(1, 2, 3)", "[1,2,3]"},
 		{"map", "map('k', 9)", `{"k":9}`},
 		{"struct", "named_struct('a', 1, 'b', 'x')", `{"a":1,"b":"x"}`},
 		{"variant", `parse_json('{"a":1,"b":[2,3]}')`, `{"a":1,"b":[2,3]}`},
 		{"geometry", "st_point(1, 2)", "POINT(1 2)"},
+		// GEOGRAPHY is the sibling geospatial type: it comes back as WKT text in a
+		// Utf8 column, so it scans to the same string as GEOMETRY. The ::geography
+		// cast may be gated on some warehouses; the subtest skips (rather than
+		// fails) when the server rejects the expression, so the case documents the
+		// parity without breaking runs on a warehouse without it.
+		{"geography", "cast(st_point(1, 2) as geography)", "POINT(1 2)"},
 	}
 
 	for _, c := range cases {
@@ -218,6 +230,9 @@ func TestKernelE2EDataTypes(t *testing.T) {
 			var got any
 			err := db.QueryRowContext(context.Background(), "SELECT "+c.expr).Scan(&got)
 			if err != nil {
+				if skipOnErrCases[c.name] {
+					t.Skipf("server rejected %q (type may be gated on this warehouse): %v", c.expr, err)
+				}
 				t.Fatalf("scan %s: %v", c.expr, err)
 			}
 			if !dataTypeEqual(got, c.want) {
@@ -306,6 +321,44 @@ func TestKernelE2ECloudFetch(t *testing.T) {
 	}
 	if count != want {
 		t.Errorf("row count = %d, want %d", count, want)
+	}
+	if last != want-1 {
+		t.Errorf("last id = %d, want %d", last, want-1)
+	}
+}
+
+// TestKernelE2EMaxChunksInMemory drives a CloudFetch-sized result with the
+// in-memory-chunk knob lowered (WithKernelMaxChunksInMemory), proving the knob
+// flows through the C-ABI set_session_conf, is accepted by the kernel, and is
+// stripped before the SEA wire — a wrong/unrecognized session conf would surface
+// as a server error, and the kernel would reject an invalid client key. The
+// result must be complete and correct regardless of the chunk bound (it only
+// changes peak memory, not output).
+func TestKernelE2EMaxChunksInMemory(t *testing.T) {
+	db := kernelTestDBWith(t, WithKernelMaxChunksInMemory(4))
+	defer db.Close()
+
+	const want = 1_000_000
+	rows, err := db.QueryContext(context.Background(), "SELECT id FROM range(0, 1000000)")
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	defer rows.Close()
+
+	var count, last int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			t.Fatalf("scan at row %d: %v", count, err)
+		}
+		count++
+		last = id
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iteration: %v", err)
+	}
+	if count != want {
+		t.Errorf("row count = %d, want %d (result must be complete regardless of chunk bound)", count, want)
 	}
 	if last != want-1 {
 		t.Errorf("last id = %d, want %d", last, want-1)

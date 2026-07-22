@@ -17,6 +17,7 @@ import (
 	"database/sql/driver"
 	"fmt"
 	"io"
+	"reflect"
 	"time"
 	"unsafe"
 
@@ -26,7 +27,17 @@ import (
 	dbsqlrows "github.com/databricks/databricks-sql-go/internal/rows"
 )
 
-var _ driver.Rows = (*kernelRows)(nil)
+// kernelRows implements the same optional column-type interfaces the Thrift path
+// (internal/rows.rows) does, so a caller sees identical result-set metadata on
+// either backend. Without these, database/sql falls back to "" / interface{} for
+// every column — see PECOBLR-3692.
+var (
+	_ driver.Rows                           = (*kernelRows)(nil)
+	_ driver.RowsColumnTypeScanType         = (*kernelRows)(nil)
+	_ driver.RowsColumnTypeDatabaseTypeName = (*kernelRows)(nil)
+	_ driver.RowsColumnTypeNullable         = (*kernelRows)(nil)
+	_ driver.RowsColumnTypeLength           = (*kernelRows)(nil)
+)
 
 // kernelRows implements driver.Rows over the kernel result stream. It pulls one
 // Arrow RecordBatch at a time via kernel_result_stream_next_batch (inline and
@@ -43,9 +54,10 @@ type kernelRows struct {
 	callbacks *dbsqlrows.TelemetryCallbacks
 
 	cols       []string
-	cur        arrow.Record // current batch (nil until first Next)
-	rowInCur   int          // next row index within cur
-	chunkCount int          // cumulative batches fetched, for OnChunkFetched
+	colTypes   []arrowscan.ColumnTypeInfo // per-column type metadata (PECOBLR-3692)
+	cur        arrow.Record               // current batch (nil until first Next)
+	rowInCur   int                        // next row index within cur
+	chunkCount int                        // cumulative batches fetched, for OnChunkFetched
 	closed     bool
 	eof        bool
 	// iterationErr is the first non-EOF error seen during Next(), reported to the
@@ -85,8 +97,15 @@ func newKernelRows(ctx context.Context, op *kernelOp, stream *C.kernel_result_st
 	}
 	fields := sch.Fields()
 	r.cols = make([]string, len(fields))
+	// Derive per-column type metadata from the Arrow schema up front (the same
+	// schema Columns() is built from), so the RowsColumnType* interfaces report
+	// the Databricks type name / scan type / length matching the Thrift path
+	// (PECOBLR-3692) with no per-call work. Kept in lockstep with the value scanner
+	// (ScanCellCached) via the shared arrowscan.ColumnTypeInfoFor mapper.
+	r.colTypes = make([]arrowscan.ColumnTypeInfo, len(fields))
 	for i, f := range fields {
 		r.cols[i] = f.Name
+		r.colTypes[i] = arrowscan.ColumnTypeInfoFor(f.Type)
 	}
 	// Construction succeeded — now arm the close telemetry callback so a normal
 	// Close() (after row iteration) records CLOSE_STATEMENT.
@@ -97,6 +116,45 @@ func newKernelRows(ctx context.Context, op *kernelOp, stream *C.kernel_result_st
 
 // Columns returns the result-set column names.
 func (r *kernelRows) Columns() []string { return r.cols }
+
+// ColumnTypeScanType returns the Go type a column is best scanned into, matching
+// the Thrift path (PECOBLR-3692). An out-of-range index returns nil, as the
+// Thrift path does on a metadata lookup failure.
+func (r *kernelRows) ColumnTypeScanType(index int) reflect.Type {
+	if index < 0 || index >= len(r.colTypes) {
+		return nil
+	}
+	return r.colTypes[index].ScanType
+}
+
+// ColumnTypeDatabaseTypeName returns the Databricks type name for a column (e.g.
+// "BIGINT", "DECIMAL", "ARRAY"), matching the Thrift path. An out-of-range index
+// returns "".
+func (r *kernelRows) ColumnTypeDatabaseTypeName(index int) string {
+	if index < 0 || index >= len(r.colTypes) {
+		return ""
+	}
+	return r.colTypes[index].DatabaseTypeName
+}
+
+// ColumnTypeNullable reports whether a column is nullable. The kernel result
+// schema does not carry a reliable per-column nullability flag, so — exactly like
+// the Thrift path — this always returns ok=false (nullability unknown).
+func (r *kernelRows) ColumnTypeNullable(index int) (nullable, ok bool) {
+	return false, false
+}
+
+// ColumnTypeLength returns a variable-length column's length (math.MaxInt64,
+// unbounded) for string/binary/nested/interval types and (0, false) for
+// fixed-width types, matching the Thrift path. An out-of-range index returns
+// (0, false).
+func (r *kernelRows) ColumnTypeLength(index int) (length int64, ok bool) {
+	if index < 0 || index >= len(r.colTypes) {
+		return 0, false
+	}
+	ct := r.colTypes[index]
+	return ct.Length, ct.HasLength
+}
 
 // Close releases the current batch, the kernel result stream, and (query-path
 // ownership) the server operation. Idempotent.

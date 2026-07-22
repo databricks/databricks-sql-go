@@ -214,13 +214,14 @@ via the authType=oauthU2M DSN param); reading scalar, nested, and complex-typed
 results (CloudFetch is transparent); bound query parameters (positional and named);
 context cancellation during execute; the initial namespace (WithInitialNamespace,
 applied post-connect via USE CATALOG / USE SCHEMA); metric-view metadata
-(WithEnableMetricViewMetadata); and the TLS, proxy, and session-conf (query tags,
-statement timeout, time zone) options. Nothing is silently ignored: WithTimeout, a
-retries-disabling WithRetries, token-provider / external / federated
-authenticators, and custom M2M OAuth scopes (the kernel applies its own) are
-rejected at connect; staging (PUT/GET/REMOVE on a Unity Catalog volume) is
-rejected at execute. WithMaxRows and positive-limit WithRetries are
-accepted but inert (the kernel manages fetching and retries below the C ABI).
+(WithEnableMetricViewMetadata); the retry / backoff policy (WithRetries:
+RetryWaitMin / RetryWaitMax / RetryMax, including the disable form, forwarded to the
+kernel's HTTP retry config); and the TLS, proxy, and session-conf (query tags,
+statement timeout, time zone) options. Nothing is silently ignored: WithTimeout,
+token-provider / external / federated authenticators, and custom M2M OAuth scopes
+(the kernel applies its own) are rejected at connect; staging (PUT/GET/REMOVE on a
+Unity Catalog volume) is rejected at execute. WithMaxRows is accepted but inert (the
+kernel manages fetching below the C ABI).
 
 OAuth U2M is interactive: on a cache miss, connecting launches the system browser and
 blocks until login completes or the kernel's ~120s callback timeout expires. Because
@@ -233,29 +234,60 @@ backend exposes a U2M-scopes option, so this is a fixed difference between the t
 default sets, not a dropped setting; both authorize against the built-in public
 client.
 
-Experimental kernel-only TLS options (rejected by the default backend; the
+Experimental kernel-only options (rejected by the default backend; the
 WithKernel* prefix marks them experimental):
   - WithKernelTrustedCerts(pem) adds a PEM CA bundle on top of the system roots (for
     a re-signing proxy or on-prem CA). Required because the kernel's TLS stack does
     not read SSL_CERT_FILE.
   - WithKernelSkipHostnameVerify() skips only the hostname check while keeping chain
     validation (finer-grained than WithSkipTLSHostVerify).
+  - WithKernelProxy(KernelProxy{URL, Username, Password, BypassHosts}) sets an explicit
+    HTTP proxy, overriding the HTTP(S)_PROXY / NO_PROXY environment the kernel path
+    otherwise mirrors. The fields are named (not positional) so the four same-typed
+    strings can't be transposed at the call site. Use it for the advanced fields the
+    env-var path can't express: a structured bypass (no-proxy) list, or basic-auth
+    credentials supplied out of band rather than embedded in the URL. An explicit proxy
+    takes precedence over the environment; empty credentials / bypass are passed to the
+    kernel as unset, and a malformed URL is rejected at connect.
+  - WithKernelRetryOverallTimeout(d) sets the cumulative retry budget across all
+    attempts — the 4th retry knob, alongside the backoff bounds and max attempts
+    carried by the backend-neutral WithRetries (also honored on the kernel path). It
+    is kernel-only because the Thrift WithRetries surface has no overall-budget
+    equivalent; it mirrors the pyo3/napi retry_overall_timeout knob. Zero keeps the
+    kernel's default budget (900s).
+  - WithKernelMaxChunksInMemory(n) bounds how many decompressed CloudFetch chunks the
+    kernel holds in memory at once — the knob that trades large-result download
+    throughput for peak RSS. Lower it (e.g. 4) to cap memory on wide, row-heavy result
+    sets; raise it for more parallelism at higher memory. It is forwarded as the
+    kernel's client-only cloudfetch_max_chunks_in_memory session conf, stripped before
+    the SEA wire so it never reaches the server. A value <= 0 keeps the kernel's
+    default (16).
 
-Setting either without WithUseKernel fails Connect with an error wrapping the
+Setting any of these without WithUseKernel fails Connect with an error wrapping the
 sentinel ErrRequiresKernelBackend, detectable with errors.Is.
 
 Features above the backend seam are inherited unchanged: the database/sql connection
 pool, per-connection telemetry (CREATE_SESSION / EXECUTE_STATEMENT / DELETE_SESSION),
-and the telemetry circuit breaker. Result types render byte-for-byte identical to the
+and the telemetry circuit breaker. The kernel path additionally emits a
+connection-configuration telemetry event at connect (mode=SEA, auth mechanism/flow,
+proxy usage, arrow, query tags, metric-view metadata); this is kernel-only, so the
+default (Thrift) path's telemetry is unchanged. Result types render byte-for-byte identical to the
 Thrift backend: scalars, DECIMAL (exact string), TIMESTAMP / TIMESTAMP_NTZ (shifted
 into the session time zone), INTERVAL, nested Array/Map/Struct and VARIANT (as JSON),
-and GEOMETRY (WKT). The server query id is surfaced on the success path, so a
+and GEOMETRY / GEOGRAPHY (WKT). The server query id is surfaced on the success path, so a
 QueryIdCallback (see below) fires with the real id and EXECUTE_STATEMENT telemetry
 carries it.
 
 On the read path, context cancellation is honored at result-batch boundaries, not
 mid-fetch: an in-flight CloudFetch batch runs to completion before the cancel takes
 effect.
+
+OAuth token caching and HTTP client reuse are inherited from the kernel and need no
+driver configuration: the kernel caches U2M tokens on disk
+(~/.config/databricks-sql-kernel/oauth/, with refresh-token lifecycle) and M2M
+tokens in-memory with background refresh, and reuses a single pooled HTTP client per
+session across the control-plane, CloudFetch, and auth-refresh calls. There is no
+driver-side cache or pool knob because these live below the C ABI.
 
 # Programmatically Retrieving Connection and Query Id
 

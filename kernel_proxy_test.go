@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"testing"
 
+	"github.com/databricks/databricks-sql-go/internal/backend/kernel"
 	"github.com/databricks/databricks-sql-go/internal/config"
 )
 
@@ -90,4 +91,46 @@ func TestProxyForEndpoint(t *testing.T) {
 
 	// The production wrapper wires http.ProxyFromEnvironment and must not panic.
 	_ = proxyForEndpoint(validCfg())
+}
+
+// resolveKernelProxy: an explicit WithKernelProxy (KernelExperimental.ProxyURL
+// set) wins verbatim — url + credentials + bypass list — over the environment;
+// with no explicit proxy it falls back to the endpoint's env-derived URL and
+// leaves credentials / bypass empty. Pure Go, default CGO_ENABLED=0 build.
+func TestResolveKernelProxy(t *testing.T) {
+	t.Run("explicit WithKernelProxy wins verbatim over env", func(t *testing.T) {
+		c := config.WithDefaults()
+		c.Host = "my-workspace.databricks.com"
+		c.Port = 443
+		c.WarehouseID = "abc"
+		c.KernelExperimental = &config.KernelExperimentalConfig{ //nolint:gosec // G101: test literals (ProxyPassword), not real credentials
+			ProxyURL:         "http://explicit-proxy:8080",
+			ProxyUsername:    "user",
+			ProxyPassword:    "pass",
+			ProxyBypassHosts: "localhost,*.internal",
+		}
+		var kc kernel.Config
+		resolveKernelProxy(c, &kc)
+		if kc.ProxyURL != "http://explicit-proxy:8080" {
+			t.Errorf("ProxyURL = %q, want the explicit WithKernelProxy URL", kc.ProxyURL)
+		}
+		if kc.ProxyUsername != "user" || kc.ProxyPassword != "pass" || kc.ProxyBypassHosts != "localhost,*.internal" {
+			t.Errorf("explicit proxy credentials/bypass not forwarded: %+v", kc)
+		}
+	})
+
+	t.Run("no explicit proxy falls back to env (no creds/bypass)", func(t *testing.T) {
+		c := config.WithDefaults()
+		c.Host = "my-workspace.databricks.com"
+		c.Port = 443
+		c.WarehouseID = "abc"
+		// No KernelExperimental proxy → env resolution. With no proxy env set in
+		// the test process this resolves to direct (""), and the credential /
+		// bypass fields must stay empty (the env path can't carry them).
+		var kc kernel.Config
+		resolveKernelProxy(c, &kc)
+		if kc.ProxyUsername != "" || kc.ProxyPassword != "" || kc.ProxyBypassHosts != "" {
+			t.Errorf("env path must not populate credentials/bypass: %+v", kc)
+		}
+	})
 }

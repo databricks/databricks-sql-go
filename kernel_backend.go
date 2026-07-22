@@ -30,10 +30,14 @@ func newKernelBackend(_ context.Context, cfg *config.Config) (backend.Backend, e
 	// buildKernelConfig in kernel_config.go, unit-tested under CGO_ENABLED=0.
 	// SPOG org routing rides in HTTPPath's ?o= and is parsed kernel-side.
 	kc := buildKernelConfig(cfg, kauth)
-	// Proxy: the Thrift path uses http.ProxyFromEnvironment; mirror it by reading
-	// the same HTTP(S)_PROXY / NO_PROXY environment for the kernel. Resolved here
-	// (not in buildKernelConfig) since proxyForEndpoint has its own unit coverage.
-	kc.ProxyURL = proxyForEndpoint(cfg)
+	// Proxy: an explicit WithKernelProxy (carried on KernelExperimental) takes
+	// precedence over the environment — an explicit proxy is a deliberate
+	// override, and consulting both would be ambiguous. Otherwise mirror the
+	// Thrift path, which uses http.ProxyFromEnvironment, by reading the same
+	// HTTP(S)_PROXY / NO_PROXY environment for the kernel. resolveKernelProxy is
+	// pure Go (untagged, in kernel_config.go) with its own unit coverage, so it
+	// (and proxyForEndpoint) resolve here rather than in buildKernelConfig.
+	resolveKernelProxy(cfg, &kc)
 	return kernel.New(kc), nil
 }
 
