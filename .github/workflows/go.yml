@@ -312,27 +312,40 @@ jobs:
 
   # Exercises the SEA-via-kernel backend on macOS (darwin/arm64) — the second
   # kernel OS after linux/amd64, per the distribution design's one-OS-at-a-time
-  # rollout. This is the FIRST time cgo_darwin.go's link flags (positional .a for
-  # Apple ld64, -lc++, @loader_path) are compiled+linked in CI; a green run here
-  # is the validation that the darwin link contract is correct.
+  # rollout. A green run validates cgo_darwin.go's link flags (positional .a for
+  # Apple ld64, -lc++, @loader_path), which are otherwise never linked in CI.
   #
-  # Structurally this is the linux build-and-test-kernel job MINUS the two JFrog
-  # steps. It runs on a GitHub-hosted macos-latest runner (arm64), which has open
-  # egress: the kernel's ~300 deps are all public crates.io (no git/private
-  # sources) and the driver's own go.mod deps are all public, so cargo hits
-  # crates.io directly and go hits the default public proxy — no JFrog Go proxy,
-  # no cargo→JFrog credential shim. The GitHub App token step IS kept: the kernel
-  # repo is still private, so kernel-lib.sh's clone needs authenticated HTTPS
-  # (that is repo auth, unrelated to crate resolution).
+  # GATED OFF by default (vars.KERNEL_MACOS_CI_ENABLED == 'true'), because it is
+  # blocked by org infrastructure, NOT by the driver code:
   #
-  # macos-latest is arm64, matching cgo_darwin.go's `darwin && arm64` build tag,
-  # so host == target and kernel-lib.sh's cross-build guard passes with no
-  # --target. aarch64-apple-darwin is a Rust tier-1 target bundled with the pinned
-  # 1.96.1 toolchain (no `rustup target add`), and Xcode CLT on the runner supplies
-  # cc + libc++. No warehouse creds here, so only the tagged UNIT tests run; the
-  # live e2e / parity suites self-skip (they run in nightly-e2e).
+  #   The kernel repo (databricks/databricks-sql-kernel) is PRIVATE, so building
+  #   its .a requires a GitHub App token to clone it. The databricks org enforces
+  #   an IP allow list, and GitHub-HOSTED macos-latest runners have public IPs that
+  #   are NOT allow-listed, so create-github-app-token fails with "your IP address
+  #   is not permitted to access this resource" before cargo/cgo ever run. The
+  #   linux kernel job avoids this only because it runs on the self-hosted,
+  #   allow-listed databricks-protected-runner-group — which offers a
+  #   windows-server-latest label (see the Windows kernel job) but NO macOS label
+  #   anywhere in the org today.
+  #
+  # Two ways to turn this on (then set the repo var to 'true'):
+  #   1. An allow-listed self-hosted macOS/arm64 runner becomes available — point
+  #      runs-on at it (the App-token step then succeeds); OR
+  #   2. The kernel publishes a downloadable darwin_arm64 .a (the distribution
+  #      design's kernel-lib-download path) — then drop the App-token + private
+  #      clone entirely and this runs on hosted macos-latest with open egress.
+  #
+  # The job body below is otherwise ready: structurally the linux kernel job MINUS
+  # the two JFrog steps (kernel deps are all public crates.io and go.mod deps are
+  # all public, so a hosted runner needs no JFrog Go proxy / cargo shim), KEEPING
+  # the App-token step for the private clone. macos-latest is arm64 = cgo_darwin.go's
+  # `darwin && arm64` tag, so host == target (no --target); aarch64-apple-darwin is
+  # Rust tier-1 (bundled with 1.96.1) and Xcode CLT supplies cc + libc++.
   build-and-test-kernel-macos:
     name: Test (kernel backend, macOS)
+    # Default-off: see the block comment above. Flip vars.KERNEL_MACOS_CI_ENABLED
+    # to 'true' once an allow-listed macOS runner or a downloadable kernel .a exists.
+    if: ${{ vars.KERNEL_MACOS_CI_ENABLED == 'true' }}
     timeout-minutes: 30
     concurrency:
       group: kernel-build-macos-${{ github.workflow }}-${{ github.ref }}
