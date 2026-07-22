@@ -716,7 +716,15 @@ func localPathIsAllowed(stagingAllowedLocalPaths []string, localFile string) boo
 		if err != nil {
 			return false
 		}
-		if !strings.Contains(relativePath, "../") {
+		// localFile is inside the allowed dir iff the relative path does not climb
+		// out of it, i.e. it is neither ".." itself nor starts with "..<sep>".
+		// filepath.Rel returns OS-native separators ("../x" on unix, "..\\x" on
+		// windows), so this must compare against filepath.Separator rather than a
+		// hard-coded "../" — the latter never matches the windows "..\\" form and
+		// silently allows an escaping path (a fail-open path-traversal check on
+		// windows). Using the "../" prefix (not a Contains) also avoids treating a
+		// sibling like "..foo" as an escape.
+		if relativePath != ".." && !strings.HasPrefix(relativePath, ".."+string(filepath.Separator)) {
 			return true
 		}
 	}
