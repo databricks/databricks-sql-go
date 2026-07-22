@@ -422,3 +422,139 @@ jobs:
       # cgo_darwin.go. make + cc + libc++ are preinstalled on macos-latest (Xcode CLT).
       - name: Build kernel lib + run tagged tests
         run: make test-kernel
+
+  # Exercises the SEA-via-kernel backend on Windows (windows/amd64) — the third
+  # kernel OS. A green run validates cgo_windows.go's link flags
+  # (-l:libdatabricks_sql_kernel.a -lws2_32 -lwsock32 -lrstrtmgr), otherwise never
+  # linked in CI, AND the Makefile/kernel-lib.sh windows-gnu target plumbing.
+  #
+  # Runs on the SELF-HOSTED, allow-listed databricks-protected-runner-group with the
+  # windows-server-latest label (as databricks-jdbc does). This is deliberate, not a
+  # hosted runner: the kernel repo is private, so create-github-app-token must run
+  # from an allow-listed IP — GitHub-hosted windows-latest is NOT allow-listed and
+  # fails the org IP allow list (the same block that gates the macOS kernel job).
+  # Being on the protected runner also means crates.io is blocked (go/hardened-gha),
+  # so — unlike the hosted-macOS job — this KEEPS the JFrog Go proxy + cargo→JFrog
+  # shim, exactly like the linux kernel job.
+  #
+  # Windows-specific vs the linux job:
+  #   - cgo links with the mingw/gcc toolchain, which needs a GNU archive (.a), not
+  #     the MSVC import lib that the default x86_64-pc-windows-MSVC host triple emits.
+  #     So the Rust gnu target is installed and the Makefile passes
+  #     --target x86_64-pc-windows-gnu (KERNEL_CARGO_TARGET) for GOOS=windows.
+  #   - mingw-w64 gcc provides both the gnu-target link and cgo's own C compiler.
+  #   - core.longpaths avoids checkout/cargo failures on deep dependency paths.
+  build-and-test-kernel-windows:
+    name: Test (kernel backend, Windows)
+    timeout-minutes: 40
+    concurrency:
+      group: kernel-build-windows-${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: true
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: windows-server-latest
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      # Deep cargo dependency paths can exceed the legacy 260-char Windows MAX_PATH;
+      # enable long paths before checkout so neither the clone nor the Rust build
+      # trips on it.
+      - name: Enable Git long paths
+        run: git config --system core.longpaths true
+
+      - name: Check out code into the Go module directory
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      # Go module proxy (GOPROXY + ~/.netrc) via JFrog OIDC. Also exports
+      # JFROG_ACCESS_TOKEN, which the cargo step below reuses. Kept for Windows
+      # because the protected runner blocks direct crates.io / public proxy egress.
+      - name: Setup JFrog
+        uses: ./.github/actions/setup-jfrog
+
+      # Point cargo at the JFrog crates proxy (protected runner blocks crates.io),
+      # reusing setup-jfrog's JFROG_ACCESS_TOKEN — same as the linux kernel job. The
+      # ~/.cargo paths resolve under git-bash on the Windows runner (HOME is set).
+      - name: Configure cargo to use JFrog
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.cargo
+          cat > ~/.cargo/config.toml << 'EOF'
+          [source.crates-io]
+          replace-with = "jfrog"
+
+          [source.jfrog]
+          registry = "sparse+https://databricks.jfrog.io/artifactory/api/cargo/db-cargo-remote/index/"
+
+          [registries.jfrog]
+          index = "sparse+https://databricks.jfrog.io/artifactory/api/cargo/db-cargo-remote/index/"
+          credential-provider = ["cargo:token"]
+          EOF
+          cat > ~/.cargo/credentials.toml << EOF
+          [registries.jfrog]
+          token = "Bearer ${JFROG_ACCESS_TOKEN}"
+          EOF
+          chmod 600 ~/.cargo/credentials.toml
+
+      - name: Set up Go Toolchain
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: '1.25.x'
+          cache: false
+
+      # Install 1.96.1 (lockstep with rust-toolchain.toml) WITH the windows-gnu
+      # target: the default host triple is -msvc, but cgo needs a -gnu archive.
+      - name: Set up Rust Toolchain (windows-gnu target)
+        uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1.16.1
+        with:
+          toolchain: 1.96.1
+          target: x86_64-pc-windows-gnu
+
+      # mingw-w64 supplies the gcc that links the -gnu Rust archive AND is cgo's own
+      # C compiler on Windows. choco is preinstalled on the runner image.
+      - name: Install mingw-w64 (gcc for cgo + gnu link)
+        run: choco install mingw --no-progress -y
+
+      - name: Generate GitHub App token for databricks-sql-kernel
+        id: kernel-token
+        uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3.0.0
+        with:
+          app-id: ${{ secrets.INTEGRATION_TEST_APP_ID }}
+          private-key: ${{ secrets.INTEGRATION_TEST_PRIVATE_KEY }}
+          owner: databricks
+          repositories: databricks-sql-kernel
+
+      - name: Rewrite kernel repo URL to authenticated HTTPS
+        env:
+          TOKEN: ${{ steps.kernel-token.outputs.token }}
+        run: |
+          git config --global \
+            url."https://x-access-token:${TOKEN}@github.com/databricks/".insteadOf \
+            "https://github.com/databricks/"
+
+      - name: Cache kernel static lib
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            internal/backend/kernel/lib
+            internal/backend/kernel/include
+          key: ${{ runner.os }}-kernellib-${{ hashFiles('KERNEL_REV', 'rust-toolchain.toml') }}
+
+      - name: Cache cargo + kernel build tree
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            build/kernel-src/target
+          key: ${{ runner.os }}-kernel-cargo-${{ hashFiles('KERNEL_REV', 'rust-toolchain.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-kernel-cargo-
+
+      # make test-kernel builds the kernel lib (make kernel-lib) — cargo build with
+      # --target x86_64-pc-windows-gnu (set by the Makefile for GOOS=windows), reading
+      # the .a from target/<triple>/release/ — then runs the tagged unit tests,
+      # linking via cgo_windows.go. No warehouse creds, so live e2e/parity self-skip.
+      - name: Build kernel lib + run tagged tests
+        run: make test-kernel
