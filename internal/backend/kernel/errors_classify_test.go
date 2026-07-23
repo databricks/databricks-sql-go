@@ -181,6 +181,32 @@ func TestKernelErrorCategory(t *testing.T) {
 	}
 }
 
+// allKernelStatusCodes is the full C enum (KernelStatusCode 1..13). It is the
+// tripwire for the "every code is mapped" invariant: adding a status constant here
+// makes TestKernelErrorCategoryExhaustive fail until codeToCategory maps it, so a
+// new code can't silently fall through to the message classifier.
+var allKernelStatusCodes = []int{
+	statusInvalidArgument, statusUnauthenticated, statusPermissionDenied,
+	statusNotFound, statusResourceExhausted, statusUnavailable, statusTimeout,
+	statusCancelled, statusDataLoss, statusInternal, statusInvalidStmtHandle,
+	statusNetworkError, statusSqlError,
+}
+
+// Every kernel status code resolves to a non-empty category, and the map holds
+// exactly those codes — so a code added without a mapping (or a stray extra entry)
+// fails here rather than silently regressing to message matching.
+func TestKernelErrorCategoryExhaustive(t *testing.T) {
+	for _, code := range allKernelStatusCodes {
+		if (&KernelError{Code: code}).Category() == "" {
+			t.Errorf("code %d has no category — add it to codeToCategory", code)
+		}
+	}
+	if len(codeToCategory) != len(allKernelStatusCodes) {
+		t.Errorf("codeToCategory has %d entries, want %d (map and status-code list drifted)",
+			len(codeToCategory), len(allKernelStatusCodes))
+	}
+}
+
 // The category must survive the fmt.Errorf("%w") wrapping the execute/read paths
 // apply, since CategoryFromError walks the chain to reach the *KernelError. This is
 // the property the telemetry classifier depends on end to end.

@@ -69,8 +69,8 @@ func (e *KernelError) Error() string {
 // the Go analog of the Python driver's _CODE_TO_EXCEPTION and Node's
 // mapKernelErrorToJsError: the kernel already hands us an authoritative code, so
 // telemetry keys off it instead of re-guessing from the message text. Every kernel
-// status code is mapped (Internal / InvalidStatementHandle to generic buckets, as
-// Python/Node do) so a *KernelError never depends on the message-substring fallback.
+// status code is mapped (Internal to the generic bucket, matching how Python/Node
+// bucket it) so a *KernelError never depends on the message-substring fallback.
 var codeToCategory = map[int]dbsqlerrint.ErrorCategory{
 	statusInvalidArgument:   dbsqlerrint.CategoryInvalidRequest,
 	statusUnauthenticated:   dbsqlerrint.CategoryAuthError,
