@@ -23,12 +23,19 @@ import (
 // without the C import. cgo.go asserts each equals its C.KernelStatusCode_* value
 // at compile time, so drift from the header is a build error, not a latent bug.
 const (
-	statusInvalidArgument = 1
-	statusUnauthenticated = 2
-	statusUnavailable     = 6
-	statusTimeout         = 7
-	statusNetworkError    = 12
-	statusSqlError        = 13
+	statusInvalidArgument   = 1
+	statusUnauthenticated   = 2
+	statusPermissionDenied  = 3
+	statusNotFound          = 4
+	statusResourceExhausted = 5
+	statusUnavailable       = 6
+	statusTimeout           = 7
+	statusCancelled         = 8
+	statusDataLoss          = 9
+	statusInternal          = 10
+	statusInvalidStmtHandle = 11
+	statusNetworkError      = 12
+	statusSqlError          = 13
 )
 
 // KernelError is the Go-side structured error mapped from the kernel's KernelError
@@ -56,6 +63,40 @@ func (e *KernelError) Error() string {
 		return fmt.Sprintf("kernel: %s (sqlstate=%s, code=%d%s)", e.Message, e.SQLState, e.Code, q)
 	}
 	return fmt.Sprintf("kernel: %s (code=%d%s)", e.Message, e.Code, q)
+}
+
+// codeToCategory maps the kernel status code to a telemetry ErrorCategory. This is
+// the Go analog of the Python driver's _CODE_TO_EXCEPTION and Node's
+// mapKernelErrorToJsError: the kernel already hands us an authoritative code, so
+// telemetry keys off it instead of re-guessing from the message text. Every kernel
+// status code is mapped (Internal to the generic bucket, matching how Python/Node
+// bucket it) so a *KernelError never depends on the message-substring fallback.
+var codeToCategory = map[int]dbsqlerrint.ErrorCategory{
+	statusInvalidArgument:   dbsqlerrint.CategoryInvalidRequest,
+	statusUnauthenticated:   dbsqlerrint.CategoryAuthError,
+	statusPermissionDenied:  dbsqlerrint.CategoryPermissionError,
+	statusNotFound:          dbsqlerrint.CategoryNotFound,
+	statusResourceExhausted: dbsqlerrint.CategoryRateLimitExceeded,
+	statusUnavailable:       dbsqlerrint.CategoryConnectionError,
+	statusTimeout:           dbsqlerrint.CategoryTimeout,
+	// Cancelled is generic (caller cancel, dropped future, or server-side cancel)
+	// and classifyError also runs for session-lifecycle ops, so use the neutral
+	// cancelled category rather than the statement-specific one.
+	statusCancelled: dbsqlerrint.CategoryCancelled,
+	statusDataLoss:  dbsqlerrint.CategoryResultSet,
+	statusInternal:  dbsqlerrint.CategoryGeneric,
+	// A closed/invalid statement handle is a use-after-close on the result path.
+	statusInvalidStmtHandle: dbsqlerrint.CategoryStatementClosed,
+	statusNetworkError:      dbsqlerrint.CategoryConnectionError,
+	statusSqlError:          dbsqlerrint.CategoryExecuteStatement,
+}
+
+// Category satisfies the telemetry categorizer interface (read via
+// CategoryFromError), so a kernel failure reports its code-derived category rather
+// than one inferred from the message. Every kernel code is mapped; a value outside
+// the enum returns "" and only then does classifyError fall back to the message.
+func (e *KernelError) Category() dbsqlerrint.ErrorCategory {
+	return codeToCategory[e.Code]
 }
 
 // statementIDFromError returns the server query id carried on a KernelError, or ""
