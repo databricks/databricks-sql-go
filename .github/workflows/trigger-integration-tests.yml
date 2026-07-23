@@ -368,6 +368,7 @@ jobs:
           private-key: ${{ secrets.INTEGRATION_TEST_PRIVATE_KEY }}
           owner: databricks
           repositories: databricks-driver-test
+          permission-contents: write
 
       - name: Dispatch coverage-fanout
         if: steps.changed.outputs.source == 'true'
