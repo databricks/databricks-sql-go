@@ -1,0 +1,333 @@
+name: On-Demand E2E (all reachable OSes)
+
+# EXPERIMENTAL / testing aid for PR #421. Runs the live-warehouse E2E suites
+# across every OS we can actually reach, ON DEMAND — triggered by adding the
+# `run-e2e` label to a PR (re-add to re-run). Unlike schedule/workflow_dispatch
+# (which run the file from the default branch), a `pull_request` trigger runs the
+# file from the PR BRANCH, so this exercises the branch's code + workflow. #421 is
+# a same-repo (non-fork) branch, so it receives the DATABRICKS_PECOTESTING_*
+# secrets a fork PR would not.
+#
+# Reachable live matrix (see the per-job comments for why each is/ isn't here):
+#   Thrift E2E  (pure-Go, needs only creds):   linux + macOS + Windows   (hosted)
+#   Kernel E2E  (needs the PRIVATE kernel repo): linux + Windows          (protected runners)
+#     macOS kernel E2E is intentionally ABSENT: a hosted macOS runner cannot mint
+#     the GitHub App token for the private kernel repo (org IP allow list), and no
+#     allow-listed macOS runner exists in the org — the same block that gates the
+#     macOS kernel unit job in go.yml.
+#
+# This is a testing scaffold, not a required gate; it is expected to be removed (or
+# folded into nightly-e2e) before #421 is considered done.
+
+on:
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  # ── Thrift (pure-Go) E2E on every OS ────────────────────────────────────────
+  # Pure-Go (CGO_ENABLED=0), so no private kernel, no JFrog, no Rust/C toolchain —
+  # it just needs the warehouse creds. That makes all three hosted OSes reachable.
+  thrift-e2e:
+    if: github.event.label.name == 'run-e2e'
+    name: Thrift E2E (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out the PR branch
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Set up Go Toolchain
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: '1.25.x'
+          cache: true
+          cache-dependency-path: go.sum
+
+      # Fail loud if a credential is missing rather than letting the tests silently
+      # t.Skip() into a misleading green (same guard as nightly-e2e). Accept _TOKEN
+      # or _TOKEN_PERSONAL.
+      - name: Verify warehouse credentials are present
+        env:
+          HOST: ${{ secrets.DATABRICKS_PECOTESTING_SERVER_HOSTNAME }}
+          HTTP_PATH: ${{ secrets.DATABRICKS_PECOTESTING_HTTP_PATH2 }}
+          TOKEN: ${{ secrets.DATABRICKS_PECOTESTING_TOKEN }}
+          TOKEN_PERSONAL: ${{ secrets.DATABRICKS_PECOTESTING_TOKEN_PERSONAL }}
+        run: |
+          if [ -z "$HOST" ] || [ -z "$HTTP_PATH" ] || { [ -z "$TOKEN" ] && [ -z "$TOKEN_PERSONAL" ]; }; then
+            echo "::error::E2E warehouse secrets not reachable on this run (need DATABRICKS_PECOTESTING_SERVER_HOSTNAME, _HTTP_PATH2, and _TOKEN or _TOKEN_PERSONAL). If this is a PR-context restriction, in-repo live E2E is not possible here." >&2
+            exit 1
+          fi
+
+      - name: Run Thrift E2E
+        env:
+          CGO_ENABLED: 0
+          DATABRICKS_PECOTESTING_SERVER_HOSTNAME: ${{ secrets.DATABRICKS_PECOTESTING_SERVER_HOSTNAME }}
+          DATABRICKS_PECOTESTING_HTTP_PATH2: ${{ secrets.DATABRICKS_PECOTESTING_HTTP_PATH2 }}
+          DATABRICKS_PECOTESTING_TOKEN: ${{ secrets.DATABRICKS_PECOTESTING_TOKEN }}
+          DATABRICKS_PECOTESTING_TOKEN_PERSONAL: ${{ secrets.DATABRICKS_PECOTESTING_TOKEN_PERSONAL }}
+        run: |
+          go test -count=1 -v -timeout 15m \
+            -run 'TestE2EArrowBatchesSurviveQueryContextCancellation|TestE2ECloudFetchExactRowCount' .
+
+  # ── Kernel (SEA) E2E on linux ───────────────────────────────────────────────
+  # Protected runner (allow-listed): App token for the private kernel works, and
+  # crates.io is blocked so cargo uses the JFrog proxy. Mirrors nightly-e2e's
+  # kernel-e2e job.
+  kernel-e2e-linux:
+    if: github.event.label.name == 'run-e2e'
+    name: Kernel E2E (linux)
+    timeout-minutes: 65
+    concurrency:
+      group: ondemand-kernel-e2e-linux-${{ github.ref }}
+      cancel-in-progress: true
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: linux-ubuntu-latest
+    steps:
+      - name: Check out the PR branch
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Setup JFrog
+        uses: ./.github/actions/setup-jfrog
+
+      - name: Configure cargo to use JFrog
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.cargo
+          cat > ~/.cargo/config.toml << 'EOF'
+          [source.crates-io]
+          replace-with = "jfrog"
+
+          [source.jfrog]
+          registry = "sparse+https://databricks.jfrog.io/artifactory/api/cargo/db-cargo-remote/index/"
+
+          [registries.jfrog]
+          index = "sparse+https://databricks.jfrog.io/artifactory/api/cargo/db-cargo-remote/index/"
+          credential-provider = ["cargo:token"]
+          EOF
+          cat > ~/.cargo/credentials.toml << EOF
+          [registries.jfrog]
+          token = "Bearer ${JFROG_ACCESS_TOKEN}"
+          EOF
+          chmod 600 ~/.cargo/credentials.toml
+
+      - name: Set up Go Toolchain
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: '1.25.x'
+          cache: false
+
+      - name: Set up Rust Toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1.16.1
+        with:
+          toolchain: 1.96.1
+
+      - name: Generate GitHub App token for databricks-sql-kernel
+        id: kernel-token
+        uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3.0.0
+        with:
+          app-id: ${{ secrets.INTEGRATION_TEST_APP_ID }}
+          private-key: ${{ secrets.INTEGRATION_TEST_PRIVATE_KEY }}
+          owner: databricks
+          repositories: databricks-sql-kernel
+
+      - name: Rewrite kernel repo URL to authenticated HTTPS
+        env:
+          TOKEN: ${{ steps.kernel-token.outputs.token }}
+        run: |
+          git config --global \
+            url."https://x-access-token:${TOKEN}@github.com/databricks/".insteadOf \
+            "https://github.com/databricks/"
+
+      - name: Cache kernel static lib
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            internal/backend/kernel/lib
+            internal/backend/kernel/include
+          key: ${{ runner.os }}-kernellib-${{ hashFiles('KERNEL_REV', 'rust-toolchain.toml') }}
+
+      - name: Cache cargo + kernel build tree
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            build/kernel-src/target
+          key: ${{ runner.os }}-kernel-cargo-${{ hashFiles('KERNEL_REV', 'rust-toolchain.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-kernel-cargo-
+
+      - name: Install build prerequisites (make, C compiler)
+        run: |
+          if ! command -v make &> /dev/null ; then
+            apt-get update && apt-get install -y make
+          fi
+          if ! command -v cc &> /dev/null ; then
+            apt-get update && apt-get install -y build-essential
+          fi
+
+      - name: Verify warehouse credentials are present
+        env:
+          HOST: ${{ secrets.DATABRICKS_PECOTESTING_SERVER_HOSTNAME }}
+          HTTP_PATH: ${{ secrets.DATABRICKS_PECOTESTING_HTTP_PATH2 }}
+          TOKEN: ${{ secrets.DATABRICKS_PECOTESTING_TOKEN }}
+          TOKEN_PERSONAL: ${{ secrets.DATABRICKS_PECOTESTING_TOKEN_PERSONAL }}
+        run: |
+          if [ -z "$HOST" ] || [ -z "$HTTP_PATH" ] || { [ -z "$TOKEN" ] && [ -z "$TOKEN_PERSONAL" ]; }; then
+            echo "::error::E2E warehouse secrets not reachable on this run." >&2
+            exit 1
+          fi
+
+      - name: Build kernel lib
+        timeout-minutes: 25
+        run: make kernel-lib
+
+      - name: Run kernel E2E
+        env:
+          DATABRICKS_PECOTESTING_SERVER_HOSTNAME: ${{ secrets.DATABRICKS_PECOTESTING_SERVER_HOSTNAME }}
+          DATABRICKS_PECOTESTING_HTTP_PATH2: ${{ secrets.DATABRICKS_PECOTESTING_HTTP_PATH2 }}
+          DATABRICKS_PECOTESTING_TOKEN: ${{ secrets.DATABRICKS_PECOTESTING_TOKEN }}
+          DATABRICKS_PECOTESTING_TOKEN_PERSONAL: ${{ secrets.DATABRICKS_PECOTESTING_TOKEN_PERSONAL }}
+        run: |
+          CGO_ENABLED=1 go test -tags databricks_kernel -count=1 -v -timeout 30m \
+            -run 'TestKernelE2E|TestKernelThriftParity|TestKernelParamsVsThrift' \
+            -skip 'TestKernelE2EM2M' .
+
+  # ── Kernel (SEA) E2E on Windows ─────────────────────────────────────────────
+  # Protected windows-server-latest (allow-listed → App token works). Same
+  # windows-gnu build plumbing as go.yml's build-and-test-kernel-windows, plus the
+  # warehouse creds + the kernel E2E filter.
+  kernel-e2e-windows:
+    if: github.event.label.name == 'run-e2e'
+    name: Kernel E2E (Windows)
+    timeout-minutes: 65
+    concurrency:
+      group: ondemand-kernel-e2e-windows-${{ github.ref }}
+      cancel-in-progress: true
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: windows-server-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Enable Git long paths
+        run: git config --system core.longpaths true
+
+      - name: Check out the PR branch
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Setup JFrog
+        uses: ./.github/actions/setup-jfrog
+
+      - name: Configure cargo to use JFrog
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.cargo
+          cat > ~/.cargo/config.toml << 'EOF'
+          [source.crates-io]
+          replace-with = "jfrog"
+
+          [source.jfrog]
+          registry = "sparse+https://databricks.jfrog.io/artifactory/api/cargo/db-cargo-remote/index/"
+
+          [registries.jfrog]
+          index = "sparse+https://databricks.jfrog.io/artifactory/api/cargo/db-cargo-remote/index/"
+          credential-provider = ["cargo:token"]
+          EOF
+          cat > ~/.cargo/credentials.toml << EOF
+          [registries.jfrog]
+          token = "Bearer ${JFROG_ACCESS_TOKEN}"
+          EOF
+          chmod 600 ~/.cargo/credentials.toml
+
+      - name: Set up Go Toolchain
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: '1.25.x'
+          cache: false
+
+      - name: Set up Rust Toolchain (windows-gnu target)
+        uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1.16.1
+        with:
+          toolchain: 1.96.1
+          target: x86_64-pc-windows-gnu
+
+      - name: Install mingw-w64 (gcc for cgo + gnu link)
+        run: choco install mingw --no-progress -y
+
+      - name: Generate GitHub App token for databricks-sql-kernel
+        id: kernel-token
+        uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3.0.0
+        with:
+          app-id: ${{ secrets.INTEGRATION_TEST_APP_ID }}
+          private-key: ${{ secrets.INTEGRATION_TEST_PRIVATE_KEY }}
+          owner: databricks
+          repositories: databricks-sql-kernel
+
+      - name: Rewrite kernel repo URL to authenticated HTTPS
+        env:
+          TOKEN: ${{ steps.kernel-token.outputs.token }}
+        run: |
+          git config --global \
+            url."https://x-access-token:${TOKEN}@github.com/databricks/".insteadOf \
+            "https://github.com/databricks/"
+
+      - name: Cache kernel static lib
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            internal/backend/kernel/lib
+            internal/backend/kernel/include
+          key: ${{ runner.os }}-kernellib-${{ hashFiles('KERNEL_REV', 'rust-toolchain.toml') }}
+
+      - name: Cache cargo + kernel build tree
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            build/kernel-src/target
+          key: ${{ runner.os }}-kernel-cargo-${{ hashFiles('KERNEL_REV', 'rust-toolchain.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-kernel-cargo-
+
+      - name: Verify warehouse credentials are present
+        env:
+          HOST: ${{ secrets.DATABRICKS_PECOTESTING_SERVER_HOSTNAME }}
+          HTTP_PATH: ${{ secrets.DATABRICKS_PECOTESTING_HTTP_PATH2 }}
+          TOKEN: ${{ secrets.DATABRICKS_PECOTESTING_TOKEN }}
+          TOKEN_PERSONAL: ${{ secrets.DATABRICKS_PECOTESTING_TOKEN_PERSONAL }}
+        run: |
+          if [ -z "$HOST" ] || [ -z "$HTTP_PATH" ] || { [ -z "$TOKEN" ] && [ -z "$TOKEN_PERSONAL" ]; }; then
+            echo "::error::E2E warehouse secrets not reachable on this run." >&2
+            exit 1
+          fi
+
+      - name: Build kernel lib
+        timeout-minutes: 25
+        run: make kernel-lib
+
+      - name: Run kernel E2E
+        env:
+          DATABRICKS_PECOTESTING_SERVER_HOSTNAME: ${{ secrets.DATABRICKS_PECOTESTING_SERVER_HOSTNAME }}
+          DATABRICKS_PECOTESTING_HTTP_PATH2: ${{ secrets.DATABRICKS_PECOTESTING_HTTP_PATH2 }}
+          DATABRICKS_PECOTESTING_TOKEN: ${{ secrets.DATABRICKS_PECOTESTING_TOKEN }}
+          DATABRICKS_PECOTESTING_TOKEN_PERSONAL: ${{ secrets.DATABRICKS_PECOTESTING_TOKEN_PERSONAL }}
+        run: |
+          CGO_ENABLED=1 go test -tags databricks_kernel -count=1 -v -timeout 30m \
+            -run 'TestKernelE2E|TestKernelThriftParity|TestKernelParamsVsThrift' \
+            -skip 'TestKernelE2EM2M' .
