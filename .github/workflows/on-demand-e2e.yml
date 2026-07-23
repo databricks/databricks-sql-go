@@ -76,6 +76,14 @@ jobs:
           DATABRICKS_PECOTESTING_HTTP_PATH2: ${{ secrets.DATABRICKS_PECOTESTING_HTTP_PATH2 }}
           DATABRICKS_PECOTESTING_TOKEN: ${{ secrets.DATABRICKS_PECOTESTING_TOKEN }}
           DATABRICKS_PECOTESTING_TOKEN_PERSONAL: ${{ secrets.DATABRICKS_PECOTESTING_TOKEN_PERSONAL }}
+          # The HTTP-path secret starts with "/" (e.g. /sql/1.0/warehouses/...).
+          # Under git-bash on Windows, MSYS auto-converts leading-slash values into
+          # a Windows path ("/sql/..." -> "C:/Program Files/Git/sql/..."), so the
+          # driver POSTed to a mangled path and got 404 (linux/macOS are unaffected).
+          # Disable MSYS arg/path conversion so the path reaches Go verbatim. These
+          # vars are MSYS-only, so they are harmless no-ops on ubuntu/macOS.
+          MSYS2_ARG_CONV_EXCL: '*'
+          MSYS_NO_PATHCONV: '1'
         run: |
           go test -count=1 -v -timeout 15m \
             -run 'TestE2EArrowBatchesSurviveQueryContextCancellation|TestE2ECloudFetchExactRowCount' .
@@ -201,6 +209,11 @@ jobs:
           DATABRICKS_PECOTESTING_HTTP_PATH2: ${{ secrets.DATABRICKS_PECOTESTING_HTTP_PATH2 }}
           DATABRICKS_PECOTESTING_TOKEN: ${{ secrets.DATABRICKS_PECOTESTING_TOKEN }}
           DATABRICKS_PECOTESTING_TOKEN_PERSONAL: ${{ secrets.DATABRICKS_PECOTESTING_TOKEN_PERSONAL }}
+          # Same MSYS leading-slash path-mangling guard as the Thrift E2E job (the
+          # HTTP-path secret starts with "/", which git-bash would rewrite to a
+          # Windows path). MSYS-only vars, so a harmless no-op on the linux job.
+          MSYS2_ARG_CONV_EXCL: '*'
+          MSYS_NO_PATHCONV: '1'
         run: |
           CGO_ENABLED=1 go test -tags databricks_kernel -count=1 -v -timeout 30m \
             -run 'TestKernelE2E|TestKernelThriftParity|TestKernelParamsVsThrift' \
@@ -327,6 +340,11 @@ jobs:
           DATABRICKS_PECOTESTING_HTTP_PATH2: ${{ secrets.DATABRICKS_PECOTESTING_HTTP_PATH2 }}
           DATABRICKS_PECOTESTING_TOKEN: ${{ secrets.DATABRICKS_PECOTESTING_TOKEN }}
           DATABRICKS_PECOTESTING_TOKEN_PERSONAL: ${{ secrets.DATABRICKS_PECOTESTING_TOKEN_PERSONAL }}
+          # Same MSYS leading-slash path-mangling guard as the Thrift E2E job (the
+          # HTTP-path secret starts with "/", which git-bash would rewrite to a
+          # Windows path). MSYS-only vars, so a harmless no-op on the linux job.
+          MSYS2_ARG_CONV_EXCL: '*'
+          MSYS_NO_PATHCONV: '1'
         run: |
           CGO_ENABLED=1 go test -tags databricks_kernel -count=1 -v -timeout 30m \
             -run 'TestKernelE2E|TestKernelThriftParity|TestKernelParamsVsThrift' \
