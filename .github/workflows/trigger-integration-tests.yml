@@ -327,10 +327,14 @@ jobs:
     if: |
       github.event_name == 'pull_request' &&
       github.event.action == 'closed' &&
-      github.event.pull_request.merged == true
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.base.ref == 'main'
     runs-on:
       group: databricks-protected-runner-group
       labels: linux-ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
       - name: Check if Go driver source changed
         id: changed
