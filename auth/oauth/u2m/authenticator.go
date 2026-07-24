@@ -20,7 +20,7 @@ import (
 
 	"github.com/databricks/databricks-sql-go/auth"
 	"github.com/databricks/databricks-sql-go/auth/oauth"
-	"github.com/rs/zerolog/log"
+	"github.com/databricks/databricks-sql-go/logger"
 	"golang.org/x/oauth2"
 )
 
@@ -160,7 +160,7 @@ func (tsp *tokenSourceProvider) GetTokenSource() (oauth2.TokenSource, error) {
 	loginURL := tsp.config.AuthCodeURL(state, challenge, challengeMethod)
 	tsp.state = state
 
-	log.Info().Msgf("listening on %s://%s/", tsp.redirectURL.Scheme, tsp.redirectURL.Host)
+	logger.Info().Msgf("listening on %s://%s/", tsp.redirectURL.Scheme, tsp.redirectURL.Host)
 	listener, err := net.Listen("tcp", tsp.redirectURL.Host)
 	if err != nil {
 		return nil, err
@@ -225,28 +225,28 @@ func (tsp *tokenSourceProvider) ServeHTTP(w http.ResponseWriter, r *http.Request
 
 	// Do some checking of the response here to show more relevant content
 	if resp.err != "" {
-		log.Error().Msg(resp.err)
+		logger.Error().Msg(resp.err)
 		w.WriteHeader(http.StatusBadRequest)
 		_, err := w.Write([]byte(errorHTML("Identity Provider returned an error: " + resp.err))) //nolint:gosec // XSS not a concern for local OAuth callback
 		if err != nil {
-			log.Error().Err(err).Msg("unable to write error response")
+			logger.Error().Err(err).Msg("unable to write error response")
 		}
 		return
 	}
 	if resp.state != tsp.state && r.URL.String() != "/favicon.ico" {
 		msg := "Authentication state received did not match original request. Please try to login again."
-		log.Error().Msg(msg)
+		logger.Error().Msg(msg)
 		w.WriteHeader(http.StatusBadRequest)
 		_, err := w.Write([]byte(errorHTML(msg)))
 		if err != nil {
-			log.Error().Err(err).Msg("unable to write error response")
+			logger.Error().Err(err).Msg("unable to write error response")
 		}
 		return
 	}
 
 	_, err := w.Write([]byte(infoHTML("CLI Login Success", "You may close this window anytime now and go back to terminal")))
 	if err != nil {
-		log.Error().Err(err).Msg("unable to write success response")
+		logger.Error().Err(err).Msg("unable to write success response")
 	}
 }
 
