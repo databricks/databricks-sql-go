@@ -241,6 +241,9 @@ WithKernel* prefix marks them experimental):
     not read SSL_CERT_FILE.
   - WithKernelSkipHostnameVerify() skips only the hostname check while keeping chain
     validation (finer-grained than WithSkipTLSHostVerify).
+  - WithKernelClientCertificate(cert, key) configures a client certificate + private
+    key for mutual TLS (mTLS). Both PEM halves are required together; the key is
+    never logged.
   - WithKernelProxy(KernelProxy{URL, Username, Password, BypassHosts}) sets an explicit
     HTTP proxy, overriding the HTTP(S)_PROXY / NO_PROXY environment the kernel path
     otherwise mirrors. The fields are named (not positional) so the four same-typed

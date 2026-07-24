@@ -35,6 +35,14 @@ type Config struct {
 	TLSTrustedCertsPEM    []byte
 	TLSSkipHostnameVerify bool
 
+	// TLSClientCertPEM / TLSClientKeyPEM are the mTLS client cert (+ optional
+	// chain) and matching private key (from WithKernelClientCertificate). They
+	// travel as a pair — both set or both empty — and are forwarded via the single
+	// paired kernel_session_config_set_tls_client_certificate. The key is never
+	// logged.
+	TLSClientCertPEM []byte
+	TLSClientKeyPEM  []byte
+
 	// ProxyURL configures an HTTP proxy. It is either resolved for this endpoint
 	// from the same HTTP(S)_PROXY / NO_PROXY environment the Thrift path uses
 	// (NO_PROXY applied during resolution), or set explicitly via WithKernelProxy.

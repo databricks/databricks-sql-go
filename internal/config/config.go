@@ -76,6 +76,23 @@ type KernelExperimentalConfig struct {
 	// of the blanket InsecureSkipVerify (which relaxes both chain and hostname).
 	// Maps to kernel_session_config_set_tls_skip_hostname_verification.
 	TLSSkipHostnameVerify bool
+	// TLSClientCertPEM / TLSClientKeyPEM are the client leaf cert (+ optional
+	// chain) and matching private key for mutual TLS (mTLS). They travel as a
+	// pair — both set or both nil (WithKernelClientCertificate is the only setter
+	// and takes both) — and map to the single paired
+	// kernel_session_config_set_tls_client_certificate. The key is never logged.
+	TLSClientCertPEM []byte
+	TLSClientKeyPEM  []byte
+	// TLSClientCertConfigured records that WithKernelClientCertificate was
+	// invoked, independent of whether the caller passed non-empty bytes. It
+	// exists because an empty cert+key pair is otherwise indistinguishable from
+	// the option never being called (KernelExperimental can be non-nil from any
+	// other WithKernel* option), which would let a caller who explicitly asked
+	// for mTLS — e.g. after a failed/empty PEM load — silently connect with no
+	// client identity (applyKernelTLS gates the setter on a non-empty cert).
+	// validateKernelConfig uses this marker to reject an incomplete mTLS request
+	// loudly instead of failing open. Never forwarded to the kernel C ABI.
+	TLSClientCertConfigured bool
 
 	// ProxyURL / ProxyUsername / ProxyPassword / ProxyBypassHosts configure an
 	// explicit HTTP proxy on the kernel path (WithKernelProxy), overriding the
@@ -117,16 +134,23 @@ func (k *KernelExperimentalConfig) DeepCopy() *KernelExperimentalConfig {
 		return nil
 	}
 	cp := &KernelExperimentalConfig{
-		TLSSkipHostnameVerify: k.TLSSkipHostnameVerify,
-		ProxyURL:              k.ProxyURL,
-		ProxyUsername:         k.ProxyUsername,
-		ProxyPassword:         k.ProxyPassword,
-		ProxyBypassHosts:      k.ProxyBypassHosts,
-		RetryOverallTimeout:   k.RetryOverallTimeout,
-		MaxChunksInMemory:     k.MaxChunksInMemory,
+		TLSSkipHostnameVerify:   k.TLSSkipHostnameVerify,
+		TLSClientCertConfigured: k.TLSClientCertConfigured,
+		ProxyURL:                k.ProxyURL,
+		ProxyUsername:           k.ProxyUsername,
+		ProxyPassword:           k.ProxyPassword,
+		ProxyBypassHosts:        k.ProxyBypassHosts,
+		RetryOverallTimeout:     k.RetryOverallTimeout,
+		MaxChunksInMemory:       k.MaxChunksInMemory,
 	}
 	if k.TLSTrustedCertsPEM != nil {
 		cp.TLSTrustedCertsPEM = append([]byte(nil), k.TLSTrustedCertsPEM...)
+	}
+	if k.TLSClientCertPEM != nil {
+		cp.TLSClientCertPEM = append([]byte(nil), k.TLSClientCertPEM...)
+	}
+	if k.TLSClientKeyPEM != nil {
+		cp.TLSClientKeyPEM = append([]byte(nil), k.TLSClientKeyPEM...)
 	}
 	return cp
 }

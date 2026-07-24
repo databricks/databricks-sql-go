@@ -99,6 +99,27 @@ func validateKernelConfig(cfg *config.Config) (kernel.Auth, error) {
 				"(want a scheme and host, e.g. http://proxy:3128)", ke.ProxyURL, dbsqlerr.ErrInvalidKernelConfig)
 		}
 	}
+	// mTLS client identity (WithKernelClientCertificate) must be a complete pair:
+	// mTLS needs both a non-empty client cert and its private key. Reject any
+	// incomplete request loudly at connect — otherwise applyKernelTLS (which gates
+	// the mTLS forward on the cert being non-empty) would silently skip the setter
+	// and connect with no client identity, a fail-open that contradicts the "both
+	// halves required together / never silently dropped" contract.
+	//
+	// "Incomplete" covers three cases: cert-without-key, key-without-cert, and —
+	// critically — the option being invoked with both halves empty/nil (e.g. from
+	// a failed PEM load), which the marker distinguishes from the option never
+	// being called. We also treat a bare cert/key present as a request even
+	// without the marker, so a config assembled without the option can't fail open
+	// either.
+	if ke := cfg.KernelExperimental; ke != nil {
+		certLen, keyLen := len(ke.TLSClientCertPEM), len(ke.TLSClientKeyPEM)
+		mtlsRequested := ke.TLSClientCertConfigured || certLen > 0 || keyLen > 0
+		if mtlsRequested && (certLen == 0 || keyLen == 0) {
+			return kernel.Auth{}, fmt.Errorf("databricks: WithKernelClientCertificate requires " +
+				"both a non-empty client certificate and a non-empty private key")
+		}
+	}
 	return kauth, nil
 }
 
@@ -130,13 +151,15 @@ func buildKernelConfig(cfg *config.Config, kauth kernel.Auth) kernel.Config {
 	if cfg.TLSConfig != nil && cfg.TLSConfig.InsecureSkipVerify {
 		kc.TLSSkipVerify = true
 	}
-	// Experimental kernel-only TLS knobs (WithKernelTrustedCerts /
-	// WithKernelSkipHostnameVerify), if any. These have no Thrift-path equivalent
-	// (the connector rejects them on that path) and are forwarded verbatim to the
-	// kernel C ABI in OpenSession.
+	// Experimental kernel-only knobs (WithKernelTrustedCerts /
+	// WithKernelSkipHostnameVerify / WithKernelClientCertificate), if any. These
+	// have no Thrift-path equivalent (the connector rejects them on that path) and
+	// are forwarded verbatim to the kernel C ABI in OpenSession.
 	if ke := cfg.KernelExperimental; ke != nil {
 		kc.TLSTrustedCertsPEM = ke.TLSTrustedCertsPEM
 		kc.TLSSkipHostnameVerify = ke.TLSSkipHostnameVerify
+		kc.TLSClientCertPEM = ke.TLSClientCertPEM
+		kc.TLSClientKeyPEM = ke.TLSClientKeyPEM
 		// Kernel-only CloudFetch in-memory-chunk knob (WithKernelMaxChunksInMemory).
 		// Injected into the kernel backend's own SessionConf ONLY (not via
 		// EffectiveSessionParams, which both backends share) as the client-only key

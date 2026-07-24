@@ -126,6 +126,64 @@ func TestValidateKernelConfig(t *testing.T) {
 		})
 	}
 
+	// mTLS client identity must be a complete pair. An unpaired credential (cert
+	// or key alone) is rejected loudly so a lone key can't be silently dropped by
+	// applyKernelTLS; a complete pair (and the no-mTLS case) validates.
+	t.Run("mTLS unpaired cert rejected", func(t *testing.T) {
+		c := baseKernelConfig()
+		c.KernelExperimental = &config.KernelExperimentalConfig{TLSClientCertPEM: []byte("cert")}
+		if _, err := validateKernelConfig(c); err == nil {
+			t.Fatal("expected an error for a cert without a key")
+		}
+	})
+	t.Run("mTLS unpaired key rejected", func(t *testing.T) {
+		c := baseKernelConfig()
+		c.KernelExperimental = &config.KernelExperimentalConfig{TLSClientKeyPEM: []byte("key")}
+		if _, err := validateKernelConfig(c); err == nil {
+			t.Fatal("expected an error for a key without a cert")
+		}
+	})
+	t.Run("mTLS complete pair validates", func(t *testing.T) {
+		c := baseKernelConfig()
+		c.KernelExperimental = &config.KernelExperimentalConfig{
+			TLSClientCertPEM: []byte("cert"),
+			TLSClientKeyPEM:  []byte("key"),
+		}
+		if _, err := validateKernelConfig(c); err != nil {
+			t.Errorf("a complete mTLS pair should validate, got %v", err)
+		}
+	})
+	// Fail-open guard: WithKernelClientCertificate invoked with empty bytes (e.g.
+	// a failed PEM load) sets the configured marker with no cert/key. Validation
+	// must reject it rather than let applyKernelTLS silently skip the setter and
+	// connect with no client identity.
+	t.Run("mTLS configured but empty rejected", func(t *testing.T) {
+		c := baseKernelConfig()
+		c.KernelExperimental = &config.KernelExperimentalConfig{TLSClientCertConfigured: true}
+		if _, err := validateKernelConfig(c); err == nil {
+			t.Fatal("expected an error when WithKernelClientCertificate was used with empty cert/key")
+		}
+	})
+	// The same request expressed through the public option (nil, nil): it must be
+	// rejected all the way through, not just when the config is hand-built.
+	t.Run("mTLS via option with empty args rejected", func(t *testing.T) {
+		c := baseKernelConfig()
+		WithKernelClientCertificate(nil, nil)(c)
+		if _, err := validateKernelConfig(c); err == nil {
+			t.Fatal("expected an error when WithKernelClientCertificate(nil, nil) is used")
+		}
+	})
+	// A non-mTLS experimental config (only some other WithKernel* option set) must
+	// still validate — the marker, not merely a non-nil KernelExperimental, gates
+	// the mTLS completeness check.
+	t.Run("non-mTLS experimental config validates", func(t *testing.T) {
+		c := baseKernelConfig()
+		c.KernelExperimental = &config.KernelExperimentalConfig{TLSSkipHostnameVerify: true}
+		if _, err := validateKernelConfig(c); err != nil {
+			t.Errorf("a non-mTLS experimental config should validate, got %v", err)
+		}
+	})
+
 	t.Run("PAT via WithAuthenticator resolves the token", func(t *testing.T) {
 		c := baseKernelConfig()
 		c.AccessToken = ""
@@ -408,12 +466,33 @@ func TestBuildKernelConfig(t *testing.T) {
 		}
 	})
 
+	// mTLS client cert/key are the other two fields buildKernelConfig forwards;
+	// each is copied ONLY here, so a dropped line would pass every other test.
+	t.Run("experimental mTLS fields forwarded", func(t *testing.T) {
+		c := baseKernelConfig()
+		c.KernelExperimental = &config.KernelExperimentalConfig{
+			TLSClientCertPEM: []byte("client-cert"),
+			TLSClientKeyPEM:  []byte("client-key"),
+		}
+		kc := buildKernelConfig(c, kernel.Auth{Mode: kernel.AuthPAT, Token: "dapi-x"})
+		if got := string(kc.TLSClientCertPEM); got != "client-cert" {
+			t.Errorf("TLSClientCertPEM = %q, want %q (WithKernelClientCertificate cert not forwarded)", got, "client-cert")
+		}
+		if got := string(kc.TLSClientKeyPEM); got != "client-key" {
+			t.Errorf("TLSClientKeyPEM = %q, want %q (WithKernelClientCertificate key not forwarded)", got, "client-key")
+		}
+	})
+
 	t.Run("nil KernelExperimental leaves TLS fields zero", func(t *testing.T) {
 		c := baseKernelConfig() // KernelExperimental nil
 		kc := buildKernelConfig(c, kernel.Auth{Mode: kernel.AuthPAT, Token: "dapi-x"})
 		if kc.TLSTrustedCertsPEM != nil || kc.TLSSkipHostnameVerify {
 			t.Errorf("expected zero experimental TLS fields with nil KernelExperimental, got certs=%v skipHost=%v",
 				kc.TLSTrustedCertsPEM, kc.TLSSkipHostnameVerify)
+		}
+		if kc.TLSClientCertPEM != nil || kc.TLSClientKeyPEM != nil {
+			t.Errorf("expected zero experimental mTLS fields with nil KernelExperimental, got cert=%v key=%v",
+				kc.TLSClientCertPEM, kc.TLSClientKeyPEM)
 		}
 	})
 
