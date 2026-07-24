@@ -49,6 +49,7 @@ func TestColumnTypeInfoFor(t *testing.T) {
 		{"map", arrow.MapOf(arrow.BinaryTypes.String, arrow.PrimitiveTypes.Int64), "MAP", raw, math.MaxInt64, true},
 		{"struct", arrow.StructOf(arrow.Field{Name: "x", Type: arrow.PrimitiveTypes.Int64}), "STRUCT", raw, math.MaxInt64, true},
 		{"duration", &arrow.DurationType{Unit: arrow.Microsecond}, "STRING", str, math.MaxInt64, true},
+		{"day_time_interval", arrow.FixedWidthTypes.DayTimeInterval, "STRING", str, math.MaxInt64, true},
 		{"month_interval", arrow.FixedWidthTypes.MonthInterval, "STRING", str, math.MaxInt64, true},
 		// VOID/NULL: Thrift stringifies to STRING on the wire (verified live), like intervals.
 		{"null", arrow.Null, "STRING", str, math.MaxInt64, true},
@@ -88,6 +89,7 @@ func TestColumnTypeInfoScanTypeCoversScanner(t *testing.T) {
 		arrow.MapOf(arrow.BinaryTypes.String, arrow.PrimitiveTypes.Int64),
 		arrow.StructOf(arrow.Field{Name: "x", Type: arrow.PrimitiveTypes.Int64}),
 		&arrow.DurationType{Unit: arrow.Microsecond},
+		arrow.FixedWidthTypes.DayTimeInterval,
 		arrow.FixedWidthTypes.MonthInterval,
 	}
 	for _, dt := range scannerTypes {

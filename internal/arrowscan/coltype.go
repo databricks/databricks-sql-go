@@ -86,10 +86,12 @@ func ColumnTypeInfoFor(dt arrow.DataType) ColumnTypeInfo {
 		return varLen("MAP", scanTypeRawBytes)
 	case arrow.STRUCT:
 		return varLen("STRUCT", scanTypeRawBytes)
-	case arrow.DURATION:
+	case arrow.DURATION, arrow.INTERVAL_DAY_TIME:
 		// INTERVAL DAY TO SECOND: Thrift's prod default pre-formats intervals to text
-		// and declares STRING_TYPE (verified live), so match STRING; the kernel formats
-		// the native arrow.DURATION Go-side to the identical string.
+		// and declares STRING_TYPE (verified live), so match STRING; the kernel returns
+		// it as either arrow.DURATION or arrow.INTERVAL_DAY_TIME, both formatted Go-side
+		// to the identical string (see ScanCellCached). Without INTERVAL_DAY_TIME here
+		// its metadata fell through to the default ""/interface{} (comparator diff).
 		return varLen("STRING", scanTypeString)
 	case arrow.INTERVAL_MONTHS:
 		// INTERVAL YEAR TO MONTH — same server-config reasoning as arrow.DURATION.

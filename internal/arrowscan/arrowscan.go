@@ -193,6 +193,13 @@ func ScanCellCached(col arrow.Array, row int, loc *time.Location, keys *StructKe
 		// shared renderer to reuse, and this stays kernel-side).
 		dt := col.DataType().(*arrow.DurationType)
 		return formatDayTimeInterval(int64(c.Value(row)), dt.Unit), nil
+	case *array.DayTimeInterval:
+		// INTERVAL DAY TO SECOND can also arrive as arrow's DayTimeInterval ({Days,
+		// Milliseconds}) rather than a Duration. Fold it to total milliseconds and reuse
+		// the same renderer. int32 days × 86_400_000 stays well within int64, so the
+		// day→ms scaling cannot overflow.
+		v := c.Value(row)
+		return formatDayTimeInterval(int64(v.Days)*86_400_000+int64(v.Milliseconds), arrow.Millisecond), nil
 	case *array.MonthInterval:
 		// INTERVAL YEAR TO MONTH arrives as a month count; Thrift's server string is
 		// "years-months".

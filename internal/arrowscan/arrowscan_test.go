@@ -193,6 +193,34 @@ func TestScanCellInterval(t *testing.T) {
 			}
 		})
 	}
+
+	// DAY-TIME intervals can arrive as arrow's DayTimeInterval ({Days, Milliseconds})
+	// instead of a Duration; it must render to the identical "D HH:MM:SS.nnnnnnnnn".
+	dayTimeInterval := []struct {
+		name string
+		v    arrow.DayTimeInterval
+		want string
+	}{
+		{"one_day", arrow.DayTimeInterval{Days: 1, Milliseconds: 0}, "1 00:00:00.000000000"},
+		{"day_hms_millis", arrow.DayTimeInterval{Days: 1, Milliseconds: 3661_500}, "1 01:01:01.500000000"},
+		{"negative", arrow.DayTimeInterval{Days: -1, Milliseconds: -3661_500}, "-1 01:01:01.500000000"},
+	}
+	for _, tc := range dayTimeInterval {
+		t.Run("daytimeinterval_"+tc.name, func(t *testing.T) {
+			b := array.NewDayTimeIntervalBuilder(pool)
+			defer b.Release()
+			b.Append(tc.v)
+			arr := b.NewArray()
+			defer arr.Release()
+			v, err := ScanCell(arr, 0, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if v.(string) != tc.want {
+				t.Errorf("got %q, want %q", v, tc.want)
+			}
+		})
+	}
 }
 
 // ScanCell renders DATE / TIMESTAMP in the requested location, matching the
