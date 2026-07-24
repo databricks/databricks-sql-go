@@ -23,8 +23,10 @@ import (
 
 	"github.com/apache/arrow/go/v12/arrow"
 	"github.com/apache/arrow/go/v12/arrow/cdata"
+	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 	"github.com/databricks/databricks-sql-go/internal/arrowscan"
 	dbsqlrows "github.com/databricks/databricks-sql-go/internal/rows"
+	dbrows "github.com/databricks/databricks-sql-go/rows"
 )
 
 // kernelRows implements the same optional column-type interfaces the Thrift path
@@ -37,6 +39,9 @@ var (
 	_ driver.RowsColumnTypeDatabaseTypeName = (*kernelRows)(nil)
 	_ driver.RowsColumnTypeNullable         = (*kernelRows)(nil)
 	_ driver.RowsColumnTypeLength           = (*kernelRows)(nil)
+	// Public batch API, matching the Thrift path (rows.rows). GetArrowBatches is
+	// real; GetArrowIPCStreams rejects (kernel C ABI exports C Data, not IPC bytes).
+	_ dbrows.Rows = (*kernelRows)(nil)
 )
 
 // kernelRows implements driver.Rows over the kernel result stream. It pulls one
@@ -55,6 +60,7 @@ type kernelRows struct {
 
 	cols       []string
 	colTypes   []arrowscan.ColumnTypeInfo // per-column type metadata (PECOBLR-3692)
+	schema     *arrow.Schema              // result-set schema, for GetArrowBatches().Schema()
 	cur        arrow.Record               // current batch (nil until first Next)
 	rowInCur   int                        // next row index within cur
 	chunkCount int                        // cumulative batches fetched, for OnChunkFetched
@@ -95,6 +101,7 @@ func newKernelRows(ctx context.Context, op *kernelOp, stream *C.kernel_result_st
 		r.Close()
 		return nil, fmt.Errorf("kernel: import schema: %w", err)
 	}
+	r.schema = sch
 	fields := sch.Fields()
 	r.cols = make([]string, len(fields))
 	// Derive per-column type metadata from the Arrow schema up front (the same
@@ -283,4 +290,88 @@ func (r *kernelRows) nextBatch() error {
 	}
 	klogCtx(r.ctx, "nextBatch: %d rows (chunk %d)", rec.NumRows(), r.chunkCount)
 	return nil
+}
+
+// GetArrowBatches exposes the kernel stream as an arrow.Record iterator (the
+// public zero-copy batch API), reusing the row scanner's next_batch pull. Callers
+// MUST Release() each record.
+func (r *kernelRows) GetArrowBatches(context.Context) (dbrows.ArrowBatchIterator, error) {
+	return &kernelBatchIterator{r: r}, nil
+}
+
+// GetArrowIPCStreams is rejected on the kernel path: the C ABI exports Arrow via
+// the C Data Interface (next_batch), not IPC bytes. Use GetArrowBatches, or the
+// Thrift backend for IPC streams.
+func (r *kernelRows) GetArrowIPCStreams(context.Context) (dbrows.ArrowIPCStreamIterator, error) {
+	return nil, fmt.Errorf("databricks: GetArrowIPCStreams is %w (kernel exports Arrow C Data, not IPC bytes); use GetArrowBatches",
+		dbsqlerr.ErrNotSupportedByKernel)
+}
+
+// kernelBatchIterator adapts the kernelRows pull loop to the public
+// ArrowBatchIterator: it prefetches one batch (so HasNext is exact) and transfers
+// each record's ownership to the caller, who must Release it.
+type kernelBatchIterator struct {
+	r       *kernelRows
+	pending arrow.Record // prefetched, not yet handed out
+	done    bool         // stream drained (io.EOF seen)
+	err     error        // sticky fetch error, surfaced by Next
+}
+
+var _ dbrows.ArrowBatchIterator = (*kernelBatchIterator)(nil)
+
+// fill buffers one batch into pending, or sets done/err. It re-uses nextBatch and
+// takes ownership of r.cur so the row scanner and Close can't double-release it.
+func (it *kernelBatchIterator) fill() {
+	if it.pending != nil || it.done || it.err != nil {
+		return
+	}
+	if it.r.closed || it.r.eof { // nothing left to pull
+		it.done = true
+		return
+	}
+	switch err := it.r.nextBatch(); err {
+	case nil:
+		it.pending, it.r.cur = it.r.cur, nil
+	case io.EOF:
+		it.done = true
+	default:
+		it.err = err
+	}
+}
+
+// Next returns the next record (caller owns it) or io.EOF when the stream drains.
+func (it *kernelBatchIterator) Next() (arrow.Record, error) {
+	it.fill()
+	if it.err != nil {
+		return nil, it.err
+	}
+	if it.pending == nil {
+		return nil, io.EOF
+	}
+	rec := it.pending
+	it.pending = nil
+	return rec, nil
+}
+
+// HasNext reports whether a following Next would yield a record or an error.
+func (it *kernelBatchIterator) HasNext() bool {
+	it.fill()
+	return it.pending != nil || it.err != nil
+}
+
+// Close releases any buffered record and tears down the underlying stream.
+func (it *kernelBatchIterator) Close() {
+	if it.pending != nil {
+		it.pending.Release()
+		it.pending = nil
+	}
+	it.r.Close() //nolint:errcheck
+}
+
+// Schema returns the result-set schema captured at construction.
+func (it *kernelBatchIterator) Schema() (*arrow.Schema, error) {
+	if it.r.schema == nil {
+		return nil, fmt.Errorf("kernel: no schema available")
+	}
+	return it.r.schema, nil
 }
