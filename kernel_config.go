@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/databricks/databricks-sql-go/auth/noop"
+	"github.com/databricks/databricks-sql-go/auth/oauth"
 	"github.com/databricks/databricks-sql-go/auth/pat"
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 	"github.com/databricks/databricks-sql-go/internal/backend/kernel"
@@ -307,13 +308,15 @@ func resolveKernelAuth(cfg *config.Config) (kernel.Auth, error) {
 		clientID, clientSecret := a.M2MCredentials()
 		return kernel.Auth{Mode: kernel.AuthM2M, ClientID: clientID, ClientSecret: clientSecret}, nil
 	case kernel.U2MCredentialsProvider:
-		// Go sources only the client id for U2M; kernel.Auth.Scopes / RedirectPort
-		// are left zero so setAuth passes the kernel's defaults. Go exposes no
-		// user-facing option for U2M scopes or redirect port on either backend today
-		// (the native Thrift path hardcodes both), so there is nothing to forward —
-		// but the kernel.Auth fields + setAuth wiring model the full set_auth_u2m
-		// surface for if/when such an option is added (see kernel.Auth docs).
-		return kernel.Auth{Mode: kernel.AuthU2M, ClientID: a.U2MClientID()}, nil
+		// Forward the SAME cloud-specific scopes the Thrift path requests via
+		// oauth.GetScopes (offline_access + sql on AWS/GCP, offline_access +
+		// <tenant>/user_impersonation on Azure), so both backends authorize against
+		// the built-in databricks-sql-connector client identically. Without this the
+		// kernel applied its own default set (all-apis + offline_access), which a
+		// workspace whose public client isn't granted all-apis rejects with
+		// access_denied. RedirectPort is still left zero (no user option; kernel
+		// default 8020). Passing nil to GetScopes yields the pure cloud-default set.
+		return kernel.Auth{Mode: kernel.AuthU2M, ClientID: a.U2MClientID(), Scopes: oauth.GetScopes(cfg.Host, nil)}, nil
 	case nil, *noop.NoopAuth, *pat.PATAuth:
 		// PAT (or no explicit authenticator). WithAccessToken sets both
 		// cfg.AccessToken and a *pat.PATAuth, but WithAuthenticator(&pat.PATAuth{...})

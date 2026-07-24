@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/databricks/databricks-sql-go/auth/oauth"
 	"github.com/databricks/databricks-sql-go/auth/pat"
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 	"github.com/databricks/databricks-sql-go/internal/backend/kernel"
@@ -181,6 +182,12 @@ func TestValidateKernelConfig(t *testing.T) {
 		}
 		if a.Mode != kernel.AuthU2M || a.ClientID != "databricks-sql-connector" {
 			t.Errorf("auth = %+v, want mode=U2M clientID=databricks-sql-connector", a)
+		}
+		// Scopes must match what the Thrift path requests for this host, so both
+		// backends authorize against the same client identically (not the kernel's
+		// all-apis default). baseKernelConfig's host is AWS → [offline_access, sql].
+		if want := oauth.GetScopes(c.Host, nil); !reflect.DeepEqual(a.Scopes, want) {
+			t.Errorf("U2M scopes = %v, want %v (Thrift parity)", a.Scopes, want)
 		}
 	})
 
