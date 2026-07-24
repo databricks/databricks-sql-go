@@ -5,6 +5,36 @@ package errors
 // error message.
 type ErrorCategory string
 
+type categorizer interface {
+	Category() ErrorCategory
+}
+
+// CategoryFromError returns the innermost (deepest) non-empty category in the
+// error chain, so a tag on an outer wrapper never masks the more specific one
+// at the source. Handles both single-error and tree-shaped (errors.Join /
+// multiple %w) Unwrap chains.
+func CategoryFromError(err error) ErrorCategory {
+	if err == nil {
+		return ""
+	}
+	switch x := err.(type) {
+	case interface{ Unwrap() error }:
+		if deeper := CategoryFromError(x.Unwrap()); deeper != "" {
+			return deeper
+		}
+	case interface{ Unwrap() []error }:
+		for _, e := range x.Unwrap() {
+			if deeper := CategoryFromError(e); deeper != "" {
+				return deeper
+			}
+		}
+	}
+	if c, ok := err.(categorizer); ok {
+		return c.Category()
+	}
+	return ""
+}
+
 const (
 	CategoryTimeout              ErrorCategory = "timeout"
 	CategoryCancelled            ErrorCategory = "cancelled"
