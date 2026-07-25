@@ -84,15 +84,9 @@ type u2mAuthenticator struct {
 // mode. It structurally satisfies the U2MCredentialsProvider interface the kernel
 // backend asserts (defined in internal/backend/kernel, off the public API).
 //
-// Only the client id crosses to the kernel — NOT the scopes. The Thrift path
-// requests offline_access + sql (AWS/GCP) or offline_access + <tenant>/
-// user_impersonation (Azure) via oauth.GetScopes, while the kernel's U2M flow
-// applies its own default set (all-apis + offline_access). Neither backend exposes
-// a user-facing U2M-scopes option, so this is a fixed-vs-fixed difference, not a
-// dropped caller choice; against the built-in databricks-sql-connector public
-// client (which all-apis targets) both authorize successfully. If a U2M-scopes
-// option is ever added, forward it via kernel.Auth.Scopes (already wired through
-// set_auth_u2m) so the two paths request the same set.
+// Only the client id is read here; resolveKernelAuth pairs it with the same
+// oauth.GetScopes set the Thrift path requests, so both backends authorize against
+// the built-in databricks-sql-connector client identically (not the kernel default).
 func (c *u2mAuthenticator) U2MClientID() string { return c.clientID }
 
 // Auth will start the OAuth Authorization Flow to authenticate the cli client

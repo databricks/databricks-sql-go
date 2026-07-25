@@ -72,14 +72,14 @@ func (c *authClient) Authenticate(r *http.Request) error {
 
 	c.tokenSource = GetTokenSource(config)
 	token, err := c.tokenSource.Token()
-	// Log via the driver's configurable logger (defaults to Warn) rather than the
-	// global zerolog logger, so this line honors WithLogLevel like every other.
-	logger.Debug().Msgf("databricks OAuth token fetched successfully")
 	if err != nil {
 		logger.Err(err).Msg("failed to get token")
 
 		return err
 	}
+	// Log via the driver's configurable logger (defaults to Warn) rather than the
+	// global zerolog logger, so this line honors SetLogLevel like every other.
+	logger.Debug().Msgf("databricks OAuth token fetched successfully")
 	token.SetAuthHeader(r)
 
 	return nil

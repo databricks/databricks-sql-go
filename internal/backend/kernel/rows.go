@@ -25,6 +25,7 @@ import (
 	"github.com/apache/arrow/go/v12/arrow/cdata"
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 	"github.com/databricks/databricks-sql-go/internal/arrowscan"
+	context2 "github.com/databricks/databricks-sql-go/internal/compat/context"
 	dbsqlrows "github.com/databricks/databricks-sql-go/internal/rows"
 	dbrows "github.com/databricks/databricks-sql-go/rows"
 )
@@ -53,7 +54,11 @@ var (
 // per-batch network/decode work once; row reads walk the already-imported
 // arrow.Record with O(1) indexing.
 type kernelRows struct {
+	// ctx is detached from the caller's QueryContext (via context2.WithoutCancel)
+	// so a submit-gating deadline can't truncate a large CloudFetch stream, matching
+	// the Thrift path (see ES-1934053); cancel makes it abortable from Close.
 	ctx       context.Context
+	cancel    context.CancelFunc
 	op        *kernelOp
 	stream    *C.kernel_result_stream_t
 	callbacks *dbsqlrows.TelemetryCallbacks
@@ -86,7 +91,10 @@ func newKernelRows(ctx context.Context, op *kernelOp, stream *C.kernel_result_st
 	// telemetry. Assign it only on the success path so cleanup Close() on a
 	// schema/import failure does not record a falsely successful CLOSE_STATEMENT; the
 	// construction error itself is surfaced to and recorded by the conn execute path.
-	r := &kernelRows{ctx: ctx, op: op, stream: stream, keyCache: arrowscan.NewStructKeyCache()}
+	// Detach from the caller's cancellation but keep its values (auth/logging), so a
+	// deadline that only gated statement submission can't truncate the result stream.
+	resultsCtx, resultsCancel := context.WithCancel(context2.WithoutCancel(ctx))
+	r := &kernelRows{ctx: resultsCtx, cancel: resultsCancel, op: op, stream: stream, keyCache: arrowscan.NewStructKeyCache()}
 
 	var csch C.struct_ArrowSchema
 	if err := call(func() C.KernelStatusCode {
@@ -171,6 +179,10 @@ func (r *kernelRows) Close() error {
 	}
 	r.closed = true
 	closeStart := time.Now()
+	// Release the detached results context so an aborted Close doesn't leak it.
+	if r.cancel != nil {
+		r.cancel()
+	}
 	if r.cur != nil {
 		r.cur.Release()
 		r.cur = nil
@@ -233,14 +245,9 @@ func (r *kernelRows) next(dest []driver.Value) error {
 // nextBatch pulls the next Arrow batch. A released array (release==NULL) is the
 // kernel's end-of-stream sentinel.
 func (r *kernelRows) nextBatch() error {
-	// Honor cancellation at batch boundaries: check ctx before entering the
-	// blocking C fetch (which cannot itself observe ctx). This does NOT interrupt
-	// a fetch already in flight — and database/sql's own cancel watcher can't
-	// either: its Rows.Close takes rs.closemu.Lock(), which blocks until the
-	// in-progress Next (holding the RLock) returns, so the stream close waits for
-	// the C call to finish on its own. A single hung CloudFetch batch is therefore
-	// uninterruptible (the kernel exposes no per-download timeout); mid-fetch
-	// cancellation would need the execute path's watcher/canceller applied here.
+	// Stop pulling once Close cancels r.ctx; r.ctx is detached from the caller's
+	// deadline, so this fires on abort, not on a submit-gating timeout. It does NOT
+	// interrupt an in-flight C fetch (the kernel exposes no per-download timeout).
 	if r.ctx != nil {
 		if err := r.ctx.Err(); err != nil {
 			return err
@@ -336,6 +343,11 @@ func (it *kernelBatchIterator) fill() {
 		it.done = true
 	default:
 		it.err = err
+		// The batch path bypasses Next(), so seed iterationErr here too; else OnClose
+		// records the failed stream as a successful statement in telemetry.
+		if it.r.iterationErr == nil {
+			it.r.iterationErr = err
+		}
 	}
 }
 
