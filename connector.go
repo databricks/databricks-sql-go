@@ -31,6 +31,13 @@ type connector struct {
 	client *http.Client
 }
 
+// interactiveU2MAuthenticator is satisfied only by the browser-based U2M
+// authenticator (U2MClientID is unique to it; PAT/M2M lack it). Matches the
+// structural check the kernel backend uses to detect U2M.
+type interactiveU2MAuthenticator interface {
+	U2MClientID() string
+}
+
 // Connect returns a connection to the Databricks database from a connection pool.
 func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 	defer debuglog.Track(ctx, "connector.Connect", "host=%s", c.cfg.Host)()
@@ -86,16 +93,31 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 		telemetryClient = withSpogHeaders(c.client, spogHeaders)
 	}
 
+	// Skip telemetry on the kernel U2M path: the kernel owns the interactive browser
+	// flow, so the telemetry/feature-flag call through the interactive authenticator
+	// would launch a second, redundant browser (and can block connect on its
+	// callback). Telemetry is best-effort, so it's dropped here rather than made to
+	// prompt. Unauthenticated telemetry (Python/Node parity) is tracked in PECOBLR-3839.
+	skipTelemetry := false
+	if c.cfg.UseKernel {
+		if _, isU2M := c.cfg.Authenticator.(interactiveU2MAuthenticator); isU2M {
+			skipTelemetry = true
+			log.Debug().Msg("telemetry skipped: kernel U2M owns the interactive auth flow")
+		}
+	}
+
 	// Initialize telemetry: client config overlay decides; if unset, feature flags decide
-	conn.telemetry = telemetry.InitializeForConnection(ctx, telemetry.TelemetryInitOptions{
-		Host:            c.cfg.Host,
-		DriverVersion:   c.cfg.DriverVersion,
-		UserAgent:       client.BuildUserAgent(c.cfg),
-		HTTPClient:      telemetryClient,
-		EnableTelemetry: c.cfg.EnableTelemetry,
-		BatchSize:       c.cfg.TelemetryBatchSize,
-		FlushInterval:   c.cfg.TelemetryFlushInterval,
-	})
+	if !skipTelemetry {
+		conn.telemetry = telemetry.InitializeForConnection(ctx, telemetry.TelemetryInitOptions{
+			Host:            c.cfg.Host,
+			DriverVersion:   c.cfg.DriverVersion,
+			UserAgent:       client.BuildUserAgent(c.cfg),
+			HTTPClient:      telemetryClient,
+			EnableTelemetry: c.cfg.EnableTelemetry,
+			BatchSize:       c.cfg.TelemetryBatchSize,
+			FlushInterval:   c.cfg.TelemetryFlushInterval,
+		})
+	}
 	if conn.telemetry != nil {
 		log.Debug().Msg("telemetry initialized for connection")
 		conn.telemetry.RecordOperation(ctx, conn.id, "", telemetry.OperationTypeCreateSession, sessionLatencyMs, nil)
