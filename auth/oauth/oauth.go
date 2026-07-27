@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
-	"github.com/rs/zerolog/log"
+	"github.com/databricks/databricks-sql-go/logger"
 	"golang.org/x/oauth2"
 )
 
@@ -99,7 +99,7 @@ func resolveOIDCIssuer(ctx context.Context, client *http.Client, hostName string
 	cfgURL := fmt.Sprintf("https://%s/.well-known/databricks-config", hostName)
 	meta, ok := fetchHostMetadata(ctx, client, cfgURL)
 	if !ok || meta.OIDCEndpoint == "" {
-		log.Debug().Msgf("oauth: no usable databricks-config for %q; using bare-host OIDC issuer", hostName)
+		logger.Debug().Msgf("oauth: no usable databricks-config for %q; using bare-host OIDC issuer", hostName)
 		return fallback
 	}
 
@@ -107,13 +107,13 @@ func resolveOIDCIssuer(ctx context.Context, client *http.Client, hostName string
 	// placeholder would resolve to a malformed ".../accounts/" issuer. Fall back
 	// rather than emit it (the function's documented contract).
 	if strings.Contains(meta.OIDCEndpoint, accountIDPlaceholder) && meta.AccountID == "" {
-		log.Warn().Msgf("oauth: databricks-config for %q has an %s placeholder but empty account_id; using bare-host OIDC issuer", hostName, accountIDPlaceholder)
+		logger.Warn().Msgf("oauth: databricks-config for %q has an %s placeholder but empty account_id; using bare-host OIDC issuer", hostName, accountIDPlaceholder)
 		return fallback
 	}
 
 	issuer := substituteAccountID(meta)
 	if !isValidDatabricksIssuer(issuer) {
-		log.Warn().Msgf("oauth: databricks-config for %q advertised an unusable oidc_endpoint %q; using bare-host OIDC issuer", hostName, issuer)
+		logger.Warn().Msgf("oauth: databricks-config for %q advertised an unusable oidc_endpoint %q; using bare-host OIDC issuer", hostName, issuer)
 		return fallback
 	}
 	return issuer

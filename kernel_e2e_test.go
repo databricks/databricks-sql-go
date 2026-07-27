@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"errors"
+	"io"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/databricks/databricks-sql-go/driverctx"
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
+	dbsqlrows "github.com/databricks/databricks-sql-go/rows"
 )
 
 // kernelTestDB opens a kernel-backed *sql.DB from the DATABRICKS_PECOTESTING_*
@@ -547,5 +549,52 @@ func TestKernelE2EM2M(t *testing.T) {
 	}
 	if got != 1 {
 		t.Errorf("SELECT 1 = %d, want 1", got)
+	}
+}
+
+// TestKernelE2EGetArrowBatches drains the public Arrow batch API over the kernel
+// backend end to end — the path driver_e2e_test only exercises through Thrift —
+// asserting an exact row count and that each record is released by the caller.
+func TestKernelE2EGetArrowBatches(t *testing.T) {
+	db := kernelTestDB(t)
+	defer db.Close()
+
+	conn, err := db.Conn(context.Background())
+	if err != nil {
+		t.Fatalf("conn: %v", err)
+	}
+	defer conn.Close()
+
+	const want = 100_000
+	var driverRows driver.Rows
+	if err := conn.Raw(func(d any) error {
+		var qErr error
+		driverRows, qErr = d.(driver.QueryerContext).QueryContext(context.Background(), "SELECT id FROM range(0, 100000)", nil)
+		return qErr
+	}); err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	defer driverRows.Close()
+
+	batches, err := driverRows.(dbsqlrows.Rows).GetArrowBatches(context.Background())
+	if err != nil {
+		t.Fatalf("GetArrowBatches: %v", err)
+	}
+	defer batches.Close()
+
+	var rowCount int64
+	for batches.HasNext() {
+		rec, err := batches.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatalf("batch Next at row %d: %v", rowCount, err)
+		}
+		rowCount += rec.NumRows()
+		rec.Release() // caller owns each record
+	}
+	if rowCount != want {
+		t.Errorf("GetArrowBatches row count = %d, want %d", rowCount, want)
 	}
 }

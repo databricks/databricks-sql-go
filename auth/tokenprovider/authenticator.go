@@ -6,7 +6,7 @@ import (
 	"net/http"
 
 	"github.com/databricks/databricks-sql-go/auth"
-	"github.com/rs/zerolog/log"
+	"github.com/databricks/databricks-sql-go/logger"
 )
 
 // TokenProviderAuthenticator implements auth.Authenticator using a TokenProvider.
@@ -47,7 +47,7 @@ func (a *TokenProviderAuthenticator) Authenticate(r *http.Request) error {
 	}
 
 	token.SetAuthHeader(r)
-	log.Debug().Msgf("token provider authenticator: authenticated using provider %s", a.provider.Name())
+	logger.Debug().Msgf("token provider authenticator: authenticated using provider %s", a.provider.Name())
 
 	return nil
 }

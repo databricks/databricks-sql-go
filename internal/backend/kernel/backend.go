@@ -68,6 +68,37 @@ func New(cfg Config) *KernelBackend {
 	return &KernelBackend{cfg: cfg}
 }
 
+// httpPathCarriesOrgRouting reports whether httpPath is a canonical
+// warehouses/endpoints path carrying a non-empty ?o=<org> SPOG query. When true,
+// OpenSession routes by the http path (set_http_path) even if a warehouse id is
+// also set, so the kernel receives the org id it needs for unified-host routing.
+//
+// The guard is deliberately narrow — it mirrors what the kernel's from_http_path
+// requires (a /sql/1.0/warehouses/{id} or /sql/1.0/endpoints/{id} prefix, with or
+// without a leading slash) AND a non-empty o= value — so rerouting can never send
+// set_http_path a path it would reject. Anything else keeps the existing
+// warehouse-id routing untouched.
+func httpPathCarriesOrgRouting(httpPath string) bool {
+	q := strings.SplitN(httpPath, "?", 2)
+	if len(q) != 2 {
+		return false // no query string → no org routing
+	}
+	path, query := q[0], q[1]
+	isWarehousePath := strings.HasPrefix(path, "/sql/1.0/warehouses/") ||
+		strings.HasPrefix(path, "sql/1.0/warehouses/") ||
+		strings.HasPrefix(path, "/sql/1.0/endpoints/") ||
+		strings.HasPrefix(path, "sql/1.0/endpoints/")
+	if !isWarehousePath {
+		return false
+	}
+	for _, param := range strings.Split(query, "&") {
+		if v, ok := strings.CutPrefix(param, "o="); ok && v != "" {
+			return true
+		}
+	}
+	return false
+}
+
 // OpenSession builds a session config (warehouse/http-path + PAT), opens the
 // session, and captures a per-conn id. Called once by the connector at connect
 // time. The config handle is consumed by kernel_session_open on success and
@@ -108,9 +139,20 @@ func (k *KernelBackend) OpenSession(ctx context.Context) error {
 
 	// Warehouse addressing: bare id when provided, else the http path (which also
 	// carries ?o= org routing for shared hosts).
+	//
+	// SPOG exception: on a unified/SPOG host the workspace id rides in the http
+	// path's ?o=<org>, and the kernel injects x-databricks-org-id ONLY when the
+	// path goes through set_http_path (kernel-side ConnectionConfig::from_http_path
+	// parses both the warehouse id and ?o=). set_warehouse takes only host+id and
+	// drops the org id, so a warehouse-id-addressed SPOG session 303s to /login.
+	// The kernel also refuses a caller-supplied x-databricks-org-id custom header
+	// (it is kernel-managed), so the org id can reach the kernel ONLY via the path.
+	// Therefore, when a warehouse id is set BUT the http path is a canonical
+	// warehouses/endpoints path carrying ?o=, route by the path instead: the kernel
+	// still parses the same warehouse id out of it, plus the org id it needs.
 	host := newCStr(k.cfg.Host)
 	defer host.free()
-	if k.cfg.WarehouseID != "" {
+	if k.cfg.WarehouseID != "" && !httpPathCarriesOrgRouting(k.cfg.HTTPPath) {
 		wh := newCStr(k.cfg.WarehouseID)
 		defer wh.free()
 		if err := call(func() C.KernelStatusCode {
@@ -130,6 +172,20 @@ func (k *KernelBackend) OpenSession(ctx context.Context) error {
 
 	if err := k.setAuth(cfg); err != nil {
 		return err
+	}
+
+	// User-Agent so query history attributes the kernel path to this driver.
+	if k.cfg.UserAgent != "" {
+		name := newCStr("User-Agent")
+		val := newCStr(k.cfg.UserAgent)
+		errSet := call(func() C.KernelStatusCode {
+			return C.kernel_session_config_set_custom_header(cfg, name.c, val.c)
+		})
+		name.free()
+		val.free()
+		if errSet != nil {
+			return fmt.Errorf("kernel: set_custom_header[User-Agent]: %w", toConnError(errSet))
+		}
 	}
 
 	// TLS: crypto/tls's InsecureSkipVerify accepts any server cert, so relax both

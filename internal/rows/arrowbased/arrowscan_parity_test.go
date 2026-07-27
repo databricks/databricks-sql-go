@@ -502,9 +502,12 @@ func TestArrowbasedKernelVariantGeometryParity(t *testing.T) {
 //     string column (DecimalAsArrow=false) — no decimal128 arrives at all, and the
 //     user gets the exact string.
 //
-// So across every real driver configuration a top-level DECIMAL comes back as the
-// exact string on both backends (verified live). This test pins the kernel side
-// (exact string) and the two Thrift container behaviors so the distinction can't
+// So across every DEFAULT driver configuration a top-level DECIMAL comes back as the
+// exact string on both backends (verified live). The one opt-in exception is the
+// kernel's WithKernelDecimalAsFloat, which deliberately yields a lossy float64 for a
+// top-level DECIMAL (mirroring Thrift's pre-UseArrowNativeDecimal float default); it
+// is off by default, so it does not affect this invariant. This test pins the kernel
+// side (exact string) and the two Thrift container behaviors so the distinction can't
 // silently drift into an actual result divergence.
 func TestTopLevelDecimalRendering(t *testing.T) {
 	pool := memory.NewGoAllocator()

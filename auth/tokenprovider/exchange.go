@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/databricks/databricks-sql-go/logger"
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/rs/zerolog/log"
 )
 
 // FederationProvider wraps another token provider and automatically handles token exchange
@@ -61,16 +61,16 @@ func (p *FederationProvider) GetToken(ctx context.Context) (*Token, error) {
 
 	// Check if token is a JWT and needs exchange
 	if p.needsTokenExchange(baseToken.AccessToken) {
-		log.Debug().Msgf("federation provider: attempting token exchange for %s", p.baseProvider.Name())
+		logger.Debug().Msgf("federation provider: attempting token exchange for %s", p.baseProvider.Name())
 
 		// Try token exchange
 		exchangedToken, err := p.tryTokenExchange(ctx, baseToken.AccessToken)
 		if err != nil {
-			log.Warn().Err(err).Msg("federation provider: token exchange failed, using original token")
+			logger.Warn().Err(err).Msg("federation provider: token exchange failed, using original token")
 			return baseToken, nil // Fall back to original token
 		}
 
-		log.Debug().Msg("federation provider: token exchange successful")
+		logger.Debug().Msg("federation provider: token exchange successful")
 		return exchangedToken, nil
 	}
 
@@ -87,7 +87,7 @@ func (p *FederationProvider) needsTokenExchange(tokenString string) bool {
 	// 3. Token validation will be done by Databricks during exchange
 	token, _, err := new(jwt.Parser).ParseUnverified(tokenString, jwt.MapClaims{})
 	if err != nil {
-		log.Debug().Err(err).Msg("federation provider: not a JWT token, skipping exchange")
+		logger.Debug().Err(err).Msg("federation provider: not a JWT token, skipping exchange")
 		return false
 	}
 
@@ -114,7 +114,7 @@ func (p *FederationProvider) tryTokenExchange(ctx context.Context, subjectToken 
 		exchangeURL = "https://" + exchangeURL
 	} else if strings.HasPrefix(exchangeURL, "http://") {
 		// Warn if using insecure HTTP for token exchange
-		log.Warn().Msgf("federation provider: using insecure HTTP for token exchange: %s", exchangeURL)
+		logger.Warn().Msgf("federation provider: using insecure HTTP for token exchange: %s", exchangeURL)
 	}
 	if !strings.HasSuffix(exchangeURL, "/") {
 		exchangeURL += "/"
@@ -179,7 +179,7 @@ func (p *FederationProvider) tryTokenExchange(ctx context.Context, subjectToken 
 		return nil, fmt.Errorf("token exchange returned empty access token")
 	}
 	if tokenResp.TokenType == "" {
-		log.Debug().Msg("token exchange: token_type not specified, defaulting to Bearer")
+		logger.Debug().Msg("token exchange: token_type not specified, defaulting to Bearer")
 		tokenResp.TokenType = "Bearer"
 	}
 	if tokenResp.ExpiresIn < 0 {
@@ -211,7 +211,7 @@ func (p *FederationProvider) isSameHost(url1, url2 string) bool {
 	u2, err2 := url.Parse(parsedURL2)
 
 	if err1 != nil || err2 != nil {
-		log.Debug().Msgf("federation provider: failed to parse URLs for comparison: url1=%s err1=%v, url2=%s err2=%v",
+		logger.Debug().Msgf("federation provider: failed to parse URLs for comparison: url1=%s err1=%v, url2=%s err2=%v",
 			url1, err1, parsedURL2, err2)
 		return false
 	}
@@ -219,7 +219,7 @@ func (p *FederationProvider) isSameHost(url1, url2 string) bool {
 	// Use Hostname() instead of Host to ignore port differences
 	// This handles cases like "host.com:443" == "host.com" for HTTPS
 	isSame := u1.Hostname() == u2.Hostname()
-	log.Debug().Msgf("federation provider: host comparison: %s vs %s = %v", u1.Hostname(), u2.Hostname(), isSame)
+	logger.Debug().Msgf("federation provider: host comparison: %s vs %s = %v", u1.Hostname(), u2.Hostname(), isSame)
 	return isSame
 }
 
