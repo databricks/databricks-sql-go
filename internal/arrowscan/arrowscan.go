@@ -106,6 +106,17 @@ func (c *StructKeyCache) keyPrefixes(st *arrow.StructType) []string {
 // StructKeyCache) so struct field-name keys are escaped once per result set
 // rather than once per row. Pass nil for the un-memoized one-shot behavior.
 func ScanCellCached(col arrow.Array, row int, loc *time.Location, keys *StructKeyCache) (driver.Value, error) {
+	return scanCell(col, row, loc, keys, false)
+}
+
+// ScanCellCachedDecimalFloat is ScanCellCached that, when decimalAsFloat is true,
+// scans a TOP-LEVEL Decimal128 to a lossy float64 instead of the exact string
+// (nested decimals still render exactly). Opt in via WithKernelDecimalAsFloat.
+func ScanCellCachedDecimalFloat(col arrow.Array, row int, loc *time.Location, keys *StructKeyCache, decimalAsFloat bool) (driver.Value, error) {
+	return scanCell(col, row, loc, keys, decimalAsFloat)
+}
+
+func scanCell(col arrow.Array, row int, loc *time.Location, keys *StructKeyCache, decimalAsFloat bool) (driver.Value, error) {
 	if col.IsNull(row) {
 		return nil, nil
 	}
@@ -184,6 +195,10 @@ func ScanCellCached(col arrow.Array, row int, loc *time.Location, keys *StructKe
 		return inLocation(timestampToTime(int64(c.Value(row)), dt.Unit), loc), nil
 	case *array.Decimal128:
 		dt := col.DataType().(*arrow.Decimal128Type)
+		if decimalAsFloat {
+			// Lossy fast path: float64, no per-cell string. Opt-in only.
+			return c.Value(row).ToFloat64(dt.Scale), nil
+		}
 		return decimalfmt.ExactString(c.Value(row), dt.Scale), nil
 	case *array.Duration:
 		// INTERVAL DAY TO SECOND arrives as an arrow duration. The kernel returns the

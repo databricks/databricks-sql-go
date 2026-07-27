@@ -650,3 +650,37 @@ func TestScanCellDecimalScaleBoundary(t *testing.T) {
 		t.Errorf("decimal 5 @ scale 2 = %q, want 0.05", got)
 	}
 }
+
+// The decimalAsFloat knob scans a top-level DECIMAL to float64; the default
+// (exact-string) arm is unchanged.
+func TestScanCellDecimalAsFloat(t *testing.T) {
+	pool := memory.NewGoAllocator()
+	dt := &arrow.Decimal128Type{Precision: 10, Scale: 2}
+	b := array.NewDecimal128Builder(pool, dt)
+	defer b.Release()
+	b.Append(decimal128.FromU64(9998)) // 99.98
+	arr := b.NewArray()
+	defer arr.Release()
+
+	// Default: exact string.
+	s, err := ScanCellCached(arr, 0, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s != "99.98" {
+		t.Errorf("exact arm = %q, want \"99.98\"", s)
+	}
+
+	// decimalAsFloat=true: lossy float64.
+	f, err := ScanCellCachedDecimalFloat(arr, 0, nil, nil, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fv, ok := f.(float64)
+	if !ok {
+		t.Fatalf("decimalAsFloat arm returned %T, want float64", f)
+	}
+	if fv < 99.97 || fv > 99.99 {
+		t.Errorf("decimalAsFloat arm = %v, want ~99.98", fv)
+	}
+}

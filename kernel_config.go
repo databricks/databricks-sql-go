@@ -150,6 +150,8 @@ func buildKernelConfig(cfg *config.Config, kauth kernel.Auth) kernel.Config {
 			// EffectiveSessionParams returned a fresh map, so mutating it is safe.
 			kc.SessionConf[config.KernelMaxChunksInMemoryConfKey] = strconv.Itoa(ke.MaxChunksInMemory)
 		}
+		// Client-side scan choice: lossy float64 decimals instead of exact strings.
+		kc.DecimalAsFloat = ke.DecimalAsFloat
 	}
 	// Retry / backoff policy from WithRetries (+ the kernel-only overall budget).
 	// nil leaves the kernel's own default policy in place.

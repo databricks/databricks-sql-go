@@ -232,7 +232,7 @@ func (r *kernelRows) next(dest []driver.Value) error {
 	}
 	rec := r.cur
 	for c := 0; c < len(dest); c++ {
-		v, err := arrowscan.ScanCellCached(rec.Column(c), r.rowInCur, r.op.location, r.keyCache)
+		v, err := arrowscan.ScanCellCachedDecimalFloat(rec.Column(c), r.rowInCur, r.op.location, r.keyCache, r.op.decimalAsFloat)
 		if err != nil {
 			return fmt.Errorf("kernel: scan col %d (%s): %w", c, r.cols[c], err)
 		}

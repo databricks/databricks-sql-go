@@ -602,6 +602,21 @@ func kernelExperimental(c *config.Config) *config.KernelExperimentalConfig {
 	return c.KernelExperimental
 }
 
+// WithKernelDecimalAsFloat makes the kernel path scan top-level DECIMAL columns to
+// a lossy float64 instead of the exact fixed-point string. The kernel still
+// receives native Arrow Decimal128; this only changes how the Go scanner
+// materializes each cell, skipping per-cell string formatting for a cheap scalar.
+// Precision beyond ~15-17 digits is lost, so it is opt-in and off by default;
+// it mirrors the Thrift driver's pre-UseArrowNativeDecimal behavior.
+//
+// EXPERIMENTAL, kernel-only: the default (Thrift) backend rejects this at connect
+// (use WithArrowNativeDecimal there instead).
+func WithKernelDecimalAsFloat(asFloat bool) ConnOption {
+	return func(c *config.Config) {
+		kernelExperimental(c).DecimalAsFloat = asFloat
+	}
+}
+
 // WithKernelTrustedCerts adds a PEM CA-certificate bundle to the kernel's TLS
 // trust store on top of the system roots — for a corporate re-signing proxy or an
 // on-prem CA. Required (rather than relying on SSL_CERT_FILE) because the kernel's

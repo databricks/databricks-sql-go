@@ -72,6 +72,10 @@ type Config struct {
 	// default namespace.
 	Catalog string
 	Schema  string
+
+	// DecimalAsFloat scans top-level DECIMAL columns to a lossy float64 instead of
+	// the exact string (from WithKernelDecimalAsFloat). Kernel still sends Decimal128.
+	DecimalAsFloat bool
 }
 
 // RetryConfig is the driver's HTTP retry policy forwarded to the kernel: the
