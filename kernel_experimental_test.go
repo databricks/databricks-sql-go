@@ -35,6 +35,7 @@ var kernelExperimentalFieldDisposition = map[string]string{
 	"ProxyBypassHosts":      "forwarded", // set_proxy (bypass_hosts)
 	"RetryOverallTimeout":   "forwarded", // set_retry_config (overall_timeout_ms, 4th knob)
 	"MaxChunksInMemory":     "forwarded", // set_session_conf (cloudfetch_max_chunks_in_memory, client-only)
+	"DecimalAsFloat":        "forwarded", // kernel.Config.DecimalAsFloat → kernelOp → arrowscan (client-side scan choice)
 }
 
 func TestKernelExperimentalFieldsClassified(t *testing.T) {
