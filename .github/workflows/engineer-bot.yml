@@ -104,9 +104,9 @@ jobs:
       # GOPROXY=off. setup-jfrog left JFROG_ACCESS_TOKEN + GOPROXY (tokened netrc)
       # in the env and a tokened ~/.netrc on disk — remove both before the agent
       # runs (its bash allowlist includes `go build`/`go test`/`git status`). Pin
-      # GOPROXY=off + GOFLAGS=-mod=mod so a cache miss fails loudly instead of
-      # silently reaching the network. (Addresses the reviewer-bot finding on the
-      # odbc onboarding PR.)
+      # GOPROXY=off + GOFLAGS=-mod=readonly so a cache miss fails loudly instead of
+      # silently reaching the network OR editing go.mod/go.sum. (Addresses the
+      # reviewer-bot finding on the odbc onboarding PR.)
       - name: Scrub JFrog credentials before the agent runs
         run: |
           rm -f ~/.netrc
