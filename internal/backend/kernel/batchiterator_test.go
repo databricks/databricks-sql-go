@@ -74,16 +74,38 @@ func TestBatchIteratorFetchErrorSeedsIterationErr(t *testing.T) {
 	if err == nil {
 		t.Fatal("Next with a cancelled ctx = nil error, want the fetch error")
 	}
-	// The error is sticky: a second Next re-returns it (it never clears).
-	if _, err2 := it.Next(); err2 != err {
-		t.Errorf("second Next = %v, want the same sticky error %v", err2, err)
-	}
 	if r.iterationErr == nil {
 		t.Error("iterationErr not seeded on batch-path fetch error — OnClose would report success")
 	}
 	it.Close()
 	if !errors.Is(gotIter, err) {
 		t.Errorf("OnClose iterErr = %v, want the fetch error %v", gotIter, err)
+	}
+}
+
+// TestBatchIteratorFetchErrorTerminates is the regression for peco-review-bot F1:
+// a fetch error must surface exactly once, then the iterator terminates — HasNext
+// goes false and a further Next returns io.EOF — so a caller that logs-and-continues
+// on a non-EOF error can't spin forever. (A cancelled r.ctx makes nextBatch return a
+// non-EOF error at the boundary without a live C stream.)
+func TestBatchIteratorFetchErrorTerminates(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	it := &kernelBatchIterator{r: &kernelRows{ctx: ctx, cancel: cancel}}
+
+	if !it.HasNext() {
+		t.Fatal("HasNext before the error = false, want true (a Next would yield the error)")
+	}
+	_, err := it.Next()
+	if err == nil {
+		t.Fatal("Next with a cancelled ctx = nil error, want the fetch error")
+	}
+	// After the error is surfaced once, the iterator is done: no infinite loop.
+	if it.HasNext() {
+		t.Error("HasNext after the surfaced error = true, want false (would spin forever)")
+	}
+	if rec, err2 := it.Next(); rec != nil || err2 != io.EOF {
+		t.Errorf("Next after the surfaced error = (%v, %v), want (nil, io.EOF)", rec, err2)
 	}
 }
 

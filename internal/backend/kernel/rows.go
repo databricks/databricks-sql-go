@@ -355,7 +355,16 @@ func (it *kernelBatchIterator) fill() {
 func (it *kernelBatchIterator) Next() (arrow.Record, error) {
 	it.fill()
 	if it.err != nil {
-		return nil, it.err
+		// Surface a fetch error exactly once, then terminate the iterator: mark
+		// done and clear err so a following HasNext() returns false. Otherwise a
+		// caller that logs-and-continues (rather than breaking) on a non-EOF error
+		// would spin forever — HasNext() would stay true and Next() would re-return
+		// the same error with a nil record. The failed stream is still recorded
+		// (fill seeds r.iterationErr for OnClose telemetry).
+		err := it.err
+		it.err = nil
+		it.done = true
+		return nil, err
 	}
 	if it.pending == nil {
 		return nil, io.EOF
