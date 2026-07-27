@@ -19,7 +19,8 @@ import (
 // DATABRICKS_TEST_CONFIG_FILE — a name the scrub deliberately preserves. Normal
 // CI and local dev leave that variable unset, so this returns "" and the
 // DATABRICKS_PECOTESTING_* env vars are used unchanged.
-func tokenFromConfigFile() string {
+func tokenFromConfigFile(t *testing.T) string {
+	t.Helper()
 	path := os.Getenv("DATABRICKS_TEST_CONFIG_FILE")
 	if path == "" {
 		return ""
@@ -30,12 +31,17 @@ func tokenFromConfigFile() string {
 	// shipped driver).
 	data, err := os.ReadFile(path)
 	if err != nil {
+		// The env var was explicitly set (engineer-bot path) but the file is
+		// unreadable. Log loudly so the misconfiguration is visible in test
+		// output instead of masquerading as a benign t.Skip downstream.
+		t.Logf("DATABRICKS_TEST_CONFIG_FILE=%q set but unreadable: %v", path, err)
 		return ""
 	}
 	var cfg struct {
 		Token string `json:"token"`
 	}
 	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Logf("DATABRICKS_TEST_CONFIG_FILE=%q set but contains malformed JSON: %v", path, err)
 		return ""
 	}
 	return cfg.Token
@@ -59,7 +65,7 @@ func pecoTestingCreds(t *testing.T) (host, httpPath, token string) {
 	// credential-shaped vars — see tokenFromConfigFile). Normal CI/local dev is
 	// unchanged.
 	if token == "" {
-		token = tokenFromConfigFile()
+		token = tokenFromConfigFile(t)
 	}
 	if host == "" || httpPath == "" || token == "" {
 		t.Skip("set DATABRICKS_PECOTESTING_SERVER_HOSTNAME, DATABRICKS_PECOTESTING_HTTP_PATH2, and DATABRICKS_PECOTESTING_TOKEN to run")
