@@ -73,13 +73,19 @@ jobs:
         with:
           python-version: '3.11'
 
-      # setup-jfrog: the engine pip-install routes through the internal mirror
-      # (protected runners are egress-blocked from pypi.org). Needs id-token:write.
-      - name: Setup JFrog
-        uses: ./.github/actions/setup-jfrog
+      # NOTE: no separate `setup-jfrog` step. The engine pip-install
+      # (install-bot-engine, use-jfrog=true) mints + scopes its OWN JFrog creds in
+      # job-local 0600 files loaded into a single step's env and wiped in an EXIT
+      # trap — so a preceding shared setup-jfrog is both redundant here (the engine
+      # is the only fetch; the reviewer runs no `go build`) AND harmful: that
+      # composite exports JFROG_ACCESS_TOKEN to $GITHUB_ENV and writes a tokened
+      # ~/.netrc, both persisting into the model-driven `Run reviewer` step below.
+      # Dropping it keeps the JFrog token out of the agent's environment.
+      # (Addresses the reviewer-bot finding on the odbc onboarding PR.)
 
       # Shared prelude: mint the review-bot token (posts findings) + the
-      # engine-scoped token, set up Node, install the pinned engine (PAT-free).
+      # engine-scoped token, set up Node, install the pinned engine (PAT-free,
+      # JFrog-routed internally).
       - name: Bot prelude (tokens + Node + engine install)
         id: prelude
         uses: ./.github/actions/bot-prelude

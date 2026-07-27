@@ -66,8 +66,11 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Setup JFrog
-        uses: ./.github/actions/setup-jfrog
+      # NOTE: no separate `setup-jfrog` step — the engine install mints + scopes
+      # its own JFrog creds (job-local, EXIT-trap cleaned). A shared setup-jfrog
+      # would export JFROG_ACCESS_TOKEN to $GITHUB_ENV + write a tokened ~/.netrc,
+      # both persisting into the model-driven followup step. (Addresses the
+      # reviewer-bot finding on the odbc onboarding PR.)
 
       # Shared prelude: mint the review-bot token (posts replies / resolves
       # threads) + the engine-scoped token, set up Node, install the engine.

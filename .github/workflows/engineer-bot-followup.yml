@@ -101,10 +101,33 @@ jobs:
           go-version: '1.25.x'
           cache: false
 
-      - name: Warm the module cache (pure-Go)
+      - name: Build + warm caches (pure-Go; while JFrog creds are present)
+        # Download everything the agent's verification needs BEFORE scrubbing the
+        # JFrog creds below: main deps (`go build`), the test tools the agent's
+        # `make test`/`make lint` build (`make tools` → bin/gotestsum +
+        # bin/golangci-lint), and every test binary's deps (`go test -run '^$'`).
+        # After this a GOPROXY=off agent run works from the warm cache.
         env:
           CGO_ENABLED: 0
-        run: go build ./...
+        run: |
+          go build ./...
+          make tools
+          go test -run '^$' ./... >/dev/null
+
+      # Scope the JFrog credential away from the model-driven followup step. The
+      # warm step above consumed the creds; the agent's `make test` runs offline
+      # from the module cache. Remove the tokened ~/.netrc + blank JFROG_ACCESS_TOKEN,
+      # and pin GOPROXY=off + GOFLAGS=-mod=readonly so a cache miss fails loudly
+      # rather than reaching the network or editing go.mod/go.sum. (Addresses the
+      # reviewer-bot finding on the odbc onboarding PR.)
+      - name: Scrub JFrog credentials before the agent runs
+        run: |
+          rm -f ~/.netrc
+          {
+            echo "JFROG_ACCESS_TOKEN="
+            echo "GOPROXY=off"
+            echo "GOFLAGS=-mod=readonly"
+          } >> "$GITHUB_ENV"
 
       # --- shared bot setup ----------------------------------------------------
       - name: Bot prelude (tokens + Node + engine install)

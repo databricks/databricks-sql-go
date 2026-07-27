@@ -78,12 +78,43 @@ jobs:
           go-version: '1.25.x'
           cache: false
 
-      - name: Build driver (pure-Go; downloads deps into the module cache)
+      - name: Build driver + warm caches (pure-Go; while JFrog creds are present)
         # CGO_ENABLED=0 pure-Go build — the same invariant go.yml's build-and-test
-        # job holds. Warms the module cache so the agent's `go test` repro is fast.
+        # job holds. This step runs while setup-jfrog's GOPROXY/~/.netrc creds are
+        # live, and deliberately downloads EVERYTHING the agent will need so the
+        # module cache is complete BEFORE we scrub the creds below:
+        #   - `go build ./...`         → main deps
+        #   - `make tools`             → builds bin/gotestsum + bin/golangci-lint
+        #                                (the agent's `make test` / `make lint` need
+        #                                these; they go install / go build via proxy)
+        #   - `go test -run '^$' ./...`→ compiles every test binary, pulling
+        #                                test-only deps, without running anything
+        # After this, a GOPROXY=off agent run works entirely from the warm cache
+        # (verified: an offline `go test` compiles + runs green).
         env:
           CGO_ENABLED: 0
-        run: go build ./...
+        run: |
+          go build ./...
+          make tools
+          go test -run '^$' ./... >/dev/null
+
+      # Scope the JFrog credential AWAY from the model-driven steps. The build +
+      # cache-warm above consumed the creds; the agent's `go build` / `go test` /
+      # `make test` / `make lint` now run from the fully-populated module cache with
+      # GOPROXY=off. setup-jfrog left JFROG_ACCESS_TOKEN + GOPROXY (tokened netrc)
+      # in the env and a tokened ~/.netrc on disk — remove both before the agent
+      # runs (its bash allowlist includes `go build`/`go test`/`git status`). Pin
+      # GOPROXY=off + GOFLAGS=-mod=mod so a cache miss fails loudly instead of
+      # silently reaching the network. (Addresses the reviewer-bot finding on the
+      # odbc onboarding PR.)
+      - name: Scrub JFrog credentials before the agent runs
+        run: |
+          rm -f ~/.netrc
+          {
+            echo "JFROG_ACCESS_TOKEN="
+            echo "GOPROXY=off"
+            echo "GOFLAGS=-mod=readonly"
+          } >> "$GITHUB_ENV"
 
       # --- shared bot setup ----------------------------------------------------
       - name: Bot prelude (tokens + Node + engine install)
