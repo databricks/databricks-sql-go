@@ -1,7 +1,7 @@
 # Release History
 
 ## Unreleased
-- Enrich telemetry error classification with source-declared error categories, so CloudFetch download, Arrow schema parsing, and result-fetch failures now report a specific `error_name` (`chunk_download_error`, `arrow_schema_parsing_error`, `result_set_error`) instead of the generic `error` (databricks/databricks-sql-go#414, #415)
+- Improve telemetry error reporting: driver failures are now categorized by cause instead of reported as a generic error (databricks/databricks-sql-go#414, #415, #417)
 
 ## v1.14.0 (2026-07-13)
 - **Minimum Go version is now 1.25.0** (previously 1.20): the `go` directive was raised to 1.25.0 while clearing OSV-Scanner findings and updating dependencies. Consumers building with an older toolchain will need to upgrade Go (databricks/databricks-sql-go#368)
