@@ -79,6 +79,9 @@ func ColumnTypeInfoFor(dt arrow.DataType) ColumnTypeInfo {
 	case arrow.DECIMAL128:
 		// Match Thrift's sql.RawBytes scan type even though the kernel renders the
 		// value as an exact string — both convert cleanly to a caller's *string/*[]byte.
+		// Under WithKernelDecimalAsFloat the value is a float64 instead of a string;
+		// the scan type stays RawBytes, a deliberate Thrift-matching exception to the
+		// scan-type/value lockstep (Thrift does the same under UseArrowNativeDecimal).
 		return ColumnTypeInfo{DatabaseTypeName: "DECIMAL", ScanType: scanTypeRawBytes}
 	case arrow.LIST, arrow.LARGE_LIST, arrow.FIXED_SIZE_LIST:
 		return varLen("ARRAY", scanTypeRawBytes)

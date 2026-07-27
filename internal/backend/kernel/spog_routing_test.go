@@ -8,7 +8,9 @@ import "testing"
 // connection through set_http_path so the kernel receives the SPOG ?o= org id.
 // It must fire ONLY for a canonical warehouses/endpoints path with a non-empty
 // o= value, so a reroute can never hand set_http_path a path from_http_path would
-// reject. Runs under CGO_ENABLED=0 (pure Go, no kernel tag).
+// reject. httpPathCarriesOrgRouting is pure string logic, but this file carries the
+// cgo && databricks_kernel build tag, so the test runs only under the kernel tag
+// (nightly), not default PR CI.
 func TestHTTPPathCarriesOrgRouting(t *testing.T) {
 	cases := []struct {
 		name     string
