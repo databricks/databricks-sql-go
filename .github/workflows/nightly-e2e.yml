@@ -244,3 +244,24 @@ jobs:
           CGO_ENABLED=1 go test -tags databricks_kernel -count=1 -v -timeout 30m \
             -run 'TestKernelE2E|TestKernelThriftParity|TestKernelParamsVsThrift' \
             -skip 'TestKernelE2EM2M' .
+
+      # Non-blocking Reyden reference-engine leg: reruns the TestKernelE2E* funcs against
+      # the Reyden warehouse (TEST_WAREHOUSE=reyden + DATABRICKS_REYDEN_HTTP_PATH →
+      # kernelTestDBWith routes there; unsupported surfaces self-skip via skipOnReyden).
+      # continue-on-error because Reyden can be down or diverge from dbsql — a reyden-side
+      # failure surfaces in the log, not the nightly. Parity funcs are excluded (they
+      # compare kernel vs Thrift on one warehouse). Inert if the reyden path secret is
+      # unset: isReydenLeg() is false and the suite just re-runs on the normal warehouse.
+      - name: Run kernel E2E against Reyden (non-blocking)
+        continue-on-error: true
+        env:
+          DATABRICKS_PECOTESTING_SERVER_HOSTNAME: ${{ secrets.DATABRICKS_PECOTESTING_SERVER_HOSTNAME }}
+          DATABRICKS_PECOTESTING_HTTP_PATH2: ${{ secrets.DATABRICKS_PECOTESTING_HTTP_PATH2 }}
+          DATABRICKS_PECOTESTING_TOKEN: ${{ secrets.DATABRICKS_PECOTESTING_TOKEN }}
+          DATABRICKS_PECOTESTING_TOKEN_PERSONAL: ${{ secrets.DATABRICKS_PECOTESTING_TOKEN_PERSONAL }}
+          TEST_WAREHOUSE: reyden
+          DATABRICKS_REYDEN_HTTP_PATH: ${{ secrets.TEST_REYDEN_WAREHOUSE_HTTP_PATH }}
+        run: |
+          CGO_ENABLED=1 go test -tags databricks_kernel -count=1 -v -timeout 30m \
+            -run 'TestKernelE2E' \
+            -skip 'TestKernelE2EM2M' .
