@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/rs/zerolog/log"
+	"github.com/databricks/databricks-sql-go/logger"
 )
 
 // CachedTokenProvider wraps another provider and caches tokens
@@ -43,7 +43,7 @@ func (p *CachedTokenProvider) GetToken(ctx context.Context) (*Token, error) {
 
 	// If cache is valid and not being refreshed, return a copy
 	if cached != nil && !needsRefresh {
-		log.Debug().Msgf("cached token provider: using cached token for provider %s", p.provider.Name())
+		logger.Debug().Msgf("cached token provider: using cached token for provider %s", p.provider.Name())
 		// Return a copy to avoid concurrent modification issues
 		return copyToken(cached), nil
 	}
@@ -75,7 +75,7 @@ func (p *CachedTokenProvider) GetToken(ctx context.Context) (*Token, error) {
 	p.mutex.Unlock()
 
 	// Fetch new token WITHOUT holding the lock
-	log.Debug().Msgf("cached token provider: fetching new token from provider %s", p.provider.Name())
+	logger.Debug().Msgf("cached token provider: fetching new token from provider %s", p.provider.Name())
 	token, err := p.provider.GetToken(ctx)
 
 	// Update cache with result

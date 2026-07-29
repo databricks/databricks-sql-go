@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+
+	dbsqlerrint "github.com/databricks/databricks-sql-go/internal/errors"
 )
 
 // These guard the safety contract (which errors may trigger database/sql's
@@ -146,6 +148,72 @@ func TestStatementIDFromError(t *testing.T) {
 	}
 	if got := statementIDFromError(nil); got != "" {
 		t.Errorf("nil: got %q, want \"\"", got)
+	}
+}
+
+// Category maps the kernel code to a telemetry category (read via
+// CategoryFromError), so a kernel failure reports its authoritative code instead of
+// a message-inferred guess. An unmapped code returns "" to keep the message fallback.
+func TestKernelErrorCategory(t *testing.T) {
+	cases := []struct {
+		code int
+		want dbsqlerrint.ErrorCategory
+	}{
+		{statusInvalidArgument, dbsqlerrint.CategoryInvalidRequest},
+		{statusUnauthenticated, dbsqlerrint.CategoryAuthError},
+		{statusPermissionDenied, dbsqlerrint.CategoryPermissionError},
+		{statusNotFound, dbsqlerrint.CategoryNotFound},
+		{statusResourceExhausted, dbsqlerrint.CategoryRateLimitExceeded},
+		{statusUnavailable, dbsqlerrint.CategoryConnectionError},
+		{statusTimeout, dbsqlerrint.CategoryTimeout},
+		{statusCancelled, dbsqlerrint.CategoryCancelled},
+		{statusDataLoss, dbsqlerrint.CategoryResultSet},
+		{statusInternal, dbsqlerrint.CategoryGeneric},
+		{statusInvalidStmtHandle, dbsqlerrint.CategoryStatementClosed},
+		{statusNetworkError, dbsqlerrint.CategoryConnectionError},
+		{statusSqlError, dbsqlerrint.CategoryExecuteStatement},
+		{9999, ""}, // outside the enum → "" so classifyError falls back to the message
+	}
+	for _, c := range cases {
+		if got := (&KernelError{Code: c.code}).Category(); got != c.want {
+			t.Errorf("code %d: Category() = %q, want %q", c.code, got, c.want)
+		}
+	}
+}
+
+// allKernelStatusCodes is the full C enum (KernelStatusCode 1..13). It is the
+// tripwire for the "every code is mapped" invariant: adding a status constant here
+// makes TestKernelErrorCategoryExhaustive fail until codeToCategory maps it, so a
+// new code can't silently fall through to the message classifier.
+var allKernelStatusCodes = []int{
+	statusInvalidArgument, statusUnauthenticated, statusPermissionDenied,
+	statusNotFound, statusResourceExhausted, statusUnavailable, statusTimeout,
+	statusCancelled, statusDataLoss, statusInternal, statusInvalidStmtHandle,
+	statusNetworkError, statusSqlError,
+}
+
+// Every kernel status code resolves to a non-empty category, and the map holds
+// exactly those codes — so a code added without a mapping (or a stray extra entry)
+// fails here rather than silently regressing to message matching.
+func TestKernelErrorCategoryExhaustive(t *testing.T) {
+	for _, code := range allKernelStatusCodes {
+		if (&KernelError{Code: code}).Category() == "" {
+			t.Errorf("code %d has no category — add it to codeToCategory", code)
+		}
+	}
+	if len(codeToCategory) != len(allKernelStatusCodes) {
+		t.Errorf("codeToCategory has %d entries, want %d (map and status-code list drifted)",
+			len(codeToCategory), len(allKernelStatusCodes))
+	}
+}
+
+// The category must survive the fmt.Errorf("%w") wrapping the execute/read paths
+// apply, since CategoryFromError walks the chain to reach the *KernelError. This is
+// the property the telemetry classifier depends on end to end.
+func TestKernelErrorCategoryThroughWrap(t *testing.T) {
+	wrapped := fmt.Errorf("kernel: execute: %w", &KernelError{Code: statusSqlError, Message: "boom"})
+	if got := dbsqlerrint.CategoryFromError(wrapped); got != dbsqlerrint.CategoryExecuteStatement {
+		t.Errorf("wrapped kernel error: CategoryFromError = %q, want %q", got, dbsqlerrint.CategoryExecuteStatement)
 	}
 }
 

@@ -116,7 +116,9 @@ func TestKernelThriftColumnTypeParity(t *testing.T) {
 		"CAST('2020-01-01 00:00:00' AS TIMESTAMP) a_ts, CAST('abc' AS BINARY) a_binary, " +
 		"array(1,2,3) a_array, map('k',1) a_map, named_struct('x',1) a_struct, " +
 		`parse_json('{"a":1}') a_variant, INTERVAL '1' DAY a_iv_dt, ` +
-		"INTERVAL '1' MONTH a_iv_ym, st_point(1,2) a_geom"
+		// VOID: the server declares it STRING_TYPE over Thrift; asserts the kernel
+		// arrow.NULL→STRING mapping matches live, not just in the pure-Go tests.
+		"INTERVAL '1' MONTH a_iv_ym, st_point(1,2) a_geom, CAST(NULL AS VOID) a_void"
 
 	kernelDB := kernelTestDB(t)
 	defer kernelDB.Close()

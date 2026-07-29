@@ -23,8 +23,11 @@ import (
 
 	"github.com/apache/arrow/go/v12/arrow"
 	"github.com/apache/arrow/go/v12/arrow/cdata"
+	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 	"github.com/databricks/databricks-sql-go/internal/arrowscan"
+	context2 "github.com/databricks/databricks-sql-go/internal/compat/context"
 	dbsqlrows "github.com/databricks/databricks-sql-go/internal/rows"
+	dbrows "github.com/databricks/databricks-sql-go/rows"
 )
 
 // kernelRows implements the same optional column-type interfaces the Thrift path
@@ -37,6 +40,9 @@ var (
 	_ driver.RowsColumnTypeDatabaseTypeName = (*kernelRows)(nil)
 	_ driver.RowsColumnTypeNullable         = (*kernelRows)(nil)
 	_ driver.RowsColumnTypeLength           = (*kernelRows)(nil)
+	// Public batch API, matching the Thrift path (rows.rows). GetArrowBatches is
+	// real; GetArrowIPCStreams rejects (kernel C ABI exports C Data, not IPC bytes).
+	_ dbrows.Rows = (*kernelRows)(nil)
 )
 
 // kernelRows implements driver.Rows over the kernel result stream. It pulls one
@@ -48,13 +54,18 @@ var (
 // per-batch network/decode work once; row reads walk the already-imported
 // arrow.Record with O(1) indexing.
 type kernelRows struct {
+	// ctx is detached from the caller's QueryContext (via context2.WithoutCancel)
+	// so a submit-gating deadline can't truncate a large CloudFetch stream, matching
+	// the Thrift path (see ES-1934053); cancel makes it abortable from Close.
 	ctx       context.Context
+	cancel    context.CancelFunc
 	op        *kernelOp
 	stream    *C.kernel_result_stream_t
 	callbacks *dbsqlrows.TelemetryCallbacks
 
 	cols       []string
 	colTypes   []arrowscan.ColumnTypeInfo // per-column type metadata (PECOBLR-3692)
+	schema     *arrow.Schema              // result-set schema, for GetArrowBatches().Schema()
 	cur        arrow.Record               // current batch (nil until first Next)
 	rowInCur   int                        // next row index within cur
 	chunkCount int                        // cumulative batches fetched, for OnChunkFetched
@@ -80,7 +91,10 @@ func newKernelRows(ctx context.Context, op *kernelOp, stream *C.kernel_result_st
 	// telemetry. Assign it only on the success path so cleanup Close() on a
 	// schema/import failure does not record a falsely successful CLOSE_STATEMENT; the
 	// construction error itself is surfaced to and recorded by the conn execute path.
-	r := &kernelRows{ctx: ctx, op: op, stream: stream, keyCache: arrowscan.NewStructKeyCache()}
+	// Detach from the caller's cancellation but keep its values (auth/logging), so a
+	// deadline that only gated statement submission can't truncate the result stream.
+	resultsCtx, resultsCancel := context.WithCancel(context2.WithoutCancel(ctx))
+	r := &kernelRows{ctx: resultsCtx, cancel: resultsCancel, op: op, stream: stream, keyCache: arrowscan.NewStructKeyCache()}
 
 	var csch C.struct_ArrowSchema
 	if err := call(func() C.KernelStatusCode {
@@ -95,6 +109,7 @@ func newKernelRows(ctx context.Context, op *kernelOp, stream *C.kernel_result_st
 		r.Close()
 		return nil, fmt.Errorf("kernel: import schema: %w", err)
 	}
+	r.schema = sch
 	fields := sch.Fields()
 	r.cols = make([]string, len(fields))
 	// Derive per-column type metadata from the Arrow schema up front (the same
@@ -164,6 +179,10 @@ func (r *kernelRows) Close() error {
 	}
 	r.closed = true
 	closeStart := time.Now()
+	// Release the detached results context so an aborted Close doesn't leak it.
+	if r.cancel != nil {
+		r.cancel()
+	}
 	if r.cur != nil {
 		r.cur.Release()
 		r.cur = nil
@@ -213,7 +232,7 @@ func (r *kernelRows) next(dest []driver.Value) error {
 	}
 	rec := r.cur
 	for c := 0; c < len(dest); c++ {
-		v, err := arrowscan.ScanCellCached(rec.Column(c), r.rowInCur, r.op.location, r.keyCache)
+		v, err := arrowscan.ScanCellCachedDecimalFloat(rec.Column(c), r.rowInCur, r.op.location, r.keyCache, r.op.decimalAsFloat)
 		if err != nil {
 			return fmt.Errorf("kernel: scan col %d (%s): %w", c, r.cols[c], err)
 		}
@@ -226,14 +245,9 @@ func (r *kernelRows) next(dest []driver.Value) error {
 // nextBatch pulls the next Arrow batch. A released array (release==NULL) is the
 // kernel's end-of-stream sentinel.
 func (r *kernelRows) nextBatch() error {
-	// Honor cancellation at batch boundaries: check ctx before entering the
-	// blocking C fetch (which cannot itself observe ctx). This does NOT interrupt
-	// a fetch already in flight — and database/sql's own cancel watcher can't
-	// either: its Rows.Close takes rs.closemu.Lock(), which blocks until the
-	// in-progress Next (holding the RLock) returns, so the stream close waits for
-	// the C call to finish on its own. A single hung CloudFetch batch is therefore
-	// uninterruptible (the kernel exposes no per-download timeout); mid-fetch
-	// cancellation would need the execute path's watcher/canceller applied here.
+	// Stop pulling once Close cancels r.ctx; r.ctx is detached from the caller's
+	// deadline, so this fires on abort, not on a submit-gating timeout. It does NOT
+	// interrupt an in-flight C fetch (the kernel exposes no per-download timeout).
 	if r.ctx != nil {
 		if err := r.ctx.Err(); err != nil {
 			return err
@@ -283,4 +297,102 @@ func (r *kernelRows) nextBatch() error {
 	}
 	klogCtx(r.ctx, "nextBatch: %d rows (chunk %d)", rec.NumRows(), r.chunkCount)
 	return nil
+}
+
+// GetArrowBatches exposes the kernel stream as an arrow.Record iterator (the
+// public zero-copy batch API), reusing the row scanner's next_batch pull. Callers
+// MUST Release() each record.
+func (r *kernelRows) GetArrowBatches(context.Context) (dbrows.ArrowBatchIterator, error) {
+	return &kernelBatchIterator{r: r}, nil
+}
+
+// GetArrowIPCStreams is rejected on the kernel path: the C ABI exports Arrow via
+// the C Data Interface (next_batch), not IPC bytes. Use GetArrowBatches, or the
+// Thrift backend for IPC streams.
+func (r *kernelRows) GetArrowIPCStreams(context.Context) (dbrows.ArrowIPCStreamIterator, error) {
+	return nil, fmt.Errorf("databricks: GetArrowIPCStreams is %w (kernel exports Arrow C Data, not IPC bytes); use GetArrowBatches",
+		dbsqlerr.ErrNotSupportedByKernel)
+}
+
+// kernelBatchIterator adapts the kernelRows pull loop to the public
+// ArrowBatchIterator: it prefetches one batch (so HasNext is exact) and transfers
+// each record's ownership to the caller, who must Release it.
+type kernelBatchIterator struct {
+	r       *kernelRows
+	pending arrow.Record // prefetched, not yet handed out
+	done    bool         // stream drained (io.EOF seen)
+	err     error        // sticky fetch error, surfaced by Next
+}
+
+var _ dbrows.ArrowBatchIterator = (*kernelBatchIterator)(nil)
+
+// fill buffers one batch into pending, or sets done/err. It re-uses nextBatch and
+// takes ownership of r.cur so the row scanner and Close can't double-release it.
+func (it *kernelBatchIterator) fill() {
+	if it.pending != nil || it.done || it.err != nil {
+		return
+	}
+	if it.r.closed || it.r.eof { // nothing left to pull
+		it.done = true
+		return
+	}
+	switch err := it.r.nextBatch(); err {
+	case nil:
+		it.pending, it.r.cur = it.r.cur, nil
+	case io.EOF:
+		it.done = true
+	default:
+		it.err = err
+		// The batch path bypasses Next(), so seed iterationErr here too; else OnClose
+		// records the failed stream as a successful statement in telemetry.
+		if it.r.iterationErr == nil {
+			it.r.iterationErr = err
+		}
+	}
+}
+
+// Next returns the next record (caller owns it) or io.EOF when the stream drains.
+func (it *kernelBatchIterator) Next() (arrow.Record, error) {
+	it.fill()
+	if it.err != nil {
+		// Surface a fetch error exactly once, then terminate the iterator: mark
+		// done and clear err so a following HasNext() returns false. Otherwise a
+		// caller that logs-and-continues (rather than breaking) on a non-EOF error
+		// would spin forever — HasNext() would stay true and Next() would re-return
+		// the same error with a nil record. The failed stream is still recorded
+		// (fill seeds r.iterationErr for OnClose telemetry).
+		err := it.err
+		it.err = nil
+		it.done = true
+		return nil, err
+	}
+	if it.pending == nil {
+		return nil, io.EOF
+	}
+	rec := it.pending
+	it.pending = nil
+	return rec, nil
+}
+
+// HasNext reports whether a following Next would yield a record or an error.
+func (it *kernelBatchIterator) HasNext() bool {
+	it.fill()
+	return it.pending != nil || it.err != nil
+}
+
+// Close releases any buffered record and tears down the underlying stream.
+func (it *kernelBatchIterator) Close() {
+	if it.pending != nil {
+		it.pending.Release()
+		it.pending = nil
+	}
+	it.r.Close() //nolint:errcheck
+}
+
+// Schema returns the result-set schema captured at construction.
+func (it *kernelBatchIterator) Schema() (*arrow.Schema, error) {
+	if it.r.schema == nil {
+		return nil, fmt.Errorf("kernel: no schema available")
+	}
+	return it.r.schema, nil
 }
