@@ -20,7 +20,7 @@ import (
 
 	"github.com/databricks/databricks-sql-go/auth"
 	"github.com/databricks/databricks-sql-go/auth/oauth"
-	"github.com/rs/zerolog/log"
+	"github.com/databricks/databricks-sql-go/logger"
 	"golang.org/x/oauth2"
 )
 
@@ -84,15 +84,9 @@ type u2mAuthenticator struct {
 // mode. It structurally satisfies the U2MCredentialsProvider interface the kernel
 // backend asserts (defined in internal/backend/kernel, off the public API).
 //
-// Only the client id crosses to the kernel — NOT the scopes. The Thrift path
-// requests offline_access + sql (AWS/GCP) or offline_access + <tenant>/
-// user_impersonation (Azure) via oauth.GetScopes, while the kernel's U2M flow
-// applies its own default set (all-apis + offline_access). Neither backend exposes
-// a user-facing U2M-scopes option, so this is a fixed-vs-fixed difference, not a
-// dropped caller choice; against the built-in databricks-sql-connector public
-// client (which all-apis targets) both authorize successfully. If a U2M-scopes
-// option is ever added, forward it via kernel.Auth.Scopes (already wired through
-// set_auth_u2m) so the two paths request the same set.
+// Only the client id is read here; resolveKernelAuth pairs it with the same
+// oauth.GetScopes set the Thrift path requests, so both backends authorize against
+// the built-in databricks-sql-connector client identically (not the kernel default).
 func (c *u2mAuthenticator) U2MClientID() string { return c.clientID }
 
 // Auth will start the OAuth Authorization Flow to authenticate the cli client
@@ -160,7 +154,7 @@ func (tsp *tokenSourceProvider) GetTokenSource() (oauth2.TokenSource, error) {
 	loginURL := tsp.config.AuthCodeURL(state, challenge, challengeMethod)
 	tsp.state = state
 
-	log.Info().Msgf("listening on %s://%s/", tsp.redirectURL.Scheme, tsp.redirectURL.Host)
+	logger.Info().Msgf("listening on %s://%s/", tsp.redirectURL.Scheme, tsp.redirectURL.Host)
 	listener, err := net.Listen("tcp", tsp.redirectURL.Host)
 	if err != nil {
 		return nil, err
@@ -225,28 +219,28 @@ func (tsp *tokenSourceProvider) ServeHTTP(w http.ResponseWriter, r *http.Request
 
 	// Do some checking of the response here to show more relevant content
 	if resp.err != "" {
-		log.Error().Msg(resp.err)
+		logger.Error().Msg(resp.err)
 		w.WriteHeader(http.StatusBadRequest)
 		_, err := w.Write([]byte(errorHTML("Identity Provider returned an error: " + resp.err))) //nolint:gosec // XSS not a concern for local OAuth callback
 		if err != nil {
-			log.Error().Err(err).Msg("unable to write error response")
+			logger.Error().Err(err).Msg("unable to write error response")
 		}
 		return
 	}
 	if resp.state != tsp.state && r.URL.String() != "/favicon.ico" {
 		msg := "Authentication state received did not match original request. Please try to login again."
-		log.Error().Msg(msg)
+		logger.Error().Msg(msg)
 		w.WriteHeader(http.StatusBadRequest)
 		_, err := w.Write([]byte(errorHTML(msg)))
 		if err != nil {
-			log.Error().Err(err).Msg("unable to write error response")
+			logger.Error().Err(err).Msg("unable to write error response")
 		}
 		return
 	}
 
 	_, err := w.Write([]byte(infoHTML("CLI Login Success", "You may close this window anytime now and go back to terminal")))
 	if err != nil {
-		log.Error().Err(err).Msg("unable to write success response")
+		logger.Error().Err(err).Msg("unable to write success response")
 	}
 }
 

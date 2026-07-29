@@ -17,6 +17,10 @@ type Config struct {
 	WarehouseID string // bare warehouse id; preferred over HTTPPath when set
 	Auth        Auth   // PAT / OAuth M2M / OAuth U2M
 
+	// UserAgent is forwarded as the User-Agent header so the kernel path is
+	// attributed to this driver (not the kernel's built-in UA). Empty leaves it unset.
+	UserAgent string
+
 	// SessionConf carries server-bound session confs verbatim — the same map the
 	// Thrift backend forwards (STATEMENT_TIMEOUT, QUERY_TAGS, TIMEZONE, …).
 	SessionConf map[string]string
@@ -68,6 +72,10 @@ type Config struct {
 	// default namespace.
 	Catalog string
 	Schema  string
+
+	// DecimalAsFloat scans top-level DECIMAL columns to a lossy float64 instead of
+	// the exact string (from WithKernelDecimalAsFloat). Kernel still sends Decimal128.
+	DecimalAsFloat bool
 }
 
 // RetryConfig is the driver's HTTP retry policy forwarded to the kernel: the

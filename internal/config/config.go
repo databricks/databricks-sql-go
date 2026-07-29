@@ -107,6 +107,10 @@ type KernelExperimentalConfig struct {
 	// its result config and strips before the SEA wire; it is kernel-only because
 	// the Thrift path has no such in-memory-chunk knob.
 	MaxChunksInMemory int
+
+	// DecimalAsFloat scans top-level DECIMAL columns to a lossy float64 instead of
+	// the exact string (WithKernelDecimalAsFloat). Kernel-only; off by default.
+	DecimalAsFloat bool
 }
 
 // DeepCopy returns a deep copy of the experimental config, or nil for a nil
@@ -124,6 +128,7 @@ func (k *KernelExperimentalConfig) DeepCopy() *KernelExperimentalConfig {
 		ProxyBypassHosts:      k.ProxyBypassHosts,
 		RetryOverallTimeout:   k.RetryOverallTimeout,
 		MaxChunksInMemory:     k.MaxChunksInMemory,
+		DecimalAsFloat:        k.DecimalAsFloat,
 	}
 	if k.TLSTrustedCertsPEM != nil {
 		cp.TLSTrustedCertsPEM = append([]byte(nil), k.TLSTrustedCertsPEM...)

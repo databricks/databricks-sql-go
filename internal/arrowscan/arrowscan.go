@@ -106,6 +106,17 @@ func (c *StructKeyCache) keyPrefixes(st *arrow.StructType) []string {
 // StructKeyCache) so struct field-name keys are escaped once per result set
 // rather than once per row. Pass nil for the un-memoized one-shot behavior.
 func ScanCellCached(col arrow.Array, row int, loc *time.Location, keys *StructKeyCache) (driver.Value, error) {
+	return scanCell(col, row, loc, keys, false)
+}
+
+// ScanCellCachedDecimalFloat is ScanCellCached that, when decimalAsFloat is true,
+// scans a TOP-LEVEL Decimal128 to a lossy float64 instead of the exact string
+// (nested decimals still render exactly). Opt in via WithKernelDecimalAsFloat.
+func ScanCellCachedDecimalFloat(col arrow.Array, row int, loc *time.Location, keys *StructKeyCache, decimalAsFloat bool) (driver.Value, error) {
+	return scanCell(col, row, loc, keys, decimalAsFloat)
+}
+
+func scanCell(col arrow.Array, row int, loc *time.Location, keys *StructKeyCache, decimalAsFloat bool) (driver.Value, error) {
 	if col.IsNull(row) {
 		return nil, nil
 	}
@@ -173,9 +184,21 @@ func ScanCellCached(col arrow.Array, row int, loc *time.Location, keys *StructKe
 		// it. The cross-backend parity test pins both sides to µs (matching the wire
 		// reality), so it can't exercise a non-µs value; TestScanCellTimestampUnits
 		// covers this arm's unit-correctness directly instead.
-		return inLocation(c.Value(row).ToTime(dt.Unit), loc), nil
+		//
+		// Convert via the unit-specific time.Unix* constructors rather than arrow's
+		// ToTime: ToTime forms an int64-nanosecond intermediate (value*multiplier),
+		// which overflows for TIMESTAMPs outside ~1678–2262 and silently wraps a valid
+		// instant to a wrong one (e.g. TIMESTAMP '0001-01-01' → 1754). time.UnixMicro/
+		// UnixMilli/Unix split into (sec, nsec) internally, so the full 0001–9999 range
+		// round-trips. The Thrift default path never hits this — it receives TIMESTAMP
+		// as a preformatted server string — so this divergence is kernel-only.
+		return inLocation(timestampToTime(int64(c.Value(row)), dt.Unit), loc), nil
 	case *array.Decimal128:
 		dt := col.DataType().(*arrow.Decimal128Type)
+		if decimalAsFloat {
+			// Lossy fast path: float64, no per-cell string. Opt-in only.
+			return c.Value(row).ToFloat64(dt.Scale), nil
+		}
 		return decimalfmt.ExactString(c.Value(row), dt.Scale), nil
 	case *array.Duration:
 		// INTERVAL DAY TO SECOND arrives as an arrow duration. The kernel returns the
@@ -185,6 +208,13 @@ func ScanCellCached(col arrow.Array, row int, loc *time.Location, keys *StructKe
 		// shared renderer to reuse, and this stays kernel-side).
 		dt := col.DataType().(*arrow.DurationType)
 		return formatDayTimeInterval(int64(c.Value(row)), dt.Unit), nil
+	case *array.DayTimeInterval:
+		// INTERVAL DAY TO SECOND can also arrive as arrow's DayTimeInterval ({Days,
+		// Milliseconds}) rather than a Duration. Fold it to total milliseconds and reuse
+		// the same renderer. int32 days × 86_400_000 stays well within int64, so the
+		// day→ms scaling cannot overflow.
+		v := c.Value(row)
+		return formatDayTimeInterval(int64(v.Days)*86_400_000+int64(v.Milliseconds), arrow.Millisecond), nil
 	case *array.MonthInterval:
 		// INTERVAL YEAR TO MONTH arrives as a month count; Thrift's server string is
 		// "years-months".
@@ -274,6 +304,24 @@ func abs64(x int64) int64 {
 		return -x
 	}
 	return x
+}
+
+// timestampToTime converts an arrow timestamp value in the given unit to a UTC
+// time.Time without arrow's ToTime int64-nanosecond overflow (see the *array.Timestamp
+// scan arm). Each constructor takes its argument in native units and splits into
+// (seconds, nanoseconds) internally, so the whole 0001–9999 range is representable;
+// only the nanosecond arm passes ns directly (already the finest unit, cannot overflow).
+func timestampToTime(v int64, unit arrow.TimeUnit) time.Time {
+	switch unit {
+	case arrow.Second:
+		return time.Unix(v, 0).UTC()
+	case arrow.Millisecond:
+		return time.UnixMilli(v).UTC()
+	case arrow.Microsecond:
+		return time.UnixMicro(v).UTC()
+	default: // arrow.Nanosecond
+		return time.Unix(0, v).UTC()
+	}
 }
 
 // inLocation renders t in loc, matching the Thrift path's .In(location); a nil
