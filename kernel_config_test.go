@@ -8,9 +8,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/databricks/databricks-sql-go/auth/oauth"
 	"github.com/databricks/databricks-sql-go/auth/pat"
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 	"github.com/databricks/databricks-sql-go/internal/backend/kernel"
+	"github.com/databricks/databricks-sql-go/internal/client"
 	"github.com/databricks/databricks-sql-go/internal/config"
 )
 
@@ -181,6 +183,12 @@ func TestValidateKernelConfig(t *testing.T) {
 		if a.Mode != kernel.AuthU2M || a.ClientID != "databricks-sql-connector" {
 			t.Errorf("auth = %+v, want mode=U2M clientID=databricks-sql-connector", a)
 		}
+		// Scopes must match what the Thrift path requests for this host, so both
+		// backends authorize against the same client identically (not the kernel's
+		// all-apis default). baseKernelConfig's host is AWS → [offline_access, sql].
+		if want := oauth.GetScopes(c.Host, nil); !reflect.DeepEqual(a.Scopes, want) {
+			t.Errorf("U2M scopes = %v, want %v (Thrift parity)", a.Scopes, want)
+		}
 	})
 
 	t.Run("last-applied auth wins: M2M then PAT resolves to PAT", func(t *testing.T) {
@@ -329,9 +337,11 @@ var kernelConfigFieldDisposition = map[string]string{
 	"MaxRows":           "inert",
 	"UseLz4Compression": "inert", // kernel negotiates compression internally
 
+	// Rides in the forwarded User-Agent header (set_custom_header).
+	"UserAgentEntry": "forwarded",
+
 	// Not applicable to the kernel path (Thrift/HTTP-transport or telemetry knobs
 	// that don't reach the kernel binding).
-	"UserAgentEntry":           "inert", // TODO: forward once the kernel exposes a UA setter
 	"EnableTelemetry":          "inert",
 	"TelemetryBatchSize":       "inert",
 	"TelemetryFlushInterval":   "inert",
@@ -440,6 +450,11 @@ func TestBuildKernelConfig(t *testing.T) {
 		}
 		if kc.Auth.Mode != kauth.Mode || kc.Auth.Token != kauth.Token {
 			t.Errorf("auth not forwarded: got %+v, want %+v", kc.Auth, kauth)
+		}
+		// UserAgent must be the driver's composed UA, non-empty — else query
+		// history mis-attributes SEA-path queries to the kernel's built-in UA.
+		if want := client.BuildUserAgent(c); kc.UserAgent == "" || kc.UserAgent != want {
+			t.Errorf("UserAgent not forwarded: got %q, want %q", kc.UserAgent, want)
 		}
 	})
 

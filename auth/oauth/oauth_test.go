@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -57,6 +58,28 @@ func TestGetAzureDnsZone(t *testing.T) {
 		t.Run(tc.host, func(t *testing.T) {
 			if got := GetAzureDnsZone(tc.host); got != tc.want {
 				t.Fatalf("GetAzureDnsZone(%q) = %q, want %q", tc.host, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestGetScopes pins the literal cloud-specific scope sets (not GetScopes's own
+// output) so a regression in the AWS/GCP-vs-Azure branching — the source of the
+// kernel U2M access_denied incident — is caught rather than asserted tautologically.
+func TestGetScopes(t *testing.T) {
+	cases := []struct {
+		name string
+		host string
+		want []string
+	}{
+		{"AWS", "dbc-1234.cloud.databricks.com", []string{"offline_access", "sql"}},
+		{"GCP", "x.gcp.databricks.com", []string{"offline_access", "sql"}},
+		{"Azure", "adb-123.azuredatabricks.net", []string{"offline_access", "2ff814a6-3304-4ab8-85cb-cd0e6f879c1d/user_impersonation"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := GetScopes(tc.host, nil); !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("GetScopes(%q, nil) = %v, want %v", tc.host, got, tc.want)
 			}
 		})
 	}

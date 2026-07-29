@@ -10,24 +10,12 @@ import (
 	"github.com/databricks/databricks-sql-go/internal/rows/rowscanner"
 )
 
-// TestColumnTypeInfoMatchesThriftMapping is the pure-Go drift guard the kernel
-// backend's column-metadata mapping (internal/arrowscan.ColumnTypeInfoFor) was
-// missing. That mapping restates the Thrift path's per-type decisions — getScanType
-// (this package), rowscanner.GetDBTypeName, and ColumnTypeLength — but pinned its own
-// hardcoded expectations, so a change to the Thrift mapping (e.g. DECIMAL's scan
-// type) would leave arrowscan silently divergent while CI stayed green; parity was
-// then enforced only by the warehouse-gated, build-tagged TestKernelThriftColumnTypeParity
-// (nightly, not PR CI).
-//
-// This test cross-checks the two mappings DIRECTLY, with no cgo and no warehouse, so
-// drift fails a default CGO_ENABLED=0 PR run. The two switch on different type systems
-// (Arrow IDs vs Thrift TTypeIds), so it can't share a map — instead it enumerates the
-// shared Databricks types as {Arrow type, equivalent Thrift TColumnDesc} pairs and
-// asserts ColumnTypeInfoFor(arrow) reports exactly what the Thrift functions produce
-// for the paired column.
-//
-// It lives in package rows (white-box) to reach the unexported getScanType;
-// arrowscan is a pure leaf import (no cycle).
+// TestColumnTypeInfoMatchesThriftMapping cross-checks arrowscan.ColumnTypeInfoFor
+// against the Thrift mapping (getScanType / GetDBTypeName / ColumnTypeLength)
+// directly, so a change to one that isn't mirrored in the other fails a pure-Go PR
+// run — not just the nightly warehouse-gated parity test. It enumerates each shared
+// type as an {Arrow type, equivalent Thrift TColumnDesc} pair and asserts they agree.
+// White-box (package rows) to reach the unexported getScanType.
 func TestColumnTypeInfoMatchesThriftMapping(t *testing.T) {
 	// thriftCol builds the minimal TColumnDesc the Thrift mapping functions read.
 	thriftCol := func(id cli_service.TTypeId) *cli_service.TColumnDesc {
@@ -63,15 +51,14 @@ func TestColumnTypeInfoMatchesThriftMapping(t *testing.T) {
 		{"array", arrow.ListOf(arrow.PrimitiveTypes.Int64), cli_service.TTypeId_ARRAY_TYPE},
 		{"map", arrow.MapOf(arrow.BinaryTypes.String, arrow.PrimitiveTypes.Int64), cli_service.TTypeId_MAP_TYPE},
 		{"struct", arrow.StructOf(arrow.Field{Name: "x", Type: arrow.PrimitiveTypes.Int64}), cli_service.TTypeId_STRUCT_TYPE},
-		// Interval types: in the prod default (native-interval Arrow off) the server
-		// pre-formats intervals to text and declares the column STRING_TYPE, so the
-		// kernel — which receives native arrow.DURATION / arrow.INTERVAL_MONTHS and
-		// formats them Go-side to the same string — must report the STRING metadata the
-		// Thrift path reports for STRING_TYPE. Pairing them with STRING_TYPE here pins
-		// exactly that (see the arrowscan DURATION / INTERVAL_MONTHS arms).
+		// Intervals: the server pre-formats them to text and declares STRING_TYPE over
+		// Thrift, so pair with STRING_TYPE (the kernel formats the native arrow value to
+		// the same string). See the arrowscan DURATION / INTERVAL_MONTHS arms.
 		{"interval_day_time", arrow.FixedWidthTypes.Duration_us, cli_service.TTypeId_STRING_TYPE},
 		{"interval_year_month", arrow.FixedWidthTypes.MonthInterval, cli_service.TTypeId_STRING_TYPE},
-		{"null", arrow.Null, cli_service.TTypeId_NULL_TYPE},
+		// VOID/NULL: the server stringifies it over Thrift as STRING_TYPE (verified
+		// live — even bare SELECT NULL), same as the interval types above.
+		{"null", arrow.Null, cli_service.TTypeId_STRING_TYPE},
 	}
 
 	for _, c := range cases {

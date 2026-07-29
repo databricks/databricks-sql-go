@@ -33,7 +33,7 @@ name: Trigger Integration Tests
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, labeled]
+    types: [opened, synchronize, reopened, labeled, closed]
   merge_group: # the required gate runs here
 
 jobs:
@@ -94,35 +94,15 @@ jobs:
               });
             }
 
-  # Ordinary PR (not a label event): post a green stub so the required
-  # "Go Integration Tests" check is satisfied on the PR. The real run happens in
-  # the merge queue; the `integration-test` label previews it on the PR.
-  skip-integration-tests-pr:
-    if: github.event_name == 'pull_request' && github.event.action != 'labeled'
-    runs-on:
-      group: databricks-protected-runner-group
-      labels: linux-ubuntu-latest
-    permissions:
-      checks: write
-    steps:
-      - name: Skip Go Integration Tests (stub)
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
-        with:
-          github-token: ${{ github.token }}
-          script: |
-            await github.rest.checks.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              name: 'Go Integration Tests',
-              head_sha: context.payload.pull_request.head.sha,
-              status: 'completed',
-              conclusion: 'success',
-              completed_at: new Date().toISOString(),
-              output: {
-                title: 'Skipped on PR - runs in merge queue',
-                summary: 'Go integration tests are skipped on ordinary PR events and run as a required gate in the merge queue. Preview on this PR by adding a label: `integration-test` (Thrift, replay) or `integration-test-full` (Thrift, passthrough); `integration-test-kernel` runs the SEA-via-kernel backend against the real warehouse (passthrough).',
-              },
-            });
+  # NOTE: the PR-open "skipped" placeholder for the required `Go Integration Tests`
+  # check is NOT posted here. It is posted by the companion workflow
+  # `skip-checks-reporter.yml`, which runs on `workflow_run` in the base-repo context
+  # so it can post the check as the driver-test app (the app the branch ruleset pins
+  # the required check to) on EVERY PR head — including fork PRs, whose own
+  # `pull_request` run gets a read-only token and cannot post checks at all. A
+  # `pull_request`-triggered stub here could only post via `github.token`
+  # (github-actions app), which would neither satisfy the app-pinned gate nor work on
+  # forks. See skip-checks-reporter.yml.
 
   # Labeled PR: preview on demand. `integration-test` → replay,
   # `integration-test-full` → full passthrough.
@@ -314,3 +294,67 @@ jobs:
                 summary: 'An error occurred while dispatching Go integration tests. Check this workflow run for details.',
               },
             });
+
+  # =============================================================================
+  # After merge: trigger the multi-language coverage fan-out.
+  # Fires when a PR lands on main (merge queue or direct merge) and touched Go
+  # driver source. Dispatches `coverage-fanout` to databricks-driver-test, whose
+  # coverage-fanout-tracker.yml creates a tracking issue and kicks off the
+  # language-agnostic fan-out (spec authored from THIS PR's diff, then conformed
+  # across every driver) as peco-engineer-bot.
+  # =============================================================================
+  trigger-coverage-fanout:
+    if: |
+      github.event_name == 'pull_request' &&
+      github.event.action == 'closed' &&
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.base.ref == 'main'
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: linux-ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Check if Go driver source changed
+        id: changed
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
+              per_page: 100,
+            });
+            // The whole repo IS the Go driver. Count a merge as source-affecting
+            // when it changes a NON-test .go file outside examples/ and testdata/.
+            // Docs/CI/test-only merges do not warrant a full multi-language fan-out.
+            const isSource = (f) =>
+              f.endsWith('.go') &&
+              !f.endsWith('_test.go') &&
+              !f.startsWith('examples/') &&
+              !f.startsWith('testdata/');
+            const srcChanged = files.some((f) => isSource(f.filename));
+            console.log(`Go driver source changed: ${srcChanged}`);
+            core.setOutput('source', srcChanged.toString());
+
+      - name: Generate GitHub App token (databricks-driver-test)
+        if: steps.changed.outputs.source == 'true'
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.INTEGRATION_TEST_APP_ID }}
+          private-key: ${{ secrets.INTEGRATION_TEST_PRIVATE_KEY }}
+          owner: databricks
+          repositories: databricks-driver-test
+          permission-contents: write
+
+      - name: Dispatch coverage-fanout
+        if: steps.changed.outputs.source == 'true'
+        uses: peter-evans/repository-dispatch@ff45666b9427631e3450c54a1bcbee4d9ff4d7c0 # v3.0.0
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          repository: databricks/databricks-driver-test
+          event-type: coverage-fanout
+          client-payload: '{"reference_repo": "${{ github.repository }}", "pr_number": "${{ github.event.pull_request.number }}", "pr_url": "${{ github.event.pull_request.html_url }}"}'
