@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"errors"
+	"io"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/databricks/databricks-sql-go/driverctx"
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
+	dbsqlrows "github.com/databricks/databricks-sql-go/rows"
 )
 
 // kernelTestDB opens a kernel-backed *sql.DB from the DATABRICKS_PECOTESTING_*
@@ -50,6 +52,11 @@ func kernelTestDBWith(t *testing.T, extra ...ConnOption) *sql.DB {
 	// Same DATABRICKS_PECOTESTING_* warehouse credentials as the Thrift E2E suite, so
 	// both backends run against one test warehouse from one secret set.
 	host, httpPath, token := pecoTestingCreds(t)
+	// Reyden leg: same host + PAT, but route the query to the Reyden warehouse. Inert
+	// unless the reyden leg is selected — see kernel_reyden_e2e_test.go.
+	if isReydenLeg() {
+		httpPath = reydenHTTPPath()
+	}
 	opts := append([]ConnOption{
 		WithServerHostname(host),
 		WithHTTPPath(httpPath),
@@ -82,6 +89,10 @@ func TestKernelE2EQueryTags(t *testing.T) {
 // TestKernelE2EStatementTimeout proves a STATEMENT_TIMEOUT session param (via
 // WithSessionParams) is applied on the kernel session and read back via SET.
 func TestKernelE2EStatementTimeout(t *testing.T) {
+	// Reyden reads STATEMENT_TIMEOUT back from SET as a duration string ("5m") vs the
+	// raw seconds ("300") a normal warehouse returns — same value, different text. A
+	// reyden formatting divergence, not a driver gap; the conf is applied either way.
+	skipOnReyden(t, "reyden reads STATEMENT_TIMEOUT back as a duration string (\"5m\") vs raw seconds (\"300\") — same value, different text")
 	db := kernelTestDBWith(t, WithSessionParams(map[string]string{"STATEMENT_TIMEOUT": "300"}))
 	defer db.Close()
 
@@ -121,6 +132,10 @@ func TestKernelE2ETimeZone(t *testing.T) {
 // exactly as Thrift does. Verified live on both backends; this pins the round-trip
 // so a one-sided "don't shift NTZ" change is caught.
 func TestKernelE2ETimestampNTZ(t *testing.T) {
+	// Reyden shifts a zoned TIMESTAMP literal like an NTZ (12:00 → 08:00 -0400) where a
+	// normal warehouse keeps the 12:00 wall-clock — an engine timestamp-tz divergence,
+	// not a driver gap (the driver renders whatever instant + tz the engine delivers).
+	skipOnReyden(t, "reyden shifts a zoned TIMESTAMP literal like an NTZ (12:00 -> 08:00 -0400) vs the normal warehouse's 12:00 wall-clock — engine timestamp-tz divergence")
 	const tz = "America/New_York"
 	db := kernelTestDBWith(t, WithSessionParams(map[string]string{"timezone": tz}))
 	defer db.Close()
@@ -227,6 +242,16 @@ func TestKernelE2EDataTypes(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			// Reyden can't decode VARIANT over inline Arrow (a reyden-sea gap; dbsql-sea
+			// and Thrift read it fine), not a driver issue.
+			if c.name == "variant" {
+				skipOnReyden(t, "VARIANT over inline Arrow is not decodable on the reyden reference engine (reyden-sea gap; dbsql-sea/Thrift read it fine)")
+			}
+			// Geospatial (st_point/GEOMETRY/GEOGRAPHY) is UNSUPPORTED_FEATURE on the reyden
+			// real-time engine — a Lakehouse//RT limitation, not a driver gap.
+			if c.name == "geometry" || c.name == "geography" {
+				skipOnReyden(t, "geospatial (st_point/GEOMETRY/GEOGRAPHY) is unsupported on the reyden real-time engine — UNSUPPORTED_FEATURE, Lakehouse//RT limitation")
+			}
 			var got any
 			err := db.QueryRowContext(context.Background(), "SELECT "+c.expr).Scan(&got)
 			if err != nil {
@@ -430,6 +455,10 @@ func TestKernelE2EConnectionPool(t *testing.T) {
 // TestKernelE2ECancellation cancels a long-running query via ctx and asserts it
 // returns well before its uncancelled runtime.
 func TestKernelE2ECancellation(t *testing.T) {
+	// The reyden real-time engine cancels via a different path: the cancel returns HTTP
+	// 404 "Statement not found" and the query is abandoned only after the deadline grace
+	// (~11s), not near the 3s ctx deadline this asserts. A reyden behavior, not a driver gap.
+	skipOnReyden(t, "reyden real-time engine cancels via a different path (HTTP 404 Statement not found; abandons ~11s, not near the ctx deadline)")
 	db := kernelTestDB(t)
 	defer db.Close()
 
@@ -501,6 +530,11 @@ func TestKernelE2EInitialNamespace(t *testing.T) {
 // by design, since the conf's live effect can't be observed (see above). Kept as a
 // connect-with-flag smoke rather than deleted so the flag has at least one live path.
 func TestKernelE2EMetricViewMetadata(t *testing.T) {
+	// The reyden RT engine rejects the canonical value 'true' for
+	// spark.sql.thriftserver.metadata.metricview.enabled at OpenSession
+	// (INVALID_CONF_VALUE, SQLSTATE 22022) — the same key/value the kernel/Python/JDBC
+	// send and normal warehouses accept. A reyden-RT server limitation, not a driver gap.
+	skipOnReyden(t, "reyden RT server rejects the canonical value 'true' for spark.sql.thriftserver.metadata.metricview.enabled (INVALID_CONF_VALUE, SQLSTATE 22022) that normal warehouses accept — same key/value the kernel/Python/JDBC send; a reyden-RT server limitation")
 	db := kernelTestDBWith(t, WithEnableMetricViewMetadata(true))
 	defer db.Close()
 
@@ -547,5 +581,52 @@ func TestKernelE2EM2M(t *testing.T) {
 	}
 	if got != 1 {
 		t.Errorf("SELECT 1 = %d, want 1", got)
+	}
+}
+
+// TestKernelE2EGetArrowBatches drains the public Arrow batch API over the kernel
+// backend end to end — the path driver_e2e_test only exercises through Thrift —
+// asserting an exact row count and that each record is released by the caller.
+func TestKernelE2EGetArrowBatches(t *testing.T) {
+	db := kernelTestDB(t)
+	defer db.Close()
+
+	conn, err := db.Conn(context.Background())
+	if err != nil {
+		t.Fatalf("conn: %v", err)
+	}
+	defer conn.Close()
+
+	const want = 100_000
+	var driverRows driver.Rows
+	if err := conn.Raw(func(d any) error {
+		var qErr error
+		driverRows, qErr = d.(driver.QueryerContext).QueryContext(context.Background(), "SELECT id FROM range(0, 100000)", nil)
+		return qErr
+	}); err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	defer driverRows.Close()
+
+	batches, err := driverRows.(dbsqlrows.Rows).GetArrowBatches(context.Background())
+	if err != nil {
+		t.Fatalf("GetArrowBatches: %v", err)
+	}
+	defer batches.Close()
+
+	var rowCount int64
+	for batches.HasNext() {
+		rec, err := batches.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatalf("batch Next at row %d: %v", rowCount, err)
+		}
+		rowCount += rec.NumRows()
+		rec.Release() // caller owns each record
+	}
+	if rowCount != want {
+		t.Errorf("GetArrowBatches row count = %d, want %d", rowCount, want)
 	}
 }

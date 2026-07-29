@@ -674,6 +674,18 @@ func errorHandler(resp *http.Response, err error, numTries int) (*http.Response,
 			}
 		}
 
+		// Tag retry-exhausted 429s here: net/http drops the response on error,
+		// so the status is invisible downstream. TODO(PECOBLR-3537): a per-attempt
+		// 429 counter metric could follow; this tags only the exhausted failure.
+		if resp.StatusCode == http.StatusTooManyRequests {
+			rlCtx := context.TODO()
+			if resp.Request != nil { // nil only in tests
+				rlCtx = resp.Request.Context()
+			}
+			werr = dbsqlerrint.NewRequestError(rlCtx, "rate limit exceeded (HTTP 429)", werr).
+				WithCategory(dbsqlerrint.CategoryRateLimitExceeded)
+		}
+
 		logger.Err(werr).Msg(resp.Status)
 	}
 

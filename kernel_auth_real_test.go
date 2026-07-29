@@ -1,8 +1,10 @@
 package dbsql
 
 import (
+	"reflect"
 	"testing"
 
+	"github.com/databricks/databricks-sql-go/auth/oauth"
 	"github.com/databricks/databricks-sql-go/auth/oauth/m2m"
 	"github.com/databricks/databricks-sql-go/auth/oauth/u2m"
 	"github.com/databricks/databricks-sql-go/internal/backend/kernel"
@@ -63,6 +65,10 @@ func TestResolveKernelAuthRealAuthenticators(t *testing.T) {
 		}
 		if got.Mode != kernel.AuthU2M || got.ClientID == "" {
 			t.Errorf("auth = %+v, want mode=U2M with a non-empty (cloud-inferred) clientID", got)
+		}
+		// Scopes are forwarded from oauth.GetScopes(cfg.Host) for Thrift parity.
+		if want := oauth.GetScopes(c.Host, nil); !reflect.DeepEqual(got.Scopes, want) {
+			t.Errorf("U2M scopes = %v, want %v (Thrift parity)", got.Scopes, want)
 		}
 	})
 }

@@ -193,6 +193,34 @@ func TestScanCellInterval(t *testing.T) {
 			}
 		})
 	}
+
+	// DAY-TIME intervals can arrive as arrow's DayTimeInterval ({Days, Milliseconds})
+	// instead of a Duration; it must render to the identical "D HH:MM:SS.nnnnnnnnn".
+	dayTimeInterval := []struct {
+		name string
+		v    arrow.DayTimeInterval
+		want string
+	}{
+		{"one_day", arrow.DayTimeInterval{Days: 1, Milliseconds: 0}, "1 00:00:00.000000000"},
+		{"day_hms_millis", arrow.DayTimeInterval{Days: 1, Milliseconds: 3661_500}, "1 01:01:01.500000000"},
+		{"negative", arrow.DayTimeInterval{Days: -1, Milliseconds: -3661_500}, "-1 01:01:01.500000000"},
+	}
+	for _, tc := range dayTimeInterval {
+		t.Run("daytimeinterval_"+tc.name, func(t *testing.T) {
+			b := array.NewDayTimeIntervalBuilder(pool)
+			defer b.Release()
+			b.Append(tc.v)
+			arr := b.NewArray()
+			defer arr.Release()
+			v, err := ScanCell(arr, 0, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if v.(string) != tc.want {
+				t.Errorf("got %q, want %q", v, tc.want)
+			}
+		})
+	}
 }
 
 // ScanCell renders DATE / TIMESTAMP in the requested location, matching the
@@ -269,6 +297,40 @@ func TestScanCellTimestampUnits(t *testing.T) {
 			}
 			if got := v.(time.Time); !got.Equal(inst) {
 				t.Errorf("unit %s: got %v, want %v", tc.unit, got.UTC(), inst)
+			}
+		})
+	}
+}
+
+// TestScanCellTimestampOutOfNanoRange pins the fix for the microsecond→nanosecond
+// overflow: arrow's ToTime forms value*multiplier as an int64 ns count, which
+// overflows for instants outside ~1678–2262 and silently wraps to a wrong time
+// (TIMESTAMP '0001-01-01' scanned back as 1754, '9999-12-31' as 1816). The
+// unit-split constructors used by ScanCell must round-trip the full 0001–9999
+// range that Databricks TIMESTAMP allows.
+func TestScanCellTimestampOutOfNanoRange(t *testing.T) {
+	pool := memory.NewGoAllocator()
+	cases := []time.Time{
+		time.Date(1, time.January, 1, 0, 0, 0, 0, time.UTC),         // TIMESTAMP '0001-01-01 00:00:00'
+		time.Date(9999, time.December, 31, 23, 59, 59, 0, time.UTC), // TIMESTAMP '9999-12-31 23:59:59'
+		time.Date(1677, time.January, 1, 0, 0, 0, 0, time.UTC),      // just below the int64-ns floor
+		time.Date(2263, time.January, 1, 0, 0, 0, 0, time.UTC),      // just above the int64-ns ceiling
+	}
+	for _, want := range cases {
+		t.Run(want.Format("2006-01-02"), func(t *testing.T) {
+			// Databricks TIMESTAMP is always microseconds on the wire.
+			b := array.NewTimestampBuilder(pool, &arrow.TimestampType{Unit: arrow.Microsecond})
+			defer b.Release()
+			b.Append(arrow.Timestamp(want.UnixMicro()))
+			arr := b.NewArray()
+			defer arr.Release()
+
+			v, err := ScanCell(arr, 0, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := v.(time.Time); !got.Equal(want) {
+				t.Errorf("got %v, want %v (arrow ToTime would have wrapped this)", got.UTC(), want)
 			}
 		})
 	}
@@ -586,5 +648,39 @@ func TestScanCellDecimalScaleBoundary(t *testing.T) {
 	}
 	if got != "0.05" {
 		t.Errorf("decimal 5 @ scale 2 = %q, want 0.05", got)
+	}
+}
+
+// The decimalAsFloat knob scans a top-level DECIMAL to float64; the default
+// (exact-string) arm is unchanged.
+func TestScanCellDecimalAsFloat(t *testing.T) {
+	pool := memory.NewGoAllocator()
+	dt := &arrow.Decimal128Type{Precision: 10, Scale: 2}
+	b := array.NewDecimal128Builder(pool, dt)
+	defer b.Release()
+	b.Append(decimal128.FromU64(9998)) // 99.98
+	arr := b.NewArray()
+	defer arr.Release()
+
+	// Default: exact string.
+	s, err := ScanCellCached(arr, 0, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s != "99.98" {
+		t.Errorf("exact arm = %q, want \"99.98\"", s)
+	}
+
+	// decimalAsFloat=true: lossy float64.
+	f, err := ScanCellCachedDecimalFloat(arr, 0, nil, nil, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fv, ok := f.(float64)
+	if !ok {
+		t.Fatalf("decimalAsFloat arm returned %T, want float64", f)
+	}
+	if fv < 99.97 || fv > 99.99 {
+		t.Errorf("decimalAsFloat arm = %v, want ~99.98", fv)
 	}
 }

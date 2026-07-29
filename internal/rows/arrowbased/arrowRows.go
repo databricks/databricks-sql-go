@@ -560,20 +560,20 @@ func tGetResultSetMetadataRespToArrowSchema(resultSetMetadata *cli_service.TGetR
 		arrowSchema, err = tTableSchemaToArrowSchema(resultSetMetadata.Schema, &arrowConfig)
 		if err != nil {
 			logger.Err(err).Msg(errArrowRowsConvertSchema)
-			return nil, nil, dbsqlerrint.NewDriverError(ctx, errArrowRowsConvertSchema, err)
+			return nil, nil, dbsqlerrint.NewDriverError(ctx, errArrowRowsConvertSchema, err).WithCategory(dbsqlerrint.CategoryArrowSchemaParsing)
 		}
 
 		// serialize the arrow schema
 		schemaBytes, err = getArrowSchemaBytes(arrowSchema, ctx)
 		if err != nil {
 			logger.Err(err).Msg(errArrowRowsSerializeSchema)
-			return nil, nil, dbsqlerrint.NewDriverError(ctx, errArrowRowsSerializeSchema, err)
+			return nil, nil, dbsqlerrint.NewDriverError(ctx, errArrowRowsSerializeSchema, err).WithCategory(dbsqlerrint.CategoryArrowSchemaParsing)
 		}
 	} else {
 		br := bytes.NewReader(schemaBytes)
 		rdr, err := ipc.NewReader(br)
 		if err != nil {
-			return nil, nil, dbsqlerrint.NewDriverError(ctx, errArrowRowsUnableToReadBatch, err)
+			return nil, nil, dbsqlerrint.NewDriverError(ctx, errArrowRowsUnableToReadBatch, err).WithCategory(dbsqlerrint.CategoryArrowSchemaParsing)
 		}
 		defer rdr.Release()
 

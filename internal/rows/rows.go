@@ -526,7 +526,12 @@ func (r *rows) getResultSetSchema() (*cli_service.TTableSchema, dbsqlerr.DBError
 		resp, err2 := r.client.GetResultSetMetadata(r.ctx, &req)
 		if err2 != nil {
 			r.logger().Err(err2).Msg(err2.Error())
-			return nil, dbsqlerr_int.NewRequestError(r.ctx, errRowsMetadataFetchFailed, err)
+			// A fetch aborted via the results context (e.g. Close) isn't a
+			// result-set failure; leave it untagged. Mirrors the CloudFetch path.
+			if r.ctx != nil && r.ctx.Err() != nil {
+				return nil, dbsqlerr_int.NewRequestError(r.ctx, errRowsMetadataFetchFailed, err2)
+			}
+			return nil, dbsqlerr_int.NewRequestError(r.ctx, errRowsMetadataFetchFailed, err2).WithCategory(dbsqlerr_int.CategoryResultSet)
 		}
 
 		r.resultSetMetadata = resp
