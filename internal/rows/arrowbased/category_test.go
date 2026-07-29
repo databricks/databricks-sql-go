@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/config"
 	dbsqlerrint "github.com/databricks/databricks-sql-go/internal/errors"
@@ -89,6 +90,41 @@ func TestCloudFetchDownloadErrorCarriesCategory_RetryBranches(t *testing.T) {
 		assert.NotNil(t, nextErr)
 		assert.Equal(t, dbsqlerrint.CategoryChunkDownload, dbsqlerrint.CategoryFromError(nextErr))
 	})
+}
+
+// A CloudFetch payload that fails LZ4 decompression must surface carrying
+// CategoryDecompression, on the same object path the telemetry hook reads.
+func TestCloudFetchDecompressionErrorCarriesCategory(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Not valid LZ4 — lz4.NewReader will fail to decompress this.
+		_, _ = w.Write([]byte("this is not lz4 compressed data"))
+	}))
+	defer server.Close()
+
+	startRowOffset := int64(0)
+	links := []*cli_service.TSparkArrowResultLink{
+		{
+			FileLink:       server.URL,
+			ExpiryTime:     time.Now().Add(10 * time.Minute).Unix(),
+			StartRowOffset: startRowOffset,
+			RowCount:       1,
+		},
+	}
+
+	cfg := config.WithDefaults()
+	cfg.UseLz4Compression = true
+	cfg.MaxDownloadThreads = 1
+
+	bi, err := NewCloudBatchIterator(context.Background(), links, startRowOffset, nil, cfg, nil)
+	assert.Nil(t, err)
+
+	_, nextErr := bi.Next()
+	assert.NotNil(t, nextErr)
+	assert.Equal(t, dbsqlerrint.CategoryDecompression, dbsqlerrint.CategoryFromError(nextErr))
+	// loadBatchFor (arrowRows.go) uses a direct, non-walking assertion; the
+	// outermost error must itself be a DBError or the tag is re-wrapped away.
+	_, ok := nextErr.(dbsqlerr.DBError)
+	assert.True(t, ok, "outermost error must be a DBError to survive loadBatchFor's direct assertion")
 }
 
 // A schema-parse failure while building the row scanner must carry

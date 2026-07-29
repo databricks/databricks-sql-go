@@ -408,10 +408,15 @@ func (b *Backend) pollOperation(ctx context.Context, opHandle *cli_service.TOper
 	status, resp, err := pollSentinel.Watch(ctx, b.cfg.PollInterval, 0)
 	if err != nil {
 		log.Err(err).Msg("error polling operation status")
-		if status == sentinel.WatchTimeout {
+		switch {
+		case status == sentinel.WatchTimeout:
 			// Unreachable today (production Watch uses timeout=0); tagged so it
 			// classifies correctly if a nonzero poll timeout is ever enabled.
 			err = dbsqlerrint.NewRequestError(ctx, dbsqlerr.ErrSentinelTimeout, err).WithCategory(dbsqlerrint.CategoryStatementTimeout)
+		case errors.Is(err, context.Canceled):
+			// Caller cancelled during polling. DeadlineExceeded is intentionally
+			// not matched here, so it keeps its existing classification.
+			err = dbsqlerrint.NewExecutionError(ctx, dbsqlerr.ErrQueryExecution, err, nil).WithCategory(dbsqlerrint.CategoryStatementCancelled)
 		}
 		return nil, err
 	}
