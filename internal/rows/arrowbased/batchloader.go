@@ -505,7 +505,7 @@ func fetchBatchBytes(
 
 		if !retry.IsRetryableStatus(res.StatusCode) {
 			msg := fmt.Sprintf("%s: %s %d", errArrowRowsCloudFetchDownloadFailure, "HTTP error", res.StatusCode)
-			return nil, dbsqlerrint.NewDriverError(ctx, msg, nil)
+			return nil, dbsqlerrint.NewDriverError(ctx, msg, nil).WithCategory(dbsqlerrint.CategoryChunkDownload)
 		}
 	}
 
@@ -513,10 +513,10 @@ func fetchBatchBytes(
 		// lastErr is nil here by construction: the HTTP-status branch above
 		// explicitly clears it on every iteration. The status code is captured
 		// in msg, so there's no underlying error to wrap.
-		return nil, dbsqlerrint.NewDriverError(ctx, fmt.Sprintf("%s: %s %d (after %d retries)", errArrowRowsCloudFetchDownloadFailure, "HTTP error", lastStatus, retryMax), nil)
+		return nil, dbsqlerrint.NewDriverError(ctx, fmt.Sprintf("%s: %s %d (after %d retries)", errArrowRowsCloudFetchDownloadFailure, "HTTP error", lastStatus, retryMax), nil).WithCategory(dbsqlerrint.CategoryChunkDownload)
 	}
 	msg := fmt.Sprintf("%s: %v (after %d retries)", errArrowRowsCloudFetchDownloadFailure, lastErr, retryMax)
-	return nil, dbsqlerrint.NewDriverError(ctx, msg, lastErr)
+	return nil, dbsqlerrint.NewDriverError(ctx, msg, lastErr).WithCategory(dbsqlerrint.CategoryChunkDownload)
 }
 
 func getReader(r io.Reader, useLz4Compression bool) io.Reader {

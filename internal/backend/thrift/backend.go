@@ -409,7 +409,9 @@ func (b *Backend) pollOperation(ctx context.Context, opHandle *cli_service.TOper
 	if err != nil {
 		log.Err(err).Msg("error polling operation status")
 		if status == sentinel.WatchTimeout {
-			err = dbsqlerrint.NewRequestError(ctx, dbsqlerr.ErrSentinelTimeout, err)
+			// Unreachable today (production Watch uses timeout=0); tagged so it
+			// classifies correctly if a nonzero poll timeout is ever enabled.
+			err = dbsqlerrint.NewRequestError(ctx, dbsqlerr.ErrSentinelTimeout, err).WithCategory(dbsqlerrint.CategoryStatementTimeout)
 		}
 		return nil, err
 	}
