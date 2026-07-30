@@ -346,19 +346,21 @@ backends — the driver exposes no `GetCatalogs`/`GetSchemas`/`GetTables`/`GetCo
 
 ## Telemetry
 
-The driver includes optional telemetry to help improve performance and reliability. It
-is **disabled by default** and requires explicit opt-in; it applies to both backends.
+The driver includes optional telemetry to help improve performance and reliability; it
+applies to both backends. When `enableTelemetry` is left unset (the default), a
+**server-side feature flag** decides whether telemetry is active — so it may be enabled
+without an explicit opt-in. Setting `enableTelemetry` explicitly overrides the flag:
 
 ```
-# opt in (respects server-side feature flags):
+# force on (regardless of the server flag):
 token:<pat>@<host>:443[path]?enableTelemetry=true
-# opt out explicitly:
+# force off:
 token:<pat>@<host>:443[path]?enableTelemetry=false
 ```
 
 | DSN parameter | Default | Description |
 |---|---|---|
-| `enableTelemetry` | server-flag gated | Opt in/out of telemetry. |
+| `enableTelemetry` | unset (server flag decides) | Force telemetry on/off, overriding the server feature flag. |
 | `telemetry_batch_size` | `200` | Events per batch. |
 | `telemetry_flush_interval` | `30s` | Flush interval. |
 
