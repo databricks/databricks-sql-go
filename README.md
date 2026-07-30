@@ -320,6 +320,7 @@ token:<pat>@<host>:443[path]?useCloudFetch=false
 | Connector option | Protocol | Description |
 |---|---|---|
 | `WithSkipTLSHostVerify()` | Both | Disable TLS chain + hostname verification. **Use only for internal private-link hostnames** — this is susceptible to machine-in-the-middle attacks. |
+| `WithTransport(http.RoundTripper)` | Thrift only | Supply a custom HTTP transport (e.g. a custom CA, mTLS, or proxy). **Rejected** on the kernel path (wraps `ErrNotSupportedByKernel`) — the kernel uses its own HTTP stack; use `WithKernelTrustedCerts` / `WithKernelProxy` there. |
 | `WithKernelTrustedCerts(pem)` | SEA only | Add a PEM CA bundle on top of the system roots (for a re-signing proxy / on-prem CA). Needed because the kernel's TLS stack does not read `SSL_CERT_FILE`. |
 | `WithKernelSkipHostnameVerify()` | SEA only | Skip **only** the hostname check while keeping chain validation (finer-grained than `WithSkipTLSHostVerify`). |
 
@@ -366,6 +367,8 @@ token:<pat>@<host>:443[path]?enableTelemetry=false
 | `enableTelemetry` | unset (server flag decides) | Force telemetry on/off, overriding the server feature flag. |
 | `telemetry_batch_size` | `200` | Events per batch. |
 | `telemetry_flush_interval` | `30s` | Flush interval. |
+| `telemetry_retry_count` | — | **Deprecated and ignored** (retries are owned by the HTTP client + circuit breaker); logs a one-time warning. |
+| `telemetry_retry_delay` | — | **Deprecated and ignored** (see above). |
 
 **Collected:** query latency/performance, error codes (not messages), feature usage,
 driver version/environment. **Not collected:** SQL text, query results/values,
