@@ -384,7 +384,7 @@ func WithWarehouseID(id string) ConnOption {
 	}
 }
 
-// WithMaxRows sets up the max rows fetched per request. Default is 10000
+// WithMaxRows sets up the max rows fetched per request. Default is 100000
 func WithMaxRows(n int) ConnOption {
 	return func(c *config.Config) {
 		if n != 0 {
@@ -483,7 +483,7 @@ func WithTransport(t http.RoundTripper) ConnOption {
 	}
 }
 
-// WithCloudFetch sets up the use of cloud fetch for query execution. Default is false.
+// WithCloudFetch sets up the use of cloud fetch for query execution. Default is true.
 func WithCloudFetch(useCloudFetch bool) ConnOption {
 	return func(c *config.Config) {
 		c.UseCloudFetch = useCloudFetch

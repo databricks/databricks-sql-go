@@ -228,11 +228,10 @@ blocks until login completes or the kernel's ~120s callback timeout expires. Bec
 the C ABI can't interrupt session open mid-call, a connection-context deadline is not
 honored during that window. Use PAT or OAuth M2M for headless / deadline-bound
 connects. The kernel and Thrift backends use the same (cloud-inferred) U2M client id
-but request different default scopes — the kernel applies all-apis + offline_access,
-the Thrift path offline_access + sql (or, on Azure, user_impersonation). Neither
-backend exposes a U2M-scopes option, so this is a fixed difference between the two
-default sets, not a dropped setting; both authorize against the built-in public
-client.
+and request the same default scopes (offline_access + sql, or, on Azure,
+offline_access + <tenant>/user_impersonation): the kernel path forwards exactly the
+scopes the Thrift path computes, so both authorize identically against the built-in
+public client. Neither backend exposes a U2M-scopes option.
 
 Experimental kernel-only options (rejected by the default backend; the
 WithKernel* prefix marks them experimental):

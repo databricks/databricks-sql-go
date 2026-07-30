@@ -231,8 +231,8 @@ type UserConfig struct {
 	// Uses config overlay pattern: client > server > default.
 	// Unset = check server feature flag; explicitly true/false overrides the server.
 	EnableTelemetry          ConfigValue[bool]
-	TelemetryBatchSize       int           // 0 = use default (100)
-	TelemetryFlushInterval   time.Duration // 0 = use default (5s)
+	TelemetryBatchSize       int           // 0 = use default (200)
+	TelemetryFlushInterval   time.Duration // 0 = use default (30s)
 	Transport                http.RoundTripper
 	UseLz4Compression        bool
 	EnableMetricViewMetadata bool
