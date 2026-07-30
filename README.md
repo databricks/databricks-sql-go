@@ -349,7 +349,10 @@ backends — the driver exposes no `GetCatalogs`/`GetSchemas`/`GetTables`/`GetCo
 The driver includes optional telemetry to help improve performance and reliability; it
 applies to both backends. When `enableTelemetry` is left unset (the default), a
 **server-side feature flag** decides whether telemetry is active — so it may be enabled
-without an explicit opt-in. Setting `enableTelemetry` explicitly overrides the flag:
+without an explicit opt-in. Setting `enableTelemetry` explicitly overrides the flag.
+(One exception: on the kernel backend with OAuth **U2M**, telemetry is skipped entirely
+— regardless of `enableTelemetry` — to avoid a second interactive browser flow at
+connect.)
 
 ```
 # force on (regardless of the server flag):
