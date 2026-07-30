@@ -208,8 +208,10 @@ connector options are listed alongside. The **Protocol** column shows applicabil
 - **Both** — honored identically on Thrift and SEA/kernel.
 - **Thrift only** — honored on Thrift; **rejected** at connect on the kernel path
   (wraps `ErrNotSupportedByKernel`) unless noted "inert" (accepted, no effect).
-- **SEA only** — kernel path only; setting it without `WithUseKernel(true)` is rejected
-  on Thrift (wraps `ErrRequiresKernelBackend`).
+- **SEA only** — kernel path only. The experimental `WithKernel*` options are
+  **rejected** on Thrift when set without `WithUseKernel(true)` (wraps
+  `ErrRequiresKernelBackend`); `warehouseId` is the exception — Thrift silently ignores
+  it (see its row).
 
 Any parameter not recognized below (e.g. `ansi_mode`, `timezone`) is passed through as a
 session parameter on both backends.
