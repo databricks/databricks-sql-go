@@ -194,7 +194,12 @@ func (rpf *resultPageIterator) getNextPage() (*cli_service.TFetchResultsResp, er
 		fetchResult, err = rpf.client.FetchResults(rpf.ctx, &req)
 		if err != nil {
 			rpf.logger.Err(err).Msg("databricks: Rows instance failed to retrieve results")
-			return nil, dbsqlerrint.NewRequestError(rpf.ctx, errRowsResultFetchFailed, err)
+			// A fetch aborted via the results context (e.g. Close) isn't a
+			// result-set failure; leave it untagged. Mirrors the CloudFetch path.
+			if rpf.ctx != nil && rpf.ctx.Err() != nil {
+				return nil, dbsqlerrint.NewRequestError(rpf.ctx, errRowsResultFetchFailed, err)
+			}
+			return nil, dbsqlerrint.NewRequestError(rpf.ctx, errRowsResultFetchFailed, err).WithCategory(dbsqlerrint.CategoryResultSet)
 		}
 
 		rpf.Delimiter = NewDelimiter(fetchResult.Results.StartRowOffset, CountRows(fetchResult.Results))

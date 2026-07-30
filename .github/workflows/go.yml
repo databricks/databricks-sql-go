@@ -5,6 +5,12 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # The merge queue requires every required status check (Lint, Test and Build)
+  # to report on the queue's transient merge commit before it merges. Without a
+  # merge_group trigger these jobs never run there, so the required checks stay
+  # pending and the entry is evicted at the check-response timeout. See the
+  # sql-python go/py workflows for the same pattern.
+  merge_group:
 
 permissions:
   contents: read

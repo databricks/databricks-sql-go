@@ -156,7 +156,7 @@ func (k *KernelBackend) execute(ctx context.Context, req backend.ExecRequest) (b
 		C.kernel_statement_canceller_free(canceller)
 	}
 
-	op := &kernelOp{backend: k, stmt: stmt, location: k.cfg.Location}
+	op := &kernelOp{backend: k, stmt: stmt, location: k.cfg.Location, decimalAsFloat: k.cfg.DecimalAsFloat}
 	if execErr != nil {
 		// A session-fatal status (expired token, dropped/unavailable session) means
 		// this conn is unusable: evict it so the pool doesn't hand it out again. This
@@ -194,7 +194,8 @@ func (k *KernelBackend) execute(ctx context.Context, req backend.ExecRequest) (b
 	// Capture the modified-row count and server query id now, while exec is live —
 	// the operation is closed (nulling exec) before these are read on the
 	// ExecContext path, and the query-id pointer is only valid while exec lives.
-	op.affectedRows = int64(C.kernel_executed_statement_num_modified_rows(exec))
+	// normalizeAffectedRows folds the C ABI's -1 sentinel to 0 for Thrift parity.
+	op.affectedRows = normalizeAffectedRows(int64(C.kernel_executed_statement_num_modified_rows(exec)))
 	// A nil execErr means the statement reached a terminal state server-side (it
 	// committed). We deliberately do NOT re-check ctx.Err() here to convert a
 	// completed statement into a cancellation: for a non-idempotent DML that would
@@ -266,6 +267,9 @@ type kernelOp struct {
 	// location renders DATE / TIMESTAMP values in the session time zone, matching
 	// the Thrift path; nil means UTC. Carried onto the rows built by Results.
 	location *time.Location
+	// decimalAsFloat scans top-level DECIMAL to lossy float64 instead of exact
+	// string (from Config.DecimalAsFloat). Carried onto the rows.
+	decimalAsFloat bool
 }
 
 var _ backend.Operation = (*kernelOp)(nil)

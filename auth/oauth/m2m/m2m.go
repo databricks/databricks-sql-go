@@ -8,7 +8,7 @@ import (
 
 	"github.com/databricks/databricks-sql-go/auth"
 	"github.com/databricks/databricks-sql-go/auth/oauth"
-	"github.com/rs/zerolog/log"
+	"github.com/databricks/databricks-sql-go/logger"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/clientcredentials"
 )
@@ -72,12 +72,14 @@ func (c *authClient) Authenticate(r *http.Request) error {
 
 	c.tokenSource = GetTokenSource(config)
 	token, err := c.tokenSource.Token()
-	log.Debug().Msgf("databricks OAuth token fetched successfully")
 	if err != nil {
-		log.Err(err).Msg("failed to get token")
+		logger.Err(err).Msg("failed to get token")
 
 		return err
 	}
+	// Log via the driver's configurable logger (defaults to Warn) rather than the
+	// global zerolog logger, so this line honors SetLogLevel like every other.
+	logger.Debug().Msgf("databricks OAuth token fetched successfully")
 	token.SetAuthHeader(r)
 
 	return nil

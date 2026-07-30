@@ -35,6 +35,7 @@ var kernelExperimentalFieldDisposition = map[string]string{
 	"ProxyBypassHosts":      "forwarded", // set_proxy (bypass_hosts)
 	"RetryOverallTimeout":   "forwarded", // set_retry_config (overall_timeout_ms, 4th knob)
 	"MaxChunksInMemory":     "forwarded", // set_session_conf (cloudfetch_max_chunks_in_memory, client-only)
+	"DecimalAsFloat":        "forwarded", // kernel.Config.DecimalAsFloat → kernelOp → arrowscan (client-side scan choice)
 }
 
 func TestKernelExperimentalFieldsClassified(t *testing.T) {
@@ -84,6 +85,9 @@ func TestWithKernelTLSOptionsSetExperimental(t *testing.T) {
 		{"max chunks in memory", WithKernelMaxChunksInMemory(4), func(k *config.KernelExperimentalConfig) bool {
 			return k.MaxChunksInMemory == 4
 		}},
+		{"decimal as float", WithKernelDecimalAsFloat(true), func(k *config.KernelExperimentalConfig) bool {
+			return k.DecimalAsFloat
+		}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -116,6 +120,7 @@ func TestWithKernelOptionsRejectedOnThriftPath(t *testing.T) {
 		{"proxy", WithKernelProxy(KernelProxy{URL: "http://proxy:3128"})},
 		{"retry overall timeout", WithKernelRetryOverallTimeout(5 * time.Minute)},
 		{"max chunks in memory", WithKernelMaxChunksInMemory(4)},
+		{"decimal as float", WithKernelDecimalAsFloat(true)},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

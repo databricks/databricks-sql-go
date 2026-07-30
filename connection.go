@@ -33,6 +33,16 @@ type conn struct {
 	telemetry *telemetry.Interceptor // Optional telemetry interceptor
 }
 
+// tagStatementClosed returns a telemetry-only copy of a close-RPC error tagged
+// statement_closed (nil stays nil). The raw error still flows to the caller.
+func tagStatementClosed(ctx context.Context, err error) error {
+	if err == nil {
+		return nil
+	}
+	return dbsqlerrint.NewRequestError(ctx, "close statement request error", err).
+		WithCategory(dbsqlerrint.CategoryStatementClosed)
+}
+
 // Prepare prepares a statement with the query bound to this connection.
 func (c *conn) Prepare(query string) (driver.Stmt, error) {
 	return &stmt{conn: c, query: query}, nil
@@ -56,7 +66,14 @@ func (c *conn) Close() error {
 
 	// Record DELETE_SESSION regardless of error (matches JDBC), then flush and release
 	if c.telemetry != nil {
-		c.telemetry.RecordOperation(ctx, c.id, "", telemetry.OperationTypeDeleteSession, time.Since(closeStart).Milliseconds(), err)
+		// Tag a telemetry-only copy; err stays untagged so it is still returned
+		// as a driver.ErrBadConn below (database/sql needs that for pool eviction).
+		telErr := err
+		if err != nil {
+			telErr = dbsqlerrint.NewRequestError(ctx, "close session request error", err).
+				WithCategory(dbsqlerrint.CategorySessionClosed)
+		}
+		c.telemetry.RecordOperation(ctx, c.id, "", telemetry.OperationTypeDeleteSession, time.Since(closeStart).Milliseconds(), telErr)
 		_ = c.telemetry.Close(ctx)
 		telemetry.ReleaseForConnection(c.cfg.Host)
 	}
@@ -173,7 +190,7 @@ func (c *conn) ExecContext(ctx context.Context, query string, args []driver.Name
 	closed, err1 := op.Close(newCtx)
 	if closed {
 		if c.telemetry != nil {
-			c.telemetry.RecordOperation(ctx, c.id, statementID, telemetry.OperationTypeCloseStatement, time.Since(closeOpStart).Milliseconds(), err1)
+			c.telemetry.RecordOperation(ctx, c.id, statementID, telemetry.OperationTypeCloseStatement, time.Since(closeOpStart).Milliseconds(), tagStatementClosed(ctx, err1))
 		}
 		if err1 != nil {
 			log.Err(err1).Msg("databricks: failed to close operation after executing statement")
@@ -365,13 +382,13 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 			interceptor.AfterExecute(telemetryCtx, iterErr)
 			interceptor.CompleteStatement(telemetryCtx, stmtID, iterErr != nil)
 			// CLOSE_STATEMENT uses the actual CloseOperation RPC error.
-			interceptor.RecordOperation(telemetryCtx, connID, stmtID, telemetry.OperationTypeCloseStatement, latencyMs, closeErr)
+			interceptor.RecordOperation(telemetryCtx, connID, stmtID, telemetry.OperationTypeCloseStatement, latencyMs, tagStatementClosed(telemetryCtx, closeErr))
 		}
 	} else if c.telemetry != nil {
 		interceptor := c.telemetry
 		connID := c.id
 		closeCallback = func(latencyMs int64, _ int, _ error, closeErr error) {
-			interceptor.RecordOperation(telemetryCtx, connID, "", telemetry.OperationTypeCloseStatement, latencyMs, closeErr)
+			interceptor.RecordOperation(telemetryCtx, connID, "", telemetry.OperationTypeCloseStatement, latencyMs, tagStatementClosed(telemetryCtx, closeErr))
 		}
 	}
 
@@ -809,6 +826,6 @@ func (c *conn) execStagingOperation(
 	case "REMOVE":
 		return c.handleStagingRemove(ctx, presignedUrl, headers)
 	default:
-		return dbsqlerrint.NewDriverError(ctx, fmt.Sprintf("operation %s is not supported. Supported operations are GET, PUT, and REMOVE", operation), nil)
+		return dbsqlerrint.NewDriverError(ctx, fmt.Sprintf("operation %s is not supported. Supported operations are GET, PUT, and REMOVE", operation), nil).WithCategory(dbsqlerrint.CategoryUnsupportedOperation)
 	}
 }
