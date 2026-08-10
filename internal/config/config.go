@@ -242,7 +242,13 @@ type UserConfig struct {
 	// connector copies it into Config.ArrowConfig.UseArrowNativeDecimal when it is
 	// assembled. The name intentionally differs from ArrowConfig's field so the
 	// promoted selector Config.UseArrowNativeDecimal stays unambiguous.
-	UseArrowNativeDecimalDSN bool
+	//
+	// It is a *bool so the connector can distinguish "not present in the DSN"
+	// (nil -> keep the ArrowConfig default, which is now native-on) from an
+	// explicit useArrowNativeDecimal=false (which must override the default and
+	// win). A plain bool could not tell those apart and would silently reset the
+	// default to false on the sql.Open(dsn) path.
+	UseArrowNativeDecimalDSN *bool
 	CloudFetchConfig
 	// UseKernel selects the SEA-via-kernel backend instead of Thrift. See the
 	// WithUseKernel connector option for the build requirements. DSN: useKernel=true.
@@ -272,6 +278,12 @@ func (ucfg UserConfig) DeepCopy() UserConfig {
 
 	}
 
+	var nativeDecimalDSN *bool
+	if ucfg.UseArrowNativeDecimalDSN != nil {
+		v := *ucfg.UseArrowNativeDecimalDSN
+		nativeDecimalDSN = &v
+	}
+
 	return UserConfig{
 		Protocol:                 ucfg.Protocol,
 		Host:                     ucfg.Host,
@@ -292,7 +304,7 @@ func (ucfg UserConfig) DeepCopy() UserConfig {
 		Transport:                ucfg.Transport,
 		UseLz4Compression:        ucfg.UseLz4Compression,
 		EnableMetricViewMetadata: ucfg.EnableMetricViewMetadata,
-		UseArrowNativeDecimalDSN: ucfg.UseArrowNativeDecimalDSN,
+		UseArrowNativeDecimalDSN: nativeDecimalDSN,
 		CloudFetchConfig:         ucfg.CloudFetchConfig,
 		EnableTelemetry:          ucfg.EnableTelemetry,
 		TelemetryBatchSize:       ucfg.TelemetryBatchSize,
@@ -445,7 +457,10 @@ func ParseDSN(dsn string) (UserConfig, error) {
 		if err != nil {
 			return UserConfig{}, err
 		}
-		ucfg.UseArrowNativeDecimalDSN = useArrowNativeDecimal
+		// Record only when the param is present so the connector can tell an
+		// explicit override (including =false) from "unspecified", which keeps
+		// the native-on default.
+		ucfg.UseArrowNativeDecimalDSN = &useArrowNativeDecimal
 	}
 
 	// Kernel backend parameters
@@ -672,6 +687,7 @@ type ArrowConfig struct {
 
 func (ucfg ArrowConfig) WithDefaults() ArrowConfig {
 	ucfg.UseArrowBatches = true
+	ucfg.UseArrowNativeDecimal = true
 	ucfg.UseArrowNativeTimestamp = true
 	ucfg.UseArrowNativeComplexTypes = true
 

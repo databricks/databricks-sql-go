@@ -251,7 +251,7 @@ session parameter on both backends.
 
 | DSN parameter | Connector option | Protocol | Default | Description |
 |---|---|---|---|---|
-| `useArrowNativeDecimal` | `WithArrowNativeDecimal` | Thrift only (inert on kernel) | `false` | Thrift: return DECIMAL as native Arrow `decimal128` (lossless string when scanned via `database/sql`). The kernel path already renders DECIMAL as the exact string regardless. |
+| `useArrowNativeDecimal` | `WithArrowNativeDecimal` | Thrift only (inert on kernel) | `true` | Thrift: return DECIMAL as native Arrow `decimal128` on the wire (lossless string when scanned via `database/sql`), matching the Python and JDBC drivers. Set to `false` for the legacy UTF8-string wire format. The kernel path already renders DECIMAL as the exact string regardless. |
 | | `WithKernelDecimalAsFloat(b)` | SEA only | `false` | Scan top-level DECIMAL as lossy `float64` instead of the exact string. |
 
 See [Cloud Fetch](#cloud-fetch), [TLS](#tls), and [Proxy](#proxy) for the remaining

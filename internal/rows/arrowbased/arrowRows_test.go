@@ -968,6 +968,9 @@ func TestArrowRowScanner(t *testing.T) {
 
 			config := config.WithDefaults()
 			config.UseArrowNativeComplexTypes = false
+			// all_types.json carries the decimal column string-encoded (legacy
+			// wire format), so scan it via the string path.
+			config.ArrowConfig.UseArrowNativeDecimal = false
 			d, err := NewArrowRowScanner(executeStatementResp.DirectResults.ResultSetMetadata, executeStatementResp.DirectResults.ResultSet.Results, config, nil, context.Background(), nil)
 			assert.Nil(t, err)
 
@@ -991,6 +994,9 @@ func TestArrowRowScanner(t *testing.T) {
 
 		config := config.WithDefaults()
 		config.UseArrowNativeComplexTypes = false
+		// all_types.json carries the decimal column string-encoded (legacy wire
+		// format), so scan it via the string path.
+		config.ArrowConfig.UseArrowNativeDecimal = false
 		d, err := NewArrowRowScanner(executeStatementResp.DirectResults.ResultSetMetadata, executeStatementResp.DirectResults.ResultSet.Results, config, nil, context.Background(), nil)
 		assert.Nil(t, err)
 
@@ -1023,6 +1029,9 @@ func TestArrowRowScanner(t *testing.T) {
 
 		config := config.WithDefaults()
 		config.UseArrowNativeComplexTypes = false
+		// all_types.json carries the decimal column string-encoded (legacy wire
+		// format), so scan it via the string path.
+		config.ArrowConfig.UseArrowNativeDecimal = false
 		d, err := NewArrowRowScanner(executeStatementResp.DirectResults.ResultSetMetadata, executeStatementResp.DirectResults.ResultSet.Results, config, nil, context.Background(), nil)
 		assert.Nil(t, err)
 

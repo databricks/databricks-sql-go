@@ -1,6 +1,7 @@
 # Release History
 
 ## Unreleased
+- **Default `useArrowNativeDecimal` to `true`** so the Thrift backend requests DECIMAL columns as native Arrow `decimal128` on the wire (a compact fixed-width binary encoding) instead of UTF8 strings, matching the `databricks-sql-python` and `databricks-jdbc` drivers and reducing decimal-heavy result payloads. Scanning through `database/sql` is unchanged — DECIMAL is still returned as a lossless, scale-applied string (Go's `driver.Value` has no decimal type). **Breaking for `GetArrowBatches` consumers only:** DECIMAL columns now arrive as `arrow.Decimal128` arrays rather than string arrays; pass `WithArrowNativeDecimal(false)` (or DSN `useArrowNativeDecimal=false`) to restore the previous string wire format. The kernel backend already renders DECIMAL exactly and is unaffected.
 - Improve telemetry error reporting: driver failures are now categorized by cause instead of reported as a generic error (databricks/databricks-sql-go#414, #415, #417, #419, #424)
 
 ## v1.14.0 (2026-07-13)
