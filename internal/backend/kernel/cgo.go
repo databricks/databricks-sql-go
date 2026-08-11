@@ -107,6 +107,46 @@ func klogCtx(ctx context.Context, format string, args ...any) {
 // kernel session installs nothing.
 var initLoggingOnce sync.Once
 
+// expectedKernelABIVersion is the C ABI version this driver build was written
+// against (kernel's KERNEL_C_ABI_VERSION / kernel_abi_version()). It is bumped
+// in lockstep with the pinned KERNEL_REV whenever the kernel makes a breaking C
+// ABI change. See checkKernelABIVersion.
+const expectedKernelABIVersion = 1
+
+// abiCheckOnce guards the one-time ABI-version handshake.
+var (
+	abiCheckOnce sync.Once
+	abiCheckErr  error
+)
+
+// checkKernelABIVersion verifies, once per process, that the linked kernel's C
+// ABI version matches what this driver was built against. This matters for the
+// DYNAMIC-LINK build (databricks_kernel_dynlib): the .dylib/.so is resolved at
+// run time, so a wrong or stale shared library dropped next to the binary would
+// otherwise crash on the first mismatched struct/function. The handshake turns
+// that into a clear, actionable error at connect time. For the static build the
+// versions can't drift (the .a is frozen in at link time), so this is a cheap
+// tautology there — but it is compiled into both so the check is uniform and a
+// static/dynamic swap can never silently skip it.
+//
+// gosnowflake does the equivalent (queries its native core's version after
+// loading). Called from OpenSession before any other kernel call.
+func checkKernelABIVersion() error {
+	abiCheckOnce.Do(func() {
+		got := uint32(C.kernel_abi_version())
+		if got != expectedKernelABIVersion {
+			abiCheckErr = fmt.Errorf(
+				"databricks: kernel C ABI mismatch: linked library reports ABI %d, this driver was built for ABI %d — "+
+					"the kernel shared library next to the binary is the wrong version; install the matching "+
+					"libdatabricks_sql_kernel build (see KERNEL_REV)", got, expectedKernelABIVersion)
+			logger.Logger.Error().Msg(abiCheckErr.Error())
+		} else {
+			klog("kernel ABI version ok: %d", got)
+		}
+	})
+	return abiCheckErr
+}
+
 // initKernelLogging turns on the kernel's own Rust (tracing) logs and points their
 // verbosity at the driver's log level, so DATABRICKS_LOG_LEVEL drives both the Go
 // binding lines and the kernel's Rust lines from one knob. The mapped level is

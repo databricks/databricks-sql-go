@@ -119,6 +119,13 @@ func (k *KernelBackend) OpenSession(ctx context.Context) error {
 		return err
 	}
 	initKernelLogging()
+	// Verify the linked kernel's C ABI matches what this driver was built for.
+	// Critical for the dynamic-link build, where a mismatched shared library
+	// would otherwise crash later; a no-op tautology for the static build. Runs
+	// once per process, before any struct-passing kernel call.
+	if err := checkKernelABIVersion(); err != nil {
+		return toConnError(err)
+	}
 	klogCtx(ctx, "OpenSession host=%s httpPath=%s warehouse=%s", k.cfg.Host, k.cfg.HTTPPath, k.cfg.WarehouseID)
 
 	var cfg *C.KernelSessionConfig

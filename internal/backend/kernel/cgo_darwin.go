@@ -1,4 +1,4 @@
-//go:build cgo && databricks_kernel && darwin && arm64
+//go:build cgo && databricks_kernel && !databricks_kernel_dynlib && darwin && arm64
 
 package kernel
 
