@@ -71,3 +71,4 @@ __debug_bin
 /build/kernel-src/
 /internal/backend/kernel/lib/
 /internal/backend/kernel/include/
+/internal/backend/kernel/lib_dyn/
