@@ -84,9 +84,15 @@ type dynLib struct {
 	statementClose   func(stmt uintptr) int32
 
 	// Executed-statement result metadata (control plane).
-	execQueryID  func(executed uintptr) uintptr // returns const char* (0 if none)
-	execNumRows  func(executed uintptr) int64
-	execClose    func(executed uintptr) int32
+	execQueryID func(executed uintptr) uintptr // returns const char* (0 if none)
+	execNumRows func(executed uintptr) int64
+	execClose   func(executed uintptr) int32
+
+	// Result stream (data plane): pull Arrow C-Data batches.
+	getResultStream func(executed uintptr, out *uintptr) int32
+	streamGetSchema func(stream uintptr, out *cArrowSchema) int32
+	streamNextBatch func(stream uintptr, outArray *cArrowArray, outSchema *cArrowSchema) int32
+	streamClose     func(stream uintptr) int32
 
 	// Error surface: KernelError is read back through an out-param struct.
 	getLastError func(out *cKernelError) bool
@@ -154,6 +160,10 @@ func openDynLib(path string) (*dynLib, error) {
 	purego.RegisterLibFunc(&l.execQueryID, h, "kernel_executed_statement_query_id")
 	purego.RegisterLibFunc(&l.execNumRows, h, "kernel_executed_statement_num_modified_rows")
 	purego.RegisterLibFunc(&l.execClose, h, "kernel_executed_statement_close")
+	purego.RegisterLibFunc(&l.getResultStream, h, "kernel_executed_statement_get_result_stream")
+	purego.RegisterLibFunc(&l.streamGetSchema, h, "kernel_result_stream_get_schema")
+	purego.RegisterLibFunc(&l.streamNextBatch, h, "kernel_result_stream_next_batch")
+	purego.RegisterLibFunc(&l.streamClose, h, "kernel_result_stream_close")
 	purego.RegisterLibFunc(&l.getLastError, h, "kernel_get_last_error")
 	return l, nil
 }
