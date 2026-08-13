@@ -1,6 +1,12 @@
 .vscode
 .idea
-.claude
+# Ignore everything under .claude EXCEPT the engineer-bot learning log, which the
+# retrospective flow must commit into its rolling PR and the author phase reads
+# back (see .bot/config.yaml: author.knowledge_log / retrospective.log_path).
+.claude/*
+!.claude/knowledge/
+.claude/knowledge/*
+!.claude/knowledge/learning-log.md
 
 # Binaries for programs and plugins
 *.exe

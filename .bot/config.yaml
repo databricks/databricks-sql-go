@@ -91,6 +91,11 @@ author:
     issue_url: ISSUE_URL
   context_files:
     - issue_body.txt   # {{issue_body}}
+  # Close the loop: the author phase reads this log back so fixes benefit from
+  # what the retrospective has learned. MUST match `retrospective.log_path` below
+  # — the retrospective WRITES that path; the author only READS it if the two
+  # agree. (Set together, they connect learning → application.)
+  knowledge_log: .claude/knowledge/learning-log.md
 
 # Engine orchestration for the author phase. `bug-fix` runs the plan →
 # author_tests → fix pipeline (write a failing test → fix the code → re-run to
@@ -99,3 +104,21 @@ author:
 # specifics (commands, layout, live e2e requirement) live in
 # prompts/engineer/system.md, not here.
 flow: bug-fix
+
+# Daily learning extraction (retrospective flow). Run by engineer-bot-learning.yml
+# via `python -m databricks_bot_engine.engineer_bot.retrospective`: over an adaptive
+# look-back window it sweeps every merged PR (diff + review comments, which the
+# engine gathers ITSELF per PR) plus engineer-bot author runs, and if the model
+# finds a durable, reusable learning, opens/updates a single rolling PR appending a
+# dated section to log_path. Human-gated — never commits the canonical log directly.
+# Omitting this block makes the retrospective a no-op.
+#
+# `system_prompt` is intentionally OMITTED: this repo ships no
+# prompts/retrospective_system.md, so the engine's built-in base prompt is used.
+# (A set-but-missing system_prompt file would be a hard error; an UNSET key uses
+# the base. Add the key later only if you write a repo-specific additive prompt.)
+# The learning log is created on first write — no seed file needed.
+retrospective:
+  log_path: .claude/knowledge/learning-log.md   # MUST match author.knowledge_log above
+  branch_prefix: ai/learning-pr-
+  pr_label: engineer-bot-learning
