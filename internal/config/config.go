@@ -49,15 +49,9 @@ type Config struct {
 	ThriftProtocolVersion     cli_service.TProtocolVersion
 	ThriftDebugClientProtocol bool
 
-	// KernelExperimental carries experimental, kernel-backend-only options that
-	// have no equivalent on the default (Thrift) path — currently the richer TLS
-	// surface (a trusted-CA bundle and an independent hostname-skip) the kernel
-	// exposes over its C ABI. It lives here on Config, NOT on UserConfig, so it
-	// stays off the stable exported/DSN surface (the same treatment TLSConfig and
-	// ArrowConfig get). nil means no experimental option was set. The Thrift
-	// backend rejects a non-nil value loudly; the kernel backend forwards it to
-	// the kernel C ABI. Mirrors Node's non-exported InternalConnectionOptions /
-	// Python's underscore-prefixed kwargs.
+	// KernelExperimental carries kernel-only options with no Thrift equivalent.
+	// Keeping them off UserConfig avoids expanding the stable DSN surface. The
+	// Thrift backend rejects a non-nil value; the kernel backend forwards it.
 	KernelExperimental *KernelExperimentalConfig
 }
 
@@ -67,6 +61,10 @@ type Config struct {
 // the exhaustiveness guard TestKernelExperimentalFieldsClassified asserts this so
 // a newly-added field can't slip through unclassified.
 type KernelExperimentalConfig struct {
+	// IdentityFederationClientID selects mandatory SP-wide workload identity
+	// federation for PAT, OAuth M2M, or OAuth U2M authentication.
+	IdentityFederationClientID string
+
 	// TLSTrustedCertsPEM is a PEM CA bundle added to the kernel's trust store on
 	// top of the system roots (maps to kernel_session_config_set_tls_trusted_certs).
 	// Needed because the kernel's rustls stack ignores SSL_CERT_FILE, so a custom
@@ -121,14 +119,15 @@ func (k *KernelExperimentalConfig) DeepCopy() *KernelExperimentalConfig {
 		return nil
 	}
 	cp := &KernelExperimentalConfig{
-		TLSSkipHostnameVerify: k.TLSSkipHostnameVerify,
-		ProxyURL:              k.ProxyURL,
-		ProxyUsername:         k.ProxyUsername,
-		ProxyPassword:         k.ProxyPassword,
-		ProxyBypassHosts:      k.ProxyBypassHosts,
-		RetryOverallTimeout:   k.RetryOverallTimeout,
-		MaxChunksInMemory:     k.MaxChunksInMemory,
-		DecimalAsFloat:        k.DecimalAsFloat,
+		IdentityFederationClientID: k.IdentityFederationClientID,
+		TLSSkipHostnameVerify:      k.TLSSkipHostnameVerify,
+		ProxyURL:                   k.ProxyURL,
+		ProxyUsername:              k.ProxyUsername,
+		ProxyPassword:              k.ProxyPassword,
+		ProxyBypassHosts:           k.ProxyBypassHosts,
+		RetryOverallTimeout:        k.RetryOverallTimeout,
+		MaxChunksInMemory:          k.MaxChunksInMemory,
+		DecimalAsFloat:             k.DecimalAsFloat,
 	}
 	if k.TLSTrustedCertsPEM != nil {
 		cp.TLSTrustedCertsPEM = append([]byte(nil), k.TLSTrustedCertsPEM...)

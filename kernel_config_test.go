@@ -403,6 +403,29 @@ func TestKernelConfigFieldsClassified(t *testing.T) {
 // TestKernelExperimentalFieldsClassified only asserts the disposition map, not the
 // runtime copy). These run in the default CGO_ENABLED=0 build.
 func TestBuildKernelConfig(t *testing.T) {
+	t.Run("identity federation client ID forwarded for every auth mode", func(t *testing.T) {
+		for _, auth := range []kernel.Auth{
+			{Mode: kernel.AuthPAT, Token: "dapi-x"},
+			{Mode: kernel.AuthM2M, ClientID: "cid", ClientSecret: "secret"},
+			{Mode: kernel.AuthU2M, ClientID: "u2m-cid"},
+		} {
+			c := baseKernelConfig()
+			c.KernelExperimental = &config.KernelExperimentalConfig{IdentityFederationClientID: "federation-client"}
+			kc := buildKernelConfig(c, auth)
+			if kc.IdentityFederationClientID != "federation-client" {
+				t.Errorf("auth mode %v: IdentityFederationClientID = %q, want %q",
+					auth.Mode, kc.IdentityFederationClientID, "federation-client")
+			}
+		}
+	})
+
+	t.Run("identity federation client ID omitted when unset", func(t *testing.T) {
+		kc := buildKernelConfig(baseKernelConfig(), kernel.Auth{Mode: kernel.AuthPAT, Token: "dapi-x"})
+		if kc.IdentityFederationClientID != "" {
+			t.Errorf("IdentityFederationClientID = %q, want empty", kc.IdentityFederationClientID)
+		}
+	})
+
 	t.Run("experimental TLS fields forwarded", func(t *testing.T) {
 		c := baseKernelConfig()
 		c.KernelExperimental = &config.KernelExperimentalConfig{

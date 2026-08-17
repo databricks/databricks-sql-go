@@ -52,6 +52,27 @@ func TestSetAuthByMode(t *testing.T) {
 	}
 }
 
+func TestSetIdentityFederationClientID(t *testing.T) {
+	cases := []struct {
+		name string
+		auth Auth
+		id   string
+	}{
+		{"PAT", Auth{Mode: AuthPAT, Token: "dapi-x"}, "federation-client"},
+		{"M2M", Auth{Mode: AuthM2M, ClientID: "cid", ClientSecret: "sec"}, "federation-client"},
+		{"U2M", Auth{Mode: AuthU2M, ClientID: "u2m-cid"}, "federation-client"},
+		{"empty omitted", Auth{Mode: AuthPAT, Token: "dapi-x"}, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := Config{Auth: tc.auth, IdentityFederationClientID: tc.id}
+			if err := trySetIdentityFederation(cfg); err != nil {
+				t.Errorf("trySetIdentityFederation(%s) = %v, want nil", tc.name, err)
+			}
+		})
+	}
+}
+
 // TestSetKernelTLS exercises the real cgo setters for the experimental kernel-only
 // TLS knobs (the byte-buffer trusted-CA bundle + the hostname-skip bool) via the
 // trySetKernelTLS seam — proving the (*C.uint8_t, C.size_t) marshalling and the C
@@ -89,7 +110,7 @@ func TestSetProxy(t *testing.T) {
 	}{
 		{"url only", Config{ProxyURL: "http://proxy:3128"}},
 		{"url + credentials", Config{ProxyURL: "http://proxy:3128", ProxyUsername: "u", ProxyPassword: "p"}},
-		{"url + bypass", Config{ProxyURL: "http://proxy:3128", ProxyBypassHosts: "localhost,*.internal"}}, //nolint:gosec // G101: test literals, not real credentials
+		{"url + bypass", Config{ProxyURL: "http://proxy:3128", ProxyBypassHosts: "localhost,*.internal"}},                                       //nolint:gosec // G101: test literals, not real credentials
 		{"all fields", Config{ProxyURL: "http://proxy:3128", ProxyUsername: "u", ProxyPassword: "p", ProxyBypassHosts: "localhost,*.internal"}}, //nolint:gosec // G101: test literals, not real credentials
 		{"none (no-op)", Config{}},
 	}
@@ -104,9 +125,8 @@ func TestSetProxy(t *testing.T) {
 
 // TestSetRetry exercises the real kernel_session_config_set_retry_config cgo setter
 // via the trySetRetry seam: a valid range succeeds (incl. the disable form,
-// MaxRetries=0, and a non-zero overall budget), and a degenerate range (min=0 or
-// max<min) is rejected by the kernel as InvalidArgument. A no-op when Config.Retry
-// is nil. Proves the 4-arg marshalling and the C signature.
+// MaxRetries=0, a non-zero overall budget, and max<min, which the kernel corrects).
+// A zero minimum is rejected as InvalidArgument. A no-op when Config.Retry is nil.
 func TestSetRetry(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -117,9 +137,9 @@ func TestSetRetry(t *testing.T) {
 		{"disable (0 retries)", Config{Retry: &RetryConfig{MinWait: time.Second, MaxWait: 30 * time.Second, MaxRetries: 0}}, false},
 		{"with overall budget", Config{Retry: &RetryConfig{MinWait: time.Second, MaxWait: 30 * time.Second, MaxRetries: 4, OverallTimeout: 5 * time.Minute}}, false},
 		{"none (no-op)", Config{}, false},
-		// The kernel setter rejects a degenerate range: min==0 and max<min.
+		// A zero minimum is invalid; max<min is corrected by raising max to min.
 		{"min zero rejected", Config{Retry: &RetryConfig{MinWait: 0, MaxWait: time.Second, MaxRetries: 3}}, true},
-		{"max below min rejected", Config{Retry: &RetryConfig{MinWait: 5 * time.Second, MaxWait: time.Second, MaxRetries: 3}}, true},
+		{"max below min corrected", Config{Retry: &RetryConfig{MinWait: 5 * time.Second, MaxWait: time.Second, MaxRetries: 3}}, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

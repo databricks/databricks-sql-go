@@ -53,10 +53,7 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 		be, err = newKernelBackend(ctx, c.cfg)
 	} else {
 		// The experimental WithKernel* options have no Thrift-path equivalent — reject
-		// them loudly rather than silently ignore, so a caller who sets one (a
-		// trusted-CA bundle, a hostname-verify skip, a proxy, a retry budget, or a
-		// CloudFetch chunk cap) and forgets WithUseKernel learns the option had no
-		// effect instead of connecting as if it were never set. Every WithKernel*
+		// them loudly rather than silently ignore. Every WithKernel*
 		// option allocates KernelExperimental, so this one gate covers them all; the
 		// message names the family rather than a stale subset that drifts as options
 		// are added.
@@ -600,6 +597,17 @@ func kernelExperimental(c *config.Config) *config.KernelExperimentalConfig {
 		c.KernelExperimental = &config.KernelExperimentalConfig{}
 	}
 	return c.KernelExperimental
+}
+
+// WithKernelIdentityFederationClientID selects mandatory SP-wide workload
+// identity federation for PAT, OAuth M2M, or OAuth U2M authentication. An empty
+// client ID leaves BYOT / account-wide federation behavior unchanged.
+//
+// EXPERIMENTAL, kernel-only: the default (Thrift) backend rejects this at connect.
+func WithKernelIdentityFederationClientID(clientID string) ConnOption {
+	return func(c *config.Config) {
+		kernelExperimental(c).IdentityFederationClientID = clientID
+	}
 }
 
 // WithKernelDecimalAsFloat makes the kernel path scan top-level DECIMAL columns to

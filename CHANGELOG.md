@@ -1,6 +1,7 @@
 # Release History
 
 ## Unreleased
+- Forward an optional SP-wide workload identity federation client ID through the kernel backend for PAT and OAuth authentication
 - Improve telemetry error reporting: driver failures are now categorized by cause instead of reported as a generic error (databricks/databricks-sql-go#414, #415, #417, #419, #424)
 
 ## v1.14.0 (2026-07-13)

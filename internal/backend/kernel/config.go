@@ -16,6 +16,9 @@ type Config struct {
 	HTTPPath    string // e.g. /sql/1.0/warehouses/abc123 (carries ?o= org routing)
 	WarehouseID string // bare warehouse id; preferred over HTTPPath when set
 	Auth        Auth   // PAT / OAuth M2M / OAuth U2M
+	// IdentityFederationClientID selects mandatory SP-wide workload identity
+	// federation. Empty preserves BYOT / account-wide behavior.
+	IdentityFederationClientID string
 
 	// UserAgent is forwarded as the User-Agent header so the kernel path is
 	// attributed to this driver (not the kernel's built-in UA). Empty leaves it unset.

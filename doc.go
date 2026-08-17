@@ -235,6 +235,9 @@ public client. Neither backend exposes a U2M-scopes option.
 
 Experimental kernel-only options (rejected by the default backend; the
 WithKernel* prefix marks them experimental):
+  - WithKernelIdentityFederationClientID(clientID) requires SP-wide workload identity
+    token exchange for PAT, OAuth M2M, or OAuth U2M. Empty preserves BYOT / account-wide
+    federation behavior.
   - WithKernelTrustedCerts(pem) adds a PEM CA bundle on top of the system roots (for
     a re-signing proxy or on-prem CA). Required because the kernel's TLS stack does
     not read SSL_CERT_FILE.

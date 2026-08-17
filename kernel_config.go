@@ -134,11 +134,10 @@ func buildKernelConfig(cfg *config.Config, kauth kernel.Auth) kernel.Config {
 	if cfg.TLSConfig != nil && cfg.TLSConfig.InsecureSkipVerify {
 		kc.TLSSkipVerify = true
 	}
-	// Experimental kernel-only TLS knobs (WithKernelTrustedCerts /
-	// WithKernelSkipHostnameVerify), if any. These have no Thrift-path equivalent
-	// (the connector rejects them on that path) and are forwarded verbatim to the
-	// kernel C ABI in OpenSession.
+	// Experimental kernel-only knobs have no Thrift-path equivalent and are
+	// forwarded to the kernel backend here.
 	if ke := cfg.KernelExperimental; ke != nil {
+		kc.IdentityFederationClientID = ke.IdentityFederationClientID
 		kc.TLSTrustedCertsPEM = ke.TLSTrustedCertsPEM
 		kc.TLSSkipHostnameVerify = ke.TLSSkipHostnameVerify
 		// Kernel-only CloudFetch in-memory-chunk knob (WithKernelMaxChunksInMemory).
@@ -317,7 +316,7 @@ func resolveKernelAuth(cfg *config.Config) (kernel.Auth, error) {
 		// kernel applied its own default set (all-apis + offline_access), which a
 		// workspace whose public client isn't granted all-apis rejects with
 		// access_denied. RedirectPort is still left zero (no user option; kernel
-		// default 8020). Passing nil to GetScopes yields the pure cloud-default set.
+		// default 8030). Passing nil to GetScopes yields the pure cloud-default set.
 		return kernel.Auth{Mode: kernel.AuthU2M, ClientID: a.U2MClientID(), Scopes: oauth.GetScopes(cfg.Host, nil)}, nil
 	case nil, *noop.NoopAuth, *pat.PATAuth:
 		// PAT (or no explicit authenticator). WithAccessToken sets both

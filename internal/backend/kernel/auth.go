@@ -23,7 +23,7 @@ const (
 // through to it by setAuth. resolveKernelAuth populates Scopes with the same
 // cloud-specific set the Thrift path requests (via oauth.GetScopes) so both
 // backends authorize identically; RedirectPort stays zero (no user option, kernel
-// default 8020) but is kept so kernel.Auth models the full set_auth_u2m surface —
+// default 8030) but is kept so kernel.Auth models the full set_auth_u2m surface —
 // a future WithOAuthRedirectPort becomes populating it, not re-plumbing the setter.
 // TestSetAuthByMode's "U2M full" case pins the marshalling of both.
 type Auth struct {
@@ -32,7 +32,7 @@ type Auth struct {
 	ClientID     string   // M2M + U2M (U2M: the cloud-inferred Go client id)
 	ClientSecret string   // M2M
 	Scopes       []string // U2M — Thrift-parity scopes from oauth.GetScopes; nil → kernel default
-	RedirectPort uint16   // U2M — no user option today; 0 → kernel default port (8020)
+	RedirectPort uint16   // U2M — no user option today; 0 → kernel default port (8030)
 }
 
 // M2MCredentialsProvider is implemented by the OAuth M2M authenticator to expose

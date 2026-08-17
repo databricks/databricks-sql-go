@@ -269,6 +269,7 @@ groups. Telemetry parameters are covered under [Telemetry](#telemetry).
 | Personal access token (PAT) | `token:<t>@…`, or `accessToken=` / `authType=Pat` | `WithAccessToken` | Both |
 | OAuth machine-to-machine (M2M) | `clientID=`+`clientSecret=` / `authType=OauthM2M` | `WithClientCredentials` | Both |
 | OAuth user-to-machine (U2M) | `authType=OauthU2M` | `WithAuthenticator` (u2m) | Both |
+| SP-wide workload identity federation | — | `WithKernelIdentityFederationClientID(clientID)` | SEA only |
 | Custom token provider / external / static / federated | — | `WithTokenProvider`, `WithExternalToken`, `WithStaticToken`, `WithFederatedTokenProvider*` | Thrift only |
 
 **PAT** (default): supply `token:<pat>@…` in the DSN, or `WithAccessToken`.
@@ -290,6 +291,8 @@ groups. Telemetry parameters are covered under [Telemetry](#telemetry).
 
 Notes for the SEA/kernel backend:
 
+- `WithKernelIdentityFederationClientID` forwards a non-empty service-principal
+  client ID with PAT, OAuth M2M, or OAuth U2M to require SP-wide token exchange.
 - Custom OAuth **M2M scopes** are rejected on the kernel path (the kernel applies its
   own default scopes). Default scopes work on both.
 - **U2M** is interactive: on a cache miss, connecting launches the browser and a

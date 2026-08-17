@@ -173,6 +173,9 @@ func (k *KernelBackend) OpenSession(ctx context.Context) error {
 	if err := k.setAuth(cfg); err != nil {
 		return err
 	}
+	if err := k.applyIdentityFederation(cfg); err != nil {
+		return err
+	}
 
 	// User-Agent so query history attributes the kernel path to this driver.
 	if k.cfg.UserAgent != "" {
@@ -423,6 +426,22 @@ func (k *KernelBackend) setAuth(cfg *C.KernelSessionConfig) error {
 	return nil
 }
 
+// applyIdentityFederation forwards the optional SP-wide federation client ID.
+// It is independent of the selected PAT, M2M, or U2M auth mode.
+func (k *KernelBackend) applyIdentityFederation(cfg *C.KernelSessionConfig) error {
+	if k.cfg.IdentityFederationClientID == "" {
+		return nil
+	}
+	clientID := newCStr(k.cfg.IdentityFederationClientID)
+	defer clientID.free()
+	if err := call(func() C.KernelStatusCode {
+		return C.kernel_session_config_set_identity_federation_client_id(cfg, clientID.c)
+	}); err != nil {
+		return fmt.Errorf("kernel: set_identity_federation_client_id: %w", toConnError(err))
+	}
+	return nil
+}
+
 // joinScopes renders U2M scopes as the comma-separated form the kernel U2M setter
 // expects. Empty (no scopes) yields "" so setAuth passes NULL and the kernel
 // applies its default scope set.
@@ -442,6 +461,21 @@ func trySetAuth(auth Auth) error {
 	defer C.kernel_session_config_free(cfg)
 	k := &KernelBackend{cfg: Config{Auth: auth}}
 	return k.setAuth(cfg)
+}
+
+// trySetIdentityFederation applies auth and the federation client ID to a
+// throwaway config so tagged tests exercise the real C setters together.
+func trySetIdentityFederation(cfg Config) error {
+	var c *C.KernelSessionConfig
+	if err := call(func() C.KernelStatusCode { return C.kernel_session_config_new(&c) }); err != nil {
+		return fmt.Errorf("config_new: %w", err)
+	}
+	defer C.kernel_session_config_free(c)
+	k := &KernelBackend{cfg: cfg}
+	if err := k.setAuth(c); err != nil {
+		return err
+	}
+	return k.applyIdentityFederation(c)
 }
 
 // trySetKernelTLS allocates a throwaway session config, applies the experimental
@@ -476,7 +510,7 @@ func trySetProxy(cfg Config) error {
 // trySetRetry allocates a throwaway session config, applies the retry config from
 // cfg to it, and frees it — the analogous test seam to trySetProxy, so a tagged
 // test can exercise the real kernel_session_config_set_retry_config cgo setter
-// (the 4 knobs, plus the InvalidArgument rejections for a degenerate range) end to
+// (the 4 knobs, plus the InvalidArgument rejection for a zero minimum) end to
 // end. Not used in production.
 func trySetRetry(cfg Config) error {
 	var c *C.KernelSessionConfig
