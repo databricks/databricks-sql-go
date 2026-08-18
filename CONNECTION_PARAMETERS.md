@@ -15,7 +15,7 @@ sections of the README, laid out as one comparison matrix per concern.
 |:---:|---|
 | ✅ | Supported and honored. |
 | ❌ | Not supported — **rejected** at connect/execute (wraps `dbsqlerr.ErrNotSupportedByKernel` or `dbsqlerr.ErrRequiresKernelBackend`), never silently ignored. |
-| ⚠️ | Accepted but has no effect ("inert" / silently ignored). |
+| ⚠️ | Accepted but not fully honored — either inert ("silently ignored") or only partially/conditionally honored (e.g. some session confs are honored while others are dropped/rejected on the kernel path). |
 | — | Not applicable. |
 
 **Backend selection.** Both backends are selected once per connection via
