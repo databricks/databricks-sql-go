@@ -14,7 +14,7 @@ sections of the README, laid out as one comparison matrix per concern.
 | Symbol | Meaning |
 |:---:|---|
 | ✅ | Supported and honored. |
-| ❌ | Not supported — **rejected** at connect/execute (wraps `dbsqlerr.ErrNotSupportedByKernel` or `ErrRequiresKernelBackend`), never silently ignored. |
+| ❌ | Not supported — **rejected** at connect/execute (wraps `dbsqlerr.ErrNotSupportedByKernel` or `dbsqlerr.ErrRequiresKernelBackend`), never silently ignored. |
 | ⚠️ | Accepted but has no effect ("inert" / silently ignored). |
 | — | Not applicable. |
 
