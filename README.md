@@ -202,6 +202,11 @@ functional options.
 
 ## Connection properties
 
+See [CONNECTION_PARAMETERS.md](CONNECTION_PARAMETERS.md) for every connection,
+session, and per-statement parameter the driver accepts, and whether each one
+applies to the Thrift backend (default), the SEA/kernel backend, or both. The
+sections below cover the same parameters inline.
+
 Optional DSN parameters are appended as `?param=value&param=value`; the equivalent
 connector options are listed alongside. The **Protocol** column shows applicability:
 
