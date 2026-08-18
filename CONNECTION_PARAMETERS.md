@@ -24,7 +24,7 @@ sections of the README, laid out as one comparison matrix per concern.
 (wraps `dbsqlerr.ErrKernelNotCompiled`) — it never silently falls back to Thrift.
 See [Building](./README.md#building).
 
-Any parameter not listed below (e.g. `ansi_mode`, `timezone`) is passed through as a
+Any parameter not listed below (e.g. `ansi_mode`) is passed through as a
 **session parameter** on both backends.
 
 ## Endpoint & routing
