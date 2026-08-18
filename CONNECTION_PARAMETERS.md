@@ -72,7 +72,7 @@ Notes for the SEA/kernel backend:
 | *(session param)* | `WithSessionParams` | ✅ | ⚠️ | | Arbitrary session confs (e.g. `ansi_mode`, `STATEMENT_TIMEOUT`, `QUERY_TAGS`). Allowlisted confs are honored on both; on kernel a non-allowlisted conf is dropped/rejected (see the note above; PECOBLR-4153). |
 | *(via session param)* | `WithQueryTags` | ✅ | ✅ | | Session-level query tags (serialized into `QUERY_TAGS`). |
 | `timezone` | `WithSessionParams(timezone=…)` | ✅ | ✅ | | Session time zone (e.g. `America/Los_Angeles`). |
-| `enableMetricViewMetadata` | `WithEnableMetricViewMetadata` | ✅ | ✅ | `false` | Enables metric-view metadata (`spark.sql.thriftserver.metadata.metricview.enabled=true`). |
+| `enableMetricViewMetadata` | `WithEnableMetricViewMetadata` | ✅ | ⚠️ | `false` | Enables metric-view metadata (sets `spark.sql.thriftserver.metadata.metricview.enabled=true`). The driver forwards the conf on both paths, but the kernel currently hard-rejects it (HTTP 400 `INVALID_CONF_VALUE`), so it does not yet take effect on the kernel path (PECOBLR-4142 / PECOBLR-4153). |
 
 ## Retry / backoff
 
