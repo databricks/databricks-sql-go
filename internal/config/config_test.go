@@ -13,6 +13,8 @@ import (
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 )
 
+func boolPtr(b bool) *bool { return &b }
+
 func TestParseConfig(t *testing.T) {
 	type args struct {
 		dsn string
@@ -271,7 +273,7 @@ func TestParseConfig(t *testing.T) {
 				RetryMax:                 4,
 				RetryWaitMin:             1 * time.Second,
 				RetryWaitMax:             30 * time.Second,
-				UseArrowNativeDecimalDSN: true,
+				UseArrowNativeDecimalDSN: boolPtr(true),
 				CloudFetchConfig:         defCloudConfig,
 			},
 			wantURL: "https://example.cloud.databricks.com:8000/sql/1.0/endpoints/12346a5b5b0e123b",

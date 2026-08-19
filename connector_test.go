@@ -265,7 +265,7 @@ func TestNewConnector(t *testing.T) {
 		assert.True(t, coni.cfg.ArrowConfig.UseArrowNativeDecimal)
 	})
 
-	t.Run("Connector test WithArrowNativeDecimal disabled by default", func(t *testing.T) {
+	t.Run("Connector test WithArrowNativeDecimal enabled by default", func(t *testing.T) {
 		host := "databricks-host"
 		accessToken := "token"
 		httpPath := "http-path"
@@ -273,6 +273,20 @@ func TestNewConnector(t *testing.T) {
 			WithServerHostname(host),
 			WithAccessToken(accessToken),
 			WithHTTPPath(httpPath),
+		)
+		assert.Nil(t, err)
+
+		coni, ok := con.(*connector)
+		require.True(t, ok)
+		assert.True(t, coni.cfg.ArrowConfig.UseArrowNativeDecimal)
+	})
+
+	t.Run("Connector test WithArrowNativeDecimal explicitly disabled", func(t *testing.T) {
+		con, err := NewConnector(
+			WithServerHostname("databricks-host"),
+			WithAccessToken("token"),
+			WithHTTPPath("http-path"),
+			WithArrowNativeDecimal(false),
 		)
 		assert.Nil(t, err)
 
@@ -286,6 +300,30 @@ func TestNewConnector(t *testing.T) {
 		// which is what connection.go reads. This is the bridge that makes the
 		// DSN parameter actually take effect (databricks/databricks-sql-go#274).
 		ucfg, err := config.ParseDSN("token:supersecret@databricks-host:443/sql/1.0/endpoints/abc?useArrowNativeDecimal=true")
+		require.NoError(t, err)
+		con, err := NewConnector(withUserConfig(ucfg))
+		require.NoError(t, err)
+
+		coni, ok := con.(*connector)
+		require.True(t, ok)
+		assert.True(t, coni.cfg.ArrowConfig.UseArrowNativeDecimal)
+	})
+
+	t.Run("Connector test useArrowNativeDecimal=false DSN param overrides the native-on default", func(t *testing.T) {
+		// An explicit =false in the DSN must win over the new native-on default.
+		ucfg, err := config.ParseDSN("token:supersecret@databricks-host:443/sql/1.0/endpoints/abc?useArrowNativeDecimal=false")
+		require.NoError(t, err)
+		con, err := NewConnector(withUserConfig(ucfg))
+		require.NoError(t, err)
+
+		coni, ok := con.(*connector)
+		require.True(t, ok)
+		assert.False(t, coni.cfg.ArrowConfig.UseArrowNativeDecimal)
+	})
+
+	t.Run("Connector test DSN without useArrowNativeDecimal keeps the native-on default", func(t *testing.T) {
+		// A silent DSN must not reset the default back to false.
+		ucfg, err := config.ParseDSN("token:supersecret@databricks-host:443/sql/1.0/endpoints/abc")
 		require.NoError(t, err)
 		con, err := NewConnector(withUserConfig(ucfg))
 		require.NoError(t, err)

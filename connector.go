@@ -282,8 +282,13 @@ func withUserConfig(ucfg config.UserConfig) ConnOption {
 		c.UserConfig = ucfg
 		// The useArrowNativeDecimal DSN parameter is carried on UserConfig (all
 		// ParseDSN can return) but is consumed from ArrowConfig. This is the one
-		// place that bridges the two.
-		c.ArrowConfig.UseArrowNativeDecimal = ucfg.UseArrowNativeDecimalDSN
+		// place that bridges the two. Only override the ArrowConfig default when
+		// the DSN actually specified the parameter; a nil carrier means the DSN
+		// was silent, so the native-on default is preserved (an explicit
+		// useArrowNativeDecimal=false still wins).
+		if ucfg.UseArrowNativeDecimalDSN != nil {
+			c.ArrowConfig.UseArrowNativeDecimal = *ucfg.UseArrowNativeDecimalDSN
+		}
 	}
 }
 
@@ -506,13 +511,20 @@ func WithEnableMetricViewMetadata(enable bool) ConnOption {
 }
 
 // WithArrowNativeDecimal controls whether DECIMAL columns are returned as native
-// Arrow decimal128 values. Default is false, in which case the server returns
-// DECIMAL columns as strings.
+// Arrow decimal128 values. Default is true, matching the databricks-sql-python
+// and databricks-jdbc drivers, which request DECIMAL as native Arrow decimal128
+// on the wire (a compact fixed-width binary encoding) rather than UTF8 strings.
 //
 // When enabled, DECIMAL columns retrieved via GetArrowBatches carry the native
 // arrow.Decimal128 type. When scanned through the standard database/sql Rows
 // interface, DECIMAL values are returned as lossless, scale-applied strings to
-// avoid the precision loss that a float64 would introduce.
+// avoid the precision loss that a float64 would introduce (Go's driver.Value
+// contract has no decimal type, so a string is the faithful scalar there).
+//
+// Pass false to restore the legacy behavior in which the server serializes
+// DECIMAL columns as UTF8 strings; GetArrowBatches then yields string-typed
+// columns. The kernel backend always renders DECIMAL exactly and is unaffected
+// by this option.
 //
 // See https://github.com/databricks/databricks-sql-go/issues/274.
 func WithArrowNativeDecimal(useNativeDecimal bool) ConnOption {
