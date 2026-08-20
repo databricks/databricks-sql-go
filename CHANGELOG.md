@@ -1,6 +1,7 @@
 # Release History
 
 ## Unreleased
+- Kernel backend (`WithUseKernel(true)`): OAuth **M2M with a JWT private-key client assertion** (RFC 7523) is now supported via `WithJWTPrivateKeyM2M(JWTPrivateKeyM2MConfig{...})`. The kernel signs a short-lived assertion with the private key instead of sending a client secret and owns the token lifecycle. `ClientID`, `KeyFile`, and `Kid` are required; `Passphrase` (encrypted PKCS#8 key), `Algorithm` (default `RS256`), `TokenURL` (the OAuth IdP token endpoint — required for an external-IdP-backed workspace such as Entra ID, since Databricks-native OIDC does not advertise the `private_key_jwt` method), and `Scopes` are optional. Kernel-backend only; on the default (Thrift) backend a connection built with this authenticator fails at authenticate time with a clear kernel-only error. Verified end-to-end against an Azure Databricks warehouse via Entra ID. Also bumps the pinned `KERNEL_REV` to a build that includes the JWT C-ABI setter. DSN-string configuration (`authType=...`) for JWT M2M is deferred to a follow-up; use the programmatic option.
 - Improve telemetry error reporting: driver failures are now categorized by cause instead of reported as a generic error (databricks/databricks-sql-go#414, #415, #417, #419, #424)
 
 ## v1.14.0 (2026-07-13)

@@ -10,9 +10,10 @@ package kernel
 type AuthMode int
 
 const (
-	AuthPAT AuthMode = iota // personal access token
-	AuthM2M                 // OAuth client-credentials (client id + secret)
-	AuthU2M                 // OAuth user-to-machine (browser/PKCE; kernel-owned flow)
+	AuthPAT    AuthMode = iota // personal access token
+	AuthM2M                    // OAuth client-credentials (client id + secret)
+	AuthU2M                    // OAuth user-to-machine (browser/PKCE; kernel-owned flow)
+	AuthJWTM2M                 // OAuth client-credentials via a JWT private-key client assertion
 )
 
 // Auth is the resolved auth descriptor for a kernel connection. Only the fields
@@ -29,10 +30,18 @@ const (
 type Auth struct {
 	Mode         AuthMode
 	Token        string   // PAT
-	ClientID     string   // M2M + U2M (U2M: the cloud-inferred Go client id)
+	ClientID     string   // M2M + U2M + JWT M2M (U2M: the cloud-inferred Go client id)
 	ClientSecret string   // M2M
-	Scopes       []string // U2M — Thrift-parity scopes from oauth.GetScopes; nil → kernel default
+	Scopes       []string // U2M / JWT M2M — nil → kernel default
 	RedirectPort uint16   // U2M — no user option today; 0 → kernel default port (8020)
+
+	// JWT private-key M2M (Mode == AuthJWTM2M). The kernel signs a short-lived
+	// client assertion with the private key instead of sending a secret.
+	JWTKeyFile    string // path to the PEM private key (required)
+	JWTKid        string // key id written into the JWT header (required)
+	JWTPassphrase string // passphrase for an encrypted PKCS#8 key ("" → unencrypted)
+	JWTAlgorithm  string // signing algorithm ("" → kernel default RS256)
+	TokenURL      string // OAuth IdP token endpoint ("" → kernel OIDC discovery)
 }
 
 // M2MCredentialsProvider is implemented by the OAuth M2M authenticator to expose
@@ -77,4 +86,19 @@ func M2MScopesSupported(scopes []string) bool {
 type U2MCredentialsProvider interface {
 	// U2MClientID returns the OAuth client id for the U2M browser flow.
 	U2MClientID() string
+}
+
+// JWTM2MCredentialsProvider is implemented by the JWT private-key M2M
+// authenticator to expose the assertion-signing inputs. The kernel backend reads
+// these to drive the kernel's own JWT client-assertion flow (the kernel signs the
+// assertion and owns the token exchange), rather than using the authenticator's
+// Authenticate method — which is unsupported on the pure-Go Thrift path anyway.
+// Internal for the same reason as M2MCredentialsProvider (the key-reading
+// capability is not part of the driver's public API); satisfied structurally by
+// the unexported jwtm2m authenticator.
+type JWTM2MCredentialsProvider interface {
+	// JWTM2MCredentials returns the client id, private-key file path, key id,
+	// passphrase (may be ""), algorithm (may be ""), token URL (may be ""), and
+	// scopes (may be nil).
+	JWTM2MCredentials() (clientID, keyFile, kid, passphrase, algorithm, tokenURL string, scopes []string)
 }

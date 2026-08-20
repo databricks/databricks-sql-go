@@ -42,6 +42,22 @@ func TestSetAuthByMode(t *testing.T) {
 		// scopes / port 0 must pass NULL / 0 so the kernel applies its own defaults
 		// (exercises newCStrOrNull).
 		{"U2M defaults", Auth{Mode: AuthU2M}},
+		// JWT M2M full: all optional args populated, exercising the 8-arg
+		// set_auth_m2m_jwt marshalling (client_id/key_file/kid required, plus
+		// passphrase/algorithm/scopes/token_url).
+		{"JWT M2M full", Auth{
+			Mode:          AuthJWTM2M,
+			ClientID:      "sp-uuid",
+			JWTKeyFile:    "/keys/jwt.pem",
+			JWTKid:        "kid-1",
+			JWTPassphrase: "pw",
+			JWTAlgorithm:  "ES256",
+			TokenURL:      "https://login.microsoftonline.com/tenant/oauth2/v2.0/token",
+			Scopes:        []string{"resource/.default"},
+		}},
+		// JWT M2M with only the required fields: passphrase/algorithm/scopes/token_url
+		// pass NULL so the kernel applies its defaults (exercises newCStrOrNull).
+		{"JWT M2M defaults", Auth{Mode: AuthJWTM2M, ClientID: "sp", JWTKeyFile: "/k.pem", JWTKid: "kid"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -89,7 +105,7 @@ func TestSetProxy(t *testing.T) {
 	}{
 		{"url only", Config{ProxyURL: "http://proxy:3128"}},
 		{"url + credentials", Config{ProxyURL: "http://proxy:3128", ProxyUsername: "u", ProxyPassword: "p"}},
-		{"url + bypass", Config{ProxyURL: "http://proxy:3128", ProxyBypassHosts: "localhost,*.internal"}}, //nolint:gosec // G101: test literals, not real credentials
+		{"url + bypass", Config{ProxyURL: "http://proxy:3128", ProxyBypassHosts: "localhost,*.internal"}},                                       //nolint:gosec // G101: test literals, not real credentials
 		{"all fields", Config{ProxyURL: "http://proxy:3128", ProxyUsername: "u", ProxyPassword: "p", ProxyBypassHosts: "localhost,*.internal"}}, //nolint:gosec // G101: test literals, not real credentials
 		{"none (no-op)", Config{}},
 	}
@@ -104,9 +120,10 @@ func TestSetProxy(t *testing.T) {
 
 // TestSetRetry exercises the real kernel_session_config_set_retry_config cgo setter
 // via the trySetRetry seam: a valid range succeeds (incl. the disable form,
-// MaxRetries=0, and a non-zero overall budget), and a degenerate range (min=0 or
-// max<min) is rejected by the kernel as InvalidArgument. A no-op when Config.Retry
-// is nil. Proves the 4-arg marshalling and the C signature.
+// MaxRetries=0, and a non-zero overall budget), min=0 is rejected as
+// InvalidArgument, and a max<min pair is *corrected* (max raised to min) with a
+// warn rather than rejected (kernel #249+). A no-op when Config.Retry is nil.
+// Proves the 4-arg marshalling and the C signature.
 func TestSetRetry(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -117,9 +134,12 @@ func TestSetRetry(t *testing.T) {
 		{"disable (0 retries)", Config{Retry: &RetryConfig{MinWait: time.Second, MaxWait: 30 * time.Second, MaxRetries: 0}}, false},
 		{"with overall budget", Config{Retry: &RetryConfig{MinWait: time.Second, MaxWait: 30 * time.Second, MaxRetries: 4, OverallTimeout: 5 * time.Minute}}, false},
 		{"none (no-op)", Config{}, false},
-		// The kernel setter rejects a degenerate range: min==0 and max<min.
+		// The kernel setter rejects min==0 (a zero floor is genuinely invalid).
 		{"min zero rejected", Config{Retry: &RetryConfig{MinWait: 0, MaxWait: time.Second, MaxRetries: 3}}, true},
-		{"max below min rejected", Config{Retry: &RetryConfig{MinWait: 5 * time.Second, MaxWait: time.Second, MaxRetries: 3}}, true},
+		// A max<min pair is a tuning typo, not fatal: as of kernel #249+ the setter
+		// *corrects* it (raises max to min) with a warn rather than rejecting, so this
+		// is accepted (was rejected under the older pinned rev).
+		{"max below min corrected", Config{Retry: &RetryConfig{MinWait: 5 * time.Second, MaxWait: time.Second, MaxRetries: 3}}, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

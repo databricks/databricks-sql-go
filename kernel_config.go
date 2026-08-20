@@ -298,6 +298,22 @@ func resolveKernelProxy(cfg *config.Config, kc *kernel.Config) {
 //     an opaque Unauthenticated.
 func resolveKernelAuth(cfg *config.Config) (kernel.Auth, error) {
 	switch a := cfg.Authenticator.(type) {
+	case kernel.JWTM2MCredentialsProvider:
+		// JWT private-key client assertion (RFC 7523). The kernel signs the
+		// assertion with the private key and owns the token exchange. Unlike the
+		// scopes-less shared-secret M2M setter, the kernel's JWT setter takes a
+		// scopes argument, so a custom set is forwarded as-is (no rejection needed).
+		clientID, keyFile, kid, passphrase, algorithm, tokenURL, scopes := a.JWTM2MCredentials()
+		return kernel.Auth{
+			Mode:          kernel.AuthJWTM2M,
+			ClientID:      clientID,
+			JWTKeyFile:    keyFile,
+			JWTKid:        kid,
+			JWTPassphrase: passphrase,
+			JWTAlgorithm:  algorithm,
+			TokenURL:      tokenURL,
+			Scopes:        scopes,
+		}, nil
 	case kernel.M2MCredentialsProvider:
 		// The kernel's set_auth_m2m takes no scopes and applies "all-apis" itself, so
 		// a custom scope set can't be forwarded — reject it instead of silently

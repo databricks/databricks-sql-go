@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/databricks/databricks-sql-go/auth"
+	"github.com/databricks/databricks-sql-go/auth/oauth/jwtm2m"
 	"github.com/databricks/databricks-sql-go/auth/oauth/m2m"
 	"github.com/databricks/databricks-sql-go/auth/pat"
 	"github.com/databricks/databricks-sql-go/auth/tokenprovider"
@@ -527,6 +528,52 @@ func WithClientCredentials(clientID, clientSecret string) ConnOption {
 		if clientID != "" && clientSecret != "" {
 			authr := m2m.NewAuthenticator(clientID, clientSecret, c.Host)
 			c.Authenticator = authr
+		}
+	}
+}
+
+// JWTPrivateKeyM2MConfig configures OAuth machine-to-machine authentication via
+// a JWT private-key client assertion (RFC 7523). A struct is used (rather than
+// positional args) so the many string fields can't be transposed.
+//
+// KERNEL BACKEND ONLY: the assertion is signed by the native kernel, so this
+// requires WithUseKernel(true). ClientID, KeyFile, and Kid are required.
+type JWTPrivateKeyM2MConfig struct {
+	// ClientID is the service principal / OAuth client id (the assertion
+	// issuer and subject).
+	ClientID string
+	// KeyFile is the path to the PEM-encoded private key that signs the
+	// assertion.
+	KeyFile string
+	// Kid is the key id written into the JWT header so the IdP can select the
+	// registered public key.
+	Kid string
+	// Passphrase decrypts an encrypted PKCS#8 key; leave empty for an
+	// unencrypted key.
+	Passphrase string
+	// Algorithm is the JWT signing algorithm (RS256/384/512, PS256/384/512,
+	// ES256, ES384); empty defaults to RS256.
+	Algorithm string
+	// TokenURL is the OAuth IdP token endpoint. Required when the workspace's
+	// OAuth authority is an external IdP (e.g. Entra ID for Azure Databricks),
+	// since Databricks-native OIDC does not advertise the private_key_jwt
+	// method; empty falls back to the kernel's OIDC discovery.
+	TokenURL string
+	// Scopes overrides the requested OAuth scopes; empty uses the kernel
+	// default (all-apis).
+	Scopes []string
+}
+
+// WithJWTPrivateKeyM2M sets up OAuth M2M authentication using a JWT private-key
+// client assertion. See JWTPrivateKeyM2MConfig. Requires the kernel backend
+// (WithUseKernel(true)); on the default (Thrift) backend a connection built with
+// this authenticator fails at authenticate time with a clear kernel-only error.
+func WithJWTPrivateKeyM2M(cfg JWTPrivateKeyM2MConfig) ConnOption {
+	return func(c *config.Config) {
+		if cfg.ClientID != "" && cfg.KeyFile != "" && cfg.Kid != "" {
+			c.Authenticator = jwtm2m.NewAuthenticator(
+				cfg.ClientID, cfg.KeyFile, cfg.Kid, cfg.Passphrase, cfg.Algorithm, cfg.TokenURL, cfg.Scopes,
+			)
 		}
 	}
 }

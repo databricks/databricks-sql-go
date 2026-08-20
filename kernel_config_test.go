@@ -43,6 +43,19 @@ type fakeU2MAuth struct{ id string }
 func (fakeU2MAuth) Authenticate(*http.Request) error { return nil }
 func (f fakeU2MAuth) U2MClientID() string            { return f.id }
 
+// fakeJWTM2MAuth implements auth.JWTM2MCredentialsProvider (the JWT private-key
+// M2M interface the kernel backend asserts on). Same rationale as the M2M/U2M
+// fakes: the kernel only needs the interface, so a hermetic fake suffices.
+type fakeJWTM2MAuth struct {
+	id, keyFile, kid, passphrase, algorithm, tokenURL string
+	scopes                                            []string
+}
+
+func (fakeJWTM2MAuth) Authenticate(*http.Request) error { return nil }
+func (f fakeJWTM2MAuth) JWTM2MCredentials() (string, string, string, string, string, string, []string) {
+	return f.id, f.keyFile, f.kid, f.passphrase, f.algorithm, f.tokenURL, f.scopes
+}
+
 func baseKernelConfig() *config.Config {
 	c := config.WithDefaults()
 	c.Host = "h.databricks.com"
@@ -188,6 +201,55 @@ func TestValidateKernelConfig(t *testing.T) {
 		// all-apis default). baseKernelConfig's host is AWS → [offline_access, sql].
 		if want := oauth.GetScopes(c.Host, nil); !reflect.DeepEqual(a.Scopes, want) {
 			t.Errorf("U2M scopes = %v, want %v (Thrift parity)", a.Scopes, want)
+		}
+	})
+
+	t.Run("JWT private-key M2M resolves to a JWT M2M descriptor", func(t *testing.T) {
+		c := baseKernelConfig()
+		c.AccessToken = ""
+		// A JWT M2M authenticator is the single source of truth; resolveKernelAuth
+		// reads its inputs via the auth.JWTM2MCredentialsProvider interface. Unlike
+		// shared-secret M2M, the kernel's JWT setter carries scopes + token_url, so
+		// custom values forward as-is (no rejection).
+		c.Authenticator = fakeJWTM2MAuth{
+			id:         "sp-uuid",
+			keyFile:    "/keys/jwt.pem",
+			kid:        "kid-1",
+			passphrase: "pw",
+			algorithm:  "ES256",
+			tokenURL:   "https://login.microsoftonline.com/tenant/oauth2/v2.0/token",
+			scopes:     []string{"resource/.default"},
+		}
+		a, err := validateKernelConfig(c)
+		if err != nil {
+			t.Fatalf("JWT M2M should validate, got %v", err)
+		}
+		if a.Mode != kernel.AuthJWTM2M {
+			t.Fatalf("auth mode = %v, want AuthJWTM2M", a.Mode)
+		}
+		if a.ClientID != "sp-uuid" || a.JWTKeyFile != "/keys/jwt.pem" || a.JWTKid != "kid-1" ||
+			a.JWTPassphrase != "pw" || a.JWTAlgorithm != "ES256" ||
+			a.TokenURL != "https://login.microsoftonline.com/tenant/oauth2/v2.0/token" {
+			t.Errorf("auth = %+v, want the JWT fields forwarded verbatim", a)
+		}
+		if !reflect.DeepEqual(a.Scopes, []string{"resource/.default"}) {
+			t.Errorf("JWT scopes = %v, want [resource/.default]", a.Scopes)
+		}
+	})
+
+	t.Run("JWT private-key M2M with only required fields", func(t *testing.T) {
+		c := baseKernelConfig()
+		c.AccessToken = ""
+		c.Authenticator = fakeJWTM2MAuth{id: "sp", keyFile: "/k.pem", kid: "kid"}
+		a, err := validateKernelConfig(c)
+		if err != nil {
+			t.Fatalf("JWT M2M should validate, got %v", err)
+		}
+		if a.Mode != kernel.AuthJWTM2M || a.ClientID != "sp" || a.JWTKeyFile != "/k.pem" || a.JWTKid != "kid" {
+			t.Errorf("auth = %+v, want mode=JWTM2M with required fields", a)
+		}
+		if a.JWTPassphrase != "" || a.JWTAlgorithm != "" || a.TokenURL != "" || a.Scopes != nil {
+			t.Errorf("auth = %+v, want optional fields empty/nil", a)
 		}
 	})
 

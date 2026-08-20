@@ -92,6 +92,8 @@ Supported functional options include:
   - WithMaxDownloadThreads (<num_threads> int). Sets up the max number of concurrent workers for cloud fetch. Default is 10. Optional
   - WithAuthenticator (<authenticator> auth.Authenticator). Sets up authentication. Required if neither access token or client credentials are provided.
   - WithClientCredentials(<clientID> string, <clientSecret> string). Sets up Oauth M2M authentication.
+  - WithJWTPrivateKeyM2M(<config> JWTPrivateKeyM2MConfig). Sets up OAuth M2M authentication with a JWT private-key client assertion (RFC 7523) instead of a client secret. Kernel backend only (requires WithUseKernel(true)); the kernel signs the assertion. See the kernel-backend section. Optional
+
   - WithUseKernel(<useKernel> bool). Routes execution through the SEA-via-kernel backend instead of Thrift. Requires a build with -tags databricks_kernel (CGO_ENABLED=1); the default build returns a clear error. Default is false. See the kernel-backend section below. Optional
   - WithWarehouseID(<id> string). The bare SQL warehouse id used by the kernel backend in preference to the http path; ignored by the Thrift backend. Optional
 
@@ -209,8 +211,9 @@ defers to RUST_LOG. Filter on the target databricks::sql::kernel (note the colon
 	# kernel logs plus its HTTP stack:
 	DBSQL_KERNEL_DEBUG=1 RUST_LOG=debug ./your_app 2>&1
 
-Supported on the kernel backend: PAT and OAuth (M2M via WithClientCredentials, U2M
-via the authType=oauthU2M DSN param); reading scalar, nested, and complex-typed
+Supported on the kernel backend: PAT and OAuth (M2M via WithClientCredentials, JWT
+private-key M2M via WithJWTPrivateKeyM2M, U2M via the authType=oauthU2M DSN param);
+reading scalar, nested, and complex-typed
 results (CloudFetch is transparent); bound query parameters (positional and named);
 context cancellation during execute; the initial namespace (WithInitialNamespace,
 applied post-connect via USE CATALOG / USE SCHEMA); metric-view metadata

@@ -411,6 +411,33 @@ func (k *KernelBackend) setAuth(cfg *C.KernelSessionConfig) error {
 		}); err != nil {
 			return fmt.Errorf("kernel: set_auth_u2m: %w", toConnError(err))
 		}
+	case AuthJWTM2M:
+		// JWT private-key client assertion (RFC 7523). client_id / jwt_key_file /
+		// jwt_kid are required; passphrase / algorithm / scopes / token_url are
+		// optional — NULL lets the kernel fill its defaults (unencrypted key, RS256,
+		// all-apis, OIDC discovery). token_url points the grant at the workspace's
+		// OAuth IdP (e.g. Entra ID) when Databricks-native OIDC can't serve it.
+		clientID := newCStr(k.cfg.Auth.ClientID)
+		defer clientID.free()
+		keyFile := newCStr(k.cfg.Auth.JWTKeyFile)
+		defer keyFile.free()
+		kid := newCStr(k.cfg.Auth.JWTKid)
+		defer kid.free()
+		passphrase := newCStrOrNull(k.cfg.Auth.JWTPassphrase)
+		defer passphrase.free()
+		algorithm := newCStrOrNull(k.cfg.Auth.JWTAlgorithm)
+		defer algorithm.free()
+		scopes := newCStrOrNull(joinScopes(k.cfg.Auth.Scopes))
+		defer scopes.free()
+		tokenURL := newCStrOrNull(k.cfg.Auth.TokenURL)
+		defer tokenURL.free()
+		if err := call(func() C.KernelStatusCode {
+			return C.kernel_session_config_set_auth_m2m_jwt(
+				cfg, clientID.c, keyFile.c, kid.c, passphrase.c, algorithm.c, scopes.c, tokenURL.c,
+			)
+		}); err != nil {
+			return fmt.Errorf("kernel: set_auth_m2m_jwt: %w", toConnError(err))
+		}
 	default: // AuthPAT
 		tok := newCStr(k.cfg.Auth.Token)
 		defer tok.free()
