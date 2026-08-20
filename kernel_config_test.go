@@ -17,8 +17,8 @@ import (
 	"github.com/databricks/databricks-sql-go/internal/config"
 )
 
-// nonPATAuth stands in for any non-PAT, non-OAuth authenticator (custom token
-// provider / external / static) — the kernel backend must reject it. It implements neither
+// nonPATAuth stands in for any non-PAT, non-OAuth authenticator (token-provider /
+// external / static) — the kernel backend must reject it. It implements neither
 // auth.M2MCredentialsProvider nor auth.U2MCredentialsProvider.
 type nonPATAuth struct{}
 
@@ -193,31 +193,26 @@ func TestValidateKernelConfig(t *testing.T) {
 	})
 
 	t.Run("federated provider supplies PAT auth", func(t *testing.T) {
-		cases := []struct {
-			name     string
-			option   func(tokenprovider.TokenProvider) ConnOption
-			clientID string
-		}{
-			{"account-wide", WithFederatedTokenProvider, ""},
-			{"SP-wide", func(p tokenprovider.TokenProvider) ConnOption {
-				return WithFederatedTokenProviderAndClientID(p, "federation-client")
-			}, "federation-client"},
-		}
-		for _, tc := range cases {
-			t.Run(tc.name, func(t *testing.T) {
+		for _, clientID := range []string{"", "federation-client"} {
+			t.Run("clientID="+clientID, func(t *testing.T) {
 				c := baseKernelConfig()
 				c.AccessToken = ""
 				calls := 0
-				tc.option(tokenprovider.NewExternalTokenProvider(func() (string, error) {
+				provider := tokenprovider.NewExternalTokenProvider(func() (string, error) {
 					calls++
 					return "subject-token", nil
-				}))(c)
+				})
+				if clientID == "" {
+					WithFederatedTokenProvider(provider)(c)
+				} else {
+					WithFederatedTokenProviderAndClientID(provider, clientID)(c)
+				}
 				a, err := validateKernelConfig(c)
 				if err != nil {
 					t.Fatalf("federated provider should validate, got %v", err)
 				}
-				if a.Mode != kernel.AuthPAT || a.Token != "subject-token" || a.ClientID != tc.clientID {
-					t.Errorf("auth = %+v, want PAT token=subject-token clientID=%q", a, tc.clientID)
+				if a.Mode != kernel.AuthPAT || a.Token != "subject-token" || a.ClientID != clientID {
+					t.Errorf("auth = %+v, want PAT token=subject-token clientID=%q", a, clientID)
 				}
 				if mech, flow := kernelAuthMech(c); mech != "PAT" || flow != "" {
 					t.Errorf("kernelAuthMech = (%q, %q), want (PAT, empty)", mech, flow)

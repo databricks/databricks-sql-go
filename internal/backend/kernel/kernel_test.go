@@ -105,8 +105,9 @@ func TestSetProxy(t *testing.T) {
 
 // TestSetRetry exercises the real kernel_session_config_set_retry_config cgo setter
 // via the trySetRetry seam: a valid range succeeds (incl. the disable form,
-// MaxRetries=0, a non-zero overall budget, and max<min, which the kernel corrects).
-// A zero minimum is rejected as InvalidArgument. A no-op when Config.Retry is nil.
+// MaxRetries=0, and a non-zero overall budget). A zero minimum is rejected, but
+// max<min is corrected by the kernel. A no-op when Config.Retry
+// is nil. Proves the 4-arg marshalling and the C signature.
 func TestSetRetry(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -117,7 +118,6 @@ func TestSetRetry(t *testing.T) {
 		{"disable (0 retries)", Config{Retry: &RetryConfig{MinWait: time.Second, MaxWait: 30 * time.Second, MaxRetries: 0}}, false},
 		{"with overall budget", Config{Retry: &RetryConfig{MinWait: time.Second, MaxWait: 30 * time.Second, MaxRetries: 4, OverallTimeout: 5 * time.Minute}}, false},
 		{"none (no-op)", Config{}, false},
-		// A zero minimum is invalid; max<min is corrected by raising max to min.
 		{"min zero rejected", Config{Retry: &RetryConfig{MinWait: 0, MaxWait: time.Second, MaxRetries: 3}}, true},
 		{"max below min corrected", Config{Retry: &RetryConfig{MinWait: 5 * time.Second, MaxWait: time.Second, MaxRetries: 3}}, false},
 	}

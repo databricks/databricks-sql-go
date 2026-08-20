@@ -46,18 +46,18 @@ Any parameter not listed below (e.g. `ansi_mode`) is passed through as a
 | Personal access token (PAT) | `token:<t>@…`, or `accessToken=` / `authType=Pat` | `WithAccessToken` | ✅ | ✅ |
 | OAuth machine-to-machine (M2M) | `clientID=`+`clientSecret=` / `authType=OauthM2M` | `WithClientCredentials` | ✅ | ✅ |
 | OAuth user-to-machine (U2M) | `authType=OauthU2M` | `WithAuthenticator` (u2m) | ✅ | ✅ |
-| Custom / external / static / federated token provider | — | `WithTokenProvider`, `WithExternalToken`, `WithStaticToken`, `WithFederatedTokenProvider*` | ✅ | ✅ federated only |
+| Custom / external / static token provider | — | `WithTokenProvider`, `WithExternalToken`, `WithStaticToken` | ✅ | ❌ |
+| Federated token provider | — | `WithFederatedTokenProvider*` | ✅ | ✅ |
 
 Notes for the SEA/kernel backend:
 
-- The kernel snapshots one `WithFederatedTokenProvider*` token during setup; see
-  the README authentication notes for the refresh limitation.
 - Custom OAuth **M2M scopes** are rejected on the kernel path (the kernel applies its
   own default scopes). Default scopes work on both.
 - **U2M** is interactive: on a cache miss, connecting launches the browser and a
   connect-context **deadline is not honored** during the login window. U2M scopes are at
   parity with Thrift. Use PAT or M2M for headless/deadline-bound connects.
-- OAuth M2M/U2M token caching and refresh are owned by the kernel (no driver config).
+- OAuth token caching/refresh is owned by the kernel on the kernel path (no driver
+  config).
 
 ## Query execution
 

@@ -77,7 +77,7 @@ func validateKernelConfigContext(ctx context.Context, cfg *config.Config) (kerne
 	// the single source of truth. resolveKernelAuth rejects unsupported authenticators
 	// loudly so the failure names the cause instead of surfacing as an opaque
 	// Unauthenticated.
-	kauth, err := resolveKernelAuth(ctx, cfg)
+	kauth, err := resolveKernelAuthContext(ctx, cfg)
 	if err != nil {
 		return kernel.Auth{}, err
 	}
@@ -299,10 +299,14 @@ func resolveKernelProxy(cfg *config.Config, kc *kernel.Config) {
 //   - implements U2MCredentialsProvider → U2M (browser/PKCE; kernel-owned flow)
 //   - federated token provider          → PAT resolved once from the provider
 //   - PAT / nil / noop                  → PAT (from AccessToken or a *pat.PATAuth)
-//   - anything else                     → rejected loudly (custom token-provider /
-//     external / static), so the failure names the cause instead of surfacing as
+//   - anything else                     → rejected loudly (token-provider / external
+//     / static), so the failure names the cause instead of surfacing as
 //     an opaque Unauthenticated.
-func resolveKernelAuth(ctx context.Context, cfg *config.Config) (kernel.Auth, error) {
+func resolveKernelAuth(cfg *config.Config) (kernel.Auth, error) {
+	return resolveKernelAuthContext(context.Background(), cfg)
+}
+
+func resolveKernelAuthContext(ctx context.Context, cfg *config.Config) (kernel.Auth, error) {
 	switch a := cfg.Authenticator.(type) {
 	case *federatedTokenAuthenticator:
 		token, err := a.provider.GetToken(ctx)
@@ -312,11 +316,7 @@ func resolveKernelAuth(ctx context.Context, cfg *config.Config) (kernel.Auth, er
 		if token == nil || token.AccessToken == "" {
 			return kernel.Auth{}, errors.New("databricks: the federated token provider returned an empty token")
 		}
-		return kernel.Auth{
-			Mode:     kernel.AuthPAT,
-			Token:    token.AccessToken,
-			ClientID: a.clientID,
-		}, nil
+		return kernel.Auth{Mode: kernel.AuthPAT, Token: token.AccessToken, ClientID: a.clientID}, nil
 	case kernel.M2MCredentialsProvider:
 		// The kernel's set_auth_m2m takes no scopes and applies "all-apis" itself, so
 		// a custom scope set can't be forwarded — reject it instead of silently

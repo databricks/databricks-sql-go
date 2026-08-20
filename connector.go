@@ -38,8 +38,7 @@ type interactiveU2MAuthenticator interface {
 	U2MClientID() string
 }
 
-// federatedTokenAuthenticator lets Thrift use FederationProvider while the
-// kernel snapshots the base provider's token.
+// federatedTokenAuthenticator preserves the base provider for the kernel.
 type federatedTokenAuthenticator struct {
 	auth.Authenticator
 	provider tokenprovider.TokenProvider

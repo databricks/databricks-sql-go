@@ -1,8 +1,6 @@
 package dbsql
 
 import (
-	"context"
-
 	"github.com/databricks/databricks-sql-go/internal/backend/kernel"
 	"github.com/databricks/databricks-sql-go/internal/config"
 	"github.com/databricks/databricks-sql-go/telemetry"
@@ -98,12 +96,11 @@ func kernelAuthMech(cfg *config.Config) (mech, flow string) {
 		authFlowClientCreds = "CLIENT_CREDENTIALS" //nolint:gosec // G101: telemetry auth_flow enum value, not a credential
 		authFlowBrowser     = "BROWSER_BASED_AUTHENTICATION"
 	)
-	// Classify federation for connection-config telemetry without taking another
-	// provider snapshot; the kernel consumes its snapshot as PAT.
+	// Avoid a second provider snapshot when classifying federation telemetry.
 	if _, ok := cfg.Authenticator.(*federatedTokenAuthenticator); ok {
 		return authMechPAT, ""
 	}
-	ka, err := resolveKernelAuth(context.Background(), cfg)
+	ka, err := resolveKernelAuth(cfg)
 	if err != nil {
 		return "", ""
 	}

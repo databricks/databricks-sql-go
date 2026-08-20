@@ -269,7 +269,8 @@ groups. Telemetry parameters are covered under [Telemetry](#telemetry).
 | Personal access token (PAT) | `token:<t>@…`, or `accessToken=` / `authType=Pat` | `WithAccessToken` | Both |
 | OAuth machine-to-machine (M2M) | `clientID=`+`clientSecret=` / `authType=OauthM2M` | `WithClientCredentials` | Both |
 | OAuth user-to-machine (U2M) | `authType=OauthU2M` | `WithAuthenticator` (u2m) | Both |
-| Custom / external / static / federated token provider | — | `WithTokenProvider`, `WithExternalToken`, `WithStaticToken`, `WithFederatedTokenProvider*` | Thrift only; federated: Both |
+| Custom / external / static token provider | — | `WithTokenProvider`, `WithExternalToken`, `WithStaticToken` | Thrift only |
+| Federated token provider | — | `WithFederatedTokenProvider*` | Both |
 
 **PAT** (default): supply `token:<pat>@…` in the DSN, or `WithAccessToken`.
 
@@ -297,8 +298,10 @@ Notes for the SEA/kernel backend:
 - **U2M** is interactive: on a cache miss, connecting launches the browser and a
   connect-context **deadline is not honored** during the login window. U2M scopes are at
   parity with Thrift. Use PAT or M2M for headless/deadline-bound connects.
-- Custom token-provider / external / static authenticators are **Thrift only**.
-- OAuth M2M/U2M token caching and refresh are owned by the kernel (no driver config).
+- Custom token-provider / external / static authenticators are **Thrift
+  only**.
+- OAuth token caching/refresh is owned by the kernel on the kernel path (no driver
+  config).
 
 ## Cloud Fetch
 
