@@ -173,9 +173,6 @@ func (k *KernelBackend) OpenSession(ctx context.Context) error {
 	if err := k.setAuth(cfg); err != nil {
 		return err
 	}
-	if err := k.applyIdentityFederation(cfg); err != nil {
-		return err
-	}
 
 	// User-Agent so query history attributes the kernel path to this driver.
 	if k.cfg.UserAgent != "" {
@@ -422,22 +419,15 @@ func (k *KernelBackend) setAuth(cfg *C.KernelSessionConfig) error {
 		}); err != nil {
 			return fmt.Errorf("kernel: set_auth_pat: %w", toConnError(err))
 		}
-	}
-	return nil
-}
-
-// applyIdentityFederation forwards the optional SP-wide client ID paired with a
-// token resolved from WithFederatedTokenProviderAndClientID.
-func (k *KernelBackend) applyIdentityFederation(cfg *C.KernelSessionConfig) error {
-	if k.cfg.IdentityFederationClientID == "" {
-		return nil
-	}
-	clientID := newCStr(k.cfg.IdentityFederationClientID)
-	defer clientID.free()
-	if err := call(func() C.KernelStatusCode {
-		return C.kernel_session_config_set_identity_federation_client_id(cfg, clientID.c)
-	}); err != nil {
-		return fmt.Errorf("kernel: set_identity_federation_client_id: %w", toConnError(err))
+		if k.cfg.Auth.ClientID != "" {
+			clientID := newCStr(k.cfg.Auth.ClientID)
+			defer clientID.free()
+			if err := call(func() C.KernelStatusCode {
+				return C.kernel_session_config_set_identity_federation_client_id(cfg, clientID.c)
+			}); err != nil {
+				return fmt.Errorf("kernel: set_identity_federation_client_id: %w", toConnError(err))
+			}
+		}
 	}
 	return nil
 }
@@ -461,21 +451,6 @@ func trySetAuth(auth Auth) error {
 	defer C.kernel_session_config_free(cfg)
 	k := &KernelBackend{cfg: Config{Auth: auth}}
 	return k.setAuth(cfg)
-}
-
-// trySetIdentityFederation applies auth and the federation client ID to a
-// throwaway config so tagged tests exercise the real C setters together.
-func trySetIdentityFederation(cfg Config) error {
-	var c *C.KernelSessionConfig
-	if err := call(func() C.KernelStatusCode { return C.kernel_session_config_new(&c) }); err != nil {
-		return fmt.Errorf("config_new: %w", err)
-	}
-	defer C.kernel_session_config_free(c)
-	k := &KernelBackend{cfg: cfg}
-	if err := k.setAuth(c); err != nil {
-		return err
-	}
-	return k.applyIdentityFederation(c)
 }
 
 // trySetKernelTLS allocates a throwaway session config, applies the experimental

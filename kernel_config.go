@@ -118,12 +118,11 @@ func validateKernelConfigContext(ctx context.Context, cfg *config.Config) (kerne
 // with newKernelBackend's kernel.Config assembly.
 func buildKernelConfig(cfg *config.Config, kauth kernel.Auth) kernel.Config {
 	kc := kernel.Config{
-		Host:                       cfg.Host,
-		HTTPPath:                   cfg.HTTPPath,
-		WarehouseID:                cfg.WarehouseID,
-		Auth:                       kauth,
-		IdentityFederationClientID: kauth.FederationClientID,
-		Location:                   cfg.Location,
+		Host:        cfg.Host,
+		HTTPPath:    cfg.HTTPPath,
+		WarehouseID: cfg.WarehouseID,
+		Auth:        kauth,
+		Location:    cfg.Location,
 		// Same UA the Thrift path sends, so query history attributes both alike.
 		UserAgent: client.BuildUserAgent(cfg),
 		// Initial namespace: no kernel config setter, so the kernel backend applies
@@ -314,9 +313,9 @@ func resolveKernelAuth(ctx context.Context, cfg *config.Config) (kernel.Auth, er
 			return kernel.Auth{}, errors.New("databricks: the federated token provider returned an empty token")
 		}
 		return kernel.Auth{
-			Mode:               kernel.AuthPAT,
-			Token:              token.AccessToken,
-			FederationClientID: a.clientID,
+			Mode:     kernel.AuthPAT,
+			Token:    token.AccessToken,
+			ClientID: a.clientID,
 		}, nil
 	case kernel.M2MCredentialsProvider:
 		// The kernel's set_auth_m2m takes no scopes and applies "all-apis" itself, so

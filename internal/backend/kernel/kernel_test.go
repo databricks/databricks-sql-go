@@ -31,6 +31,7 @@ func TestSetAuthByMode(t *testing.T) {
 		auth Auth
 	}{
 		{"PAT", Auth{Mode: AuthPAT, Token: "dapi-x"}},
+		{"federated PAT", Auth{Mode: AuthPAT, Token: "subject-token", ClientID: "federation-client"}},
 		{"M2M", Auth{Mode: AuthM2M, ClientID: "cid", ClientSecret: "sec"}},
 		// "U2M full" populates Scopes/RedirectPort, which no production path sets today
 		// (resolveKernelAuth sources only the client id — see kernel.Auth docs). It is
@@ -47,25 +48,6 @@ func TestSetAuthByMode(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			if err := trySetAuth(c.auth); err != nil {
 				t.Errorf("setAuth(%s) = %v, want nil", c.name, err)
-			}
-		})
-	}
-}
-
-func TestSetIdentityFederationClientID(t *testing.T) {
-	cases := []struct {
-		name string
-		auth Auth
-		id   string
-	}{
-		{"PAT", Auth{Mode: AuthPAT, Token: "dapi-x"}, "federation-client"},
-		{"empty omitted", Auth{Mode: AuthPAT, Token: "dapi-x"}, ""},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			cfg := Config{Auth: tc.auth, IdentityFederationClientID: tc.id}
-			if err := trySetIdentityFederation(cfg); err != nil {
-				t.Errorf("trySetIdentityFederation(%s) = %v, want nil", tc.name, err)
 			}
 		})
 	}
@@ -108,7 +90,7 @@ func TestSetProxy(t *testing.T) {
 	}{
 		{"url only", Config{ProxyURL: "http://proxy:3128"}},
 		{"url + credentials", Config{ProxyURL: "http://proxy:3128", ProxyUsername: "u", ProxyPassword: "p"}},
-		{"url + bypass", Config{ProxyURL: "http://proxy:3128", ProxyBypassHosts: "localhost,*.internal"}},                                       //nolint:gosec // G101: test literals, not real credentials
+		{"url + bypass", Config{ProxyURL: "http://proxy:3128", ProxyBypassHosts: "localhost,*.internal"}}, //nolint:gosec // G101: test literals, not real credentials
 		{"all fields", Config{ProxyURL: "http://proxy:3128", ProxyUsername: "u", ProxyPassword: "p", ProxyBypassHosts: "localhost,*.internal"}}, //nolint:gosec // G101: test literals, not real credentials
 		{"none (no-op)", Config{}},
 	}

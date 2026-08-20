@@ -46,23 +46,18 @@ Any parameter not listed below (e.g. `ansi_mode`) is passed through as a
 | Personal access token (PAT) | `token:<t>@…`, or `accessToken=` / `authType=Pat` | `WithAccessToken` | ✅ | ✅ |
 | OAuth machine-to-machine (M2M) | `clientID=`+`clientSecret=` / `authType=OauthM2M` | `WithClientCredentials` | ✅ | ✅ |
 | OAuth user-to-machine (U2M) | `authType=OauthU2M` | `WithAuthenticator` (u2m) | ✅ | ✅ |
-| Federated token provider | — | `WithFederatedTokenProvider*` | ✅ | ✅ |
-| Custom token provider / external / static | — | `WithTokenProvider`, `WithExternalToken`, `WithStaticToken` | ✅ | ❌ |
+| Custom / external / static / federated token provider | — | `WithTokenProvider`, `WithExternalToken`, `WithStaticToken`, `WithFederatedTokenProvider*` | ✅ | ✅ federated only |
 
 Notes for the SEA/kernel backend:
 
-- `WithFederatedTokenProvider*` resolves the provider once per connection and
-  supplies its token as PAT auth for kernel-side federation. The `AndClientID`
-  form also forwards the SP-wide federation client ID. The kernel cannot refresh
-  the provider token after the connection is created, so an expired token requires
-  a new connection.
+- The kernel snapshots one `WithFederatedTokenProvider*` token during setup; see
+  the README authentication notes for the refresh limitation.
 - Custom OAuth **M2M scopes** are rejected on the kernel path (the kernel applies its
   own default scopes). Default scopes work on both.
 - **U2M** is interactive: on a cache miss, connecting launches the browser and a
   connect-context **deadline is not honored** during the login window. U2M scopes are at
   parity with Thrift. Use PAT or M2M for headless/deadline-bound connects.
-- OAuth token caching/refresh is owned by the kernel on the kernel path (no driver
-  config).
+- OAuth M2M/U2M token caching and refresh are owned by the kernel (no driver config).
 
 ## Query execution
 

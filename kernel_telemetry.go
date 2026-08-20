@@ -98,8 +98,8 @@ func kernelAuthMech(cfg *config.Config) (mech, flow string) {
 		authFlowClientCreds = "CLIENT_CREDENTIALS" //nolint:gosec // G101: telemetry auth_flow enum value, not a credential
 		authFlowBrowser     = "BROWSER_BASED_AUTHENTICATION"
 	)
-	// Resolving a federated provider obtains a token. Telemetry must not trigger a
-	// second provider call after connection setup; the kernel consumes it as PAT.
+	// Classify federation for connection-config telemetry without taking another
+	// provider snapshot; the kernel consumes its snapshot as PAT.
 	if _, ok := cfg.Authenticator.(*federatedTokenAuthenticator); ok {
 		return authMechPAT, ""
 	}

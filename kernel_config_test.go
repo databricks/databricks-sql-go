@@ -192,49 +192,40 @@ func TestValidateKernelConfig(t *testing.T) {
 		}
 	})
 
-	t.Run("federated provider resolves once to PAT with SP-wide client ID", func(t *testing.T) {
-		c := baseKernelConfig()
-		c.AccessToken = ""
-		calls := 0
-		baseProvider := tokenprovider.NewExternalTokenProvider(func() (string, error) {
-			calls++
-			return "federated-token", nil
-		})
-		WithFederatedTokenProviderAndClientID(
-			baseProvider,
-			"federation-client",
-		)(c)
-		if got := c.Authenticator.(*federatedTokenAuthenticator).provider; got != baseProvider {
-			t.Fatal("kernel federation should resolve the base provider, not the Thrift exchange wrapper")
+	t.Run("federated provider supplies PAT auth", func(t *testing.T) {
+		cases := []struct {
+			name     string
+			option   func(tokenprovider.TokenProvider) ConnOption
+			clientID string
+		}{
+			{"account-wide", WithFederatedTokenProvider, ""},
+			{"SP-wide", func(p tokenprovider.TokenProvider) ConnOption {
+				return WithFederatedTokenProviderAndClientID(p, "federation-client")
+			}, "federation-client"},
 		}
-		a, err := validateKernelConfig(c)
-		if err != nil {
-			t.Fatalf("federated provider should validate, got %v", err)
-		}
-		if a.Mode != kernel.AuthPAT || a.Token != "federated-token" || a.FederationClientID != "federation-client" {
-			t.Errorf("auth = %+v, want PAT token=federated-token FederationClientID=federation-client", a)
-		}
-		if calls != 1 {
-			t.Errorf("provider calls = %d, want 1", calls)
-		}
-		if mech, flow := kernelAuthMech(c); mech != "PAT" || flow != "" {
-			t.Errorf("kernelAuthMech = (%q, %q), want (PAT, empty)", mech, flow)
-		}
-		if calls != 1 {
-			t.Errorf("telemetry resolved the provider again: calls = %d, want 1", calls)
-		}
-	})
-
-	t.Run("account-wide federated provider omits client ID", func(t *testing.T) {
-		c := baseKernelConfig()
-		c.AccessToken = ""
-		WithFederatedTokenProvider(tokenprovider.NewStaticTokenProvider("federated-token"))(c)
-		a, err := validateKernelConfig(c)
-		if err != nil {
-			t.Fatalf("federated provider should validate, got %v", err)
-		}
-		if a.Mode != kernel.AuthPAT || a.Token != "federated-token" || a.FederationClientID != "" {
-			t.Errorf("auth = %+v, want PAT token=federated-token and no FederationClientID", a)
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				c := baseKernelConfig()
+				c.AccessToken = ""
+				calls := 0
+				tc.option(tokenprovider.NewExternalTokenProvider(func() (string, error) {
+					calls++
+					return "subject-token", nil
+				}))(c)
+				a, err := validateKernelConfig(c)
+				if err != nil {
+					t.Fatalf("federated provider should validate, got %v", err)
+				}
+				if a.Mode != kernel.AuthPAT || a.Token != "subject-token" || a.ClientID != tc.clientID {
+					t.Errorf("auth = %+v, want PAT token=subject-token clientID=%q", a, tc.clientID)
+				}
+				if mech, flow := kernelAuthMech(c); mech != "PAT" || flow != "" {
+					t.Errorf("kernelAuthMech = (%q, %q), want (PAT, empty)", mech, flow)
+				}
+				if calls != 1 {
+					t.Errorf("connection-config telemetry classification resolved the provider: calls = %d, want 1", calls)
+				}
+			})
 		}
 	})
 
@@ -450,21 +441,6 @@ func TestKernelConfigFieldsClassified(t *testing.T) {
 // TestKernelExperimentalFieldsClassified only asserts the disposition map, not the
 // runtime copy). These run in the default CGO_ENABLED=0 build.
 func TestBuildKernelConfig(t *testing.T) {
-	t.Run("federated auth client ID forwarded", func(t *testing.T) {
-		auth := kernel.Auth{Mode: kernel.AuthPAT, Token: "federated-token", FederationClientID: "federation-client"}
-		kc := buildKernelConfig(baseKernelConfig(), auth)
-		if kc.IdentityFederationClientID != "federation-client" {
-			t.Errorf("IdentityFederationClientID = %q, want %q", kc.IdentityFederationClientID, "federation-client")
-		}
-	})
-
-	t.Run("identity federation client ID omitted when unset", func(t *testing.T) {
-		kc := buildKernelConfig(baseKernelConfig(), kernel.Auth{Mode: kernel.AuthPAT, Token: "dapi-x"})
-		if kc.IdentityFederationClientID != "" {
-			t.Errorf("IdentityFederationClientID = %q, want empty", kc.IdentityFederationClientID)
-		}
-	})
-
 	t.Run("experimental TLS fields forwarded", func(t *testing.T) {
 		c := baseKernelConfig()
 		c.KernelExperimental = &config.KernelExperimentalConfig{
