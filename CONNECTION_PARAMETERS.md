@@ -51,6 +51,8 @@ Any parameter not listed below (e.g. `ansi_mode`) is passed through as a
 
 Notes for the SEA/kernel backend:
 
+- The kernel snapshots one `WithFederatedTokenProvider*` token during setup;
+  `AndClientID` also forwards the SP-wide client ID. Expired tokens require a new connection.
 - Custom OAuth **M2M scopes** are rejected on the kernel path (the kernel applies its
   own default scopes). Default scopes work on both.
 - **U2M** is interactive: on a cache miss, connecting launches the browser and a
