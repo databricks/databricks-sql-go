@@ -211,7 +211,7 @@ func TestValidateKernelConfig(t *testing.T) {
 		// reads its inputs via the auth.JWTM2MCredentialsProvider interface. Unlike
 		// shared-secret M2M, the kernel's JWT setter carries scopes + token_url, so
 		// custom values forward as-is (no rejection).
-		c.Authenticator = fakeJWTM2MAuth{
+		c.Authenticator = fakeJWTM2MAuth{ //nolint:gosec // G101: test literals, not real credentials
 			id:         "sp-uuid",
 			keyFile:    "/keys/jwt.pem",
 			kid:        "kid-1",
