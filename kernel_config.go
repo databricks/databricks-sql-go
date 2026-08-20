@@ -167,7 +167,7 @@ func buildKernelConfig(cfg *config.Config, kauth kernel.Auth) kernel.Config {
 // kernelRetryPlaceholderWaits are the backoff bounds substituted when the caller
 // gave no valid wait range but a definite attempt count to honor — the disable form
 // (RetryMax < 0), or WithRetries(n, 0, 0) where WithDefaults' waits were overwritten
-// to zero. The kernel setter validates the range (it rejects min == 0 / max < min),
+// to zero. The kernel setter rejects min == 0 and corrects max < min,
 // so a valid one must be passed even when the attempts make the backoff moot; any
 // positive min<=max works, and the kernel's own defaults (1s / 60s) are the natural
 // choice.

@@ -193,26 +193,41 @@ func TestValidateKernelConfig(t *testing.T) {
 	})
 
 	t.Run("federated provider supplies PAT auth", func(t *testing.T) {
-		for _, clientID := range []string{"", "federation-client"} {
-			t.Run("clientID="+clientID, func(t *testing.T) {
+		providerErr := errors.New("provider failure")
+		for _, tc := range []struct {
+			name, token, clientID string
+			providerErr           error
+		}{
+			{"account-wide", "subject-token", "", nil},
+			{"SP-wide", "subject-token", "federation-client", nil},
+			{"provider error", "", "", providerErr},
+			{"empty token", "", "", nil},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
 				c := baseKernelConfig()
 				c.AccessToken = ""
 				calls := 0
 				provider := tokenprovider.NewExternalTokenProvider(func() (string, error) {
 					calls++
-					return "subject-token", nil
+					return tc.token, tc.providerErr
 				})
-				if clientID == "" {
+				if tc.clientID == "" {
 					WithFederatedTokenProvider(provider)(c)
 				} else {
-					WithFederatedTokenProviderAndClientID(provider, clientID)(c)
+					WithFederatedTokenProviderAndClientID(provider, tc.clientID)(c)
 				}
 				a, err := validateKernelConfig(c)
+				if tc.token == "" {
+					if err == nil || tc.providerErr != nil && !errors.Is(err, tc.providerErr) {
+						t.Fatalf("error = %v, want provider error %v", err, tc.providerErr)
+					}
+					return
+				}
 				if err != nil {
 					t.Fatalf("federated provider should validate, got %v", err)
 				}
-				if a.Mode != kernel.AuthPAT || a.Token != "subject-token" || a.ClientID != clientID {
-					t.Errorf("auth = %+v, want PAT token=subject-token clientID=%q", a, clientID)
+				if a.Mode != kernel.AuthPAT || a.Token != tc.token || a.ClientID != tc.clientID {
+					t.Errorf("auth = %+v, want PAT token=%q clientID=%q", a, tc.token, tc.clientID)
 				}
 				if mech, flow := kernelAuthMech(c); mech != "PAT" || flow != "" {
 					t.Errorf("kernelAuthMech = (%q, %q), want (PAT, empty)", mech, flow)
