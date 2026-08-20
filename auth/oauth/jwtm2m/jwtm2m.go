@@ -1,3 +1,5 @@
+//go:build cgo && databricks_kernel
+
 // Package jwtm2m provides an OAuth machine-to-machine authenticator that
 // authenticates with a JWT private-key client assertion (RFC 7523) instead of
 // a client secret.

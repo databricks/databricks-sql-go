@@ -26,8 +26,8 @@ import (
 // validateKernelConfig enforces the kernel backend's "nothing silently ignored"
 // contract: it rejects every option the kernel path can't yet honor with a clear
 // error (rather than dropping it, which would behave differently than Thrift) and
-// resolves the kernel.Auth descriptor the kernel authenticates with (PAT, or OAuth
-// M2M/U2M). Options it does NOT reject are either forwarded by newKernelBackend or
+// resolves the kernel.Auth descriptor the kernel authenticates with (PAT, OAuth
+// M2M/U2M, or JWT private-key M2M). Options it does NOT reject are either forwarded by newKernelBackend or
 // intentionally accepted-but-inert (documented in doc.go and asserted by
 // TestKernelConfigFieldsClassified). It returns kernel.Auth directly (no dbsql-side
 // duplicate) — kernel's auth types are in an untagged file, so this untagged,
@@ -288,8 +288,10 @@ func resolveKernelProxy(cfg *config.Config, kc *kernel.Config) {
 // single source of truth for auth, so the last WithX option applied wins for both
 // backends (matching Thrift's last-writer-wins on cfg.Authenticator). The M2M/U2M
 // authenticator types are unexported, so it asserts the small
-// kernel.M2MCredentialsProvider / kernel.U2MCredentialsProvider interfaces they
-// satisfy structurally:
+// kernel.JWTM2MCredentialsProvider / kernel.M2MCredentialsProvider /
+// kernel.U2MCredentialsProvider interfaces they satisfy structurally:
+//   - implements JWTM2MCredentialsProvider → JWT private-key M2M (RFC 7523 client
+//     assertion; kernel signs it)
 //   - implements M2MCredentialsProvider → M2M (client id + secret)
 //   - implements U2MCredentialsProvider → U2M (browser/PKCE; kernel-owned flow)
 //   - PAT / nil / noop                  → PAT (from AccessToken or a *pat.PATAuth)
@@ -363,7 +365,8 @@ func resolveKernelAuth(cfg *config.Config) (kernel.Auth, error) {
 		// wrapped — a missing token is misconfiguration to fix, not a feature the
 		// kernel can't honor.)
 		return kernel.Auth{}, fmt.Errorf("databricks: this authenticator is %w; "+
-			"PAT (WithAccessToken) and OAuth M2M/U2M (WithClientCredentials / authType) are supported, but "+
+			"PAT (WithAccessToken), OAuth M2M/U2M (WithClientCredentials / authType), and JWT "+
+			"private-key M2M (WithJWTPrivateKeyM2M) are supported, but "+
 			"token-provider, external/static, and federated authenticators are not — "+
 			"use one of those or the default (Thrift) backend", dbsqlerr.ErrNotSupportedByKernel)
 	}

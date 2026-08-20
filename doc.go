@@ -80,35 +80,20 @@ Use sql.OpenDB() to create a database handle via a new connector object created 
 Supported functional options include:
 
   - WithServerHostname(<hostname> string): Sets up the server hostname. The hostname can be prefixed with "http:" or "https:" to specify a protocol to use. Mandatory
-
   - WithPort(<port> int): Sets up the server port. Mandatory
-
   - WithAccessToken(<my_token> string): Sets up the Personal Access Token. Mandatory
-
   - WithHTTPPath(<http_path> string): Sets up the endpoint to the warehouse. Mandatory
-
   - WithInitialNamespace(<catalog> string, <schema> string): Sets up the catalog and schema name in the session. Optional
-
   - WithMaxRows(<max_rows> int): Sets up the max rows fetched per request. Default is 100000. Optional
-
   - WithSessionParams(<params_map> map[string]string): Sets up session parameters including "timezone" and "ansi_mode". Optional
-
   - WithTimeout(<timeout> Duration). Adds timeout (in time.Duration) for the server query execution. Default is no timeout. Optional
-
   - WithUserAgentEntry(<isv-name+product-name> string). Used to identify partners. Optional
-
   - WithCloudFetch (bool). Used to enable cloud fetch for the query execution. Default is true. Optional
-
   - WithMaxDownloadThreads (<num_threads> int). Sets up the max number of concurrent workers for cloud fetch. Default is 10. Optional
-
   - WithAuthenticator (<authenticator> auth.Authenticator). Sets up authentication. Required if neither access token or client credentials are provided.
-
   - WithClientCredentials(<clientID> string, <clientSecret> string). Sets up Oauth M2M authentication.
-
-  - WithJWTPrivateKeyM2M(<config> JWTPrivateKeyM2MConfig). Sets up OAuth M2M authentication with a JWT private-key client assertion (RFC 7523) instead of a client secret. Kernel backend only (requires WithUseKernel(true)); the kernel signs the assertion. See the kernel-backend section. Optional
-
+  - WithJWTPrivateKeyM2M(<config> JWTPrivateKeyM2MConfig). Sets up OAuth M2M authentication with a JWT private-key client assertion (RFC 7523) instead of a client secret. Kernel backend only (requires WithUseKernel(true) and a build with -tags databricks_kernel); the kernel signs the assertion. See the kernel-backend section. Optional
   - WithUseKernel(<useKernel> bool). Routes execution through the SEA-via-kernel backend instead of Thrift. Requires a build with -tags databricks_kernel (CGO_ENABLED=1); the default build returns a clear error. Default is false. See the kernel-backend section below. Optional
-
   - WithWarehouseID(<id> string). The bare SQL warehouse id used by the kernel backend in preference to the http path; ignored by the Thrift backend. Optional
 
 # Query cancellation and timeout

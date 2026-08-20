@@ -1,3 +1,5 @@
+//go:build cgo && databricks_kernel
+
 package jwtm2m
 
 import (

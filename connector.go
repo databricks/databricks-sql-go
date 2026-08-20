@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/databricks/databricks-sql-go/auth"
-	"github.com/databricks/databricks-sql-go/auth/oauth/jwtm2m"
 	"github.com/databricks/databricks-sql-go/auth/oauth/m2m"
 	"github.com/databricks/databricks-sql-go/auth/pat"
 	"github.com/databricks/databricks-sql-go/auth/tokenprovider"
@@ -37,6 +36,19 @@ type connector struct {
 // structural check the kernel backend uses to detect U2M.
 type interactiveU2MAuthenticator interface {
 	U2MClientID() string
+}
+
+// kernelOnlyAuthenticator is satisfied only by the JWT private-key M2M
+// authenticator, whose Authenticate always returns a kernel-only error (the
+// assertion is signed by the native kernel, not the Go path). Matches the
+// JWTM2MCredentials signature the kernel backend asserts structurally. Used to
+// skip telemetry on the kernel JWT M2M path: telemetry/feature-flag HTTP calls
+// go through cfg.Authenticator.Authenticate, which for this authenticator would
+// fail every request (burning a failing round-trip at connect). Telemetry is
+// best-effort, so it's dropped here rather than made to fail — consistent with
+// the U2M skip below and the Python/Node kernel paths (PECOBLR-3839).
+type kernelOnlyAuthenticator interface {
+	JWTM2MCredentials() (clientID, keyFile, kid, passphrase, algorithm, tokenURL string, scopes []string)
 }
 
 // Connect returns a connection to the Databricks database from a connection pool.
@@ -104,6 +116,12 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 		if _, isU2M := c.cfg.Authenticator.(interactiveU2MAuthenticator); isU2M {
 			skipTelemetry = true
 			log.Debug().Msg("telemetry skipped: kernel U2M owns the interactive auth flow")
+		} else if _, isKernelOnly := c.cfg.Authenticator.(kernelOnlyAuthenticator); isKernelOnly {
+			// JWT private-key M2M: Authenticate always errors on the Go path (the
+			// kernel signs the assertion), so every telemetry/feature-flag request
+			// would fail auth. Drop telemetry rather than burn failing round-trips.
+			skipTelemetry = true
+			log.Debug().Msg("telemetry skipped: kernel JWT M2M signs via the native kernel; Go-path auth is kernel-only")
 		}
 	}
 
@@ -528,52 +546,6 @@ func WithClientCredentials(clientID, clientSecret string) ConnOption {
 		if clientID != "" && clientSecret != "" {
 			authr := m2m.NewAuthenticator(clientID, clientSecret, c.Host)
 			c.Authenticator = authr
-		}
-	}
-}
-
-// JWTPrivateKeyM2MConfig configures OAuth machine-to-machine authentication via
-// a JWT private-key client assertion (RFC 7523). A struct is used (rather than
-// positional args) so the many string fields can't be transposed.
-//
-// KERNEL BACKEND ONLY: the assertion is signed by the native kernel, so this
-// requires WithUseKernel(true). ClientID, KeyFile, and Kid are required.
-type JWTPrivateKeyM2MConfig struct {
-	// ClientID is the service principal / OAuth client id (the assertion
-	// issuer and subject).
-	ClientID string
-	// KeyFile is the path to the PEM-encoded private key that signs the
-	// assertion.
-	KeyFile string
-	// Kid is the key id written into the JWT header so the IdP can select the
-	// registered public key.
-	Kid string
-	// Passphrase decrypts an encrypted PKCS#8 key; leave empty for an
-	// unencrypted key.
-	Passphrase string
-	// Algorithm is the JWT signing algorithm (RS256/384/512, PS256/384/512,
-	// ES256, ES384); empty defaults to RS256.
-	Algorithm string
-	// TokenURL is the OAuth IdP token endpoint. Required when the workspace's
-	// OAuth authority is an external IdP (e.g. Entra ID for Azure Databricks),
-	// since Databricks-native OIDC does not advertise the private_key_jwt
-	// method; empty falls back to the kernel's OIDC discovery.
-	TokenURL string
-	// Scopes overrides the requested OAuth scopes; empty uses the kernel
-	// default (all-apis).
-	Scopes []string
-}
-
-// WithJWTPrivateKeyM2M sets up OAuth M2M authentication using a JWT private-key
-// client assertion. See JWTPrivateKeyM2MConfig. Requires the kernel backend
-// (WithUseKernel(true)); on the default (Thrift) backend a connection built with
-// this authenticator fails at authenticate time with a clear kernel-only error.
-func WithJWTPrivateKeyM2M(cfg JWTPrivateKeyM2MConfig) ConnOption {
-	return func(c *config.Config) {
-		if cfg.ClientID != "" && cfg.KeyFile != "" && cfg.Kid != "" {
-			c.Authenticator = jwtm2m.NewAuthenticator(
-				cfg.ClientID, cfg.KeyFile, cfg.Kid, cfg.Passphrase, cfg.Algorithm, cfg.TokenURL, cfg.Scopes,
-			)
 		}
 	}
 }
