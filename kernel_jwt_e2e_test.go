@@ -24,6 +24,8 @@ import (
 //	DATABRICKS_JWT_CLIENT_ID         service principal / OAuth client id
 //	DATABRICKS_JWT_KEY_FILE          path to the PEM private key
 //	DATABRICKS_JWT_KID               key id (Entra: the cert x5t thumbprint)
+//	DATABRICKS_JWT_PASSPHRASE        passphrase for an encrypted PKCS#8 key (optional)
+//	DATABRICKS_JWT_ALGORITHM         JWT signing algorithm (optional; default RS256)
 //	DATABRICKS_JWT_TOKEN_URL         IdP token endpoint (optional; OIDC discovery otherwise)
 //	DATABRICKS_JWT_SCOPES            space-separated scope override (optional)
 func TestKernelE2EJWTM2MSelect1(t *testing.T) {

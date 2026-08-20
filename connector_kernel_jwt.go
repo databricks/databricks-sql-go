@@ -5,6 +5,7 @@ package dbsql
 import (
 	"github.com/databricks/databricks-sql-go/auth/oauth/jwtm2m"
 	"github.com/databricks/databricks-sql-go/internal/config"
+	"github.com/databricks/databricks-sql-go/logger"
 )
 
 // JWTPrivateKeyM2MConfig configures OAuth machine-to-machine authentication via
@@ -54,6 +55,19 @@ func WithJWTPrivateKeyM2M(cfg JWTPrivateKeyM2MConfig) ConnOption {
 			c.Authenticator = jwtm2m.NewAuthenticator(
 				cfg.ClientID, cfg.KeyFile, cfg.Kid, cfg.Passphrase, cfg.Algorithm, cfg.TokenURL, cfg.Scopes,
 			)
+			return
+		}
+		// Consistent with WithClientCredentials/WithAccessToken, a fully-empty
+		// config is a no-op (the caller simply didn't pick this option). But a
+		// PARTIAL config (some required fields set, others blank — e.g. a typo or
+		// an unset env var) is almost certainly a mistake: no authenticator gets
+		// installed, so connect later fails with a misleading "requires a personal
+		// access token" (or authenticates as PAT if WithAccessToken was also set).
+		// Warn so the misconfiguration isn't wholly invisible, rather than
+		// silently dropping it.
+		if cfg.ClientID != "" || cfg.KeyFile != "" || cfg.Kid != "" {
+			logger.Warn().Msg("WithJWTPrivateKeyM2M: incomplete config; ClientID, KeyFile, and Kid are all " +
+				"required. No JWT authenticator was installed — the connection will not use JWT private-key M2M.")
 		}
 	}
 }
