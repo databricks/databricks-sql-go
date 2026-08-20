@@ -426,8 +426,8 @@ func (k *KernelBackend) setAuth(cfg *C.KernelSessionConfig) error {
 	return nil
 }
 
-// applyIdentityFederation forwards the optional SP-wide federation client ID.
-// It is independent of the selected PAT, M2M, or U2M auth mode.
+// applyIdentityFederation forwards the optional SP-wide client ID paired with a
+// token resolved from WithFederatedTokenProviderAndClientID.
 func (k *KernelBackend) applyIdentityFederation(cfg *C.KernelSessionConfig) error {
 	if k.cfg.IdentityFederationClientID == "" {
 		return nil

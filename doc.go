@@ -217,11 +217,14 @@ applied post-connect via USE CATALOG / USE SCHEMA); metric-view metadata
 (WithEnableMetricViewMetadata); the retry / backoff policy (WithRetries:
 RetryWaitMin / RetryWaitMax / RetryMax, including the disable form, forwarded to the
 kernel's HTTP retry config); and the TLS, proxy, and session-conf (query tags,
-statement timeout, time zone) options. Nothing is silently ignored: WithTimeout,
-token-provider / external / federated authenticators, and custom M2M OAuth scopes
-(the kernel applies its own) are rejected at connect; staging (PUT/GET/REMOVE on a
-Unity Catalog volume) is rejected at execute. WithMaxRows is accepted but inert (the
-kernel manages fetching below the C ABI).
+statement timeout, time zone) options. Federated token providers are resolved once
+per connection and passed as PAT auth for kernel-side federation; the SP-wide client
+ID is also forwarded when present. The kernel cannot refresh that provider token after the
+connection is created. Nothing is silently ignored: WithTimeout, custom
+token-provider / external / static authenticators, and custom M2M OAuth scopes (the
+kernel applies its own) are rejected at connect; staging (PUT/GET/REMOVE on a Unity
+Catalog volume) is rejected at execute. WithMaxRows is accepted but inert (the kernel
+manages fetching below the C ABI).
 
 OAuth U2M is interactive: on a cache miss, connecting launches the system browser and
 blocks until login completes or the kernel's ~120s callback timeout expires. Because
@@ -235,9 +238,6 @@ public client. Neither backend exposes a U2M-scopes option.
 
 Experimental kernel-only options (rejected by the default backend; the
 WithKernel* prefix marks them experimental):
-  - WithKernelIdentityFederationClientID(clientID) requires SP-wide workload identity
-    token exchange for PAT, OAuth M2M, or OAuth U2M. Empty preserves BYOT / account-wide
-    federation behavior.
   - WithKernelTrustedCerts(pem) adds a PEM CA bundle on top of the system roots (for
     a re-signing proxy or on-prem CA). Required because the kernel's TLS stack does
     not read SSL_CERT_FILE.

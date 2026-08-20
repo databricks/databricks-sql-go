@@ -10,14 +10,15 @@ import (
 
 	"github.com/databricks/databricks-sql-go/auth/oauth"
 	"github.com/databricks/databricks-sql-go/auth/pat"
+	"github.com/databricks/databricks-sql-go/auth/tokenprovider"
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 	"github.com/databricks/databricks-sql-go/internal/backend/kernel"
 	"github.com/databricks/databricks-sql-go/internal/client"
 	"github.com/databricks/databricks-sql-go/internal/config"
 )
 
-// nonPATAuth stands in for any non-PAT, non-OAuth authenticator (token-provider /
-// external / federated) — the kernel backend must reject it. It implements neither
+// nonPATAuth stands in for any non-PAT, non-OAuth authenticator (custom token
+// provider / external / static) — the kernel backend must reject it. It implements neither
 // auth.M2MCredentialsProvider nor auth.U2MCredentialsProvider.
 type nonPATAuth struct{}
 
@@ -191,6 +192,52 @@ func TestValidateKernelConfig(t *testing.T) {
 		}
 	})
 
+	t.Run("federated provider resolves once to PAT with SP-wide client ID", func(t *testing.T) {
+		c := baseKernelConfig()
+		c.AccessToken = ""
+		calls := 0
+		baseProvider := tokenprovider.NewExternalTokenProvider(func() (string, error) {
+			calls++
+			return "federated-token", nil
+		})
+		WithFederatedTokenProviderAndClientID(
+			baseProvider,
+			"federation-client",
+		)(c)
+		if got := c.Authenticator.(*federatedTokenAuthenticator).provider; got != baseProvider {
+			t.Fatal("kernel federation should resolve the base provider, not the Thrift exchange wrapper")
+		}
+		a, err := validateKernelConfig(c)
+		if err != nil {
+			t.Fatalf("federated provider should validate, got %v", err)
+		}
+		if a.Mode != kernel.AuthPAT || a.Token != "federated-token" || a.FederationClientID != "federation-client" {
+			t.Errorf("auth = %+v, want PAT token=federated-token FederationClientID=federation-client", a)
+		}
+		if calls != 1 {
+			t.Errorf("provider calls = %d, want 1", calls)
+		}
+		if mech, flow := kernelAuthMech(c); mech != "PAT" || flow != "" {
+			t.Errorf("kernelAuthMech = (%q, %q), want (PAT, empty)", mech, flow)
+		}
+		if calls != 1 {
+			t.Errorf("telemetry resolved the provider again: calls = %d, want 1", calls)
+		}
+	})
+
+	t.Run("account-wide federated provider omits client ID", func(t *testing.T) {
+		c := baseKernelConfig()
+		c.AccessToken = ""
+		WithFederatedTokenProvider(tokenprovider.NewStaticTokenProvider("federated-token"))(c)
+		a, err := validateKernelConfig(c)
+		if err != nil {
+			t.Fatalf("federated provider should validate, got %v", err)
+		}
+		if a.Mode != kernel.AuthPAT || a.Token != "federated-token" || a.FederationClientID != "" {
+			t.Errorf("auth = %+v, want PAT token=federated-token and no FederationClientID", a)
+		}
+	})
+
 	t.Run("last-applied auth wins: M2M then PAT resolves to PAT", func(t *testing.T) {
 		// Regression for the auth-mode divergence: cfg.Authenticator is the single
 		// source of truth, so setting an M2M authenticator and then a PAT (a later
@@ -227,7 +274,7 @@ func TestValidateKernelConfig(t *testing.T) {
 		c.Authenticator = nonPATAuth{}
 		_, err := validateKernelConfig(c)
 		if err == nil {
-			t.Fatal("expected an error for a token-provider/external/federated authenticator")
+			t.Fatal("expected an error for a custom token-provider/external/static authenticator")
 		}
 		// An unsupported authenticator is a "kernel can't honor this" rejection, so it
 		// must wrap ErrNotSupportedByKernel like every other unsupported option — the
@@ -403,19 +450,11 @@ func TestKernelConfigFieldsClassified(t *testing.T) {
 // TestKernelExperimentalFieldsClassified only asserts the disposition map, not the
 // runtime copy). These run in the default CGO_ENABLED=0 build.
 func TestBuildKernelConfig(t *testing.T) {
-	t.Run("identity federation client ID forwarded for every auth mode", func(t *testing.T) {
-		for _, auth := range []kernel.Auth{
-			{Mode: kernel.AuthPAT, Token: "dapi-x"},
-			{Mode: kernel.AuthM2M, ClientID: "cid", ClientSecret: "secret"},
-			{Mode: kernel.AuthU2M, ClientID: "u2m-cid"},
-		} {
-			c := baseKernelConfig()
-			c.KernelExperimental = &config.KernelExperimentalConfig{IdentityFederationClientID: "federation-client"}
-			kc := buildKernelConfig(c, auth)
-			if kc.IdentityFederationClientID != "federation-client" {
-				t.Errorf("auth mode %v: IdentityFederationClientID = %q, want %q",
-					auth.Mode, kc.IdentityFederationClientID, "federation-client")
-			}
+	t.Run("federated auth client ID forwarded", func(t *testing.T) {
+		auth := kernel.Auth{Mode: kernel.AuthPAT, Token: "federated-token", FederationClientID: "federation-client"}
+		kc := buildKernelConfig(baseKernelConfig(), auth)
+		if kc.IdentityFederationClientID != "federation-client" {
+			t.Errorf("IdentityFederationClientID = %q, want %q", kc.IdentityFederationClientID, "federation-client")
 		}
 	})
 

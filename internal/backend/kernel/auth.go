@@ -27,12 +27,13 @@ const (
 // a future WithOAuthRedirectPort becomes populating it, not re-plumbing the setter.
 // TestSetAuthByMode's "U2M full" case pins the marshalling of both.
 type Auth struct {
-	Mode         AuthMode
-	Token        string   // PAT
-	ClientID     string   // M2M + U2M (U2M: the cloud-inferred Go client id)
-	ClientSecret string   // M2M
-	Scopes       []string // U2M — Thrift-parity scopes from oauth.GetScopes; nil → kernel default
-	RedirectPort uint16   // U2M — no user option today; 0 → kernel default port (8030)
+	Mode               AuthMode
+	Token              string   // PAT
+	ClientID           string   // M2M + U2M (U2M: the cloud-inferred Go client id)
+	ClientSecret       string   // M2M
+	Scopes             []string // U2M — Thrift-parity scopes from oauth.GetScopes; nil → kernel default
+	RedirectPort       uint16   // U2M — no user option today; 0 → kernel default port (8030)
+	FederationClientID string   // PAT from WithFederatedTokenProviderAndClientID; empty → account-wide federation
 }
 
 // M2MCredentialsProvider is implemented by the OAuth M2M authenticator to expose

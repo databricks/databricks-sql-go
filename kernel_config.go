@@ -1,6 +1,7 @@
 package dbsql
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/url"
@@ -37,6 +38,10 @@ import (
 // "kernel can't honor this option" case with errors.Is (e.g. to fall back to the
 // default backend) instead of matching on message text.
 func validateKernelConfig(cfg *config.Config) (kernel.Auth, error) {
+	return validateKernelConfigContext(context.Background(), cfg)
+}
+
+func validateKernelConfigContext(ctx context.Context, cfg *config.Config) (kernel.Auth, error) {
 	// Initial namespace (WithInitialNamespace) is forwarded, not rejected: the
 	// kernel C ABI has no catalog/schema setter, so KernelBackend.OpenSession
 	// selects it post-connect with USE CATALOG / USE SCHEMA. No per-backend handling
@@ -72,7 +77,7 @@ func validateKernelConfig(cfg *config.Config) (kernel.Auth, error) {
 	// the single source of truth. resolveKernelAuth rejects unsupported authenticators
 	// loudly so the failure names the cause instead of surfacing as an opaque
 	// Unauthenticated.
-	kauth, err := resolveKernelAuth(cfg)
+	kauth, err := resolveKernelAuth(ctx, cfg)
 	if err != nil {
 		return kernel.Auth{}, err
 	}
@@ -113,11 +118,12 @@ func validateKernelConfig(cfg *config.Config) (kernel.Auth, error) {
 // with newKernelBackend's kernel.Config assembly.
 func buildKernelConfig(cfg *config.Config, kauth kernel.Auth) kernel.Config {
 	kc := kernel.Config{
-		Host:        cfg.Host,
-		HTTPPath:    cfg.HTTPPath,
-		WarehouseID: cfg.WarehouseID,
-		Auth:        kauth,
-		Location:    cfg.Location,
+		Host:                       cfg.Host,
+		HTTPPath:                   cfg.HTTPPath,
+		WarehouseID:                cfg.WarehouseID,
+		Auth:                       kauth,
+		IdentityFederationClientID: kauth.FederationClientID,
+		Location:                   cfg.Location,
 		// Same UA the Thrift path sends, so query history attributes both alike.
 		UserAgent: client.BuildUserAgent(cfg),
 		// Initial namespace: no kernel config setter, so the kernel backend applies
@@ -134,10 +140,11 @@ func buildKernelConfig(cfg *config.Config, kauth kernel.Auth) kernel.Config {
 	if cfg.TLSConfig != nil && cfg.TLSConfig.InsecureSkipVerify {
 		kc.TLSSkipVerify = true
 	}
-	// Experimental kernel-only knobs have no Thrift-path equivalent and are
-	// forwarded to the kernel backend here.
+	// Experimental kernel-only TLS knobs (WithKernelTrustedCerts /
+	// WithKernelSkipHostnameVerify), if any. These have no Thrift-path equivalent
+	// (the connector rejects them on that path) and are forwarded verbatim to the
+	// kernel C ABI in OpenSession.
 	if ke := cfg.KernelExperimental; ke != nil {
-		kc.IdentityFederationClientID = ke.IdentityFederationClientID
 		kc.TLSTrustedCertsPEM = ke.TLSTrustedCertsPEM
 		kc.TLSSkipHostnameVerify = ke.TLSSkipHostnameVerify
 		// Kernel-only CloudFetch in-memory-chunk knob (WithKernelMaxChunksInMemory).
@@ -291,12 +298,26 @@ func resolveKernelProxy(cfg *config.Config, kc *kernel.Config) {
 // satisfy structurally:
 //   - implements M2MCredentialsProvider → M2M (client id + secret)
 //   - implements U2MCredentialsProvider → U2M (browser/PKCE; kernel-owned flow)
+//   - federated token provider          → PAT resolved once from the provider
 //   - PAT / nil / noop                  → PAT (from AccessToken or a *pat.PATAuth)
-//   - anything else                     → rejected loudly (token-provider / external
-//     / static / federated), so the failure names the cause instead of surfacing as
+//   - anything else                     → rejected loudly (custom token-provider /
+//     external / static), so the failure names the cause instead of surfacing as
 //     an opaque Unauthenticated.
-func resolveKernelAuth(cfg *config.Config) (kernel.Auth, error) {
+func resolveKernelAuth(ctx context.Context, cfg *config.Config) (kernel.Auth, error) {
 	switch a := cfg.Authenticator.(type) {
+	case *federatedTokenAuthenticator:
+		token, err := a.provider.GetToken(ctx)
+		if err != nil {
+			return kernel.Auth{}, fmt.Errorf("databricks: failed to get a federated token for the kernel backend: %w", err)
+		}
+		if token == nil || token.AccessToken == "" {
+			return kernel.Auth{}, errors.New("databricks: the federated token provider returned an empty token")
+		}
+		return kernel.Auth{
+			Mode:               kernel.AuthPAT,
+			Token:              token.AccessToken,
+			FederationClientID: a.clientID,
+		}, nil
 	case kernel.M2MCredentialsProvider:
 		// The kernel's set_auth_m2m takes no scopes and applies "all-apis" itself, so
 		// a custom scope set can't be forwarded — reject it instead of silently
@@ -347,7 +368,7 @@ func resolveKernelAuth(cfg *config.Config) (kernel.Auth, error) {
 		// kernel can't honor.)
 		return kernel.Auth{}, fmt.Errorf("databricks: this authenticator is %w; "+
 			"PAT (WithAccessToken) and OAuth M2M/U2M (WithClientCredentials / authType) are supported, but "+
-			"token-provider, external/static, and federated authenticators are not — "+
-			"use one of those or the default (Thrift) backend", dbsqlerr.ErrNotSupportedByKernel)
+			"custom token-provider and external/static authenticators are not — "+
+			"use PAT/OAuth or the default (Thrift) backend", dbsqlerr.ErrNotSupportedByKernel)
 	}
 }

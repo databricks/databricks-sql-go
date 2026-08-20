@@ -59,8 +59,6 @@ func TestSetIdentityFederationClientID(t *testing.T) {
 		id   string
 	}{
 		{"PAT", Auth{Mode: AuthPAT, Token: "dapi-x"}, "federation-client"},
-		{"M2M", Auth{Mode: AuthM2M, ClientID: "cid", ClientSecret: "sec"}, "federation-client"},
-		{"U2M", Auth{Mode: AuthU2M, ClientID: "u2m-cid"}, "federation-client"},
 		{"empty omitted", Auth{Mode: AuthPAT, Token: "dapi-x"}, ""},
 	}
 	for _, tc := range cases {

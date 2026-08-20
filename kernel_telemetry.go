@@ -1,6 +1,8 @@
 package dbsql
 
 import (
+	"context"
+
 	"github.com/databricks/databricks-sql-go/internal/backend/kernel"
 	"github.com/databricks/databricks-sql-go/internal/config"
 	"github.com/databricks/databricks-sql-go/telemetry"
@@ -96,7 +98,12 @@ func kernelAuthMech(cfg *config.Config) (mech, flow string) {
 		authFlowClientCreds = "CLIENT_CREDENTIALS" //nolint:gosec // G101: telemetry auth_flow enum value, not a credential
 		authFlowBrowser     = "BROWSER_BASED_AUTHENTICATION"
 	)
-	ka, err := resolveKernelAuth(cfg)
+	// Resolving a federated provider obtains a token. Telemetry must not trigger a
+	// second provider call after connection setup; the kernel consumes it as PAT.
+	if _, ok := cfg.Authenticator.(*federatedTokenAuthenticator); ok {
+		return authMechPAT, ""
+	}
+	ka, err := resolveKernelAuth(context.Background(), cfg)
 	if err != nil {
 		return "", ""
 	}

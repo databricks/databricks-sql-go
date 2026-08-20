@@ -15,12 +15,12 @@ import (
 // same config fields Thrift does and translates them to the kernel's flat
 // connection config, so the user-facing options are unchanged — only the routing
 // differs. The public API adds nothing beyond WithUseKernel.
-func newKernelBackend(_ context.Context, cfg *config.Config) (backend.Backend, error) {
+func newKernelBackend(ctx context.Context, cfg *config.Config) (backend.Backend, error) {
 	// Reject options the kernel path can't honor yet + resolve the auth form. The
 	// validation is pure Go and lives in kernel_config.go (untagged) so its tests —
 	// including the exhaustiveness guard against a dropped Config field — run in the
 	// default CGO_ENABLED=0 build. It returns kernel.Auth directly.
-	kauth, err := validateKernelConfig(cfg)
+	kauth, err := validateKernelConfigContext(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}

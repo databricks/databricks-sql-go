@@ -27,16 +27,15 @@ import (
 // deliberate decision and a setter in KernelBackend.OpenSession so it can't be
 // silently dropped.
 var kernelExperimentalFieldDisposition = map[string]string{
-	"IdentityFederationClientID": "forwarded", // set_identity_federation_client_id
-	"TLSTrustedCertsPEM":         "forwarded", // set_tls_trusted_certs
-	"TLSSkipHostnameVerify":      "forwarded", // set_tls_skip_hostname_verification
-	"ProxyURL":                   "forwarded", // set_proxy (url)
-	"ProxyUsername":              "forwarded", // set_proxy (username)
-	"ProxyPassword":              "forwarded", // set_proxy (password)
-	"ProxyBypassHosts":           "forwarded", // set_proxy (bypass_hosts)
-	"RetryOverallTimeout":        "forwarded", // set_retry_config (overall_timeout_ms, 4th knob)
-	"MaxChunksInMemory":          "forwarded", // set_session_conf (cloudfetch_max_chunks_in_memory, client-only)
-	"DecimalAsFloat":             "forwarded", // kernel.Config.DecimalAsFloat → kernelOp → arrowscan (client-side scan choice)
+	"TLSTrustedCertsPEM":    "forwarded", // set_tls_trusted_certs
+	"TLSSkipHostnameVerify": "forwarded", // set_tls_skip_hostname_verification
+	"ProxyURL":              "forwarded", // set_proxy (url)
+	"ProxyUsername":         "forwarded", // set_proxy (username)
+	"ProxyPassword":         "forwarded", // set_proxy (password)
+	"ProxyBypassHosts":      "forwarded", // set_proxy (bypass_hosts)
+	"RetryOverallTimeout":   "forwarded", // set_retry_config (overall_timeout_ms, 4th knob)
+	"MaxChunksInMemory":     "forwarded", // set_session_conf (cloudfetch_max_chunks_in_memory, client-only)
+	"DecimalAsFloat":        "forwarded", // kernel.Config.DecimalAsFloat → kernelOp → arrowscan (client-side scan choice)
 }
 
 func TestKernelExperimentalFieldsClassified(t *testing.T) {
@@ -64,7 +63,7 @@ func TestKernelExperimentalFieldsClassified(t *testing.T) {
 // branch is what rejects it. We assert the option→config wiring here (a non-nil
 // KernelExperimental after applying a WithKernel* option is the signal the Thrift
 // branch keys off).
-func TestWithKernelOptionsSetExperimental(t *testing.T) {
+func TestWithKernelTLSOptionsSetExperimental(t *testing.T) {
 	cases := []struct {
 		name   string
 		opt    ConnOption
@@ -72,9 +71,6 @@ func TestWithKernelOptionsSetExperimental(t *testing.T) {
 	}{
 		{"trusted certs", WithKernelTrustedCerts([]byte("ca")), func(k *config.KernelExperimentalConfig) bool {
 			return string(k.TLSTrustedCertsPEM) == "ca"
-		}},
-		{"identity federation", WithKernelIdentityFederationClientID("federation-client"), func(k *config.KernelExperimentalConfig) bool {
-			return k.IdentityFederationClientID == "federation-client"
 		}},
 		{"skip hostname", WithKernelSkipHostnameVerify(), func(k *config.KernelExperimentalConfig) bool {
 			return k.TLSSkipHostnameVerify
@@ -120,7 +116,6 @@ func TestWithKernelOptionsRejectedOnThriftPath(t *testing.T) {
 		opt  ConnOption
 	}{
 		{"trusted certs", WithKernelTrustedCerts([]byte("ca"))},
-		{"identity federation", WithKernelIdentityFederationClientID("federation-client")},
 		{"skip hostname", WithKernelSkipHostnameVerify()},
 		{"proxy", WithKernelProxy(KernelProxy{URL: "http://proxy:3128"})},
 		{"retry overall timeout", WithKernelRetryOverallTimeout(5 * time.Minute)},
@@ -185,22 +180,18 @@ func TestWithKernelTrustedCertsCopiesPEM(t *testing.T) {
 // mutation reach another.
 func TestKernelExperimentalDeepCopy(t *testing.T) {
 	orig := &config.KernelExperimentalConfig{
-		IdentityFederationClientID: "federation-client",
-		TLSTrustedCertsPEM:         []byte("ca-bundle"),
-		TLSSkipHostnameVerify:      true,
-		ProxyURL:                   "http://proxy:3128",
-		ProxyUsername:              "u",
-		ProxyPassword:              "p",
-		ProxyBypassHosts:           "*.internal",
-		RetryOverallTimeout:        5 * time.Minute,
-		MaxChunksInMemory:          4,
+		TLSTrustedCertsPEM:    []byte("ca-bundle"),
+		TLSSkipHostnameVerify: true,
+		ProxyURL:              "http://proxy:3128",
+		ProxyUsername:         "u",
+		ProxyPassword:         "p",
+		ProxyBypassHosts:      "*.internal",
+		RetryOverallTimeout:   5 * time.Minute,
+		MaxChunksInMemory:     4,
 	}
 	cp := orig.DeepCopy()
 	if cp == nil || string(cp.TLSTrustedCertsPEM) != "ca-bundle" || !cp.TLSSkipHostnameVerify {
 		t.Fatalf("DeepCopy lost data: %+v", cp)
-	}
-	if cp.IdentityFederationClientID != "federation-client" {
-		t.Errorf("DeepCopy lost IdentityFederationClientID: %q", cp.IdentityFederationClientID)
 	}
 	if cp.ProxyURL != "http://proxy:3128" || cp.ProxyUsername != "u" ||
 		cp.ProxyPassword != "p" || cp.ProxyBypassHosts != "*.internal" {
