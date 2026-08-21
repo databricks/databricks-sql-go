@@ -8,19 +8,19 @@ import (
 	"github.com/rs/zerolog"
 )
 
-// logSink is the Go destination for kernel tracing records. The logger is built
-// directly over the driver's shared output proxy (logger.Output) rather than
-// derived from logger.Logger, so it (a) still follows SetLogOutput, (b) is ungated
-// at TraceLevel because the kernel already applied its configured level, and (c)
-// carries no auto-timestamp hook — forward stamps each record with the emission
-// time captured on the kernel thread, not the drain time.
+// logSink is the Go destination for kernel tracing records. Its logger comes from
+// logger.NewForwardingLogger rather than being derived from logger.Logger, so it
+// (a) still follows SetLogOutput, (b) is ungated at TraceLevel because the kernel
+// already applied its configured level, and (c) carries no auto-timestamp hook —
+// forward stamps each record with the emission time captured on the kernel thread,
+// not the drain time.
 type logSink struct {
 	log     zerolog.Logger
 	observe func(level, target, message string)
 }
 
 func newLogSink() *logSink {
-	return &logSink{log: zerolog.New(logger.Output()).Level(zerolog.TraceLevel)}
+	return &logSink{log: logger.NewForwardingLogger().Level(zerolog.TraceLevel)}
 }
 
 // forward writes one kernel record. emittedAt is the time the kernel emitted the

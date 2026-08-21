@@ -188,3 +188,43 @@ func TestFlushKernelLogsNoopWhenUnset(t *testing.T) {
 		t.Fatal("flush with no queue should be a no-op returning true")
 	}
 }
+
+type panicWriter struct{}
+
+func (panicWriter) Write([]byte) (int, error) { panic("writer always panics") }
+
+// A panicking writer combined with dropped records must not crash the drain: the
+// forwarded record AND the one-shot drop warning both write to that writer, and
+// both must be contained. observe advances the drop counter past the drain's
+// baseline (so the warning fires) and panics (so forward is exercised too); the
+// shared output is the panicking writer (so the warning write panics).
+func TestDrainContainsPanicFromForwardAndDropWarning(t *testing.T) {
+	prevLevel := logger.Logger.GetLevel()
+	t.Cleanup(func() {
+		logger.SetLogOutput(os.Stderr)
+		logger.Logger.Logger = logger.Logger.Level(prevLevel)
+	})
+	if err := logger.SetLogLevel("warn"); err != nil {
+		t.Fatal(err)
+	}
+	logger.SetLogOutput(panicWriter{})
+
+	sink := newLogSink()
+	sink.observe = func(_, _, _ string) {
+		logDropped.Add(1) // advance past the drain's baseline, deterministically
+		panic("forward failure")
+	}
+
+	ch := make(chan kernelLogRecord, 4)
+	prev := logQueue.Swap(&ch)
+	t.Cleanup(func() { logQueue.Store(prev) })
+	go drainKernelLogs(ch, sink)
+	defer close(ch)
+
+	enqueueKernelLog(time.Now(), "info", "databricks::sql::kernel", "boom")
+
+	// The drain reaches the flush barrier only if it survived both panics.
+	if !flushKernelLogs(2 * time.Second) {
+		t.Fatal("drain did not survive a panicking writer combined with dropped records")
+	}
+}

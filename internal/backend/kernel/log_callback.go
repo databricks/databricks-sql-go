@@ -106,31 +106,44 @@ func drainKernelLogs(ch <-chan kernelLogRecord, sink *logSink) {
 			close(rec.done)
 			continue
 		}
-		// A writer panic must not kill the drain goroutine — an unrecovered
-		// goroutine panic is fatal to the process. Contain it per record.
-		func() {
-			defer func() { _ = recover() }()
+		// Every write below goes to the user's writer, which may panic — an
+		// unrecovered goroutine panic is fatal to the process, so contain each one.
+		contain(func() {
 			sink.forward(rec.emittedAt, rec.level, rec.target, rec.message)
-		}()
+		})
 		// Surface log loss the first time the sink falls behind — from this
 		// goroutine, never the kernel thread. One-shot so a burst can't turn into
-		// log spam; the running total stays available via kernelLogDropped().
+		// log spam; the running total stays available via kernelLogDropped(). This
+		// writes to the same destination as forward, so it is contained too.
 		if !warnedDrop && logDropped.Load() > baselineDrops {
 			warnedDrop = true
-			logger.Logger.Warn().Uint64("dropped", logDropped.Load()-baselineDrops).Msg(
-				"[kernel] kernel log records dropped; the log sink is not keeping up " +
-					"(raise capacity or lower kernel verbosity)")
+			dropped := logDropped.Load() - baselineDrops
+			contain(func() {
+				logger.Logger.Warn().Uint64("dropped", dropped).Msg(
+					"[kernel] kernel log records dropped; the log sink is not keeping up " +
+						"(raise capacity or lower kernel verbosity)")
+			})
 		}
 	}
 }
 
+// contain runs fn, swallowing any panic. A misbehaving user writer (reached via
+// the shared logger) must never take down the drain goroutine.
+func contain(fn func()) {
+	defer func() { _ = recover() }()
+	fn()
+}
+
 // flushKernelLogs blocks until every kernel record already queued has been
 // written, or until timeout elapses; it returns whether the flush completed. It
-// is a no-op returning true when kernel logging was never installed. Callers use
-// it to drain the asynchronous hand-off before closing the log writer, retargeting
-// output, or exiting — records still buffered at process exit are otherwise lost.
-// Best-effort: records dropped for a full buffer are gone, and records enqueued
-// after this call are not waited on.
+// is a no-op returning true when kernel logging was never installed.
+//
+// It drains the asynchronous hand-off so records are not lost or misrouted when
+// the log writer is closed, output is retargeted, or the process exits. There is
+// currently no public entry point that calls it — only the end-to-end test does;
+// exposing a supported flush API (or wiring it into a shutdown path) is a separate
+// change. Best-effort: records already dropped for a full buffer are gone, and
+// records enqueued after this call are not waited on.
 func flushKernelLogs(timeout time.Duration) bool {
 	qp := logQueue.Load()
 	if qp == nil {

@@ -147,14 +147,18 @@ func SetLogOutput(w io.Writer) {
 	output.set(w)
 }
 
-// Output returns the process-wide destination proxy that Logger writes through.
-// Writes to it follow SetLogOutput exactly as Logger does, but it carries no
-// level/timestamp context of its own. Callers that forward already-rendered
-// records — such as the kernel log bridge — build their own zerolog.Logger over it
-// so they can supply their own fields (including an accurate emission timestamp)
-// instead of inheriting Logger's log-time one.
-func Output() io.Writer {
-	return output
+// NewForwardingLogger returns a zerolog.Logger that writes through the same
+// process-wide destination as Logger — so it follows SetLogOutput — but carries
+// none of Logger's context: no level gate and no timestamp hook. It is for callers
+// that forward already-rendered records and supply their own fields (including an
+// accurate timestamp), such as the kernel log bridge.
+//
+// It deliberately returns a Logger, not the underlying writer: exposing the writer
+// invites SetLogOutput(Output()) (e.g. a save/restore of the "current" output),
+// which would wrap the shared proxy around itself and deadlock the next write on
+// the re-entered SyncWriter mutex.
+func NewForwardingLogger() zerolog.Logger {
+	return zerolog.New(output)
 }
 
 // Sets log to trace. -1
