@@ -38,6 +38,13 @@ type interactiveU2MAuthenticator interface {
 	U2MClientID() string
 }
 
+// federatedTokenAuthenticator preserves the base provider for the kernel.
+type federatedTokenAuthenticator struct {
+	auth.Authenticator
+	provider tokenprovider.TokenProvider
+	clientID string
+}
+
 // Connect returns a connection to the Databricks database from a connection pool.
 func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 	defer debuglog.Track(ctx, "connector.Connect", "host=%s", c.cfg.Host)()
@@ -567,7 +574,10 @@ func WithFederatedTokenProvider(baseProvider tokenprovider.TokenProvider) ConnOp
 		if baseProvider != nil {
 			// Wrap with federation provider that auto-detects need for token exchange
 			federationProvider := tokenprovider.NewFederationProvider(baseProvider, c.Host)
-			c.Authenticator = tokenprovider.NewAuthenticator(federationProvider)
+			c.Authenticator = &federatedTokenAuthenticator{
+				Authenticator: tokenprovider.NewAuthenticator(federationProvider),
+				provider:      baseProvider,
+			}
 		}
 	}
 }
@@ -578,7 +588,11 @@ func WithFederatedTokenProviderAndClientID(baseProvider tokenprovider.TokenProvi
 		if baseProvider != nil {
 			// Wrap with federation provider for SP-wide federation
 			federationProvider := tokenprovider.NewFederationProviderWithClientID(baseProvider, c.Host, clientID)
-			c.Authenticator = tokenprovider.NewAuthenticator(federationProvider)
+			c.Authenticator = &federatedTokenAuthenticator{
+				Authenticator: tokenprovider.NewAuthenticator(federationProvider),
+				provider:      baseProvider,
+				clientID:      clientID,
+			}
 		}
 	}
 }

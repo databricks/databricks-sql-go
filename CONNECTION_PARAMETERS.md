@@ -50,10 +50,13 @@ allowlist is tracked in PECOBLR-4153.
 | Personal access token (PAT) | `token:<t>@…`, or `accessToken=` / `authType=Pat` | `WithAccessToken` | ✅ | ✅ |
 | OAuth machine-to-machine (M2M) | `clientID=`+`clientSecret=` / `authType=OauthM2M` | `WithClientCredentials` | ✅ | ✅ |
 | OAuth user-to-machine (U2M) | `authType=OauthU2M` | `WithAuthenticator` (u2m) | ✅ | ✅ |
-| Custom token provider / external / static / federated | — | `WithTokenProvider`, `WithExternalToken`, `WithStaticToken`, `WithFederatedTokenProvider*` | ✅ | ❌ |
+| Custom / external / static token provider | — | `WithTokenProvider`, `WithExternalToken`, `WithStaticToken` | ✅ | ❌ |
+| Federated token provider | — | `WithFederatedTokenProvider*` | ✅ | ✅ |
 
 Notes for the SEA/kernel backend:
 
+- The kernel snapshots one `WithFederatedTokenProvider*` token during setup;
+  `AndClientID` also forwards the SP-wide client ID. Expired tokens require a new connection.
 - Custom OAuth **M2M scopes** are rejected on the kernel path (the kernel applies its
   own default scopes). Default scopes work on both.
 - **U2M** is interactive: on a cache miss, connecting launches the browser and a

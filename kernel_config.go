@@ -1,6 +1,7 @@
 package dbsql
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/url"
@@ -37,6 +38,10 @@ import (
 // "kernel can't honor this option" case with errors.Is (e.g. to fall back to the
 // default backend) instead of matching on message text.
 func validateKernelConfig(cfg *config.Config) (kernel.Auth, error) {
+	return validateKernelConfigContext(context.Background(), cfg)
+}
+
+func validateKernelConfigContext(ctx context.Context, cfg *config.Config) (kernel.Auth, error) {
 	// Initial namespace (WithInitialNamespace) is forwarded, not rejected: the
 	// kernel C ABI has no catalog/schema setter, so KernelBackend.OpenSession
 	// selects it post-connect with USE CATALOG / USE SCHEMA. No per-backend handling
@@ -72,7 +77,7 @@ func validateKernelConfig(cfg *config.Config) (kernel.Auth, error) {
 	// the single source of truth. resolveKernelAuth rejects unsupported authenticators
 	// loudly so the failure names the cause instead of surfacing as an opaque
 	// Unauthenticated.
-	kauth, err := resolveKernelAuth(cfg)
+	kauth, err := resolveKernelAuthContext(ctx, cfg)
 	if err != nil {
 		return kernel.Auth{}, err
 	}
@@ -162,7 +167,7 @@ func buildKernelConfig(cfg *config.Config, kauth kernel.Auth) kernel.Config {
 // kernelRetryPlaceholderWaits are the backoff bounds substituted when the caller
 // gave no valid wait range but a definite attempt count to honor — the disable form
 // (RetryMax < 0), or WithRetries(n, 0, 0) where WithDefaults' waits were overwritten
-// to zero. The kernel setter validates the range (it rejects min == 0 / max < min),
+// to zero. The kernel setter rejects min == 0 and corrects max < min,
 // so a valid one must be passed even when the attempts make the backoff moot; any
 // positive min<=max works, and the kernel's own defaults (1s / 60s) are the natural
 // choice.
@@ -292,12 +297,26 @@ func resolveKernelProxy(cfg *config.Config, kc *kernel.Config) {
 // satisfy structurally:
 //   - implements M2MCredentialsProvider → M2M (client id + secret)
 //   - implements U2MCredentialsProvider → U2M (browser/PKCE; kernel-owned flow)
+//   - federated token provider          → PAT resolved once from the provider
 //   - PAT / nil / noop                  → PAT (from AccessToken or a *pat.PATAuth)
 //   - anything else                     → rejected loudly (token-provider / external
-//     / static / federated), so the failure names the cause instead of surfacing as
+//     / static), so the failure names the cause instead of surfacing as
 //     an opaque Unauthenticated.
 func resolveKernelAuth(cfg *config.Config) (kernel.Auth, error) {
+	return resolveKernelAuthContext(context.Background(), cfg)
+}
+
+func resolveKernelAuthContext(ctx context.Context, cfg *config.Config) (kernel.Auth, error) {
 	switch a := cfg.Authenticator.(type) {
+	case *federatedTokenAuthenticator:
+		token, err := a.provider.GetToken(ctx)
+		if err != nil {
+			return kernel.Auth{}, fmt.Errorf("databricks: failed to get a federated token for the kernel backend: %w", err)
+		}
+		if token == nil || token.AccessToken == "" {
+			return kernel.Auth{}, errors.New("databricks: the federated token provider returned an empty token")
+		}
+		return kernel.Auth{Mode: kernel.AuthPAT, Token: token.AccessToken, ClientID: a.clientID}, nil
 	case kernel.M2MCredentialsProvider:
 		// The kernel's set_auth_m2m takes no scopes and applies "all-apis" itself, so
 		// a custom scope set can't be forwarded — reject it instead of silently
@@ -317,7 +336,7 @@ func resolveKernelAuth(cfg *config.Config) (kernel.Auth, error) {
 		// kernel applied its own default set (all-apis + offline_access), which a
 		// workspace whose public client isn't granted all-apis rejects with
 		// access_denied. RedirectPort is still left zero (no user option; kernel
-		// default 8020). Passing nil to GetScopes yields the pure cloud-default set.
+		// default 8030). Passing nil to GetScopes yields the pure cloud-default set.
 		return kernel.Auth{Mode: kernel.AuthU2M, ClientID: a.U2MClientID(), Scopes: oauth.GetScopes(cfg.Host, nil)}, nil
 	case nil, *noop.NoopAuth, *pat.PATAuth:
 		// PAT (or no explicit authenticator). WithAccessToken sets both
@@ -348,7 +367,7 @@ func resolveKernelAuth(cfg *config.Config) (kernel.Auth, error) {
 		// kernel can't honor.)
 		return kernel.Auth{}, fmt.Errorf("databricks: this authenticator is %w; "+
 			"PAT (WithAccessToken) and OAuth M2M/U2M (WithClientCredentials / authType) are supported, but "+
-			"token-provider, external/static, and federated authenticators are not — "+
-			"use one of those or the default (Thrift) backend", dbsqlerr.ErrNotSupportedByKernel)
+			"custom token-provider and external/static authenticators are not — "+
+			"use PAT/OAuth or the default (Thrift) backend", dbsqlerr.ErrNotSupportedByKernel)
 	}
 }

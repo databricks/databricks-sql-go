@@ -2,16 +2,58 @@ package dbsql
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/databricks/databricks-sql-go/auth/pat"
+	"github.com/databricks/databricks-sql-go/auth/tokenprovider"
 	"github.com/databricks/databricks-sql-go/internal/client"
 	"github.com/databricks/databricks-sql-go/internal/config"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/hashicorp/go-retryablehttp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestFederatedTokenAuthenticatorPreservesThriftTokenExchange(t *testing.T) {
+	type exchangeRequest struct {
+		path         string
+		subjectToken string
+	}
+	exchangeRequests := make(chan exchangeRequest, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		exchangeRequests <- exchangeRequest{
+			path:         r.URL.Path,
+			subjectToken: r.FormValue("subject_token"),
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"exchanged-token","token_type":"Bearer","expires_in":3600}`))
+	}))
+	defer server.Close()
+
+	subjectToken, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"iss": "https://external.example.com/",
+	}).SignedString([]byte("test-key"))
+	require.NoError(t, err)
+
+	cfg := config.WithDefaults()
+	cfg.Host = server.URL
+	WithFederatedTokenProvider(tokenprovider.NewStaticTokenProvider(subjectToken))(cfg)
+
+	req, err := http.NewRequest(http.MethodGet, "https://example.com", nil)
+	require.NoError(t, err)
+	require.NoError(t, cfg.Authenticator.Authenticate(req))
+	require.Equal(t, "Bearer exchanged-token", req.Header.Get("Authorization"))
+
+	exchange := <-exchangeRequests
+	assert.Equal(t, "/oidc/v1/token", exchange.path)
+	assert.Equal(t, subjectToken, exchange.subjectToken)
+}
 
 func TestNewConnector(t *testing.T) {
 	t.Run("Connector initialized with functional options should have all options set", func(t *testing.T) {

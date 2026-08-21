@@ -96,6 +96,10 @@ func kernelAuthMech(cfg *config.Config) (mech, flow string) {
 		authFlowClientCreds = "CLIENT_CREDENTIALS" //nolint:gosec // G101: telemetry auth_flow enum value, not a credential
 		authFlowBrowser     = "BROWSER_BASED_AUTHENTICATION"
 	)
+	// Avoid a second provider snapshot when classifying federation telemetry.
+	if _, ok := cfg.Authenticator.(*federatedTokenAuthenticator); ok {
+		return authMechPAT, ""
+	}
 	ka, err := resolveKernelAuth(cfg)
 	if err != nil {
 		return "", ""
