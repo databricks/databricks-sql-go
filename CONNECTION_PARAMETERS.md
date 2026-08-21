@@ -15,7 +15,7 @@ sections of the README, laid out as one comparison matrix per concern.
 |:---:|---|
 | ✅ | Supported and honored. |
 | ❌ | Not supported — **rejected** at connect/execute (wraps `dbsqlerr.ErrNotSupportedByKernel` or `dbsqlerr.ErrRequiresKernelBackend`), never silently ignored. |
-| ⚠️ | Accepted but has no effect ("inert" / silently ignored). |
+| ⚠️ | Accepted but not fully honored — either inert ("silently ignored") or only partially/conditionally honored (e.g. some session confs are honored while others are dropped/rejected on the kernel path). |
 | — | Not applicable. |
 
 **Backend selection.** Both backends are selected once per connection via
@@ -25,7 +25,11 @@ sections of the README, laid out as one comparison matrix per concern.
 See [Building](./README.md#building).
 
 Any parameter not listed below (e.g. `ansi_mode`) is passed through as a
-**session parameter** on both backends.
+**session parameter**. On the **Thrift** path the session-conf map is forwarded freely.
+On the **kernel** path conf keys are matched (case-insensitively) against an allowlist —
+non-allowlisted keys are dropped with a warning, and a few are hard-rejected — so a conf
+that takes effect on Thrift may silently be ignored on kernel. Broadening the kernel
+allowlist is tracked in PECOBLR-4153.
 
 ## Endpoint & routing
 
@@ -68,10 +72,10 @@ Notes for the SEA/kernel backend:
 | `maxRows` | `WithMaxRows` | ✅ | ⚠️ | `100000` | Max rows per fetch. On the kernel path the kernel manages paging, so this is accepted but has no effect. |
 | `timeout` | `WithTimeout` | ✅ | ❌ | no timeout | Server-side query timeout, in seconds. On the kernel path use the `STATEMENT_TIMEOUT` session parameter instead. |
 | `userAgentEntry` | `WithUserAgentEntry` | ✅ | ✅ | | Identifies your application (partners/ISVs), format `<isv-name+product-name>`. |
-| *(session param)* | `WithSessionParams` | ✅ | ✅ | | Arbitrary session confs (e.g. `ansi_mode`, `STATEMENT_TIMEOUT`, `QUERY_TAGS`). |
+| *(session param)* | `WithSessionParams` | ✅ | ⚠️ | | Arbitrary session confs (e.g. `ansi_mode`, `STATEMENT_TIMEOUT`, `QUERY_TAGS`). Allowlisted confs are honored on both; on kernel a non-allowlisted conf is dropped/rejected (see the note above; PECOBLR-4153). |
 | *(via session param)* | `WithQueryTags` | ✅ | ✅ | | Session-level query tags (serialized into `QUERY_TAGS`). |
 | `timezone` | `WithSessionParams(timezone=…)` | ✅ | ✅ | | Session time zone (e.g. `America/Los_Angeles`). |
-| `enableMetricViewMetadata` | `WithEnableMetricViewMetadata` | ✅ | ✅ | `false` | Enables metric-view metadata (`spark.sql.thriftserver.metadata.metricview.enabled=true`). |
+| `enableMetricViewMetadata` | `WithEnableMetricViewMetadata` | ✅ | ⚠️ | `false` | Enables metric-view metadata (sets `spark.sql.thriftserver.metadata.metricview.enabled=true`). The driver forwards the conf on both paths, but the kernel currently hard-rejects it (HTTP 400 `INVALID_CONF_VALUE`), so it does not yet take effect on the kernel path (PECOBLR-4142 / PECOBLR-4153). |
 
 ## Retry / backoff
 
@@ -112,7 +116,9 @@ BINARY as `sql.RawBytes`).
 ## Proxy
 
 Both backends honor the standard `HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY` environment
-variables.
+variables. Note the kernel path accepts **http(s) proxies only**: a `socks*` proxy URL
+(honored on the Thrift path) is rejected at connect on the kernel path. Kernel SOCKS
+support is tracked in PECOBLR-4152.
 
 | Connector option | Thrift | Kernel | Notes |
 |---|:---:|:---:|---|
