@@ -187,6 +187,69 @@ func TestSetRequestTimeout(t *testing.T) {
 	}
 }
 
+func TestSetTelemetry(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		cfg     Config
+		wantErr bool
+	}{
+		{"nil telemetry is no-op", Config{}, false},
+		{"defaults filled for zero tuning fields", Config{Telemetry: &TelemetryConfig{Enabled: true}}, false},
+		{"explicit tuning", Config{Telemetry: &TelemetryConfig{
+			Enabled:           false,
+			BatchSize:         17,
+			FlushInterval:     2 * time.Second,
+			MaxRetries:        2,
+			RetryDelay:        25 * time.Millisecond,
+			CloseFlushTimeout: 3 * time.Second,
+		}}, false},
+		{"negative batch size is defaulted", Config{Telemetry: &TelemetryConfig{Enabled: true, BatchSize: -1}}, false},
+		{"negative flush interval is defaulted", Config{Telemetry: &TelemetryConfig{Enabled: true, FlushInterval: -time.Second}}, false},
+		{"negative retry delay is defaulted", Config{Telemetry: &TelemetryConfig{Enabled: true, RetryDelay: -time.Second}}, false},
+		{"negative close timeout is defaulted", Config{Telemetry: &TelemetryConfig{Enabled: true, CloseFlushTimeout: -time.Second}}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := trySetTelemetry(tc.cfg)
+			if tc.wantErr && err == nil {
+				t.Errorf("applyTelemetry(%s) = nil, want an error", tc.name)
+			}
+			if !tc.wantErr && err != nil {
+				t.Errorf("applyTelemetry(%s) = %v, want nil", tc.name, err)
+			}
+		})
+	}
+}
+
+func TestSetDriverSystemConfiguration(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		cfg  Config
+	}{
+		{"nil system config is no-op", Config{}},
+		{"empty strings pass as null defaults", Config{DriverSystemConfiguration: &DriverSystemConfiguration{}}},
+		{"all fields", Config{DriverSystemConfiguration: &DriverSystemConfiguration{
+			DriverName:      "databricks-sql-go",
+			DriverVersion:   "1.2.3",
+			RuntimeName:     "go",
+			RuntimeVersion:  "go1.25.0",
+			RuntimeVendor:   "Go",
+			OSName:          "Linux",
+			OSVersion:       "6.1",
+			OSArch:          "amd64",
+			ClientAppName:   "test-app",
+			LocaleName:      "en_US",
+			CharSetEncoding: "UTF-8",
+			ProcessName:     "kernel-test",
+		}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := trySetDriverSystemConfiguration(tc.cfg); err != nil {
+				t.Errorf("applyDriverSystemConfiguration(%s) = %v, want nil", tc.name, err)
+			}
+		})
+	}
+}
+
 // TestKernelLogLevel and TestResolveKernelLogArg — the pure level-resolution tests —
 // live in the untagged logging_level_test.go so they run under CGO_ENABLED=0. The
 // tests below exercise klog/klogCtx and so need the cgo build.

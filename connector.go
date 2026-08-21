@@ -31,11 +31,8 @@ type connector struct {
 	client *http.Client
 }
 
-// interactiveU2MAuthenticator is satisfied only by the browser-based U2M
-// authenticator (U2MClientID is unique to it; PAT/M2M lack it). Matches the
-// structural check the kernel backend uses to detect U2M.
-type interactiveU2MAuthenticator interface {
-	U2MClientID() string
+func skipDriverTelemetry(cfg *config.Config) bool {
+	return cfg.UseKernel
 }
 
 // federatedTokenAuthenticator preserves the base provider for the kernel.
@@ -100,17 +97,12 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 		telemetryClient = withSpogHeaders(c.client, spogHeaders)
 	}
 
-	// Skip telemetry on the kernel U2M path: the kernel owns the interactive browser
-	// flow, so the telemetry/feature-flag call through the interactive authenticator
-	// would launch a second, redundant browser (and can block connect on its
-	// callback). Telemetry is best-effort, so it's dropped here rather than made to
-	// prompt. Unauthenticated telemetry (Python/Node parity) is tracked in PECOBLR-3839.
-	skipTelemetry := false
-	if c.cfg.UseKernel {
-		if _, isU2M := c.cfg.Authenticator.(interactiveU2MAuthenticator); isU2M {
-			skipTelemetry = true
-			log.Debug().Msg("telemetry skipped: kernel U2M owns the interactive auth flow")
-		}
+	// Skip driver telemetry on the kernel path. The kernel owns query execution
+	// below the driver backend, so keeping the Go telemetry interceptor active
+	// would duplicate kernel telemetry for the same connection/statements.
+	skipTelemetry := skipDriverTelemetry(c.cfg)
+	if skipTelemetry {
+		log.Debug().Msg("telemetry skipped: kernel backend owns telemetry")
 	}
 
 	// Initialize telemetry: client config overlay decides; if unset, feature flags decide
@@ -128,15 +120,6 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 	if conn.telemetry != nil {
 		log.Debug().Msg("telemetry initialized for connection")
 		conn.telemetry.RecordOperation(ctx, conn.id, "", telemetry.OperationTypeCreateSession, sessionLatencyMs, nil)
-		// Connection-configuration telemetry on the kernel path only, so the
-		// default (Thrift) path's emitted telemetry stays byte-identical (the
-		// Thrift path has never populated DriverConnectionParameters). Emits mode /
-		// auth mech+flow / proxy / arrow / query-tags / metric-view for the
-		// just-opened session. Gated on the kernel backend, not just WithUseKernel,
-		// so it never fires when the kernel wasn't actually selected.
-		if _, ok := be.(*thrift.Backend); !ok {
-			conn.telemetry.RecordConnectionConfig(ctx, conn.id, kernelConnectionTelemetry(c.cfg))
-		}
 	}
 
 	// ServerProtocolVersion is Thrift-specific (not on the neutral backend

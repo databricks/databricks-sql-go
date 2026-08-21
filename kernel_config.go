@@ -14,6 +14,7 @@ import (
 	"github.com/databricks/databricks-sql-go/internal/backend/kernel"
 	"github.com/databricks/databricks-sql-go/internal/client"
 	"github.com/databricks/databricks-sql-go/internal/config"
+	"github.com/databricks/databricks-sql-go/telemetry"
 )
 
 // This file is intentionally NOT behind the `cgo && databricks_kernel` build tag.
@@ -150,6 +151,11 @@ func buildKernelConfig(cfg *config.Config, kauth kernel.Auth) kernel.Config {
 		// the same effective params the Thrift backend forwards, so they flow to the
 		// server identically with no per-backend translation.
 		SessionConf: cfg.EffectiveSessionParams(),
+		// Kernel-owned telemetry. The Go wrapper interceptor is skipped on the
+		// kernel path, but the kernel still needs the user's telemetry knobs and
+		// this binding's system identity for its own runtime.
+		Telemetry:                 kernelTelemetryConfig(cfg),
+		DriverSystemConfiguration: kernelDriverSystemConfiguration(cfg),
 	}
 	// TLS: the driver honors TLSConfig only for InsecureSkipVerify (see
 	// internal/client), so map exactly that knob to the kernel.
@@ -183,6 +189,39 @@ func buildKernelConfig(cfg *config.Config, kauth kernel.Auth) kernel.Config {
 	// nil leaves the kernel's own default policy in place.
 	kc.Retry = kernelRetryConfig(cfg)
 	return kc
+}
+
+func kernelTelemetryConfig(cfg *config.Config) *kernel.TelemetryConfig {
+	enabled := true
+	if val, isSet := cfg.EnableTelemetry.Get(); isSet {
+		enabled = val
+	}
+	return &kernel.TelemetryConfig{
+		Enabled:       enabled,
+		BatchSize:     cfg.TelemetryBatchSize,
+		FlushInterval: cfg.TelemetryFlushInterval,
+	}
+}
+
+func kernelDriverSystemConfiguration(cfg *config.Config) *kernel.DriverSystemConfiguration {
+	system := telemetry.GetSystemConfiguration(cfg.DriverVersion)
+	if system == nil {
+		return nil
+	}
+	return &kernel.DriverSystemConfiguration{
+		DriverVersion:   system.DriverVersion,
+		RuntimeName:     system.RuntimeName,
+		RuntimeVersion:  system.RuntimeVersion,
+		RuntimeVendor:   system.RuntimeVendor,
+		OSName:          system.OSName,
+		OSVersion:       system.OSVersion,
+		OSArch:          system.OSArch,
+		DriverName:      system.DriverName,
+		ClientAppName:   system.ClientAppName,
+		LocaleName:      system.LocaleName,
+		CharSetEncoding: system.CharSetEncoding,
+		ProcessName:     system.ProcessName,
+	}
 }
 
 // kernelRetryPlaceholderWaits are the backoff bounds substituted when the caller
@@ -323,10 +362,6 @@ func resolveKernelProxy(cfg *config.Config, kc *kernel.Config) {
 //   - anything else                     → rejected loudly (token-provider / external
 //     / static), so the failure names the cause instead of surfacing as
 //     an opaque Unauthenticated.
-func resolveKernelAuth(cfg *config.Config) (kernel.Auth, error) {
-	return resolveKernelAuthContext(context.Background(), cfg)
-}
-
 func resolveKernelAuthContext(ctx context.Context, cfg *config.Config) (kernel.Auth, error) {
 	switch a := cfg.Authenticator.(type) {
 	case *federatedTokenAuthenticator:

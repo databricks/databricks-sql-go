@@ -93,6 +93,15 @@ type Config struct {
 	// forwarded to the setter to explicitly disable on-disk persistence by default.
 	// Maps to kernel_session_config_set_u2m_token_cache_config.
 	TokenCacheEnabled bool
+
+	// Telemetry carries the kernel-owned telemetry collection settings. The Go
+	// wrapper telemetry interceptor is disabled on the kernel path; these fields
+	// are the configuration the kernel must use for its own telemetry runtime.
+	Telemetry *TelemetryConfig
+
+	// DriverSystemConfiguration is the driver/runtime identity stamped onto
+	// kernel-owned telemetry. Nil lets the kernel use its built-in defaults.
+	DriverSystemConfiguration *DriverSystemConfiguration
 }
 
 // RetryConfig is the driver's HTTP retry policy forwarded to the kernel: the
@@ -121,4 +130,35 @@ func requestTimeoutMilliseconds(timeout time.Duration) int64 {
 		return 1
 	}
 	return timeout.Milliseconds()
+}
+
+// TelemetryConfig is the kernel telemetry subset exposed by the Go driver. It
+// mirrors the kernel telemetry C ABI: Enabled follows the user-supplied
+// enableTelemetry value, defaulting to true when unset. Zero-valued tuning fields
+// keep the kernel defaults until applyTelemetry fills them for the setter.
+type TelemetryConfig struct {
+	Enabled           bool
+	BatchSize         int
+	FlushInterval     time.Duration
+	MaxRetries        uint32
+	RetryDelay        time.Duration
+	CloseFlushTimeout time.Duration
+}
+
+// DriverSystemConfiguration mirrors the kernel's DriverSystemConfiguration
+// fields without importing the Go telemetry package into this lower-level
+// backend package.
+type DriverSystemConfiguration struct {
+	DriverVersion   string
+	RuntimeName     string
+	RuntimeVersion  string
+	RuntimeVendor   string
+	OSName          string
+	OSVersion       string
+	OSArch          string
+	DriverName      string
+	ClientAppName   string
+	LocaleName      string
+	CharSetEncoding string
+	ProcessName     string
 }
