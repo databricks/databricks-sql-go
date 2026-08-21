@@ -195,19 +195,21 @@ level the lines are suppressed with no cost.
 
 	dbsql.SetLogLevel("debug") // or DATABRICKS_LOG_LEVEL=debug
 
-The same level is mapped into the kernel's internal (Rust) log subscriber, with two
-caveats specific to the Rust lines: they go to stderr directly (not affected by
-logger.SetLogOutput), and their verbosity is fixed when the first kernel session in
-the process is opened — set the level before that first connect to control them.
+The same level is mapped into the kernel's internal (Rust) log subscriber. Its
+records are forwarded into the driver's logger, so they use the same output as the
+Go and Thrift paths, including a local file configured with logger.SetLogOutput.
+Changing SetLogOutput later safely retargets all three paths. The Rust verbosity is
+fixed when the first kernel session in the process is opened, so set the level
+before that first connect.
 
 For finer control of the Rust verbosity independent of the driver level, set
-DBSQL_KERNEL_DEBUG to any non-empty value: it forces the kernel subscriber on and
-defers to RUST_LOG. Filter on the target databricks::sql::kernel (note the colons):
+DBSQL_KERNEL_DEBUG to any non-empty value: the callback then defers filtering to
+RUST_LOG. Filter on the target databricks::sql::kernel (note the colons):
 
 	# kernel logs only, at the kernel's own verbosity:
-	DBSQL_KERNEL_DEBUG=1 RUST_LOG=databricks::sql::kernel=debug ./your_app 2>&1
+	DBSQL_KERNEL_DEBUG=1 RUST_LOG=databricks::sql::kernel=debug ./your_app
 	# kernel logs plus its HTTP stack:
-	DBSQL_KERNEL_DEBUG=1 RUST_LOG=debug ./your_app 2>&1
+	DBSQL_KERNEL_DEBUG=1 RUST_LOG=debug ./your_app
 
 Supported on the kernel backend: PAT and OAuth (M2M via WithClientCredentials, U2M
 via the authType=oauthU2M DSN param); reading scalar, nested, and complex-typed

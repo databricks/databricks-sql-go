@@ -4,6 +4,7 @@ import (
 	"io"
 	"os"
 	"runtime"
+	"sync"
 	"time"
 
 	"github.com/mattn/go-isatty"
@@ -12,6 +13,27 @@ import (
 
 type DBSQLLogger struct {
 	zerolog.Logger
+}
+
+// sharedOutput is the process-wide destination behind every driver logger,
+// including logger values derived before a later SetLogOutput call. Serializing
+// writes keeps Go and kernel-callback records intact when they arrive from
+// different goroutines or native kernel threads.
+type sharedOutput struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+func (o *sharedOutput) Write(p []byte) (int, error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.w.Write(p)
+}
+
+func (o *sharedOutput) set(w io.Writer) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.w = w
 }
 
 // Track is a simple utility function to use with logger to log a message with a timestamp.
@@ -36,15 +58,15 @@ func (l *DBSQLLogger) Duration(msg string, start time.Time) {
 	l.Debug().Msgf("%v elapsed time: %v", msg, time.Since(start))
 }
 
-var Logger = &DBSQLLogger{
-	zerolog.New(os.Stderr).With().Timestamp().Logger(),
-}
+var output = &sharedOutput{w: os.Stderr}
+
+var Logger = &DBSQLLogger{zerolog.New(output).With().Timestamp().Logger()}
 
 // Enable pretty printing for interactive terminals and json for production.
 func init() {
 	// for tty terminal enable pretty logs
 	if isatty.IsTerminal(os.Stdout.Fd()) && runtime.GOOS != "windows" {
-		Logger = &DBSQLLogger{Logger.Output(zerolog.ConsoleWriter{Out: os.Stderr})}
+		output.set(zerolog.ConsoleWriter{Out: os.Stderr})
 	}
 	// by default only log warns or above
 	loglvl := zerolog.WarnLevel
@@ -72,7 +94,7 @@ func SetLogLevel(l string) error {
 
 // Sets logging output. Default is os.Stderr. If in terminal, pretty logs are enabled.
 func SetLogOutput(w io.Writer) {
-	Logger.Logger = Logger.Output(w)
+	output.set(w)
 }
 
 // Sets log to trace. -1
