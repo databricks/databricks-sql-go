@@ -330,12 +330,14 @@ func resolveKernelAuth(cfg *config.Config) (kernel.Auth, error) {
 		// (login.microsoftonline.com/{tenant}/v1/authorize). The Thrift path keeps
 		// the cloud-specific values (it needs them); only this kernel-path mapping
 		// is uniform. On AWS/GCP this is a no-op — a.U2MClientID() is already
-		// databricks-sql-connector and the scopes are already sql+offline_access.
+		// databricks-sql-connector and this scope slice is byte-for-byte the set
+		// oauth.GetScopes(host, nil) returns there (it appends offline_access,
+		// then sql), so the historical ordering is preserved too.
 		// RedirectPort stays zero (no user option; kernel default).
 		return kernel.Auth{
 			Mode:     kernel.AuthU2M,
 			ClientID: u2mKernelClientID,
-			Scopes:   []string{"sql", "offline_access"},
+			Scopes:   []string{"offline_access", "sql"},
 		}, nil
 	case nil, *noop.NoopAuth, *pat.PATAuth:
 		// PAT (or no explicit authenticator). WithAccessToken sets both

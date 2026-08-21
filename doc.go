@@ -227,11 +227,14 @@ OAuth U2M is interactive: on a cache miss, connecting launches the system browse
 blocks until login completes or the kernel's ~120s callback timeout expires. Because
 the C ABI can't interrupt session open mid-call, a connection-context deadline is not
 honored during that window. Use PAT or OAuth M2M for headless / deadline-bound
-connects. The kernel and Thrift backends use the same (cloud-inferred) U2M client id
-and request the same default scopes (offline_access + sql, or, on Azure,
-offline_access + <tenant>/user_impersonation): the kernel path forwards exactly the
-scopes the Thrift path computes, so both authorize identically against the built-in
-public client. Neither backend exposes a U2M-scopes option.
+connects. The kernel runs a single, cloud-agnostic in-house U2M flow (OIDC discovery
+against {host}/oidc, no Azure branching), so on every cloud the kernel path uses the
+built-in databricks-sql-connector client and requests offline_access + sql. It does
+NOT forward the cloud-inferred client id / scopes the Thrift path computes: on
+AWS/GCP those already match, but on Azure the Thrift path uses the Entra-direct app
+id and <tenant>/user_impersonation scope, which would break the kernel's
+workspace-federated flow. So the two backends authorize identically on AWS/GCP and
+deliberately diverge on Azure. Neither backend exposes a U2M-scopes option.
 
 Experimental kernel-only options (rejected by the default backend; the
 WithKernel* prefix marks them experimental):

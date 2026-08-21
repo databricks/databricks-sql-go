@@ -71,8 +71,8 @@ func TestResolveKernelAuthRealAuthenticators(t *testing.T) {
 		// Azure host. The kernel runs one cloud-blind in-house workspace-federated
 		// U2M flow; feeding it the Entra-direct app breaks it. See
 		// resolveKernelAuth's U2M case.
-		if got.ClientID != "databricks-sql-connector" {
-			t.Errorf("U2M clientID = %q, want databricks-sql-connector (in-house app, cloud-agnostic on the kernel path)", got.ClientID)
+		if got.ClientID != u2mKernelClientID {
+			t.Errorf("U2M clientID = %q, want %s (in-house app, cloud-agnostic on the kernel path)", got.ClientID, u2mKernelClientID)
 		}
 		if want := []string{"sql", "offline_access"}; !reflect.DeepEqual(got.Scopes, want) {
 			t.Errorf("U2M scopes = %v, want %v (in-house, cloud-agnostic)", got.Scopes, want)

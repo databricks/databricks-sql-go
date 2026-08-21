@@ -20,18 +20,20 @@ const (
 // validateKernelConfig); OpenSession maps it to exactly one
 // kernel_session_config_set_auth_* call.
 // Scopes and RedirectPort map to the optional args of set_auth_u2m and are wired
-// through to it by setAuth. resolveKernelAuth populates Scopes with the same
-// cloud-specific set the Thrift path requests (via oauth.GetScopes) so both
-// backends authorize identically; RedirectPort stays zero (no user option, kernel
-// default 8020) but is kept so kernel.Auth models the full set_auth_u2m surface —
-// a future WithOAuthRedirectPort becomes populating it, not re-plumbing the setter.
-// TestSetAuthByMode's "U2M full" case pins the marshalling of both.
+// through to it by setAuth. For U2M, resolveKernelAuth populates ClientID/Scopes
+// with the fixed in-house databricks-sql-connector client and offline_access + sql
+// on every cloud (NOT the cloud-inferred Thrift values), because the kernel runs one
+// in-house workspace-federated flow with no Azure branching. RedirectPort stays zero
+// (no user option, kernel default 8020) but is kept so kernel.Auth models the full
+// set_auth_u2m surface — a future WithOAuthRedirectPort becomes populating it, not
+// re-plumbing the setter. TestSetAuthByMode's "U2M full" case pins the marshalling
+// of both.
 type Auth struct {
 	Mode         AuthMode
 	Token        string   // PAT
-	ClientID     string   // M2M + U2M (U2M: the cloud-inferred Go client id)
+	ClientID     string   // M2M + U2M (U2M: fixed in-house client, cloud-agnostic)
 	ClientSecret string   // M2M
-	Scopes       []string // U2M — Thrift-parity scopes from oauth.GetScopes; nil → kernel default
+	Scopes       []string // U2M — fixed offline_access + sql (cloud-agnostic); nil → kernel default
 	RedirectPort uint16   // U2M — no user option today; 0 → kernel default port (8020)
 }
 
@@ -69,12 +71,15 @@ func M2MScopesSupported(scopes []string) bool {
 	}
 }
 
-// U2MCredentialsProvider is implemented by the OAuth U2M authenticator to expose
-// the cloud-inferred client id the kernel should use for its browser/PKCE flow (so
-// the kernel path uses the same client id the Thrift path would). Internal for the
-// same reason as M2MCredentialsProvider; satisfied structurally by the unexported
-// u2m authenticator.
+// U2MCredentialsProvider is implemented by the OAuth U2M authenticator. The kernel
+// backend asserts this interface only to DETECT that the interactive U2M flow is
+// selected — it does NOT forward the returned (cloud-inferred) client id. The kernel
+// runs a single in-house workspace-federated flow on every cloud, so resolveKernelAuth
+// uses the fixed built-in databricks-sql-connector client and offline_access + sql
+// scopes instead. Internal for the same reason as M2MCredentialsProvider; satisfied
+// structurally by the unexported u2m authenticator.
 type U2MCredentialsProvider interface {
-	// U2MClientID returns the OAuth client id for the U2M browser flow.
+	// U2MClientID returns the OAuth client id for the U2M browser flow. Used by the
+	// kernel path only as a presence marker (see the interface doc above).
 	U2MClientID() string
 }

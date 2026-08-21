@@ -17,7 +17,7 @@ import (
 
 // nonPATAuth stands in for any non-PAT, non-OAuth authenticator (token-provider /
 // external / federated) — the kernel backend must reject it. It implements neither
-// auth.M2MCredentialsProvider nor auth.U2MCredentialsProvider.
+// kernel.M2MCredentialsProvider nor kernel.U2MCredentialsProvider.
 type nonPATAuth struct{}
 
 func (nonPATAuth) Authenticate(*http.Request) error { return nil }
@@ -172,7 +172,7 @@ func TestValidateKernelConfig(t *testing.T) {
 	t.Run("OAuth U2M resolves to a U2M descriptor", func(t *testing.T) {
 		c := baseKernelConfig()
 		c.AccessToken = ""
-		// A U2M authenticator selects the U2M path via the auth.U2MCredentialsProvider
+		// A U2M authenticator selects the U2M path via the kernel.U2MCredentialsProvider
 		// interface. On the kernel path the descriptor is CLOUD-AGNOSTIC: resolveKernelAuth
 		// forwards the in-house app + scopes uniformly (it deliberately does NOT read the
 		// authenticator's cloud-inferred client id), so an Azure host would resolve to the
@@ -183,13 +183,13 @@ func TestValidateKernelConfig(t *testing.T) {
 		if err != nil {
 			t.Fatalf("U2M should validate, got %v", err)
 		}
-		if a.Mode != kernel.AuthU2M || a.ClientID != "databricks-sql-connector" {
-			t.Errorf("auth = %+v, want mode=U2M clientID=databricks-sql-connector (in-house, cloud-agnostic)", a)
+		if a.Mode != kernel.AuthU2M || a.ClientID != u2mKernelClientID {
+			t.Errorf("auth = %+v, want mode=U2M clientID=%s (in-house, cloud-agnostic)", a, u2mKernelClientID)
 		}
 		// The kernel path forwards the fixed in-house scopes for every cloud, not the
 		// cloud-specific oauth.GetScopes set (which on Azure would add user_impersonation
 		// and derail the kernel's in-house flow to AAD).
-		if want := []string{"sql", "offline_access"}; !reflect.DeepEqual(a.Scopes, want) {
+		if want := []string{"offline_access", "sql"}; !reflect.DeepEqual(a.Scopes, want) {
 			t.Errorf("U2M scopes = %v, want %v (in-house, cloud-agnostic)", a.Scopes, want)
 		}
 	})
