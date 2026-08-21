@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/databricks/databricks-sql-go/logger"
 	"github.com/rs/zerolog"
@@ -23,16 +24,22 @@ func TestLogSinkForwardMapsLevels(t *testing.T) {
 		{"trace", "trace"},
 		{"future", "debug"},
 	}
+	emittedAt := time.Now()
 	for _, tc := range cases {
 		var buf bytes.Buffer
-		sink := &logSink{log: logger.Logger.Output(&buf).Level(zerolog.TraceLevel)}
-		sink.forward(tc.level, "databricks::sql::kernel", "hello")
+		// Build the sink the way production does: hook-free over an explicit writer,
+		// so the only "time" field is the emission time forward stamps.
+		sink := &logSink{log: zerolog.New(&buf).Level(zerolog.TraceLevel)}
+		sink.forward(emittedAt, tc.level, "databricks::sql::kernel", "hello")
 		var record map[string]any
 		if err := json.Unmarshal(bytes.TrimSpace(buf.Bytes()), &record); err != nil {
 			t.Fatalf("level %q: %v", tc.level, err)
 		}
 		if record["level"] != tc.want || record["target"] != "databricks::sql::kernel" || record["message"] != "hello" {
 			t.Errorf("level %q: record = %#v", tc.level, record)
+		}
+		if _, ok := record[zerolog.TimestampFieldName]; !ok {
+			t.Errorf("level %q: record missing %q field: %#v", tc.level, zerolog.TimestampFieldName, record)
 		}
 	}
 }
@@ -65,9 +72,9 @@ func TestLogSinkFollowsLocalFileRetarget(t *testing.T) {
 
 	logger.SetLogOutput(first)
 	sink := newLogSink()
-	sink.forward("debug", "databricks::sql::kernel", "kernel first destination")
+	sink.forward(time.Now(), "debug", "databricks::sql::kernel", "kernel first destination")
 	logger.SetLogOutput(second)
-	sink.forward("warn", "databricks::sql::kernel", "kernel second destination")
+	sink.forward(time.Now(), "warn", "databricks::sql::kernel", "kernel second destination")
 
 	if err := first.Sync(); err != nil {
 		t.Fatal(err)

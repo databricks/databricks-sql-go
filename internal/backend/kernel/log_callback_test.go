@@ -50,16 +50,11 @@ func TestKernelCallbackWritesConfiguredFileEndToEnd(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		// The kernel record now crosses an async drain goroutine, so wait until it
-		// lands in the file before retargeting the output or closing it — otherwise
-		// the drain could write to stderr (post-retarget) or after Close. Bounded so
-		// a real failure surfaces as a missing probe in the parent, not a hang.
-		deadline := time.Now().Add(5 * time.Second)
-		for time.Now().Before(deadline) {
-			if b, _ := os.ReadFile(path); strings.Contains(string(b), rustLogFileProbe) { //nolint:gosec // Parent supplies its temp path.
-				break
-			}
-			time.Sleep(10 * time.Millisecond)
+		// The kernel record crosses an async drain goroutine, so flush it into the
+		// file before retargeting the output or closing it — otherwise the drain
+		// could write to stderr (post-retarget) or after Close.
+		if !flushKernelLogs(5 * time.Second) {
+			t.Fatal("kernel log flush timed out")
 		}
 
 		logger.SetLogOutput(os.Stderr)
@@ -100,12 +95,15 @@ func TestEnqueueKernelLog(t *testing.T) {
 	prev := logQueue.Swap(&ch)
 	t.Cleanup(func() { logQueue.Store(prev) })
 
-	enqueueKernelLog("debug", "databricks::sql::kernel", "callback probe")
+	emittedAt := time.Now()
+	enqueueKernelLog(emittedAt, "debug", "databricks::sql::kernel", "callback probe")
 	select {
 	case got := <-ch:
-		want := kernelLogRecord{"debug", "databricks::sql::kernel", "callback probe"}
-		if got != want {
-			t.Fatalf("enqueued record = %#v, want %#v", got, want)
+		if got.level != "debug" || got.target != "databricks::sql::kernel" || got.message != "callback probe" {
+			t.Fatalf("enqueued record = %#v", got)
+		}
+		if !got.emittedAt.Equal(emittedAt) {
+			t.Fatalf("emittedAt = %v, want %v", got.emittedAt, emittedAt)
 		}
 	default:
 		t.Fatal("record was not enqueued")
@@ -118,13 +116,13 @@ func TestEnqueueKernelLogDropsWhenFullAndNoopWhenUnset(t *testing.T) {
 	// Unset queue: must not block or panic.
 	prev := logQueue.Swap(nil)
 	t.Cleanup(func() { logQueue.Store(prev) })
-	enqueueKernelLog("warn", "t", "before install")
+	enqueueKernelLog(time.Now(), "warn", "t", "before install")
 
 	ch := make(chan kernelLogRecord, 1)
 	logQueue.Store(&ch)
 	before := kernelLogDropped()
-	enqueueKernelLog("warn", "t", "keeps the one slot") // fills the buffer
-	enqueueKernelLog("warn", "t", "must be dropped")    // buffer full → dropped
+	enqueueKernelLog(time.Now(), "warn", "t", "keeps the one slot") // fills the buffer
+	enqueueKernelLog(time.Now(), "warn", "t", "must be dropped")    // buffer full → dropped
 	if got := kernelLogDropped() - before; got != 1 {
 		t.Fatalf("dropped delta = %d, want 1", got)
 	}
@@ -148,8 +146,8 @@ func TestDrainRecoversFromWriterPanic(t *testing.T) {
 	go drainKernelLogs(ch, sink)
 	defer close(ch)
 
-	ch <- kernelLogRecord{"error", "t", "boom"} // triggers the panic
-	ch <- kernelLogRecord{"info", "t", "after"} // must still be delivered
+	ch <- kernelLogRecord{level: "error", target: "t", message: "boom"} // triggers the panic
+	ch <- kernelLogRecord{level: "info", target: "t", message: "after"} // must still be delivered
 	select {
 	case got := <-done:
 		if got != "after" {
@@ -157,5 +155,36 @@ func TestDrainRecoversFromWriterPanic(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("drain goroutine did not survive a writer panic")
+	}
+}
+
+// flushKernelLogs returns only after every record queued before it is written.
+func TestFlushKernelLogsWaitsForQueued(t *testing.T) {
+	seen := make(chan string, 8)
+	sink := &logSink{observe: func(_, _, message string) { seen <- message }}
+
+	ch := make(chan kernelLogRecord, 8)
+	prev := logQueue.Swap(&ch)
+	t.Cleanup(func() { logQueue.Store(prev) })
+	go drainKernelLogs(ch, sink)
+	defer close(ch)
+
+	enqueueKernelLog(time.Now(), "info", "t", "one")
+	enqueueKernelLog(time.Now(), "info", "t", "two")
+	if !flushKernelLogs(2 * time.Second) {
+		t.Fatal("flush timed out")
+	}
+	// The barrier is FIFO-ordered behind both records, so both are delivered.
+	if got := len(seen); got != 2 {
+		t.Fatalf("after flush, delivered %d records, want 2", got)
+	}
+}
+
+// flushKernelLogs is a no-op returning true when logging was never installed.
+func TestFlushKernelLogsNoopWhenUnset(t *testing.T) {
+	prev := logQueue.Swap(nil)
+	t.Cleanup(func() { logQueue.Store(prev) })
+	if !flushKernelLogs(time.Second) {
+		t.Fatal("flush with no queue should be a no-op returning true")
 	}
 }

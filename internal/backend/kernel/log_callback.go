@@ -22,6 +22,7 @@ import "C"
 import (
 	"sync"
 	"sync/atomic"
+	"time"
 	"unsafe"
 
 	"github.com/databricks/databricks-sql-go/logger"
@@ -29,11 +30,15 @@ import (
 
 // kernelLogRecord is an owned copy of one kernel tracing record. The C strings
 // are valid only for the duration of the callback, so the trampoline copies them
-// before the record leaves the kernel thread.
+// before the record leaves the kernel thread. A record with a non-nil done
+// channel is a flush barrier: the drain closes done (in FIFO order, after every
+// earlier record is written) and forwards nothing — see flushKernelLogs.
 type kernelLogRecord struct {
-	level   string
-	target  string
-	message string
+	emittedAt time.Time
+	level     string
+	target    string
+	message   string
+	done      chan struct{}
 }
 
 // kernelLogChannelCapacity bounds the hand-off buffer between kernel threads and
@@ -62,20 +67,22 @@ func kernelLogTrampoline(level, target, message *C.char, _ unsafe.Pointer) {
 	// kernel is given NULL, and the destination is reached through logQueue, so no
 	// Go pointer is ever fabricated into a C void* (which the GC could fault on).
 	defer func() { _ = recover() }()
-	// C.GoString copies each borrowed string into owned Go memory before the
-	// record can outlive the callback; the rest is pure Go (see enqueueKernelLog).
-	enqueueKernelLog(C.GoString(level), C.GoString(target), C.GoString(message))
+	// time.Now() here is the emission time — the callback fires synchronously on
+	// the kernel thread as the event is logged. C.GoString copies each borrowed
+	// string into owned Go memory before the record can outlive the callback; the
+	// rest is pure Go (see enqueueKernelLog).
+	enqueueKernelLog(time.Now(), C.GoString(level), C.GoString(target), C.GoString(message))
 }
 
 // enqueueKernelLog hands one already-owned record to the drain goroutine without
 // blocking. Split out of the cgo trampoline so the enqueue/drop policy is
 // testable without cgo (import "C" is not allowed in _test.go files).
-func enqueueKernelLog(level, target, message string) {
+func enqueueKernelLog(emittedAt time.Time, level, target, message string) {
 	qp := logQueue.Load()
 	if qp == nil {
 		return
 	}
-	rec := kernelLogRecord{level: level, target: target, message: message}
+	rec := kernelLogRecord{emittedAt: emittedAt, level: level, target: target, message: message}
 	// Non-blocking hand-off: never stall a kernel thread on a slow, contended, or
 	// re-entrant user writer. A full buffer drops the record and counts it.
 	select {
@@ -90,13 +97,61 @@ func enqueueKernelLog(level, target, message string) {
 // trampoline — keeps user I/O (and any driver re-entry it triggers) off the
 // kernel thread, honoring the C ABI's "return promptly / no re-entry" contract.
 func drainKernelLogs(ch <-chan kernelLogRecord, sink *logSink) {
+	baselineDrops := logDropped.Load()
+	warnedDrop := false
 	for rec := range ch {
+		// A flush barrier carries no record: closing done signals that every
+		// earlier record has been written (channel + drain are FIFO).
+		if rec.done != nil {
+			close(rec.done)
+			continue
+		}
 		// A writer panic must not kill the drain goroutine — an unrecovered
 		// goroutine panic is fatal to the process. Contain it per record.
 		func() {
 			defer func() { _ = recover() }()
-			sink.forward(rec.level, rec.target, rec.message)
+			sink.forward(rec.emittedAt, rec.level, rec.target, rec.message)
 		}()
+		// Surface log loss the first time the sink falls behind — from this
+		// goroutine, never the kernel thread. One-shot so a burst can't turn into
+		// log spam; the running total stays available via kernelLogDropped().
+		if !warnedDrop && logDropped.Load() > baselineDrops {
+			warnedDrop = true
+			logger.Logger.Warn().Uint64("dropped", logDropped.Load()-baselineDrops).Msg(
+				"[kernel] kernel log records dropped; the log sink is not keeping up " +
+					"(raise capacity or lower kernel verbosity)")
+		}
+	}
+}
+
+// flushKernelLogs blocks until every kernel record already queued has been
+// written, or until timeout elapses; it returns whether the flush completed. It
+// is a no-op returning true when kernel logging was never installed. Callers use
+// it to drain the asynchronous hand-off before closing the log writer, retargeting
+// output, or exiting — records still buffered at process exit are otherwise lost.
+// Best-effort: records dropped for a full buffer are gone, and records enqueued
+// after this call are not waited on.
+func flushKernelLogs(timeout time.Duration) bool {
+	qp := logQueue.Load()
+	if qp == nil {
+		return true
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
+	done := make(chan struct{})
+	// Enqueue the barrier behind everything already queued. A full buffer means
+	// the drain is behind; wait (bounded) for room rather than dropping the barrier.
+	select {
+	case *qp <- kernelLogRecord{done: done}:
+	case <-timer.C:
+		return false
+	}
+	select {
+	case <-done:
+		return true
+	case <-timer.C:
+		return false
 	}
 }
 
@@ -108,9 +163,9 @@ func installKernelLogCallback(level string, useNULL bool) {
 		}
 
 		ch := make(chan kernelLogRecord, kernelLogChannelCapacity)
-		go drainKernelLogs(ch, newLogSink())
-		// Publish before installing the subscriber so a callback that fires during
-		// kernel_init_logging_callback already sees the channel.
+		// Publish before installing so a callback that fires during
+		// kernel_init_logging_callback already has a channel to enqueue onto;
+		// records buffer until the drain starts just below.
 		logQueue.Store(&ch)
 
 		var clevel cStr
@@ -123,14 +178,16 @@ func installKernelLogCallback(level string, useNULL bool) {
 		if err := call(func() C.KernelStatusCode {
 			return C.kernel_init_logging_callback(clevel.c, C.kernel_log_cb(), nil)
 		}); err != nil {
-			// The subscriber did not install (commonly: a global subscriber is
-			// already set), so no callback will ever fire. Retire the drain:
-			// unpublish the channel first, then close it so the goroutine exits.
-			// Safe because no producer exists on this path.
+			// Install failed, so the callback layer was not installed. Unpublish the
+			// channel; no drain was started and nothing references it, so it is simply
+			// collected — no close (and thus no send-on-closed race to reason about).
 			logQueue.Store(nil)
-			close(ch)
 			logger.Logger.Warn().Msgf(
 				"databricks: kernel_init_logging_callback: %v (kernel logs not forwarded; proceeding)", err)
+			return
 		}
+		// Installed: start the single drain goroutine. Any records enqueued during
+		// the call above are buffered and delivered once it runs.
+		go drainKernelLogs(ch, newLogSink())
 	})
 }

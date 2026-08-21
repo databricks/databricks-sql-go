@@ -1,6 +1,8 @@
 package logger
 
 import (
+	"bytes"
+	"encoding/json"
 	"os"
 	"strings"
 	"sync"
@@ -131,5 +133,82 @@ func TestSetLogOutputPreservesLevelWriter(t *testing.T) {
 	}
 	if !foundWarn {
 		t.Fatalf("WriteLevel not called with WarnLevel; severity routing lost (levels=%v)", lw.levels)
+	}
+}
+
+// countingWriter is a self-synchronized destination: it counts complete records
+// and flags any that isn't a single well-formed JSON line (which is what byte
+// interleaving from unsynchronized concurrent writes would produce).
+type countingWriter struct {
+	mu    sync.Mutex
+	lines int
+	bad   int
+}
+
+func (w *countingWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if json.Valid(bytes.TrimSpace(p)) {
+		w.lines++
+	} else {
+		w.bad++
+	}
+	return len(p), nil
+}
+
+// Hot-swapping SetLogOutput under concurrent logging must not corrupt output when
+// the destination is safe for concurrent use — even when the same writer is
+// reapplied (each set builds a fresh SyncWriter, so the writer's own lock, not the
+// driver's, is what serializes writes straddling a swap). Run under -race.
+func TestConcurrentRetargetToSyncWriter(t *testing.T) {
+	prevLevel := Logger.GetLevel()
+	t.Cleanup(func() {
+		SetLogOutput(os.Stderr)
+		Logger.Logger = Logger.Level(prevLevel)
+	})
+
+	w := &countingWriter{}
+	SetLogOutput(w)
+	snapshot := Logger.Level(zerolog.TraceLevel)
+
+	const writers, perWriter = 8, 200
+
+	// Retargeter: reapply the same writer until stopped, each call replacing the
+	// SyncWriter wrapper while writes are in flight.
+	stop := make(chan struct{})
+	retargeterDone := make(chan struct{})
+	go func() {
+		defer close(retargeterDone)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				SetLogOutput(w)
+			}
+		}
+	}()
+
+	var wg sync.WaitGroup
+	wg.Add(writers)
+	for i := 0; i < writers; i++ {
+		go func() {
+			defer wg.Done()
+			for j := 0; j < perWriter; j++ {
+				snapshot.Info().Int("j", j).Msg("concurrent")
+			}
+		}()
+	}
+	wg.Wait()
+	close(stop)
+	<-retargeterDone
+
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.bad != 0 {
+		t.Fatalf("observed %d corrupted (non-JSON) writes", w.bad)
+	}
+	if w.lines != writers*perWriter {
+		t.Fatalf("wrote %d complete records, want %d", w.lines, writers*perWriter)
 	}
 }

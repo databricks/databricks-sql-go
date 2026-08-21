@@ -136,8 +136,25 @@ func SetLogLevel(l string) error {
 }
 
 // Sets logging output. Default is os.Stderr. If in terminal, pretty logs are enabled.
+// A nil writer is treated as io.Discard. Existing logger values (and the kernel
+// log bridge) follow later calls to this function.
+//
+// Writes are serialized per destination. If you hot-swap the output under
+// concurrent logging while reusing the same underlying writer across swaps, pass a
+// writer that is safe for concurrent use (os.File is; a bare bytes.Buffer is not):
+// records in flight across a swap are serialized by that writer, not by the driver.
 func SetLogOutput(w io.Writer) {
 	output.set(w)
+}
+
+// Output returns the process-wide destination proxy that Logger writes through.
+// Writes to it follow SetLogOutput exactly as Logger does, but it carries no
+// level/timestamp context of its own. Callers that forward already-rendered
+// records — such as the kernel log bridge — build their own zerolog.Logger over it
+// so they can supply their own fields (including an accurate emission timestamp)
+// instead of inheriting Logger's log-time one.
+func Output() io.Writer {
+	return output
 }
 
 // Sets log to trace. -1
