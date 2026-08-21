@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/databricks/databricks-sql-go/auth/noop"
-	"github.com/databricks/databricks-sql-go/auth/oauth"
 	"github.com/databricks/databricks-sql-go/auth/pat"
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 	"github.com/databricks/databricks-sql-go/internal/backend/kernel"
@@ -22,6 +21,14 @@ import (
 // including the reflective exhaustiveness check that guards against a future
 // Config field being silently dropped — run under CGO_ENABLED=0. The tagged
 // newKernelBackend calls validateKernelConfig, then assembles the cgo kernel.Config.
+
+// u2mKernelClientID is the in-house Databricks OAuth app the kernel path uses for
+// U2M on EVERY cloud. It is the built-in databricks-sql-connector client — the
+// AWS/GCP default and the kernel's own U2M default. Deliberately cloud-agnostic:
+// the kernel runs one in-house workspace-federated flow (no Azure branching), so
+// the kernel path must not send the Azure Entra-direct app id. See
+// resolveKernelAuth's U2M case.
+const u2mKernelClientID = "databricks-sql-connector"
 
 // validateKernelConfig enforces the kernel backend's "nothing silently ignored"
 // contract: it rejects every option the kernel path can't yet honor with a clear
@@ -310,15 +317,26 @@ func resolveKernelAuth(cfg *config.Config) (kernel.Auth, error) {
 		clientID, clientSecret := a.M2MCredentials()
 		return kernel.Auth{Mode: kernel.AuthM2M, ClientID: clientID, ClientSecret: clientSecret}, nil
 	case kernel.U2MCredentialsProvider:
-		// Forward the SAME cloud-specific scopes the Thrift path requests via
-		// oauth.GetScopes (offline_access + sql on AWS/GCP, offline_access +
-		// <tenant>/user_impersonation on Azure), so both backends authorize against
-		// the built-in databricks-sql-connector client identically. Without this the
-		// kernel applied its own default set (all-apis + offline_access), which a
-		// workspace whose public client isn't granted all-apis rejects with
-		// access_denied. RedirectPort is still left zero (no user option; kernel
-		// default 8020). Passing nil to GetScopes yields the pure cloud-default set.
-		return kernel.Auth{Mode: kernel.AuthU2M, ClientID: a.U2MClientID(), Scopes: oauth.GetScopes(cfg.Host, nil)}, nil
+		// The kernel runs a single, cloud-agnostic in-house U2M flow: it does OIDC
+		// discovery against {host}/oidc and uses that authorize endpoint verbatim —
+		// it has NO Azure/cloud branching. That in-house workspace-federated flow
+		// works on every cloud including Azure (the workspace federates the browser
+		// login to Entra server-side). So forward the in-house app +
+		// `sql offline_access` scopes UNIFORMLY across clouds; do NOT forward the
+		// Azure Entra-direct app id / `user_impersonation` scope that
+		// a.U2MClientID() / oauth.GetScopes pick for an Azure host. Handing those
+		// Entra-direct values to the kernel's in-house flow makes the workspace
+		// federation route the browser to AAD and yields a broken authorize URL
+		// (login.microsoftonline.com/{tenant}/v1/authorize). The Thrift path keeps
+		// the cloud-specific values (it needs them); only this kernel-path mapping
+		// is uniform. On AWS/GCP this is a no-op — a.U2MClientID() is already
+		// databricks-sql-connector and the scopes are already sql+offline_access.
+		// RedirectPort stays zero (no user option; kernel default).
+		return kernel.Auth{
+			Mode:     kernel.AuthU2M,
+			ClientID: u2mKernelClientID,
+			Scopes:   []string{"sql", "offline_access"},
+		}, nil
 	case nil, *noop.NoopAuth, *pat.PATAuth:
 		// PAT (or no explicit authenticator). WithAccessToken sets both
 		// cfg.AccessToken and a *pat.PATAuth, but WithAuthenticator(&pat.PATAuth{...})

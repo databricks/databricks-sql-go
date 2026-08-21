@@ -2,6 +2,7 @@
 
 ## Unreleased
 - Improve telemetry error reporting: driver failures are now categorized by cause instead of reported as a generic error (databricks/databricks-sql-go#414, #415, #417, #419, #424)
+- Fix OAuth U2M on the kernel backend (`WithUseKernel(true)`) against **Azure** workspaces: `resolveKernelAuth` now forwards the in-house OAuth app (`databricks-sql-connector`) + `sql offline_access` scopes **uniformly across all clouds**, instead of the Azure Entra-direct app id + `user_impersonation` scope that the Thrift path infers from the host. The kernel runs a single cloud-blind in-house workspace-federated U2M flow (it uses the workspace's OIDC-discovered authorize endpoint verbatim), so feeding it the Entra-direct app made the workspace federation route the browser to a broken AAD authorize URL. AWS/GCP behavior is unchanged (those already resolved to the in-house app + scopes). The Thrift path is unaffected.
 
 ## v1.14.0 (2026-07-13)
 - **Minimum Go version is now 1.25.0** (previously 1.20): the `go` directive was raised to 1.25.0 while clearing OSV-Scanner findings and updating dependencies. Consumers building with an older toolchain will need to upgrade Go (databricks/databricks-sql-go#368)
