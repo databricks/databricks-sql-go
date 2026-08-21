@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime/cgo"
 	"strings"
 	"testing"
 	"time"
@@ -51,6 +50,18 @@ func TestKernelCallbackWritesConfiguredFileEndToEnd(t *testing.T) {
 			t.Fatal(err)
 		}
 
+		// The kernel record now crosses an async drain goroutine, so wait until it
+		// lands in the file before retargeting the output or closing it — otherwise
+		// the drain could write to stderr (post-retarget) or after Close. Bounded so
+		// a real failure surfaces as a missing probe in the parent, not a hang.
+		deadline := time.Now().Add(5 * time.Second)
+		for time.Now().Before(deadline) {
+			if b, _ := os.ReadFile(path); strings.Contains(string(b), rustLogFileProbe) { //nolint:gosec // Parent supplies its temp path.
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+
 		logger.SetLogOutput(os.Stderr)
 		if err := file.Sync(); err != nil {
 			t.Fatal(err)
@@ -80,33 +91,71 @@ func TestKernelCallbackWritesConfiguredFileEndToEnd(t *testing.T) {
 	}
 }
 
-func TestLogCallbackRoundTrip(t *testing.T) {
-	type record struct{ level, target, message string }
-	received := make(chan record, 1)
-	h := cgo.NewHandle(&logSink{observe: func(level, target, message string) {
-		received <- record{level, target, message}
-	}})
-	defer h.Delete()
+// The forward path enqueues an owned record onto the bounded channel. (The cgo
+// trampoline copies the borrowed C strings via C.GoString, then calls this; that
+// tiny boundary can't be driven from a _test.go file because import "C" is
+// disallowed there, so the testable logic lives in enqueueKernelLog.)
+func TestEnqueueKernelLog(t *testing.T) {
+	ch := make(chan kernelLogRecord, 1)
+	prev := logQueue.Swap(&ch)
+	t.Cleanup(func() { logQueue.Store(prev) })
 
-	invokeLogTrampolineForTest(h, "debug", "databricks::sql::kernel", "callback probe")
+	enqueueKernelLog("debug", "databricks::sql::kernel", "callback probe")
 	select {
-	case got := <-received:
-		want := record{"debug", "databricks::sql::kernel", "callback probe"}
+	case got := <-ch:
+		want := kernelLogRecord{"debug", "databricks::sql::kernel", "callback probe"}
 		if got != want {
-			t.Fatalf("callback record = %#v, want %#v", got, want)
+			t.Fatalf("enqueued record = %#v, want %#v", got, want)
 		}
 	default:
-		t.Fatal("callback did not reach the Go sink")
+		t.Fatal("record was not enqueued")
 	}
 }
 
-func TestLogCallbackPanicDoesNotCrossABI(t *testing.T) {
-	h := cgo.NewHandle(&logSink{observe: func(string, string, string) {
-		panic("sink failure")
-	}})
-	defer h.Delete()
+// A full buffer drops the record and counts it rather than blocking the kernel
+// thread. A nil queue (logging not installed) is a safe no-op.
+func TestEnqueueKernelLogDropsWhenFullAndNoopWhenUnset(t *testing.T) {
+	// Unset queue: must not block or panic.
+	prev := logQueue.Swap(nil)
+	t.Cleanup(func() { logQueue.Store(prev) })
+	enqueueKernelLog("warn", "t", "before install")
 
-	// The trampoline's recovery boundary converts a logger panic into a dropped
-	// diagnostic instead of allowing it to cross cgo and terminate the process.
-	invokeLogTrampolineForTest(h, "error", "databricks::sql::kernel", "boom")
+	ch := make(chan kernelLogRecord, 1)
+	logQueue.Store(&ch)
+	before := kernelLogDropped()
+	enqueueKernelLog("warn", "t", "keeps the one slot") // fills the buffer
+	enqueueKernelLog("warn", "t", "must be dropped")    // buffer full → dropped
+	if got := kernelLogDropped() - before; got != 1 {
+		t.Fatalf("dropped delta = %d, want 1", got)
+	}
+	if len(ch) != 1 {
+		t.Fatalf("channel len = %d, want 1 (non-blocking drop)", len(ch))
+	}
+}
+
+// A panicking writer must not kill the drain goroutine (an unrecovered goroutine
+// panic is fatal to the process); the drain contains it and keeps processing.
+func TestDrainRecoversFromWriterPanic(t *testing.T) {
+	done := make(chan string, 1)
+	sink := &logSink{observe: func(_, _, message string) {
+		if message == "boom" {
+			panic("writer failure")
+		}
+		done <- message
+	}}
+
+	ch := make(chan kernelLogRecord, 2)
+	go drainKernelLogs(ch, sink)
+	defer close(ch)
+
+	ch <- kernelLogRecord{"error", "t", "boom"} // triggers the panic
+	ch <- kernelLogRecord{"info", "t", "after"} // must still be delivered
+	select {
+	case got := <-done:
+		if got != "after" {
+			t.Fatalf("delivered %q, want %q", got, "after")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("drain goroutine did not survive a writer panic")
+	}
 }

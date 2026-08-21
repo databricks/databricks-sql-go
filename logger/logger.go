@@ -4,7 +4,7 @@ import (
 	"io"
 	"os"
 	"runtime"
-	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/mattn/go-isatty"
@@ -16,24 +16,67 @@ type DBSQLLogger struct {
 }
 
 // sharedOutput is the process-wide destination behind every driver logger,
-// including logger values derived before a later SetLogOutput call. Serializing
-// writes keeps Go and kernel-callback records intact when they arrive from
-// different goroutines or native kernel threads.
+// including logger values derived before a later SetLogOutput call. The current
+// destination is held behind an atomic pointer and wrapped in a per-destination
+// synchronized, level-aware writer. This gives three properties the driver's
+// logging (Go, Thrift, and forwarded kernel records) relies on:
+//
+//   - Retargeting (set) is a single atomic store: it never waits on an in-flight
+//     user Write, is never blocked by a slow/stuck writer, and never holds a lock
+//     across arbitrary user code — so SetLogOutput can't self-deadlock and a stuck
+//     writer can always be replaced.
+//   - Concurrent records to one destination stay intact (zerolog.SyncWriter
+//     serializes writes per destination).
+//   - A zerolog.LevelWriter destination keeps severity-aware routing: the proxy
+//     itself implements LevelWriter, so zerolog calls WriteLevel on it and it
+//     forwards WriteLevel to the destination.
 type sharedOutput struct {
-	mu sync.Mutex
-	w  io.Writer
+	dst atomic.Pointer[zerolog.LevelWriter]
+}
+
+func newSharedOutput(w io.Writer) *sharedOutput {
+	o := &sharedOutput{}
+	o.set(w)
+	return o
+}
+
+// set publishes w as the current destination. A nil writer is normalized to
+// io.Discard, matching the historical zerolog.New(nil) behavior (before the proxy
+// existed, SetLogOutput(nil) → Logger.Output(nil) → io.Discard); without this the
+// next log would panic on a nil-interface Write.
+func (o *sharedOutput) set(w io.Writer) {
+	if w == nil {
+		w = io.Discard
+	}
+	// SyncWriter serializes concurrent writes to this destination and preserves a
+	// LevelWriter's WriteLevel (a plain writer is adapted). The result always
+	// implements LevelWriter; keep a fallback adapter in case that ever changes.
+	sw := zerolog.SyncWriter(w)
+	lw, ok := sw.(zerolog.LevelWriter)
+	if !ok {
+		lw = plainLevelWriter{sw}
+	}
+	o.dst.Store(&lw)
+}
+
+func (o *sharedOutput) current() zerolog.LevelWriter {
+	return *o.dst.Load()
 }
 
 func (o *sharedOutput) Write(p []byte) (int, error) {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	return o.w.Write(p)
+	return o.current().Write(p)
 }
 
-func (o *sharedOutput) set(w io.Writer) {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	o.w = w
+func (o *sharedOutput) WriteLevel(l zerolog.Level, p []byte) (int, error) {
+	return o.current().WriteLevel(l, p)
+}
+
+// plainLevelWriter adapts an io.Writer that is not a zerolog.LevelWriter, routing
+// WriteLevel to Write (dropping the level, as zerolog's own adapter does).
+type plainLevelWriter struct{ io.Writer }
+
+func (p plainLevelWriter) WriteLevel(_ zerolog.Level, b []byte) (int, error) {
+	return p.Write(b)
 }
 
 // Track is a simple utility function to use with logger to log a message with a timestamp.
@@ -58,7 +101,7 @@ func (l *DBSQLLogger) Duration(msg string, start time.Time) {
 	l.Debug().Msgf("%v elapsed time: %v", msg, time.Since(start))
 }
 
-var output = &sharedOutput{w: os.Stderr}
+var output = newSharedOutput(os.Stderr)
 
 var Logger = &DBSQLLogger{zerolog.New(output).With().Timestamp().Logger()}
 
