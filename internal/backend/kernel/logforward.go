@@ -8,19 +8,20 @@ import (
 	"github.com/rs/zerolog"
 )
 
-// logSink is the Go destination for kernel tracing records. Its logger comes from
-// logger.NewForwardingLogger rather than being derived from logger.Logger, so it
-// (a) still follows SetLogOutput, (b) is ungated at TraceLevel because the kernel
-// already applied its configured level, and (c) carries no auto-timestamp hook —
-// forward stamps each record with the emission time captured on the kernel thread,
-// not the drain time.
+// logSink is the Go destination for kernel tracing records. It forwards through
+// logger.ForwardingSink (not a logger derived from logger.Logger), so it (a) still
+// follows SetLogOutput, (b) is ungated at TraceLevel because the kernel already
+// applied its configured level, (c) carries no auto-timestamp hook — forward stamps
+// each record with the emission time captured on the kernel thread, not the drain
+// time — and (d) cannot be round-tripped into SetLogOutput (ForwardingSink is not
+// an io.Writer), which would deadlock.
 type logSink struct {
-	log     zerolog.Logger
+	sink    *logger.ForwardingSink
 	observe func(level, target, message string)
 }
 
 func newLogSink() *logSink {
-	return &logSink{log: logger.NewForwardingLogger().Level(zerolog.TraceLevel)}
+	return &logSink{sink: logger.NewForwardingSink()}
 }
 
 // forward writes one kernel record. emittedAt is the time the kernel emitted the
@@ -33,8 +34,7 @@ func (s *logSink) forward(emittedAt time.Time, level, target, message string) {
 	if s.observe != nil {
 		s.observe(level, target, message)
 	}
-	ev := s.event(level)
-	ev.Time(zerolog.TimestampFieldName, emittedAt).Str("target", target).Msg(message)
+	s.event(level).Time(zerolog.TimestampFieldName, emittedAt).Str("target", target).Msg(message)
 }
 
 // event picks the zerolog event for a kernel level string. An unknown level maps
@@ -42,16 +42,16 @@ func (s *logSink) forward(emittedAt time.Time, level, target, message string) {
 func (s *logSink) event(level string) *zerolog.Event {
 	switch strings.ToLower(level) {
 	case "error":
-		return s.log.Error()
+		return s.sink.Event(zerolog.ErrorLevel)
 	case "warn":
-		return s.log.Warn()
+		return s.sink.Event(zerolog.WarnLevel)
 	case "info":
-		return s.log.Info()
+		return s.sink.Event(zerolog.InfoLevel)
 	case "debug":
-		return s.log.Debug()
+		return s.sink.Event(zerolog.DebugLevel)
 	case "trace":
-		return s.log.Trace()
+		return s.sink.Event(zerolog.TraceLevel)
 	default:
-		return s.log.Debug().Str("kernelLevel", level)
+		return s.sink.Event(zerolog.DebugLevel).Str("kernelLevel", level)
 	}
 }

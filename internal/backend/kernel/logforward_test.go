@@ -24,12 +24,15 @@ func TestLogSinkForwardMapsLevels(t *testing.T) {
 		{"trace", "trace"},
 		{"future", "debug"},
 	}
+	t.Cleanup(func() { logger.SetLogOutput(os.Stderr) })
 	emittedAt := time.Now()
 	for _, tc := range cases {
 		var buf bytes.Buffer
-		// Build the sink the way production does: hook-free over an explicit writer,
-		// so the only "time" field is the emission time forward stamps.
-		sink := &logSink{log: zerolog.New(&buf).Level(zerolog.TraceLevel)}
+		// The sink forwards through the shared output; point it at a buffer to
+		// capture the single record and confirm it is one hook-free JSON line whose
+		// only timestamp is the emission time forward stamps.
+		logger.SetLogOutput(&buf)
+		sink := newLogSink()
 		sink.forward(emittedAt, tc.level, "databricks::sql::kernel", "hello")
 		var record map[string]any
 		if err := json.Unmarshal(bytes.TrimSpace(buf.Bytes()), &record); err != nil {

@@ -3,6 +3,7 @@
 package kernel
 
 import (
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -134,13 +135,16 @@ func TestEnqueueKernelLogDropsWhenFullAndNoopWhenUnset(t *testing.T) {
 // A panicking writer must not kill the drain goroutine (an unrecovered goroutine
 // panic is fatal to the process); the drain contains it and keeps processing.
 func TestDrainRecoversFromWriterPanic(t *testing.T) {
+	t.Cleanup(func() { logger.SetLogOutput(os.Stderr) })
+	logger.SetLogOutput(io.Discard) // discard the sink's forwarded records
 	done := make(chan string, 1)
-	sink := &logSink{observe: func(_, _, message string) {
+	sink := newLogSink()
+	sink.observe = func(_, _, message string) {
 		if message == "boom" {
 			panic("writer failure")
 		}
 		done <- message
-	}}
+	}
 
 	ch := make(chan kernelLogRecord, 2)
 	go drainKernelLogs(ch, sink)
@@ -160,8 +164,11 @@ func TestDrainRecoversFromWriterPanic(t *testing.T) {
 
 // flushKernelLogs returns only after every record queued before it is written.
 func TestFlushKernelLogsWaitsForQueued(t *testing.T) {
+	t.Cleanup(func() { logger.SetLogOutput(os.Stderr) })
+	logger.SetLogOutput(io.Discard) // discard the sink's forwarded records
 	seen := make(chan string, 8)
-	sink := &logSink{observe: func(_, _, message string) { seen <- message }}
+	sink := newLogSink()
+	sink.observe = func(_, _, message string) { seen <- message }
 
 	ch := make(chan kernelLogRecord, 8)
 	prev := logQueue.Swap(&ch)

@@ -3,6 +3,7 @@ package logger
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"os"
 	"strings"
 	"sync"
@@ -133,6 +134,17 @@ func TestSetLogOutputPreservesLevelWriter(t *testing.T) {
 	}
 	if !foundWarn {
 		t.Fatalf("WriteLevel not called with WarnLevel; severity routing lost (levels=%v)", lw.levels)
+	}
+}
+
+// A ForwardingSink must not be an io.Writer. If it were, SetLogOutput(sink) would
+// store it as the destination and its own writes would route back through the
+// SyncWriter that wraps it (output -> SyncWriter -> sink -> output), deadlocking
+// the next record on the re-entered mutex — the same trap that made returning a
+// zerolog.Logger (which implements io.Writer) unsafe.
+func TestForwardingSinkIsNotAnIOWriter(t *testing.T) {
+	if _, ok := any(NewForwardingSink()).(io.Writer); ok {
+		t.Fatal("ForwardingSink must not implement io.Writer (would enable a self-referential SetLogOutput deadlock)")
 	}
 }
 

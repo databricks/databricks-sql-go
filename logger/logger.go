@@ -147,18 +147,32 @@ func SetLogOutput(w io.Writer) {
 	output.set(w)
 }
 
-// NewForwardingLogger returns a zerolog.Logger that writes through the same
-// process-wide destination as Logger — so it follows SetLogOutput — but carries
-// none of Logger's context: no level gate and no timestamp hook. It is for callers
-// that forward already-rendered records and supply their own fields (including an
-// accurate timestamp), such as the kernel log bridge.
+// ForwardingSink emits already-rendered log records from an external source (such
+// as the Rust kernel) to the driver's shared destination. It follows SetLogOutput
+// and bypasses Logger's level gate and timestamp hook, so the source can supply its
+// own level and its own (emission-time) timestamp.
 //
-// It deliberately returns a Logger, not the underlying writer: exposing the writer
-// invites SetLogOutput(Output()) (e.g. a save/restore of the "current" output),
-// which would wrap the shared proxy around itself and deadlock the next write on
-// the re-entered SyncWriter mutex.
-func NewForwardingLogger() zerolog.Logger {
-	return zerolog.New(output)
+// It is deliberately NOT an io.Writer — and neither is the *zerolog.Event it hands
+// out. A forwarding sink that is an io.Writer can be passed to SetLogOutput, which
+// wraps it in a SyncWriter and stores it as the destination; the sink's own writes
+// then route back through that same SyncWriter (output → SyncWriter → sink →
+// output), and because SyncWriter holds its mutex across the write, the next record
+// deadlocks. Handing out a Logger fails the same way (zerolog.Logger implements
+// io.Writer). A method-only sink cannot form that cycle.
+type ForwardingSink struct {
+	log zerolog.Logger
+}
+
+// NewForwardingSink returns a sink over the shared output, ungated at TraceLevel
+// because the external source has already applied its own level filter.
+func NewForwardingSink() *ForwardingSink {
+	return &ForwardingSink{log: zerolog.New(output).Level(zerolog.TraceLevel)}
+}
+
+// Event begins a record at level on the shared destination; the caller adds fields
+// and terminates with Msg. Like Logger, it follows SetLogOutput.
+func (s *ForwardingSink) Event(level zerolog.Level) *zerolog.Event {
+	return s.log.WithLevel(level)
 }
 
 // Sets log to trace. -1
