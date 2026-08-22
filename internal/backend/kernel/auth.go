@@ -24,17 +24,17 @@ const (
 // with the fixed in-house databricks-sql-connector client and offline_access + sql
 // on every cloud (NOT the cloud-inferred Thrift values), because the kernel runs one
 // in-house workspace-federated flow with no Azure branching. RedirectPort stays zero
-// (no user option, kernel default 8020) but is kept so kernel.Auth models the full
+// (no user option, kernel default 8030) but is kept so kernel.Auth models the full
 // set_auth_u2m surface — a future WithOAuthRedirectPort becomes populating it, not
 // re-plumbing the setter. TestSetAuthByMode's "U2M full" case pins the marshalling
 // of both.
 type Auth struct {
 	Mode         AuthMode
 	Token        string   // PAT
-	ClientID     string   // M2M + U2M (U2M: fixed in-house client, cloud-agnostic)
+	ClientID     string   // M2M + U2M (U2M: fixed in-house client, cloud-agnostic); federated PAT uses the optional SP-wide client id
 	ClientSecret string   // M2M
 	Scopes       []string // U2M — fixed offline_access + sql (cloud-agnostic); nil → kernel default
-	RedirectPort uint16   // U2M — no user option today; 0 → kernel default port (8020)
+	RedirectPort uint16   // U2M — no user option today; 0 → kernel default port (8030)
 }
 
 // M2MCredentialsProvider is implemented by the OAuth M2M authenticator to expose

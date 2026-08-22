@@ -421,6 +421,15 @@ func (k *KernelBackend) setAuth(cfg *C.KernelSessionConfig) error {
 		}); err != nil {
 			return fmt.Errorf("kernel: set_auth_pat: %w", toConnError(err))
 		}
+		if k.cfg.Auth.ClientID != "" {
+			clientID := newCStr(k.cfg.Auth.ClientID)
+			defer clientID.free()
+			if err := call(func() C.KernelStatusCode {
+				return C.kernel_session_config_set_identity_federation_client_id(cfg, clientID.c)
+			}); err != nil {
+				return fmt.Errorf("kernel: set_identity_federation_client_id: %w", toConnError(err))
+			}
+		}
 	}
 	return nil
 }
@@ -478,7 +487,7 @@ func trySetProxy(cfg Config) error {
 // trySetRetry allocates a throwaway session config, applies the retry config from
 // cfg to it, and frees it — the analogous test seam to trySetProxy, so a tagged
 // test can exercise the real kernel_session_config_set_retry_config cgo setter
-// (the 4 knobs, plus the InvalidArgument rejections for a degenerate range) end to
+// (the 4 knobs, plus the InvalidArgument rejection for a zero minimum) end to
 // end. Not used in production.
 func trySetRetry(cfg Config) error {
 	var c *C.KernelSessionConfig

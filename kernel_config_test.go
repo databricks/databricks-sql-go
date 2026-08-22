@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/databricks/databricks-sql-go/auth/pat"
+	"github.com/databricks/databricks-sql-go/auth/tokenprovider"
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 	"github.com/databricks/databricks-sql-go/internal/backend/kernel"
 	"github.com/databricks/databricks-sql-go/internal/client"
@@ -16,7 +17,7 @@ import (
 )
 
 // nonPATAuth stands in for any non-PAT, non-OAuth authenticator (token-provider /
-// external / federated) — the kernel backend must reject it. It implements neither
+// external / static) — the kernel backend must reject it. It implements neither
 // kernel.M2MCredentialsProvider nor kernel.U2MCredentialsProvider.
 type nonPATAuth struct{}
 
@@ -194,6 +195,53 @@ func TestValidateKernelConfig(t *testing.T) {
 		}
 	})
 
+	t.Run("federated provider supplies PAT auth", func(t *testing.T) {
+		providerErr := errors.New("provider failure")
+		for _, tc := range []struct {
+			name, token, clientID string
+			providerErr           error
+		}{
+			{"account-wide", "subject-token", "", nil},
+			{"SP-wide", "subject-token", "federation-client", nil},
+			{"provider error", "", "", providerErr},
+			{"empty token", "", "", nil},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				c := baseKernelConfig()
+				c.AccessToken = ""
+				calls := 0
+				provider := tokenprovider.NewExternalTokenProvider(func() (string, error) {
+					calls++
+					return tc.token, tc.providerErr
+				})
+				if tc.clientID == "" {
+					WithFederatedTokenProvider(provider)(c)
+				} else {
+					WithFederatedTokenProviderAndClientID(provider, tc.clientID)(c)
+				}
+				a, err := validateKernelConfig(c)
+				if tc.token == "" {
+					if err == nil || tc.providerErr != nil && !errors.Is(err, tc.providerErr) {
+						t.Fatalf("error = %v, want provider error %v", err, tc.providerErr)
+					}
+					return
+				}
+				if err != nil {
+					t.Fatalf("federated provider should validate, got %v", err)
+				}
+				if a.Mode != kernel.AuthPAT || a.Token != tc.token || a.ClientID != tc.clientID {
+					t.Errorf("auth = %+v, want PAT token=%q clientID=%q", a, tc.token, tc.clientID)
+				}
+				if mech, flow := kernelAuthMech(c); mech != "PAT" || flow != "" {
+					t.Errorf("kernelAuthMech = (%q, %q), want (PAT, empty)", mech, flow)
+				}
+				if calls != 1 {
+					t.Errorf("connection-config telemetry classification resolved the provider: calls = %d, want 1", calls)
+				}
+			})
+		}
+	})
+
 	t.Run("last-applied auth wins: M2M then PAT resolves to PAT", func(t *testing.T) {
 		// Regression for the auth-mode divergence: cfg.Authenticator is the single
 		// source of truth, so setting an M2M authenticator and then a PAT (a later
@@ -230,7 +278,7 @@ func TestValidateKernelConfig(t *testing.T) {
 		c.Authenticator = nonPATAuth{}
 		_, err := validateKernelConfig(c)
 		if err == nil {
-			t.Fatal("expected an error for a token-provider/external/federated authenticator")
+			t.Fatal("expected an error for a custom token-provider/external/static authenticator")
 		}
 		// An unsupported authenticator is a "kernel can't honor this" rejection, so it
 		// must wrap ErrNotSupportedByKernel like every other unsupported option — the

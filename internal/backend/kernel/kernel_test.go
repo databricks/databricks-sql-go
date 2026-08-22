@@ -31,6 +31,7 @@ func TestSetAuthByMode(t *testing.T) {
 		auth Auth
 	}{
 		{"PAT", Auth{Mode: AuthPAT, Token: "dapi-x"}},
+		{"federated PAT", Auth{Mode: AuthPAT, Token: "subject-token", ClientID: "federation-client"}},
 		{"M2M", Auth{Mode: AuthM2M, ClientID: "cid", ClientSecret: "sec"}},
 		// "U2M full" populates Scopes/RedirectPort, which no production path sets today
 		// (resolveKernelAuth sources only the client id — see kernel.Auth docs). It is
@@ -104,8 +105,8 @@ func TestSetProxy(t *testing.T) {
 
 // TestSetRetry exercises the real kernel_session_config_set_retry_config cgo setter
 // via the trySetRetry seam: a valid range succeeds (incl. the disable form,
-// MaxRetries=0, and a non-zero overall budget), and a degenerate range (min=0 or
-// max<min) is rejected by the kernel as InvalidArgument. A no-op when Config.Retry
+// MaxRetries=0, and a non-zero overall budget). A zero minimum is rejected, but
+// max<min is corrected by the kernel. A no-op when Config.Retry
 // is nil. Proves the 4-arg marshalling and the C signature.
 func TestSetRetry(t *testing.T) {
 	cases := []struct {
@@ -117,9 +118,8 @@ func TestSetRetry(t *testing.T) {
 		{"disable (0 retries)", Config{Retry: &RetryConfig{MinWait: time.Second, MaxWait: 30 * time.Second, MaxRetries: 0}}, false},
 		{"with overall budget", Config{Retry: &RetryConfig{MinWait: time.Second, MaxWait: 30 * time.Second, MaxRetries: 4, OverallTimeout: 5 * time.Minute}}, false},
 		{"none (no-op)", Config{}, false},
-		// The kernel setter rejects a degenerate range: min==0 and max<min.
 		{"min zero rejected", Config{Retry: &RetryConfig{MinWait: 0, MaxWait: time.Second, MaxRetries: 3}}, true},
-		{"max below min rejected", Config{Retry: &RetryConfig{MinWait: 5 * time.Second, MaxWait: time.Second, MaxRetries: 3}}, true},
+		{"max below min corrected", Config{Retry: &RetryConfig{MinWait: 5 * time.Second, MaxWait: time.Second, MaxRetries: 3}}, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
