@@ -2,6 +2,14 @@ module github.com/databricks/databricks-sql-go
 
 go 1.25.0
 
+// gotestsum is a build-time test runner (see the Makefile's test/coverage
+// targets), not a library the driver imports. The tool directive (Go 1.24+)
+// keeps it in the module graph — the job the old //go:build tools file did —
+// without declaring a second package in the module root.
+//
+// See https://github.com/databricks/databricks-sql-go/issues/162.
+tool gotest.tools/gotestsum
+
 require (
 	github.com/apache/arrow/go/v12 v12.0.1
 	github.com/apache/thrift v0.23.0
@@ -12,7 +20,6 @@ require (
 	github.com/pierrec/lz4/v4 v4.1.15
 	github.com/stretchr/testify v1.8.1
 	golang.org/x/oauth2 v0.27.0
-	gotest.tools/gotestsum v1.8.2
 )
 
 require (
@@ -43,6 +50,7 @@ require (
 	golang.org/x/tools v0.6.0 // indirect
 	golang.org/x/xerrors v0.0.0-20220609144429-65e65417b02f // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
+	gotest.tools/gotestsum v1.8.2 // indirect
 )
 
 require (
