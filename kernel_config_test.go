@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/databricks/databricks-sql-go/auth/oauth"
 	"github.com/databricks/databricks-sql-go/auth/pat"
 	"github.com/databricks/databricks-sql-go/auth/tokenprovider"
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
@@ -19,7 +18,7 @@ import (
 
 // nonPATAuth stands in for any non-PAT, non-OAuth authenticator (token-provider /
 // external / static) — the kernel backend must reject it. It implements neither
-// auth.M2MCredentialsProvider nor auth.U2MCredentialsProvider.
+// kernel.M2MCredentialsProvider nor kernel.U2MCredentialsProvider.
 type nonPATAuth struct{}
 
 func (nonPATAuth) Authenticate(*http.Request) error { return nil }
@@ -174,21 +173,25 @@ func TestValidateKernelConfig(t *testing.T) {
 	t.Run("OAuth U2M resolves to a U2M descriptor", func(t *testing.T) {
 		c := baseKernelConfig()
 		c.AccessToken = ""
-		// A U2M authenticator is the single source of truth; resolveKernelAuth reads
-		// its (cloud-inferred) client id via the auth.U2MCredentialsProvider interface.
-		c.Authenticator = fakeU2MAuth{id: "databricks-sql-connector"}
+		// A U2M authenticator selects the U2M path via the kernel.U2MCredentialsProvider
+		// interface. On the kernel path the descriptor is CLOUD-AGNOSTIC: resolveKernelAuth
+		// forwards the in-house app + scopes uniformly (it deliberately does NOT read the
+		// authenticator's cloud-inferred client id), so an Azure host would resolve to the
+		// same values — see the U2M case in resolveKernelAuth. The fake's id here is
+		// intentionally NOT what the descriptor carries.
+		c.Authenticator = fakeU2MAuth{id: "ignored-cloud-inferred-id"}
 		a, err := validateKernelConfig(c)
 		if err != nil {
 			t.Fatalf("U2M should validate, got %v", err)
 		}
-		if a.Mode != kernel.AuthU2M || a.ClientID != "databricks-sql-connector" {
-			t.Errorf("auth = %+v, want mode=U2M clientID=databricks-sql-connector", a)
+		if a.Mode != kernel.AuthU2M || a.ClientID != u2mKernelClientID {
+			t.Errorf("auth = %+v, want mode=U2M clientID=%s (in-house, cloud-agnostic)", a, u2mKernelClientID)
 		}
-		// Scopes must match what the Thrift path requests for this host, so both
-		// backends authorize against the same client identically (not the kernel's
-		// all-apis default). baseKernelConfig's host is AWS → [offline_access, sql].
-		if want := oauth.GetScopes(c.Host, nil); !reflect.DeepEqual(a.Scopes, want) {
-			t.Errorf("U2M scopes = %v, want %v (Thrift parity)", a.Scopes, want)
+		// The kernel path forwards the fixed in-house scopes for every cloud, not the
+		// cloud-specific oauth.GetScopes set (which on Azure would add user_impersonation
+		// and derail the kernel's in-house flow to AAD).
+		if want := []string{"offline_access", "sql"}; !reflect.DeepEqual(a.Scopes, want) {
+			t.Errorf("U2M scopes = %v, want %v (in-house, cloud-agnostic)", a.Scopes, want)
 		}
 	})
 

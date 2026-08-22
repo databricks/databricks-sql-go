@@ -4,7 +4,6 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/databricks/databricks-sql-go/auth/oauth"
 	"github.com/databricks/databricks-sql-go/auth/oauth/m2m"
 	"github.com/databricks/databricks-sql-go/auth/oauth/u2m"
 	"github.com/databricks/databricks-sql-go/internal/backend/kernel"
@@ -63,12 +62,20 @@ func TestResolveKernelAuthRealAuthenticators(t *testing.T) {
 				"error here means *u2mAuthenticator no longer satisfies kernel.U2MCredentialsProvider "+
 				"(U2MClientID renamed?): %v", err)
 		}
-		if got.Mode != kernel.AuthU2M || got.ClientID == "" {
-			t.Errorf("auth = %+v, want mode=U2M with a non-empty (cloud-inferred) clientID", got)
+		if got.Mode != kernel.AuthU2M {
+			t.Errorf("auth = %+v, want mode=U2M", got)
 		}
-		// Scopes are forwarded from oauth.GetScopes(cfg.Host) for Thrift parity.
-		if want := oauth.GetScopes(c.Host, nil); !reflect.DeepEqual(got.Scopes, want) {
-			t.Errorf("U2M scopes = %v, want %v (Thrift parity)", got.Scopes, want)
+		// The kernel path forwards the in-house bundle UNIFORMLY across clouds —
+		// databricks-sql-connector + sql/offline_access — NOT the Azure
+		// Entra-direct app id / user_impersonation scope, even though this is an
+		// Azure host. The kernel runs one cloud-blind in-house workspace-federated
+		// U2M flow; feeding it the Entra-direct app breaks it. See
+		// resolveKernelAuth's U2M case.
+		if got.ClientID != u2mKernelClientID {
+			t.Errorf("U2M clientID = %q, want %s (in-house app, cloud-agnostic on the kernel path)", got.ClientID, u2mKernelClientID)
+		}
+		if want := []string{"offline_access", "sql"}; !reflect.DeepEqual(got.Scopes, want) {
+			t.Errorf("U2M scopes = %v, want %v (in-house, cloud-agnostic)", got.Scopes, want)
 		}
 	})
 }

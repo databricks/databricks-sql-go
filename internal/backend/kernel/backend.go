@@ -400,8 +400,10 @@ func (k *KernelBackend) setAuth(cfg *C.KernelSessionConfig) error {
 		}
 	case AuthU2M:
 		// client id / scopes are optional: NULL when empty lets the kernel use its
-		// public client / default scopes. We pass Go's cloud-inferred client id when
-		// set, so the kernel uses the same client id the Thrift path would.
+		// public client / default scopes. resolveKernelAuth fills these with the
+		// fixed in-house databricks-sql-connector client and offline_access + sql
+		// scopes on every cloud (NOT the cloud-inferred Thrift values), so the
+		// kernel's single in-house workspace-federated flow works uniformly.
 		clientID := newCStrOrNull(k.cfg.Auth.ClientID)
 		defer clientID.free()
 		scopes := newCStrOrNull(joinScopes(k.cfg.Auth.Scopes))

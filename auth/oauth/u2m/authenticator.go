@@ -78,15 +78,17 @@ type u2mAuthenticator struct {
 	mx          sync.Mutex
 }
 
-// U2MClientID exposes the cloud-inferred OAuth client id so the SEA-via-kernel
-// backend uses the same client id for the kernel's browser/PKCE flow that the
-// Thrift path would, keeping cfg.Authenticator the single source of truth for auth
-// mode. It structurally satisfies the U2MCredentialsProvider interface the kernel
-// backend asserts (defined in internal/backend/kernel, off the public API).
+// U2MClientID exposes the cloud-inferred OAuth client id, keeping
+// cfg.Authenticator the single source of truth for auth mode. It structurally
+// satisfies the U2MCredentialsProvider interface the kernel backend asserts
+// (defined in internal/backend/kernel, off the public API).
 //
-// Only the client id is read here; resolveKernelAuth pairs it with the same
-// oauth.GetScopes set the Thrift path requests, so both backends authorize against
-// the built-in databricks-sql-connector client identically (not the kernel default).
+// NOTE: the kernel path asserts this interface only to DETECT that the U2M flow is
+// selected; it does NOT forward this cloud-inferred client id. The kernel runs one
+// in-house workspace-federated flow on every cloud, so resolveKernelAuth uses the
+// fixed built-in databricks-sql-connector client and offline_access + sql scopes
+// instead (see resolveKernelAuth's U2M case). On AWS/GCP that equals this value;
+// on Azure it deliberately differs.
 func (c *u2mAuthenticator) U2MClientID() string { return c.clientID }
 
 // Auth will start the OAuth Authorization Flow to authenticate the cli client
