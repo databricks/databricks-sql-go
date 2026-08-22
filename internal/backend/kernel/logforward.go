@@ -37,6 +37,19 @@ func (s *logSink) forward(emittedAt time.Time, level, target, message string) {
 	s.event(level).Time(zerolog.TimestampFieldName, emittedAt).Str("target", target).Msg(message)
 }
 
+// warnDropped emits a one-shot advisory that forwarded records were dropped. It
+// goes through the sink's own immutable logger — not logger.Logger, whose embedded
+// value SetLogLevel reassigns — so the long-lived drain goroutine never races
+// SetLogLevel. Like forwarded records it is ungated, which is what we want: log loss
+// should surface regardless of the driver level.
+func (s *logSink) warnDropped(dropped uint64) {
+	s.sink.Event(zerolog.WarnLevel).
+		Uint64("dropped", dropped).
+		Time(zerolog.TimestampFieldName, time.Now()).
+		Msg("[kernel] kernel log records dropped; the log sink is not keeping up " +
+			"(raise capacity or lower kernel verbosity)")
+}
+
 // event picks the zerolog event for a kernel level string. An unknown level maps
 // to Debug and preserves the raw kernel level as a field.
 func (s *logSink) event(level string) *zerolog.Event {
