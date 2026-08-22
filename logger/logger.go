@@ -143,6 +143,12 @@ func SetLogLevel(l string) error {
 // concurrent logging while reusing the same underlying writer across swaps, pass a
 // writer that is safe for concurrent use (os.File is; a bare bytes.Buffer is not):
 // records in flight across a swap are serialized by that writer, not by the driver.
+//
+// The writer must not log through this driver from within its own Write/WriteLevel,
+// directly or indirectly: per-destination serialization holds a non-reentrant lock
+// across the write, so a re-entrant writer deadlocks (and a truly self-referential
+// one would recurse without bound regardless). As with any logging library, do not
+// log from your log destination.
 func SetLogOutput(w io.Writer) {
 	output.set(w)
 }
