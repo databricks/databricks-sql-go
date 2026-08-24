@@ -73,7 +73,17 @@ _tmp*
 __debug_bin
 .DS_Store
 
-# Kernel (SEA) backend build artifacts — produced by `make kernel-lib`, never committed.
+# Kernel (SEA) backend build artifacts.
+#
+# The distribution model (see README): this repo commits only the small,
+# platform-independent C header (internal/backend/kernel/include/). The prebuilt
+# per-platform archives live in the SEPARATE github.com/databricks/databricks-sql-kernel-bindings
+# repo (one nested Go module per platform), which this driver requires in go.mod
+# — so a kernel opt-in `go get` build needs no build step. The committed header
+# is intentionally NOT ignored.
+#
+# The paths below remain ignored: they are local scratch dirs used only by
+# `make kernel-lib` for source builds against a kernel checkout (dev/CI), and are
+# never committed — the shipped archives come from the bindings modules.
 /build/kernel-src/
 /internal/backend/kernel/lib/
-/internal/backend/kernel/include/

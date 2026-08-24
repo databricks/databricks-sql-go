@@ -11,19 +11,21 @@
 // the error mapping to the driver's error surface, and the gated step logger.
 // The backend, operation, and rows layers live in sibling files.
 //
-// Link contract (${SRCDIR}-relative, machine-independent). The header is
-// included from ${SRCDIR}/include and the static lib is linked from
-// ${SRCDIR}/lib/<os>_<arch>; the per-platform link flags live in the
-// cgo_<os>.go files beside this one. Both directories are produced by the
-// build step (`make kernel-lib`), which checks out the kernel at the commit
-// pinned in the repo-root KERNEL_REV file and `cargo build`s a static lib —
-// so the kernel revision is a reviewable pin, never baked into a #cgo line
-// (those expand only ${SRCDIR} and cannot run git or read env). The dirs are
-// .gitignore'd; nothing kernel-built is committed. For local development
-// against an existing checkout, `make kernel-lib KERNEL_LOCAL_A=<path/to>.a
-// KERNEL_LOCAL_HEADER=<path/to>databricks_kernel.h` copies those in instead of
-// building. The eventual release path downloads a published .a at the pinned
-// rev rather than building it (see the driver's distribution design).
+// Link contract. This file owns the compile side: the C header is committed at
+// ${SRCDIR}/include/databricks_kernel.h and pulled in via the #cgo CFLAGS below.
+// The link side lives OUT of this repo: each cgo_<os>[_<arch>].go beside this
+// file blank-imports the matching per-platform module from the separate
+// github.com/databricks/databricks-sql-kernel-bindings repo, and cgo collects
+// THAT module's `#cgo LDFLAGS` at final link time to pull in the prebuilt
+// libdatabricks_sql_kernel.a. So a kernel opt-in `go get` build downloads only
+// the archive for the platform it targets (build-tag gated) — no Rust toolchain
+// and no build step. The committed header and the prebuilt archives are produced
+// from the same pinned kernel revision (repo-root KERNEL_REV; the bindings repo
+// records the same rev), which is the reviewable pin — never baked into a #cgo
+// line. For local development against a kernel checkout, `make kernel-lib` builds
+// the archive from source into the .gitignore'd internal/backend/kernel/lib/
+// scratch dir (selected via a go.work / replace pointing at that path); the
+// committed bindings modules are what ship.
 package kernel
 
 /*
