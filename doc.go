@@ -244,6 +244,9 @@ WithKernel* prefix marks them experimental):
   - WithKernelTrustedCerts(pem) adds a PEM CA bundle on top of the system roots (for
     a re-signing proxy or on-prem CA). Required because the kernel's TLS stack does
     not read SSL_CERT_FILE.
+  - WithKernelClientCertificate(certPEM, keyPEM) configures a paired mTLS client
+    identity. Both PEM buffers must be non-empty; the certificate may include
+    intermediates and an unencrypted PKCS#8 private key is recommended.
   - WithKernelSkipHostnameVerify() skips only the hostname check while keeping chain
     validation (finer-grained than WithSkipTLSHostVerify).
   - WithKernelProxy(KernelProxy{URL, Username, Password, BypassHosts}) sets an explicit

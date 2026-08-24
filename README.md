@@ -330,6 +330,7 @@ token:<pat>@<host>:443[path]?useCloudFetch=false
 | `WithSkipTLSHostVerify()` | Both | Disable TLS chain + hostname verification. **Use only for internal private-link hostnames** — this is susceptible to machine-in-the-middle attacks. |
 | `WithTransport(http.RoundTripper)` | Thrift only | Supply a custom HTTP transport (e.g. a custom CA, mTLS, or proxy). **Rejected** on the kernel path (wraps `ErrNotSupportedByKernel`) — the kernel uses its own HTTP stack; use `WithKernelTrustedCerts` / `WithKernelProxy` there. |
 | `WithKernelTrustedCerts(pem)` | SEA only | Add a PEM CA bundle on top of the system roots (for a re-signing proxy / on-prem CA). Needed because the kernel's TLS stack does not read `SSL_CERT_FILE`. |
+| `WithKernelClientCertificate(certPEM, keyPEM)` | SEA only | Configure a paired mTLS client certificate and unencrypted private key. Both must be non-empty; PKCS#8 keys are recommended. |
 | `WithKernelSkipHostnameVerify()` | SEA only | Skip **only** the hostname check while keeping chain validation (finer-grained than `WithSkipTLSHostVerify`). |
 
 ## Proxy

@@ -54,19 +54,26 @@ func TestSetAuthByMode(t *testing.T) {
 }
 
 // TestSetKernelTLS exercises the real cgo setters for the experimental kernel-only
-// TLS knobs (the byte-buffer trusted-CA bundle + the hostname-skip bool) via the
-// trySetKernelTLS seam — proving the (*C.uint8_t, C.size_t) marshalling and the C
-// signatures. A failure here means the field→setter wiring or a C signature
-// drifted.
+// TLS knobs (trusted CA, paired mTLS identity, and hostname-skip bool) via the
+// trySetKernelTLS seam — proving the (*C.uint8_t, C.size_t) marshalling and C
+// signatures. A failure here means field→setter wiring or a C signature drifted.
 func TestSetKernelTLS(t *testing.T) {
 	ca := []byte("-----BEGIN CERTIFICATE-----\nca\n-----END CERTIFICATE-----\n")
+	clientCert := []byte("client-cert")
+	clientKey := []byte("client-key")
 	cases := []struct {
 		name string
 		cfg  Config
 	}{
 		{"trusted certs only", Config{TLSTrustedCertsPEM: ca}},
+		{"mTLS identity only", Config{TLSClientCertPEM: clientCert, TLSClientKeyPEM: clientKey}},
 		{"skip hostname only", Config{TLSSkipHostnameVerify: true}},
-		{"both together", Config{TLSTrustedCertsPEM: ca, TLSSkipHostnameVerify: true}},
+		{"all together", Config{
+			TLSTrustedCertsPEM:    ca,
+			TLSClientCertPEM:      clientCert,
+			TLSClientKeyPEM:       clientKey,
+			TLSSkipHostnameVerify: true,
+		}},
 		{"none (no-op)", Config{}},
 	}
 	for _, c := range cases {
@@ -90,7 +97,7 @@ func TestSetProxy(t *testing.T) {
 	}{
 		{"url only", Config{ProxyURL: "http://proxy:3128"}},
 		{"url + credentials", Config{ProxyURL: "http://proxy:3128", ProxyUsername: "u", ProxyPassword: "p"}},
-		{"url + bypass", Config{ProxyURL: "http://proxy:3128", ProxyBypassHosts: "localhost,*.internal"}}, //nolint:gosec // G101: test literals, not real credentials
+		{"url + bypass", Config{ProxyURL: "http://proxy:3128", ProxyBypassHosts: "localhost,*.internal"}},                                       //nolint:gosec // G101: test literals, not real credentials
 		{"all fields", Config{ProxyURL: "http://proxy:3128", ProxyUsername: "u", ProxyPassword: "p", ProxyBypassHosts: "localhost,*.internal"}}, //nolint:gosec // G101: test literals, not real credentials
 		{"none (no-op)", Config{}},
 	}

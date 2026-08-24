@@ -650,6 +650,27 @@ func WithKernelTrustedCerts(pem []byte) ConnOption {
 	}
 }
 
+// WithKernelClientCertificate configures the PEM-encoded client certificate and
+// matching private key used when a server requires mutual TLS (mTLS). certPEM
+// contains the leaf certificate followed by any intermediate certificates;
+// keyPEM contains the matching unencrypted private key. PKCS#8 is recommended
+// for portability across the kernel's TLS backends.
+//
+// Both values are required and must be non-empty. The driver copies them
+// defensively and validates the pair at connect time. Server trust remains
+// independent and strict by default; use WithKernelTrustedCerts when the server
+// certificate chains to a private CA.
+//
+// EXPERIMENTAL, kernel-only: the default (Thrift) backend rejects this at connect.
+func WithKernelClientCertificate(certPEM, keyPEM []byte) ConnOption {
+	return func(c *config.Config) {
+		ke := kernelExperimental(c)
+		ke.TLSClientCertConfigured = true
+		ke.TLSClientCertPEM = append([]byte(nil), certPEM...)
+		ke.TLSClientKeyPEM = append([]byte(nil), keyPEM...)
+	}
+}
+
 // WithKernelSkipHostnameVerify skips only the certificate hostname-vs-SNI check on
 // the kernel backend, while keeping chain validation. This is finer-grained than
 // WithSkipTLSHostVerify, which relaxes both chain and hostname checks.

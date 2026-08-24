@@ -34,9 +34,12 @@ type Config struct {
 	// Experimental kernel-only TLS knobs (from the WithKernel* options). These
 	// have no Thrift-path equivalent and are set via config.KernelExperimental.
 	// Empty/false fields are simply not applied. TLSTrustedCertsPEM is a custom CA
-	// bundle added on top of the system roots; TLSSkipHostnameVerify skips only the
+	// bundle added on top of the system roots; TLSClientCertPEM/TLSClientKeyPEM
+	// are the paired mTLS client identity; TLSSkipHostnameVerify skips only the
 	// hostname check (finer-grained than the blanket TLSSkipVerify above).
 	TLSTrustedCertsPEM    []byte
+	TLSClientCertPEM      []byte
+	TLSClientKeyPEM       []byte
 	TLSSkipHostnameVerify bool
 
 	// ProxyURL configures an HTTP proxy. It is either resolved for this endpoint
