@@ -26,11 +26,6 @@ type kernelLogRecord struct {
 	done      chan struct{}
 }
 
-// kernelLogChannelCapacity bounds the hand-off buffer between kernel threads and the
-// drain goroutine. Bursts beyond this are dropped rather than blocking a kernel
-// thread — logs are advisory and must never back-pressure a kernel path.
-const kernelLogChannelCapacity = 4096
-
 var (
 	// logQueue publishes the bounded hand-off channel to the trampoline. It is an
 	// atomic pointer so the read on a kernel thread synchronizes with the write on

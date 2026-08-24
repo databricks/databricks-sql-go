@@ -32,6 +32,11 @@ import (
 // pipeline it drives (queue, drain, flush, drop accounting) lives untagged in
 // logforward_async.go so its tests run in the default CGO_ENABLED=0 build.
 
+// kernelLogChannelCapacity bounds the hand-off buffer between kernel threads and the
+// drain goroutine. Bursts beyond this are dropped rather than blocking a kernel
+// thread — logs are advisory and must never back-pressure a kernel path.
+const kernelLogChannelCapacity = 4096
+
 // logCallbackOnce guards the process-wide, first-call-wins install.
 var logCallbackOnce sync.Once
 
