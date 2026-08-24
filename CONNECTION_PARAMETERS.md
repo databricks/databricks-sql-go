@@ -163,10 +163,28 @@ BINARY as `sql.RawBytes`).
 
 | Connector option | Thrift | Kernel | Notes |
 |---|:---:|:---:|---|
-| `WithSkipTLSHostVerify()` | ✅ | ✅ | Disable TLS chain + hostname verification. **Use only for internal private-link hostnames** — susceptible to machine-in-the-middle attacks. |
-| `WithTransport(http.RoundTripper)` | ✅ | ❌ | Supply a custom HTTP transport (custom CA, mTLS, or proxy). Rejected on the kernel path — the kernel uses its own HTTP stack; use `WithKernelTrustedCerts` / `WithKernelProxy` there. |
-| `WithKernelTrustedCerts(pem)` | ❌ | ✅ | Add a PEM CA bundle on top of the system roots (for a re-signing proxy / on-prem CA). Needed because the kernel's TLS stack does not read `SSL_CERT_FILE`. |
-| `WithKernelSkipHostnameVerify()` | ❌ | ✅ | Skip **only** the hostname check while keeping chain validation (finer-grained than `WithSkipTLSHostVerify`). |
+| `WithSkipTLSHostVerify()` | ✅ | ✅ | Disable TLS chain + hostname verification. **Use only for internal private-link hostnames** — susceptible to machine-in-the-middle attacks. On the kernel path it maps to the kernel's "accept self-signed" + hostname-skip (relaxes both chain and hostname, matching Thrift). |
+| `WithTransport(http.RoundTripper)` | ✅ | ❌ | Supply a custom HTTP transport (custom CA, mTLS, or proxy). **Rejected** on the kernel path (wraps `ErrNotSupportedByKernel`): a Go `RoundTripper` is executable Go code that can't cross the C ABI into the kernel's own Rust HTTP stack, so it could only be silently ignored. Use the dedicated `WithKernel*` knobs below for the individual needs (custom CA / hostname-skip / proxy); mTLS has no kernel equivalent — see the note. |
+| `WithKernelTrustedCerts(pem)` | ❌ | ✅ | Add a PEM CA bundle on top of the system roots (for a re-signing proxy / on-prem CA). Needed because the kernel's rustls stack does not read `SSL_CERT_FILE`. Rejected on Thrift (use `WithTransport` there). |
+| `WithKernelSkipHostnameVerify()` | ❌ | ✅ | Skip **only** the hostname check while keeping chain validation (finer-grained than `WithSkipTLSHostVerify`). Rejected on Thrift. |
+| Client-certificate **mTLS** | ✅ | ❌ | Thrift: supply the client cert/key via a custom `WithTransport` (`tls.Config.Certificates`). **Not available on the kernel path** — see the note below. |
+
+The `WithTransport` rejection is deliberate, and the dedicated kernel TLS knobs cover most
+of what a custom transport is used for — with one gap:
+
+| Reason for a custom `WithTransport` | Kernel option |
+|---|---|
+| Custom CA bundle (re-signing proxy / on-prem CA) | `WithKernelTrustedCerts(pem)` |
+| Skip hostname check (private-link host) | `WithKernelSkipHostnameVerify()` (hostname only) or `WithSkipTLSHostVerify()` (blanket) |
+| HTTP proxy | `WithKernelProxy(...)` / `HTTP(S)_PROXY` env (see [Proxy](#proxy)) |
+| **Client-certificate mTLS** | **none yet** |
+
+**mTLS gap.** The kernel core itself supports client-certificate mTLS (`client_cert_pem` /
+`client_key_pem` on its `TlsConfig`), but the Go driver does not currently surface it: the
+experimental config exposes only a trusted-CA bundle and a hostname-verify skip, with no
+`WithKernelClientCert`. So a connection that relies on mTLS must use the default (Thrift)
+backend and `WithTransport`. Wiring the existing kernel capability through to a Go option is
+a tracked follow-up.
 
 ## Proxy
 
