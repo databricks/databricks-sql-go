@@ -111,6 +111,66 @@ jobs:
       - name: Build
         run: make linux
 
+  # Fans the DEFAULT pure-Go driver (CGO_ENABLED=0, Thrift backend) out to macOS
+  # and Windows so the cross-platform surface is exercised per-PR — the Linux
+  # build-and-test job above already covers linux/amd64 on the protected runners.
+  # The pure-Go build has no cgo and no kernel .a, so it needs no Rust toolchain,
+  # no C compiler, and no private-repo access; it just has to compile and pass its
+  # unit tests on each OS. The SEA-via-kernel backend is NOT built here (it stays
+  # Linux-only for now — see build-and-test-kernel below and the distribution
+  # design doc's per-OS rollout).
+  #
+  # These run on GitHub-hosted macos-latest (arm64) / windows-latest (amd64) via
+  # runs-on: ${{ matrix.os }}, NOT the databricks-protected-runner-group (which is
+  # linux-only). That mirrors the sibling databricks-adbc Go driver's go_test.yaml,
+  # which already tests on hosted macos-latest + windows-latest. Hosted runners have
+  # open egress and every module dependency is public (go.mod has no private
+  # databricks modules), so setup-jfrog / the JFrog Go proxy is deliberately omitted
+  # — the default public proxy resolves everything.
+  build-and-test-cross-os:
+    name: Test (${{ matrix.os }}, Go ${{ matrix.go-version }})
+    strategy:
+      # Don't let one OS's failure cancel the others — we want the full
+      # cross-platform signal on every run while this job stabilizes.
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+        # Same support window as build-and-test. Hosted runners don't pin
+        # GOTOOLCHAIN=local, but keep the versions identical for parity.
+        go-version: ['1.25.x', '1.26.x']
+    runs-on: ${{ matrix.os }}
+    # bash on every OS (git-bash on Windows) so the run: blocks below are portable.
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Check out code into the Go module directory
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Set up Go Toolchain
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: ${{ matrix.go-version }}
+          # Let setup-go manage the module/build cache here — the bespoke
+          # actions/cache step in build-and-test is tuned to the Linux runner's
+          # paths; the built-in cache is portable across macOS/Windows.
+          cache: true
+          cache-dependency-path: go.sum
+
+      # Build + unit-test the pure-Go driver directly with the go tool rather than
+      # `make test`: the Makefile's test target shells out to gotestsum + writes
+      # JUnit XML and is oriented at the Linux CI, whereas `go build`/`go test` are
+      # uniform across macOS and Windows and need no extra tooling installed. Race
+      # detection is intentionally NOT run here — it requires cgo + a C toolchain,
+      # which cuts against this job's toolchain-free goal, and it's already covered
+      # on Linux by build-and-test's Test-Race step.
+      - name: Build
+        run: CGO_ENABLED=0 go build -v ./...
+
+      - name: Test
+        run: CGO_ENABLED=0 go test -count=1 ./...
+
   build-and-test-kernel:
     name: Test (kernel backend)
     # Exercises the opt-in SEA-via-kernel backend: builds the Rust kernel static
@@ -253,5 +313,254 @@ jobs:
       # warehouse credentials). This matches how build-and-test treats the Thrift path
       # (pure-Go unit tests only); the credentialed e2e suites for both backends run in
       # the separate nightly-e2e workflow.
+      - name: Build kernel lib + run tagged tests
+        run: make test-kernel
+
+  # Exercises the SEA-via-kernel backend on macOS (darwin/arm64) — the second
+  # kernel OS after linux/amd64, per the distribution design's one-OS-at-a-time
+  # rollout. A green run validates cgo_darwin.go's link flags (positional .a for
+  # Apple ld64, -lc++, @loader_path), which are otherwise never linked in CI.
+  #
+  # GATED OFF by default (vars.KERNEL_MACOS_CI_ENABLED == 'true'), because it is
+  # blocked by org infrastructure, NOT by the driver code:
+  #
+  #   The kernel repo (databricks/databricks-sql-kernel) is PRIVATE, so building
+  #   its .a requires a GitHub App token to clone it. The databricks org enforces
+  #   an IP allow list, and GitHub-HOSTED macos-latest runners have public IPs that
+  #   are NOT allow-listed, so create-github-app-token fails with "your IP address
+  #   is not permitted to access this resource" before cargo/cgo ever run. The
+  #   linux kernel job avoids this only because it runs on the self-hosted,
+  #   allow-listed databricks-protected-runner-group — which offers a
+  #   windows-server-latest label (see the Windows kernel job) but NO macOS label
+  #   anywhere in the org today.
+  #
+  # Two ways to turn this on (then set the repo var to 'true'):
+  #   1. An allow-listed self-hosted macOS/arm64 runner becomes available — point
+  #      runs-on at it (the App-token step then succeeds); OR
+  #   2. The kernel publishes a downloadable darwin_arm64 .a (the distribution
+  #      design's kernel-lib-download path) — then drop the App-token + private
+  #      clone entirely and this runs on hosted macos-latest with open egress.
+  #
+  # The job body below is otherwise ready: structurally the linux kernel job MINUS
+  # the two JFrog steps (kernel deps are all public crates.io and go.mod deps are
+  # all public, so a hosted runner needs no JFrog Go proxy / cargo shim), KEEPING
+  # the App-token step for the private clone. macos-latest is arm64 = cgo_darwin.go's
+  # `darwin && arm64` tag, so host == target (no --target); aarch64-apple-darwin is
+  # Rust tier-1 (bundled with 1.96.1) and Xcode CLT supplies cc + libc++.
+  build-and-test-kernel-macos:
+    name: Test (kernel backend, macOS)
+    # Default-off: see the block comment above. Flip vars.KERNEL_MACOS_CI_ENABLED
+    # to 'true' once an allow-listed macOS runner or a downloadable kernel .a exists.
+    if: ${{ vars.KERNEL_MACOS_CI_ENABLED == 'true' }}
+    timeout-minutes: 30
+    concurrency:
+      group: kernel-build-macos-${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: true
+    runs-on: macos-latest
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Check out code into the Go module directory
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Set up Go Toolchain
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: '1.25.x'
+          cache: false
+
+      # Keep in lockstep with rust-toolchain.toml's channel (it governs the archive
+      # under a fixed KERNEL_REV; a floating `stable` here would drift it).
+      - name: Set up Rust Toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1.16.1
+        with:
+          toolchain: 1.96.1
+
+      # The kernel repo (databricks/databricks-sql-kernel) is private and the hosted
+      # runner has no ambient git credentials, so kernel-lib.sh's fetch would fail
+      # with "could not read Username". Mint a repo-scoped token from the
+      # INTEGRATION_TEST_APP GitHub App and rewrite the kernel HTTPS URL to carry it
+      # (same mechanism as the linux kernel job). This is repo auth only — crate
+      # resolution goes to public crates.io, so no cargo→JFrog shim is needed here.
+      - name: Generate GitHub App token for databricks-sql-kernel
+        id: kernel-token
+        uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3.0.0
+        with:
+          app-id: ${{ secrets.INTEGRATION_TEST_APP_ID }}
+          private-key: ${{ secrets.INTEGRATION_TEST_PRIVATE_KEY }}
+          owner: databricks
+          repositories: databricks-sql-kernel
+
+      - name: Rewrite kernel repo URL to authenticated HTTPS
+        env:
+          TOKEN: ${{ steps.kernel-token.outputs.token }}
+        run: |
+          git config --global \
+            url."https://x-access-token:${TOKEN}@github.com/databricks/".insteadOf \
+            "https://github.com/databricks/"
+
+      # Cache keyed on runner.os (macOS) so it never collides with the linux job's
+      # cache; the .a is platform-specific.
+      - name: Cache kernel static lib
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            internal/backend/kernel/lib
+            internal/backend/kernel/include
+          key: ${{ runner.os }}-kernellib-${{ hashFiles('KERNEL_REV', 'rust-toolchain.toml') }}
+
+      - name: Cache cargo + kernel build tree
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            build/kernel-src/target
+          key: ${{ runner.os }}-kernel-cargo-${{ hashFiles('KERNEL_REV', 'rust-toolchain.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-kernel-cargo-
+
+      # make test-kernel builds the kernel lib (make kernel-lib) if the cache missed
+      # — cargo build on darwin/arm64 (host==target) — then runs
+      # `CGO_ENABLED=1 go test -tags databricks_kernel ./...`, linking via
+      # cgo_darwin.go. make + cc + libc++ are preinstalled on macos-latest (Xcode CLT).
+      - name: Build kernel lib + run tagged tests
+        run: make test-kernel
+
+  # Exercises the SEA-via-kernel backend on Windows (windows/amd64) — the third
+  # kernel OS. A green run validates cgo_windows.go's link flags
+  # (-l:libdatabricks_sql_kernel.a -lws2_32 -lwsock32 -lrstrtmgr), otherwise never
+  # linked in CI, AND the Makefile/kernel-lib.sh windows-gnu target plumbing.
+  #
+  # Runs on the SELF-HOSTED, allow-listed databricks-protected-runner-group with the
+  # windows-server-latest label (as databricks-jdbc does). This is deliberate, not a
+  # hosted runner: the kernel repo is private, so create-github-app-token must run
+  # from an allow-listed IP — GitHub-hosted windows-latest is NOT allow-listed and
+  # fails the org IP allow list (the same block that gates the macOS kernel job).
+  # Being on the protected runner also means crates.io is blocked (go/hardened-gha),
+  # so — unlike the hosted-macOS job — this KEEPS the JFrog Go proxy + cargo→JFrog
+  # shim, exactly like the linux kernel job.
+  #
+  # Windows-specific vs the linux job:
+  #   - cgo links with the mingw/gcc toolchain, which needs a GNU archive (.a), not
+  #     the MSVC import lib that the default x86_64-pc-windows-MSVC host triple emits.
+  #     So the Rust gnu target is installed and the Makefile passes
+  #     --target x86_64-pc-windows-gnu (KERNEL_CARGO_TARGET) for GOOS=windows.
+  #   - mingw-w64 gcc provides both the gnu-target link and cgo's own C compiler.
+  #   - core.longpaths avoids checkout/cargo failures on deep dependency paths.
+  build-and-test-kernel-windows:
+    name: Test (kernel backend, Windows)
+    timeout-minutes: 40
+    concurrency:
+      group: kernel-build-windows-${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: true
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: windows-server-latest
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      # Deep cargo dependency paths can exceed the legacy 260-char Windows MAX_PATH;
+      # enable long paths before checkout so neither the clone nor the Rust build
+      # trips on it.
+      - name: Enable Git long paths
+        run: git config --system core.longpaths true
+
+      - name: Check out code into the Go module directory
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      # Go module proxy (GOPROXY + ~/.netrc) via JFrog OIDC. Also exports
+      # JFROG_ACCESS_TOKEN, which the cargo step below reuses. Kept for Windows
+      # because the protected runner blocks direct crates.io / public proxy egress.
+      - name: Setup JFrog
+        uses: ./.github/actions/setup-jfrog
+
+      # Point cargo at the JFrog crates proxy (protected runner blocks crates.io),
+      # reusing setup-jfrog's JFROG_ACCESS_TOKEN — same as the linux kernel job. The
+      # ~/.cargo paths resolve under git-bash on the Windows runner (HOME is set).
+      - name: Configure cargo to use JFrog
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.cargo
+          cat > ~/.cargo/config.toml << 'EOF'
+          [source.crates-io]
+          replace-with = "jfrog"
+
+          [source.jfrog]
+          registry = "sparse+https://databricks.jfrog.io/artifactory/api/cargo/db-cargo-remote/index/"
+
+          [registries.jfrog]
+          index = "sparse+https://databricks.jfrog.io/artifactory/api/cargo/db-cargo-remote/index/"
+          credential-provider = ["cargo:token"]
+          EOF
+          cat > ~/.cargo/credentials.toml << EOF
+          [registries.jfrog]
+          token = "Bearer ${JFROG_ACCESS_TOKEN}"
+          EOF
+          chmod 600 ~/.cargo/credentials.toml
+
+      - name: Set up Go Toolchain
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: '1.25.x'
+          cache: false
+
+      # Install 1.96.1 (lockstep with rust-toolchain.toml) WITH the windows-gnu
+      # target: the default host triple is -msvc, but cgo needs a -gnu archive.
+      - name: Set up Rust Toolchain (windows-gnu target)
+        uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1.16.1
+        with:
+          toolchain: 1.96.1
+          target: x86_64-pc-windows-gnu
+
+      # mingw-w64 supplies the gcc that links the -gnu Rust archive AND is cgo's own
+      # C compiler on Windows. choco is preinstalled on the runner image.
+      - name: Install mingw-w64 (gcc for cgo + gnu link)
+        run: choco install mingw --no-progress -y
+
+      - name: Generate GitHub App token for databricks-sql-kernel
+        id: kernel-token
+        uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3.0.0
+        with:
+          app-id: ${{ secrets.INTEGRATION_TEST_APP_ID }}
+          private-key: ${{ secrets.INTEGRATION_TEST_PRIVATE_KEY }}
+          owner: databricks
+          repositories: databricks-sql-kernel
+
+      - name: Rewrite kernel repo URL to authenticated HTTPS
+        env:
+          TOKEN: ${{ steps.kernel-token.outputs.token }}
+        run: |
+          git config --global \
+            url."https://x-access-token:${TOKEN}@github.com/databricks/".insteadOf \
+            "https://github.com/databricks/"
+
+      - name: Cache kernel static lib
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            internal/backend/kernel/lib
+            internal/backend/kernel/include
+          key: ${{ runner.os }}-kernellib-${{ hashFiles('KERNEL_REV', 'rust-toolchain.toml') }}
+
+      - name: Cache cargo + kernel build tree
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            build/kernel-src/target
+          key: ${{ runner.os }}-kernel-cargo-${{ hashFiles('KERNEL_REV', 'rust-toolchain.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-kernel-cargo-
+
+      # make test-kernel builds the kernel lib (make kernel-lib) — cargo build with
+      # --target x86_64-pc-windows-gnu (set by the Makefile for GOOS=windows), reading
+      # the .a from target/<triple>/release/ — then runs the tagged unit tests,
+      # linking via cgo_windows.go. No warehouse creds, so live e2e/parity self-skip.
       - name: Build kernel lib + run tagged tests
         run: make test-kernel

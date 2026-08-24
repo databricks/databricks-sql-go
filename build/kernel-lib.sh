@@ -157,6 +157,23 @@ if ! git -C "$KERNEL_SRC" checkout -f --quiet "$KERNEL_REV" 2>/dev/null; then
 fi
 log "kernel at $(git -C "$KERNEL_SRC" rev-parse --short HEAD)"
 
+# Optional explicit cargo --target (KERNEL_CARGO_TARGET). Needed on Windows: the
+# default host triple there is x86_64-pc-windows-MSVC, which emits an MSVC-style
+# import lib, but cgo links with the mingw/gcc toolchain and needs a GNU archive —
+# so the Makefile sets KERNEL_CARGO_TARGET=x86_64-pc-windows-gnu for GOOS=windows.
+# This is an ABI selection on the SAME os/arch (host==target still holds, so the
+# cross-build guard above is not tripped), NOT a cross-OS build. With --target,
+# cargo writes to target/<triple>/release/ instead of target/release/, so the
+# archive path is scoped accordingly. Unset on linux/macOS → the original
+# no-`--target`, target/release/ behavior is preserved byte-for-byte.
+target_flag=""
+target_subdir=""
+if [ -n "${KERNEL_CARGO_TARGET:-}" ]; then
+  target_flag="--target ${KERNEL_CARGO_TARGET}"
+  target_subdir="${KERNEL_CARGO_TARGET}/"
+  log "cargo target override: ${KERNEL_CARGO_TARGET}"
+fi
+
 # --no-default-features --features tls-rustls: pure-Rust TLS (no system OpenSSL)
 # keeps the archive self-contained and cross-compile-tractable. The kernel's
 # default is tls-native, so the override is required.
@@ -164,10 +181,10 @@ log "kernel at $(git -C "$KERNEL_SRC" rev-parse --short HEAD)"
 # re-resolving, so a fixed KERNEL_REV yields a fixed dependency graph (paired
 # with the pinned rustc in rust-toolchain.toml, the .a is reproducible). Fails
 # loud if the lock is stale instead of silently pulling newer deps.
-log "cargo build --release --locked --no-default-features --features tls-rustls"
-( cd "$KERNEL_SRC" && cargo build --release --locked --no-default-features --features tls-rustls )
+log "cargo build --release --locked ${target_flag} --no-default-features --features tls-rustls"
+( cd "$KERNEL_SRC" && cargo build --release --locked ${target_flag} --no-default-features --features tls-rustls )
 
-src_a="$KERNEL_SRC/target/release/$LIB_NAME"
+src_a="$KERNEL_SRC/target/${target_subdir}release/$LIB_NAME"
 src_h="$KERNEL_SRC/include/$HEADER_NAME"
 [ -f "$src_a" ] || { log "expected archive not produced: $src_a"; exit 1; }
 [ -f "$src_h" ] || { log "expected header not found: $src_h"; exit 1; }

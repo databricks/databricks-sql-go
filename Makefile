@@ -101,6 +101,13 @@ KERNEL_LIB_DIR    = internal/backend/kernel/lib/$(KERNEL_GOOS)_$(KERNEL_GOARCH)
 KERNEL_INC_DIR    = internal/backend/kernel/include
 KERNEL_GO         = CGO_ENABLED=1 go
 KERNEL_TAGS       = -tags databricks_kernel
+# Explicit cargo target triple. Empty on linux/macOS (cargo's default host triple
+# is what cgo_<os>.go expects, and kernel-lib.sh omits --target). On Windows the
+# default host triple is x86_64-pc-windows-MSVC, which emits an MSVC import lib,
+# but cgo links via mingw/gcc and needs a GNU archive — so force the -gnu triple.
+# This is an ABI choice on the same os/arch (host==target still holds), not a
+# cross-OS build; kernel-lib.sh reads the .a from target/<triple>/release/ when set.
+KERNEL_CARGO_TARGET = $(if $(filter windows,$(KERNEL_GOOS)),x86_64-pc-windows-gnu,)
 
 .PHONY: kernel-lib
 kernel-lib:  ## Build the pinned kernel static lib + header into the cgo link dir (source build).
@@ -108,6 +115,7 @@ kernel-lib:  ## Build the pinned kernel static lib + header into the cgo link di
 	KERNEL_LIB_DIR="$(KERNEL_LIB_DIR)" KERNEL_INC_DIR="$(KERNEL_INC_DIR)" \
 	KERNEL_GOOS="$(KERNEL_GOOS)" KERNEL_GOARCH="$(KERNEL_GOARCH)" \
 	KERNEL_GOHOSTOS="$(KERNEL_GOHOSTOS)" KERNEL_GOHOSTARCH="$(KERNEL_GOHOSTARCH)" \
+	KERNEL_CARGO_TARGET="$(KERNEL_CARGO_TARGET)" \
 	KERNEL_LOCAL_A="$(KERNEL_LOCAL_A)" KERNEL_LOCAL_HEADER="$(KERNEL_LOCAL_HEADER)" \
 	./build/kernel-lib.sh
 
