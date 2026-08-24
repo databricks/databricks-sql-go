@@ -38,6 +38,7 @@ allowlist is tracked in PECOBLR-4153.
 | *(host)* | `WithServerHostname` | ✅ | ✅ | *(required)* | Workspace hostname. |
 | *(path)* | `WithHTTPPath` | ✅ | ✅ | *(required)* | Warehouse/endpoint HTTP path. |
 | *(port)* | `WithPort` | ✅ | ❌ | `443` | Kernel connects on **443 only** and rejects any other port. |
+| *(scheme)* | *(via `WithServerHostname`)* | ✅ | ❌ | `https` | A non-https scheme (`http://…`, or a bare `localhost`, which defaults to `http`) is **rejected** on the kernel path (it connects over https). Honored on Thrift. |
 | `warehouseId` | `WithWarehouseID` | ⚠️ | ✅ | | Bare warehouse id; the kernel routes by it (preferred over the HTTP path). The Thrift backend **silently ignores** it. |
 | `catalog` | `WithInitialNamespace` | ✅ | ✅ | | Initial catalog. Kernel applies it post-connect via `USE CATALOG`. |
 | `schema` | `WithInitialNamespace` | ✅ | ✅ | | Initial schema. Kernel applies it post-connect via `USE SCHEMA`. |
@@ -59,9 +60,19 @@ Notes for the SEA/kernel backend:
   `AndClientID` also forwards the SP-wide client ID. Expired tokens require a new connection.
 - Custom OAuth **M2M scopes** are rejected on the kernel path (the kernel applies its
   own default scopes). Default scopes work on both.
-- **U2M** is interactive: on a cache miss, connecting launches the browser and a
-  connect-context **deadline is not honored** during the login window. U2M scopes are at
-  parity with Thrift. Use PAT or M2M for headless/deadline-bound connects.
+- **U2M** is interactive: on a cache miss, connecting launches the browser to complete the
+  login. Use PAT or M2M for headless connects (they need no browser).
+- On the kernel path U2M always uses the in-house `databricks-sql-connector` OAuth app and
+  fixed `sql` + `offline_access` scopes, **uniformly across clouds** — it does not forward a
+  custom client id or custom scopes. This matches Thrift on AWS/GCP; on **Azure** it
+  deliberately differs (Thrift uses the Entra-direct app id / `user_impersonation` scope,
+  while the kernel drives a single in-house workspace-federated flow).
+- The **connect-context deadline is not honored mid-connect** on the kernel path for *any*
+  auth (not just U2M): the context is checked only at entry to session-open, then the
+  kernel's blocking session-open runs uninterruptibly, so a slow warehouse cold-start or a
+  connect-time network partition can block past the deadline. U2M's browser login is the
+  most visible case, but PAT/M2M are equally un-interruptible mid-connect — this is a kernel
+  C ABI limitation, not U2M-specific.
 - OAuth token caching/refresh is owned by the kernel on the kernel path (no driver
   config).
 
@@ -75,7 +86,7 @@ Notes for the SEA/kernel backend:
 | *(session param)* | `WithSessionParams` | ✅ | ⚠️ | | Arbitrary session confs (e.g. `ansi_mode`, `STATEMENT_TIMEOUT`, `QUERY_TAGS`). Allowlisted confs are honored on both; on kernel a non-allowlisted conf is dropped/rejected (see the note above; PECOBLR-4153). |
 | *(via session param)* | `WithQueryTags` | ✅ | ✅ | | Session-level query tags (serialized into `QUERY_TAGS`). |
 | `timezone` | `WithSessionParams(timezone=…)` | ✅ | ✅ | | Session time zone (e.g. `America/Los_Angeles`). |
-| `enableMetricViewMetadata` | `WithEnableMetricViewMetadata` | ✅ | ⚠️ | `false` | Enables metric-view metadata (sets `spark.sql.thriftserver.metadata.metricview.enabled=true`). The driver forwards the conf on both paths, but the kernel currently hard-rejects it (HTTP 400 `INVALID_CONF_VALUE`), so it does not yet take effect on the kernel path (PECOBLR-4142 / PECOBLR-4153). |
+| `enableMetricViewMetadata` | `WithEnableMetricViewMetadata` | ✅ | ⚠️ | `false` | Enables metric-view metadata (sets `spark.sql.thriftserver.metadata.metricview.enabled=true`). Both paths forward the **identical** conf; the kernel allowlists this key and sends it verbatim — it is **not** rejected driver- or kernel-side. Whether it takes effect on the SEA/kernel path depends on server-side SEA support (a `⚠️` pending confirmation against a live warehouse; PECOBLR-4142 / PECOBLR-4153). |
 
 ## Retry / backoff
 
@@ -139,6 +150,10 @@ telemetry is skipped entirely to avoid a second interactive browser flow at conn
 | `telemetry_flush_interval` | ✅ | ✅ | `30s` | Flush interval. |
 | `telemetry_retry_count` | ⚠️ | ⚠️ | — | **Deprecated and ignored** (retries are owned by the HTTP client + circuit breaker); logs a one-time warning. |
 | `telemetry_retry_delay` | ⚠️ | ⚠️ | — | **Deprecated and ignored** (see above). |
+
+These telemetry knobs are **DSN-only** — there are no `WithX` connector options for them.
+An app assembled with `NewConnector(...)` options rather than a DSN cannot tune telemetry
+and falls back to the server feature flag.
 
 The kernel path additionally emits a connection-config telemetry event at connect (mode,
 auth mechanism/flow, proxy, arrow, query tags, metric-view); the Thrift path's telemetry
