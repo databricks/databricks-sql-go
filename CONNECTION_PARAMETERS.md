@@ -88,6 +88,50 @@ Notes for the SEA/kernel backend:
 | `timezone` | `WithSessionParams(timezone=…)` | ✅ | ✅ | | Session time zone (e.g. `America/Los_Angeles`). |
 | `enableMetricViewMetadata` | `WithEnableMetricViewMetadata` | ✅ | ⚠️ | `false` | Enables metric-view metadata (sets `spark.sql.thriftserver.metadata.metricview.enabled=true`). Both paths forward the **identical** conf; the kernel allowlists this key and sends it verbatim — it is **not** rejected driver- or kernel-side. Whether it takes effect on the SEA/kernel path depends on server-side SEA support (a `⚠️` pending confirmation against a live warehouse; PECOBLR-4142 / PECOBLR-4153). |
 
+### Kernel session-conf allowlist
+
+On the **Thrift** path the `WithSessionParams` map is forwarded to the server freely.
+On the **kernel** path each key is matched **case-insensitively** against the allowlist
+below; a key not on it is **dropped with a warning** (never sent), so a conf that takes
+effect on Thrift may silently do nothing on kernel. Broadening the allowlist is tracked in
+PECOBLR-4153.
+
+**SET-style SQL parameters** — matched case-insensitively, sent **uppercased** (the server
+echoes these uppercase, so `SET`-readback matches):
+
+| Key | Purpose |
+|---|---|
+| `ANSI_MODE` | Enable/disable ANSI SQL behavior. |
+| `COLLATION` | Default collation. |
+| `ENABLE_PHOTON` | Toggle the Photon engine. |
+| `LEGACY_TIME_PARSER_POLICY` | Legacy datetime parsing behavior. |
+| `MAX_FILE_PARTITION_BYTES` | Max bytes per file partition. |
+| `QUERY_TAGS` | Query tags (comma-separated `key:value`). This is the key `WithQueryTags` writes. |
+| `READ_ONLY_EXTERNAL_METASTORE` | Treat the external metastore as read-only. |
+| `STATEMENT_TIMEOUT` | Server-side per-statement timeout (seconds). The real query-timeout knob on the kernel path, since `WithTimeout` is rejected there. |
+| `TIMEZONE` | Session time zone (e.g. `UTC`). Also settable via the `timezone` DSN param / `WithSessionParams`. |
+| `USE_CACHED_RESULT` | Toggle result caching. |
+
+**Dotted `spark.*` conf** — matched case-insensitively but sent **verbatim** (Spark conf
+keys are case-sensitive and must not be uppercased):
+
+| Key | Purpose |
+|---|---|
+| `spark.sql.thriftserver.metadata.metricview.enabled` | Metric-view metadata; the conf `WithEnableMetricViewMetadata` sets. |
+
+Notes:
+
+- Boolean-valued keys should use the exact strings `"true"` / `"false"` — the kernel does
+  not pre-validate values and forwards them as-is.
+- **`CAN_CLOUD_DOWNLOAD` is deliberately not allowlisted**: SEA has no such session conf
+  (it is accepted at CreateSession but rejected at the first statement with
+  `CONFIG_NOT_AVAILABLE`). Disable Cloud Fetch with `WithCloudFetch(false)` and bound its
+  memory with `WithKernelMaxChunksInMemory` instead of a raw conf.
+- The client-only keys (`cloudfetch_enabled`, `cloudfetch_max_chunks_in_memory`,
+  `complex_types_as_json`, `intervals_as_string`, …) are **not** in this allowlist: the
+  kernel reads them at session creation and strips them before the SEA wire. The driver
+  exposes the relevant ones as dedicated `WithKernel*` options rather than raw confs.
+
 ## Retry / backoff
 
 | Connector option | Thrift | Kernel | Default | Notes |
