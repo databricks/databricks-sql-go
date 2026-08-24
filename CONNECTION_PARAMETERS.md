@@ -111,6 +111,7 @@ BINARY as `sql.RawBytes`).
 | `WithSkipTLSHostVerify()` | ✅ | ✅ | Disable TLS chain + hostname verification. **Use only for internal private-link hostnames** — susceptible to machine-in-the-middle attacks. |
 | `WithTransport(http.RoundTripper)` | ✅ | ❌ | Supply a custom HTTP transport (custom CA, mTLS, or proxy). Rejected on the kernel path — the kernel uses its own HTTP stack; use `WithKernelTrustedCerts` / `WithKernelProxy` there. |
 | `WithKernelTrustedCerts(pem)` | ❌ | ✅ | Add a PEM CA bundle on top of the system roots (for a re-signing proxy / on-prem CA). Needed because the kernel's TLS stack does not read `SSL_CERT_FILE`. |
+| `WithKernelClientCertificate(certPEM, keyPEM)` | ❌ | ✅ | Configure a paired mTLS client certificate and unencrypted private key. Both must be non-empty; the certificate may include intermediates and PKCS#8 keys are recommended. |
 | `WithKernelSkipHostnameVerify()` | ❌ | ✅ | Skip **only** the hostname check while keeping chain validation (finer-grained than `WithSkipTLSHostVerify`). |
 
 ## Proxy

@@ -770,8 +770,11 @@ func TestConfig_DeepCopy(t *testing.T) {
 			ThriftProtocolVersion:     cli_service.TProtocolVersion_SPARK_CLI_SERVICE_PROTOCOL_V8,
 			ThriftDebugClientProtocol: false,
 			KernelExperimental: &KernelExperimentalConfig{
-				TLSTrustedCertsPEM:    []byte("ca-bundle"),
-				TLSSkipHostnameVerify: true,
+				TLSTrustedCertsPEM:      []byte("ca-bundle"),
+				TLSClientCertPEM:        []byte("client-cert"),
+				TLSClientKeyPEM:         []byte("client-key"),
+				TLSClientCertConfigured: true,
+				TLSSkipHostnameVerify:   true,
 			},
 		}
 
@@ -786,6 +789,12 @@ func TestConfig_DeepCopy(t *testing.T) {
 		cfg_copy.KernelExperimental.TLSTrustedCertsPEM[0] = 'X'
 		if cfg.KernelExperimental.TLSTrustedCertsPEM[0] == 'X' {
 			t.Error("DeepCopy aliased the KernelExperimental CA byte slice")
+		}
+		cfg_copy.KernelExperimental.TLSClientCertPEM[0] = 'X'
+		cfg_copy.KernelExperimental.TLSClientKeyPEM[0] = 'X'
+		if cfg.KernelExperimental.TLSClientCertPEM[0] == 'X' ||
+			cfg.KernelExperimental.TLSClientKeyPEM[0] == 'X' {
+			t.Error("DeepCopy aliased the KernelExperimental mTLS byte slices")
 		}
 	})
 }

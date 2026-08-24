@@ -113,6 +113,14 @@ func validateKernelConfigContext(ctx context.Context, cfg *config.Config) (kerne
 				"(want a scheme and host, e.g. http://proxy:3128)", ke.ProxyURL, dbsqlerr.ErrInvalidKernelConfig)
 		}
 	}
+	if ke := cfg.KernelExperimental; ke != nil && ke.TLSClientCertConfigured {
+		if len(ke.TLSClientCertPEM) == 0 || len(ke.TLSClientKeyPEM) == 0 {
+			return kernel.Auth{}, fmt.Errorf(
+				"databricks: WithKernelClientCertificate requires a non-empty certificate and private key: %w",
+				dbsqlerr.ErrInvalidKernelConfig,
+			)
+		}
+	}
 	return kauth, nil
 }
 
@@ -152,6 +160,8 @@ func buildKernelConfig(cfg *config.Config, kauth kernel.Auth) kernel.Config {
 	// kernel C ABI in OpenSession.
 	if ke := cfg.KernelExperimental; ke != nil {
 		kc.TLSTrustedCertsPEM = ke.TLSTrustedCertsPEM
+		kc.TLSClientCertPEM = ke.TLSClientCertPEM
+		kc.TLSClientKeyPEM = ke.TLSClientKeyPEM
 		kc.TLSSkipHostnameVerify = ke.TLSSkipHostnameVerify
 		// Kernel-only CloudFetch in-memory-chunk knob (WithKernelMaxChunksInMemory).
 		// Injected into the kernel backend's own SessionConf ONLY (not via

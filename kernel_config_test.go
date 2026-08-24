@@ -322,6 +322,35 @@ func TestValidateKernelConfig(t *testing.T) {
 		}
 	})
 
+	t.Run("valid WithKernelClientCertificate pair accepted", func(t *testing.T) {
+		c := baseKernelConfig()
+		WithKernelClientCertificate([]byte("cert"), []byte("key"))(c)
+		if _, err := validateKernelConfig(c); err != nil {
+			t.Errorf("a complete mTLS identity should validate, got %v", err)
+		}
+	})
+
+	t.Run("incomplete WithKernelClientCertificate rejected as ErrInvalidKernelConfig", func(t *testing.T) {
+		for _, tc := range []struct {
+			name string
+			cert []byte
+			key  []byte
+		}{
+			{"both empty", nil, nil},
+			{"certificate empty", nil, []byte("key")},
+			{"key empty", []byte("cert"), nil},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				c := baseKernelConfig()
+				WithKernelClientCertificate(tc.cert, tc.key)(c)
+				_, err := validateKernelConfig(c)
+				if !errors.Is(err, dbsqlerr.ErrInvalidKernelConfig) {
+					t.Errorf("incomplete mTLS identity should be ErrInvalidKernelConfig, got %v", err)
+				}
+			})
+		}
+	})
+
 	t.Run("malformed WithKernelProxy URL rejected as ErrInvalidKernelConfig", func(t *testing.T) {
 		// A malformed URL must be caught in the Go layer with an errors.Is-able
 		// config error, not surface as an opaque "kernel: set_proxy: …" wrap at
@@ -457,8 +486,11 @@ func TestBuildKernelConfig(t *testing.T) {
 	t.Run("experimental TLS fields forwarded", func(t *testing.T) {
 		c := baseKernelConfig()
 		c.KernelExperimental = &config.KernelExperimentalConfig{
-			TLSTrustedCertsPEM:    []byte("ca-bundle"),
-			TLSSkipHostnameVerify: true,
+			TLSTrustedCertsPEM:      []byte("ca-bundle"),
+			TLSClientCertPEM:        []byte("client-cert"),
+			TLSClientKeyPEM:         []byte("client-key"),
+			TLSClientCertConfigured: true,
+			TLSSkipHostnameVerify:   true,
 		}
 		kc := buildKernelConfig(c, kernel.Auth{Mode: kernel.AuthPAT, Token: "dapi-x"})
 		if got := string(kc.TLSTrustedCertsPEM); got != "ca-bundle" {
@@ -467,14 +499,20 @@ func TestBuildKernelConfig(t *testing.T) {
 		if !kc.TLSSkipHostnameVerify {
 			t.Error("TLSSkipHostnameVerify = false, want true (WithKernelSkipHostnameVerify not forwarded)")
 		}
+		if got := string(kc.TLSClientCertPEM); got != "client-cert" {
+			t.Errorf("TLSClientCertPEM = %q, want client-cert", got)
+		}
+		if got := string(kc.TLSClientKeyPEM); got != "client-key" {
+			t.Errorf("TLSClientKeyPEM = %q, want client-key", got)
+		}
 	})
 
 	t.Run("nil KernelExperimental leaves TLS fields zero", func(t *testing.T) {
 		c := baseKernelConfig() // KernelExperimental nil
 		kc := buildKernelConfig(c, kernel.Auth{Mode: kernel.AuthPAT, Token: "dapi-x"})
-		if kc.TLSTrustedCertsPEM != nil || kc.TLSSkipHostnameVerify {
-			t.Errorf("expected zero experimental TLS fields with nil KernelExperimental, got certs=%v skipHost=%v",
-				kc.TLSTrustedCertsPEM, kc.TLSSkipHostnameVerify)
+		if kc.TLSTrustedCertsPEM != nil || kc.TLSClientCertPEM != nil ||
+			kc.TLSClientKeyPEM != nil || kc.TLSSkipHostnameVerify {
+			t.Errorf("expected zero experimental TLS fields with nil KernelExperimental, got %+v", kc)
 		}
 	})
 
