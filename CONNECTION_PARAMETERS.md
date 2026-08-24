@@ -96,6 +96,13 @@ below; a key not on it is **dropped with a warning** (never sent), so a conf tha
 effect on Thrift may silently do nothing on kernel. Broadening the allowlist is tracked in
 PECOBLR-4153.
 
+> **Authoritative source.** This table is transcribed from the vendored kernel's
+> allowlist (`build/kernel-src/src/config.rs`), which is not part of this repo checkout.
+> Only `spark.sql.thriftserver.metadata.metricview.enabled` and the kernel max-chunks key
+> have repo-side anchors (`internal/config/config.go`); the remaining keys and the
+> uppercase-on-send / `spark.*`-verbatim rules have no CI guard here and may lag as the
+> kernel evolves. When in doubt, treat the kernel allowlist as authoritative.
+
 **SET-style SQL parameters** — matched case-insensitively, sent **uppercased** (the server
 echoes these uppercase, so `SET`-readback matches):
 
