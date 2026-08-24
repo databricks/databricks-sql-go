@@ -46,9 +46,14 @@ require (
 )
 
 require (
+	github.com/ebitengine/purego v0.10.2
 	github.com/hashicorp/go-retryablehttp v0.7.7
 	github.com/pkg/browser v0.0.0-20210911075715-681adbf594b8
 	github.com/pkg/errors v0.9.1
 	github.com/rs/zerolog v1.28.0
 	golang.org/x/sys v0.45.0 // indirect
 )
+
+// PoC-only: point purego at a local checkout so this branch builds offline.
+// The real PR drops this replace and lets the module proxy fetch v0.10.2.
+replace github.com/ebitengine/purego => /tmp/purego-src
