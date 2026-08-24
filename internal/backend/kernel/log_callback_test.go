@@ -52,20 +52,7 @@ func TestKernelCallbackWritesConfiguredFileEndToEnd(t *testing.T) {
 
 		// The kernel record crosses an async drain goroutine. Wait until that record
 		// reaches the file before retargeting output and closing the test-owned file.
-		deadline := time.Now().Add(5 * time.Second)
-		for {
-			contents, readErr := os.ReadFile(path) //nolint:gosec // Parent supplies its temp path.
-			if readErr != nil {
-				t.Fatal(readErr)
-			}
-			if strings.Contains(string(contents), rustLogFileProbe) {
-				break
-			}
-			if time.Now().After(deadline) {
-				t.Fatalf("kernel log did not reach the configured file: %q", contents)
-			}
-			time.Sleep(10 * time.Millisecond)
-		}
+		waitForLogProbe(t, path, rustLogFileProbe)
 
 		logger.SetLogOutput(os.Stderr)
 		if err := file.Sync(); err != nil {
@@ -93,5 +80,79 @@ func TestKernelCallbackWritesConfiguredFileEndToEnd(t *testing.T) {
 	}
 	if !strings.Contains(got, rustLogFileProbe) {
 		t.Errorf("local log file is missing Rust kernel record: %q", got)
+	}
+}
+
+// OFF must leave both the Go and kernel once-only slots available. A later session
+// can then install the callback after the driver level is raised.
+func TestKernelCallbackCanInstallAfterOff(t *testing.T) {
+	if os.Getenv(logFileHelperEnv) == "1" {
+		path := os.Getenv(logFilePathEnv)
+		file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600) //nolint:gosec // Parent supplies its temp path.
+		if err != nil {
+			t.Fatal(err)
+		}
+		logger.SetLogOutput(file)
+		if err := logger.SetLogLevel("disabled"); err != nil {
+			t.Fatal(err)
+		}
+		initKernelLogging()
+		if logQueue.Load() != nil {
+			t.Fatal("OFF installed a kernel log queue")
+		}
+
+		if err := logger.SetLogLevel("warn"); err != nil {
+			t.Fatal(err)
+		}
+		initKernelLogging()
+		if logQueue.Load() == nil {
+			t.Fatal("WARN did not install the callback after OFF")
+		}
+		if err := trySetRetry(Config{Retry: &RetryConfig{
+			MinWait:    5 * time.Second,
+			MaxWait:    time.Second,
+			MaxRetries: 1,
+		}}); err != nil {
+			t.Fatal(err)
+		}
+		waitForLogProbe(t, path, rustLogFileProbe)
+
+		logger.SetLogOutput(os.Stderr)
+		if err := file.Close(); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+
+	logPath := filepath.Join(t.TempDir(), "kernel-off-first.log")
+	cmd := exec.Command(os.Args[0], "-test.run=^TestKernelCallbackCanInstallAfterOff$") //nolint:gosec // Re-executes this test binary only.
+	cmd.Env = append(os.Environ(), logFileHelperEnv+"=1", logFilePathEnv+"="+logPath)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("logging helper failed: %v\n%s", err, output)
+	}
+	contents, err := os.ReadFile(logPath) //nolint:gosec // Test-owned temporary path.
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(contents), rustLogFileProbe) {
+		t.Errorf("local log file is missing Rust kernel record: %q", contents)
+	}
+}
+
+func waitForLogProbe(t *testing.T, path, probe string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		contents, err := os.ReadFile(path) //nolint:gosec // Test-owned temporary path.
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(contents), probe) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("kernel log did not reach the configured file: %q", contents)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }

@@ -37,7 +37,7 @@ import (
 // thread — logs are advisory and must never back-pressure a kernel path.
 const kernelLogChannelCapacity = 4096
 
-// logCallbackOnce guards the process-wide, first-call-wins install.
+// logCallbackOnce guards the process-wide, first-non-OFF-call-wins install.
 var logCallbackOnce sync.Once
 
 //export kernelLogTrampoline
@@ -54,12 +54,13 @@ func kernelLogTrampoline(level, target, message *C.char, _ unsafe.Pointer) {
 }
 
 func installKernelLogCallback(level string, useNULL bool) {
-	logCallbackOnce.Do(func() {
-		// OFF intentionally installs no subscriber and starts no drain.
-		if !useNULL && level == "OFF" {
-			return
-		}
+	// OFF intentionally installs no subscriber or drain and, matching the kernel
+	// ABI, leaves the once-only slot available for a later non-OFF session.
+	if !useNULL && level == "OFF" {
+		return
+	}
 
+	logCallbackOnce.Do(func() {
 		ch := make(chan kernelLogRecord, kernelLogChannelCapacity)
 		// Publish before installing so a callback that fires during
 		// kernel_init_logging_callback already has a channel to enqueue onto;

@@ -110,12 +110,12 @@ func klogCtx(ctx context.Context, format string, args ...any) {
 // and never fails a connection. At the default Warn level the kernel filters out
 // lower-level events before crossing cgo.
 //
-// Scope caveat: the kernel subscriber is PROCESS-WIDE, first-call-wins, and never
-// uninstalled — in a long-lived multi-tenant process the first kernel session's
-// level applies to all later sessions. The driver level is sampled here, once;
-// set it before the first kernel connection. The output is different: the shared
-// logger uses a stable writer proxy, so a later SetLogOutput safely retargets both
-// Go and forwarded Rust records.
+// Scope caveat: the kernel subscriber is PROCESS-WIDE, first-non-OFF-call-wins,
+// and never uninstalled. OFF leaves the install slot open, so raising the driver
+// level lets a later session install forwarding. After installation, that level
+// applies to all later sessions. The output is different: the shared logger uses
+// a stable writer proxy, so a later SetLogOutput safely retargets both Go and
+// forwarded Rust records.
 func initKernelLogging() {
 	level, useNULL := resolveKernelLogArg()
 	installKernelLogCallback(level, useNULL)
