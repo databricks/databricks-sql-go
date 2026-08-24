@@ -4,6 +4,7 @@ import (
 	"io"
 	"os"
 	"runtime"
+	"sync/atomic"
 	"time"
 
 	"github.com/mattn/go-isatty"
@@ -12,6 +13,70 @@ import (
 
 type DBSQLLogger struct {
 	zerolog.Logger
+}
+
+// sharedOutput is the process-wide destination behind every driver logger,
+// including logger values derived before a later SetLogOutput call. The current
+// destination is held behind an atomic pointer and wrapped in a per-destination
+// synchronized, level-aware writer. This gives three properties the driver's
+// logging (Go, Thrift, and forwarded kernel records) relies on:
+//
+//   - Retargeting (set) is a single atomic store: it never waits on an in-flight
+//     user Write, is never blocked by a slow/stuck writer, and never holds a lock
+//     across arbitrary user code — so SetLogOutput can't self-deadlock and a stuck
+//     writer can always be replaced.
+//   - Concurrent records to one destination stay intact (zerolog.SyncWriter
+//     serializes writes per destination).
+//   - A zerolog.LevelWriter destination keeps severity-aware routing: the proxy
+//     itself implements LevelWriter, so zerolog calls WriteLevel on it and it
+//     forwards WriteLevel to the destination.
+type sharedOutput struct {
+	dst atomic.Pointer[zerolog.LevelWriter]
+}
+
+func newSharedOutput(w io.Writer) *sharedOutput {
+	o := &sharedOutput{}
+	o.set(w)
+	return o
+}
+
+// set publishes w as the current destination. A nil writer is normalized to
+// io.Discard, matching the historical zerolog.New(nil) behavior (before the proxy
+// existed, SetLogOutput(nil) → Logger.Output(nil) → io.Discard); without this the
+// next log would panic on a nil-interface Write.
+func (o *sharedOutput) set(w io.Writer) {
+	if w == nil {
+		w = io.Discard
+	}
+	// SyncWriter serializes concurrent writes to this destination and preserves a
+	// LevelWriter's WriteLevel (a plain writer is adapted). The result always
+	// implements LevelWriter; keep a fallback adapter in case that ever changes.
+	sw := zerolog.SyncWriter(w)
+	lw, ok := sw.(zerolog.LevelWriter)
+	if !ok {
+		lw = plainLevelWriter{sw}
+	}
+	o.dst.Store(&lw)
+}
+
+func (o *sharedOutput) current() zerolog.LevelWriter {
+	return *o.dst.Load()
+}
+
+func (o *sharedOutput) Write(p []byte) (int, error) {
+	return o.current().Write(p)
+}
+
+func (o *sharedOutput) WriteLevel(l zerolog.Level, p []byte) (int, error) {
+	return o.current().WriteLevel(l, p)
+}
+
+// plainLevelWriter adapts an io.Writer that is not a zerolog.LevelWriter, routing
+// WriteLevel to Write (dropping the level, as zerolog's own adapter does).
+type plainLevelWriter struct{ io.Writer }
+
+func (p plainLevelWriter) WriteLevel(_ zerolog.Level, b []byte) (int, error) {
+	return p.Write(b)
 }
 
 // Track is a simple utility function to use with logger to log a message with a timestamp.
@@ -36,15 +101,15 @@ func (l *DBSQLLogger) Duration(msg string, start time.Time) {
 	l.Debug().Msgf("%v elapsed time: %v", msg, time.Since(start))
 }
 
-var Logger = &DBSQLLogger{
-	zerolog.New(os.Stderr).With().Timestamp().Logger(),
-}
+var output = newSharedOutput(os.Stderr)
+
+var Logger = &DBSQLLogger{zerolog.New(output).With().Timestamp().Logger()}
 
 // Enable pretty printing for interactive terminals and json for production.
 func init() {
 	// for tty terminal enable pretty logs
 	if isatty.IsTerminal(os.Stdout.Fd()) && runtime.GOOS != "windows" {
-		Logger = &DBSQLLogger{Logger.Output(zerolog.ConsoleWriter{Out: os.Stderr})}
+		output.set(zerolog.ConsoleWriter{Out: os.Stderr})
 	}
 	// by default only log warns or above
 	loglvl := zerolog.WarnLevel
@@ -71,8 +136,49 @@ func SetLogLevel(l string) error {
 }
 
 // Sets logging output. Default is os.Stderr. If in terminal, pretty logs are enabled.
+// A nil writer is treated as io.Discard. Existing logger values (and the kernel
+// log bridge) follow later calls to this function.
+//
+// Writes are serialized per destination. If you hot-swap the output under
+// concurrent logging while reusing the same underlying writer across swaps, pass a
+// writer that is safe for concurrent use (os.File is; a bare bytes.Buffer is not):
+// records in flight across a swap are serialized by that writer, not by the driver.
+//
+// The writer must not log through this driver from within its own Write/WriteLevel,
+// directly or indirectly: per-destination serialization holds a non-reentrant lock
+// across the write, so a re-entrant writer deadlocks (and a truly self-referential
+// one would recurse without bound regardless). As with any logging library, do not
+// log from your log destination.
 func SetLogOutput(w io.Writer) {
-	Logger.Logger = Logger.Output(w)
+	output.set(w)
+}
+
+// ForwardingSink emits already-rendered log records from an external source (such
+// as the Rust kernel) to the driver's shared destination. It follows SetLogOutput
+// and bypasses Logger's level gate and timestamp hook, so the source can supply its
+// own level and its own (emission-time) timestamp.
+//
+// It is deliberately NOT an io.Writer — and neither is the *zerolog.Event it hands
+// out. A forwarding sink that is an io.Writer can be passed to SetLogOutput, which
+// wraps it in a SyncWriter and stores it as the destination; the sink's own writes
+// then route back through that same SyncWriter (output → SyncWriter → sink →
+// output), and because SyncWriter holds its mutex across the write, the next record
+// deadlocks. Handing out a Logger fails the same way (zerolog.Logger implements
+// io.Writer). A method-only sink cannot form that cycle.
+type ForwardingSink struct {
+	log zerolog.Logger
+}
+
+// NewForwardingSink returns a sink over the shared output, ungated at TraceLevel
+// because the external source has already applied its own level filter.
+func NewForwardingSink() *ForwardingSink {
+	return &ForwardingSink{log: zerolog.New(output).Level(zerolog.TraceLevel)}
+}
+
+// Event begins a record at level on the shared destination; the caller adds fields
+// and terminates with Msg. Like Logger, it follows SetLogOutput.
+func (s *ForwardingSink) Event(level zerolog.Level) *zerolog.Event {
+	return s.log.WithLevel(level)
 }
 
 // Sets log to trace. -1

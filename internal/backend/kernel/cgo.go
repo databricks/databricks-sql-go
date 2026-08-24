@@ -37,7 +37,6 @@ import (
 	"context"
 	"fmt"
 	"runtime"
-	"sync"
 	"unsafe"
 
 	"github.com/databricks/databricks-sql-go/driverctx"
@@ -101,56 +100,25 @@ func klogCtx(ctx context.Context, format string, args ...any) {
 	).Debug().Msgf("[kernel] "+format, args...)
 }
 
-// initLoggingOnce guards kernel_init_logging, which is process-wide and
-// first-call-wins in the kernel. We install the kernel subscriber lazily on the
-// first session open rather than in init(), so a process that never opens a
-// kernel session installs nothing.
-var initLoggingOnce sync.Once
-
-// initKernelLogging turns on the kernel's own Rust (tracing) logs and points their
-// verbosity at the driver's log level, so DATABRICKS_LOG_LEVEL drives both the Go
-// binding lines and the kernel's Rust lines from one knob. The mapped level is
-// passed to kernel_init_logging (Go zerolog level → the kernel's OFF/ERROR/WARN/
-// INFO/DEBUG/TRACE string); DBSQL_KERNEL_DEBUG forces the subscriber on with a
-// NULL level so the kernel honors RUST_LOG instead (the advanced override for
-// tuning kernel-only verbosity). file_path=NULL sends kernel logs to stderr — the
-// kernel ABI has no sink hook, so the Rust lines always go to stderr and are NOT
-// routed through logger.SetLogOutput (unlike the Go binding lines).
+// initKernelLogging routes the kernel's own Rust tracing records into the
+// driver's shared logger and maps the driver level into the kernel subscriber.
+// Consequently DATABRICKS_LOG_LEVEL controls both paths and SetLogOutput controls
+// their common destination. DBSQL_KERNEL_DEBUG keeps its advanced behavior: the
+// callback is installed with a NULL level so the kernel honors RUST_LOG instead.
 //
-// Best-effort: an Internal return (e.g. the host already installed a global
-// subscriber) is a documented, benign outcome — logged at Warn, never fatal to
-// connect. The subscriber installs at whatever level is mapped in; a driver left at
-// the default Warn level (benchmarks included, and never having set
-// DBSQL_KERNEL_DEBUG) installs it at WARN, so the kernel emits nothing below Warn
-// and there is no hot-path cost.
+// Best-effort: failure to install the process-global callback is logged at Warn
+// and never fails a connection. At the default Warn level the kernel filters out
+// lower-level events before crossing cgo.
 //
-// Scope caveat: the kernel subscriber is PROCESS-WIDE, first-call-wins, and never
-// uninstalled — in a long-lived multi-tenant process the first kernel session's
-// level/destination applies to ALL subsequent kernel sessions, with no way to
-// re-scope or turn it off afterward. That is a kernel-ABI property, not a Go one.
-// A direct consequence: the driver level is sampled HERE, once, at the first kernel
-// session — a later dbsql.SetLogLevel re-levels the Go binding lines (klog/klogCtx
-// re-read GetLevel per call) but NOT the already-installed Rust subscriber. Set the
-// level before opening the first kernel connection to govern the Rust logs.
+// Scope caveat: the kernel subscriber is PROCESS-WIDE, first-non-OFF-call-wins,
+// and never uninstalled. OFF leaves the install slot open, so raising the driver
+// level lets a later session install forwarding. After installation, that level
+// applies to all later sessions. The output is different: the shared logger uses
+// a stable writer proxy, so a later SetLogOutput safely retargets both Go and
+// forwarded Rust records.
 func initKernelLogging() {
-	initLoggingOnce.Do(func() {
-		// resolveKernelLogArg decides the level (or NULL for the DBSQL_KERNEL_DEBUG
-		// override, which lets the kernel honor RUST_LOG). The pure decision lives in
-		// logging_level.go so it's unit-tested without cgo.
-		var level cStr
-		if lvl, useNULL := resolveKernelLogArg(); !useNULL {
-			level = newCStr(lvl)
-			defer level.free()
-		} // else level stays {c: nil} → NULL → kernel honors RUST_LOG
-		if err := call(func() C.KernelStatusCode {
-			return C.kernel_init_logging(level.c, nil)
-		}); err != nil {
-			// The kernel subscriber didn't install (commonly: the host already
-			// installed a global tracing subscriber). Non-fatal — surface it through
-			// the shared logger so it's visible without a separate stderr scrape.
-			logger.Logger.Warn().Msgf("databricks: kernel_init_logging: %v (kernel logs unavailable; proceeding)", err)
-		}
-	})
+	level, useNULL := resolveKernelLogArg()
+	installKernelLogCallback(level, useNULL)
 }
 
 // call runs a fallible kernel entry point and, on a non-Success status, reads
