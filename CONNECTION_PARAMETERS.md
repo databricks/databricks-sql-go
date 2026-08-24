@@ -71,7 +71,7 @@ Notes for the SEA/kernel backend:
   auth (not just U2M): the context is checked only at entry to session-open, then the
   kernel's blocking session-open runs uninterruptibly, so a slow warehouse cold-start or a
   connect-time network partition can block past the deadline. U2M's browser login is the
-  most visible case, but PAT/M2M are equally un-interruptible mid-connect — this is a kernel
+  most visible case, but PAT/M2M are equally uninterruptible mid-connect — this is a kernel
   C ABI limitation, not U2M-specific.
 - OAuth token caching/refresh is owned by the kernel on the kernel path (no driver
   config).
@@ -196,8 +196,10 @@ telemetry is skipped entirely to avoid a second interactive browser flow at conn
 | `telemetry_retry_delay` | ⚠️ | ⚠️ | — | **Deprecated and ignored** (see above). |
 
 These telemetry knobs are **DSN-only** — there are no `WithX` connector options for them.
-An app assembled with `NewConnector(...)` options rather than a DSN cannot tune telemetry
-and falls back to the server feature flag.
+An app assembled with `NewConnector(...)` options rather than a DSN cannot tune telemetry:
+whether telemetry is enabled falls back to the server feature flag (since `enableTelemetry`
+is unset), and `telemetry_batch_size` / `telemetry_flush_interval` use their defaults
+(`200` / `30s`).
 
 The kernel path additionally emits a connection-config telemetry event at connect (mode,
 auth mechanism/flow, proxy, arrow, query tags, metric-view); the Thrift path's telemetry
