@@ -50,11 +50,21 @@ func TestKernelCallbackWritesConfiguredFileEndToEnd(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		// The kernel record crosses an async drain goroutine, so flush it into the
-		// file before retargeting the output or closing it — otherwise the drain
-		// could write to stderr (post-retarget) or after Close.
-		if !flushKernelLogs(5 * time.Second) {
-			t.Fatal("kernel log flush timed out")
+		// The kernel record crosses an async drain goroutine. Wait until that record
+		// reaches the file before retargeting output and closing the test-owned file.
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			contents, readErr := os.ReadFile(path) //nolint:gosec // Parent supplies its temp path.
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			if strings.Contains(string(contents), rustLogFileProbe) {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("kernel log did not reach the configured file: %q", contents)
+			}
+			time.Sleep(10 * time.Millisecond)
 		}
 
 		logger.SetLogOutput(os.Stderr)

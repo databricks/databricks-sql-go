@@ -2,10 +2,10 @@ package kernel
 
 // This file is intentionally NOT behind the `cgo && databricks_kernel` build tag
 // (matching logging_level.go and logforward.go). It holds the pure-Go async
-// forwarding pipeline — the bounded hand-off queue, its drain, the flush barrier,
-// drop accounting, and panic containment. Only the cgo trampoline and the
+// forwarding pipeline — the bounded hand-off queue, its drain, drop accounting,
+// and panic containment. Only the cgo trampoline and the
 // kernel_init_logging_callback call actually need cgo; keeping the rest untagged
-// lets its tests (FIFO flush, drop policy, panic containment) run in the default
+// lets its tests (drop policy and panic containment) run in the default
 // CGO_ENABLED=0 build rather than only in the kernel-linked lane.
 
 import (
@@ -15,15 +15,12 @@ import (
 
 // kernelLogRecord is an owned copy of one kernel tracing record. The C strings are
 // valid only for the duration of the callback, so the trampoline copies them before
-// the record leaves the kernel thread. A record with a non-nil done channel is a
-// flush barrier: the drain closes done (in FIFO order, after every earlier record is
-// written) and forwards nothing — see flushKernelLogs.
+// the record leaves the kernel thread.
 type kernelLogRecord struct {
 	emittedAt time.Time
 	level     string
 	target    string
 	message   string
-	done      chan struct{}
 }
 
 var (
@@ -66,12 +63,6 @@ func drainKernelLogs(ch <-chan kernelLogRecord, sink *logSink) {
 	baselineDrops := logDropped.Load()
 	warnedDrop := false
 	for rec := range ch {
-		// A flush barrier carries no record: closing done signals that every earlier
-		// record has been written (channel + drain are FIFO).
-		if rec.done != nil {
-			close(rec.done)
-			continue
-		}
 		// Every write below goes to the user's writer, which may panic — an
 		// unrecovered goroutine panic is fatal to the process, so contain each one.
 		contain(func() {
@@ -94,38 +85,4 @@ func drainKernelLogs(ch <-chan kernelLogRecord, sink *logSink) {
 func contain(fn func()) {
 	defer func() { _ = recover() }()
 	fn()
-}
-
-// flushKernelLogs blocks until every kernel record already queued has been written,
-// or until timeout elapses; it returns whether the flush completed. It is a no-op
-// returning true when kernel logging was never installed.
-//
-// It drains the asynchronous hand-off so records are not lost or misrouted when the
-// log writer is closed, output is retargeted, or the process exits. There is
-// currently no public entry point that calls it — only the end-to-end test does;
-// exposing a supported flush API (or wiring it into a shutdown path) is a separate
-// change. Best-effort: records already dropped for a full buffer are gone, and
-// records enqueued after this call are not waited on.
-func flushKernelLogs(timeout time.Duration) bool {
-	qp := logQueue.Load()
-	if qp == nil {
-		return true
-	}
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
-
-	done := make(chan struct{})
-	// Enqueue the barrier behind everything already queued. A full buffer means the
-	// drain is behind; wait (bounded) for room rather than dropping the barrier.
-	select {
-	case *qp <- kernelLogRecord{done: done}:
-	case <-timer.C:
-		return false
-	}
-	select {
-	case <-done:
-		return true
-	case <-timer.C:
-		return false
-	}
 }

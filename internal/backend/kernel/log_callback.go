@@ -29,7 +29,7 @@ import (
 
 // This file is the thin cgo layer of the kernel log bridge: the exported callback
 // trampoline and the one-time kernel_init_logging_callback install. The pure-Go
-// pipeline it drives (queue, drain, flush, drop accounting) lives untagged in
+// pipeline it drives (queue, drain, drop accounting) lives untagged in
 // logforward_async.go so its tests run in the default CGO_ENABLED=0 build.
 
 // kernelLogChannelCapacity bounds the hand-off buffer between kernel threads and the

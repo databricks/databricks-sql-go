@@ -1,7 +1,7 @@
 package kernel
 
 // These exercise the pure-Go async forwarding pipeline (logforward_async.go) and
-// are intentionally untagged, so the FIFO-flush, drop-policy, and panic-containment
+// are intentionally untagged, so the drop-policy and panic-containment
 // guarantees run in the default CGO_ENABLED=0 build — not only the kernel-linked
 // lane. The cgo trampoline that feeds this pipeline is covered by the end-to-end
 // test in log_callback_test.go.
@@ -90,40 +90,6 @@ func TestDrainRecoversFromWriterPanic(t *testing.T) {
 	}
 }
 
-// flushKernelLogs returns only after every record queued before it is written.
-func TestFlushKernelLogsWaitsForQueued(t *testing.T) {
-	t.Cleanup(func() { logger.SetLogOutput(os.Stderr) })
-	logger.SetLogOutput(io.Discard) // discard the sink's forwarded records
-	seen := make(chan string, 8)
-	sink := newLogSink()
-	sink.observe = func(_, _, message string) { seen <- message }
-
-	ch := make(chan kernelLogRecord, 8)
-	prev := logQueue.Swap(&ch)
-	t.Cleanup(func() { logQueue.Store(prev) })
-	go drainKernelLogs(ch, sink)
-	defer close(ch)
-
-	enqueueKernelLog(time.Now(), "info", "t", "one")
-	enqueueKernelLog(time.Now(), "info", "t", "two")
-	if !flushKernelLogs(2 * time.Second) {
-		t.Fatal("flush timed out")
-	}
-	// The barrier is FIFO-ordered behind both records, so both are delivered.
-	if got := len(seen); got != 2 {
-		t.Fatalf("after flush, delivered %d records, want 2", got)
-	}
-}
-
-// flushKernelLogs is a no-op returning true when logging was never installed.
-func TestFlushKernelLogsNoopWhenUnset(t *testing.T) {
-	prev := logQueue.Swap(nil)
-	t.Cleanup(func() { logQueue.Store(prev) })
-	if !flushKernelLogs(time.Second) {
-		t.Fatal("flush with no queue should be a no-op returning true")
-	}
-}
-
 type panicWriter struct{}
 
 func (panicWriter) Write([]byte) (int, error) { panic("writer always panics") }
@@ -144,8 +110,13 @@ func TestDrainContainsPanicFromForwardAndDropWarning(t *testing.T) {
 	}
 	logger.SetLogOutput(panicWriter{})
 
+	done := make(chan string, 1)
 	sink := newLogSink()
-	sink.observe = func(_, _, _ string) {
+	sink.observe = func(_, _, message string) {
+		if message != "boom" {
+			done <- message
+			return
+		}
 		logDropped.Add(1) // advance past the drain's baseline, deterministically
 		panic("forward failure")
 	}
@@ -157,9 +128,16 @@ func TestDrainContainsPanicFromForwardAndDropWarning(t *testing.T) {
 	defer close(ch)
 
 	enqueueKernelLog(time.Now(), "info", "databricks::sql::kernel", "boom")
+	enqueueKernelLog(time.Now(), "info", "databricks::sql::kernel", "after")
 
-	// The drain reaches the flush barrier only if it survived both panics.
-	if !flushKernelLogs(2 * time.Second) {
+	// The second record is observed only if the drain survived both the first
+	// record's panic and the drop warning's panicking write.
+	select {
+	case got := <-done:
+		if got != "after" {
+			t.Fatalf("delivered %q, want %q", got, "after")
+		}
+	case <-time.After(2 * time.Second):
 		t.Fatal("drain did not survive a panicking writer combined with dropped records")
 	}
 }
