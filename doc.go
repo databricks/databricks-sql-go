@@ -199,8 +199,8 @@ The same level is mapped into the kernel's internal (Rust) log subscriber. Its
 records are forwarded into the driver's logger, so they use the same output as the
 Go and Thrift paths, including a local file configured with logger.SetLogOutput.
 Changing SetLogOutput later safely retargets all three paths. The Rust verbosity is
-fixed when the first kernel session in the process is opened, so set the level
-before that first connect.
+fixed when the first kernel session whose resolved level is not OFF is opened, so
+set the level before that first non-OFF connect.
 
 For finer control of the Rust verbosity independent of the driver level, set
 DBSQL_KERNEL_DEBUG to any non-empty value: the callback then defers filtering to
