@@ -78,6 +78,9 @@ func kernelSocketTimeoutSeconds(timeout time.Duration) int64 {
 	if timeout%time.Second >= time.Second/2 {
 		seconds++
 	}
+	if seconds == 0 {
+		return 1
+	}
 	return int64(seconds)
 }
 

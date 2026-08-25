@@ -72,6 +72,7 @@ func TestKernelConnectionTelemetry(t *testing.T) {
 		}{
 			{"zero", 0, 0},
 			{"negative", -time.Second, 0},
+			{"positive sub-second floors to one", time.Nanosecond, 1},
 			{"fractional second rounds down", 1499 * time.Millisecond, 1},
 			{"half second rounds up", 1500 * time.Millisecond, 2},
 			{"whole seconds", 12 * time.Second, 12},
