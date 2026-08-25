@@ -63,6 +63,19 @@ func TestKernelConnectionTelemetry(t *testing.T) {
 		}
 	})
 
+	t.Run("request timeout reports the effective kernel value", func(t *testing.T) {
+		cfg := config.WithDefaults()
+		cfg.ClientTimeout = 0
+		if got := kernelConnectionTelemetry(cfg).SocketTimeout; got != 120_000 {
+			t.Errorf("SocketTimeout = %d, want kernel default 120000", got)
+		}
+
+		cfg.ClientTimeout = time.Nanosecond
+		if got := kernelConnectionTelemetry(cfg).SocketTimeout; got != 1 {
+			t.Errorf("SocketTimeout = %d, want rounded-up 1", got)
+		}
+	})
+
 	t.Run("explicit WithKernelProxy marks UseProxy", func(t *testing.T) {
 		cfg := config.WithDefaults()
 		cfg.AccessToken = "dapi-x"

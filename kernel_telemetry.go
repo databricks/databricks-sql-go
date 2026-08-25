@@ -39,7 +39,7 @@ func kernelConnectionTelemetry(cfg *config.Config) *telemetry.DriverConnectionPa
 		},
 		UseProxy:             kernelUsesProxy(cfg),
 		EnableMetricViewMeta: cfg.EnableMetricViewMetadata,
-		SocketTimeout:        cfg.ClientTimeout.Milliseconds(),
+		SocketTimeout:        kernel.EffectiveRequestTimeoutMilliseconds(cfg.ClientTimeout),
 	}
 	if qt := cfg.SessionParams["QUERY_TAGS"]; qt != "" {
 		params.QueryTags = qt

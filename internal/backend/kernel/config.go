@@ -111,12 +111,21 @@ type RetryConfig struct {
 	OverallTimeout time.Duration
 }
 
-func requestTimeoutMilliseconds(timeout time.Duration) uint64 {
+func requestTimeoutMilliseconds(timeout time.Duration) int64 {
 	if timeout <= 0 {
 		return 0
 	}
 	if timeout < time.Millisecond {
 		return 1
 	}
-	return uint64(timeout.Milliseconds()) //nolint:gosec // timeout is positive and bounded by time.Duration
+	return timeout.Milliseconds()
+}
+
+// EffectiveRequestTimeoutMilliseconds returns the deadline the kernel applies.
+func EffectiveRequestTimeoutMilliseconds(timeout time.Duration) int64 {
+	timeoutMs := requestTimeoutMilliseconds(timeout)
+	if timeoutMs == 0 {
+		return 120_000
+	}
+	return timeoutMs
 }
