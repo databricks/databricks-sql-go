@@ -184,14 +184,17 @@ of what a custom transport is used for — with one gap:
 | Custom CA bundle (re-signing proxy / on-prem CA) | `WithKernelTrustedCerts(pem)` |
 | Skip hostname check (private-link host) | `WithKernelSkipHostnameVerify()` (hostname only) or `WithSkipTLSHostVerify()` (blanket) |
 | HTTP proxy | `WithKernelProxy(...)` / `HTTP(S)_PROXY` env (see [Proxy](#proxy)) |
-| **Client-certificate mTLS** | **none yet** |
+| **Client-certificate mTLS** | **none yet in Go** (kernel C ABI ready — see note) |
 
-**mTLS gap.** The kernel core itself supports client-certificate mTLS (`client_cert_pem` /
-`client_key_pem` on its `TlsConfig`), but the Go driver does not currently surface it: the
-experimental config exposes only a trusted-CA bundle and a hostname-verify skip, with no
-`WithKernelClientCert`. So a connection that relies on mTLS must use the default (Thrift)
-backend and `WithTransport`. Wiring the existing kernel capability through to a Go option is
-a tracked follow-up.
+**mTLS gap.** The kernel core supports client-certificate mTLS (`client_cert_pem` /
+`client_key_pem` on its `TlsConfig`), and as of
+[databricks-sql-kernel#289](https://github.com/databricks/databricks-sql-kernel/pull/289)
+the C ABI exposes it too (`kernel_session_config_set_tls_client_certificate`). The **Go
+driver** does not yet surface it: the experimental config exposes only a trusted-CA bundle
+and a hostname-verify skip, with no `WithKernelClientCert`. Until the driver pins that kernel
+revision and adds the option, a connection that relies on mTLS must use the default (Thrift)
+backend and `WithTransport`. Wiring the now-available C ABI setter through to a Go option is
+the pending follow-up.
 
 ## Proxy
 
