@@ -43,6 +43,9 @@ func TestKernelConnectionTelemetry(t *testing.T) {
 		if p.HostInfo == nil || p.HostInfo.HostURL != "example.cloud.databricks.com" || p.HostInfo.Port != 443 {
 			t.Errorf("HostInfo = %+v, want host/port populated", p.HostInfo)
 		}
+		if p.SocketTimeout != 900_000 {
+			t.Errorf("SocketTimeout = %d, want 900000", p.SocketTimeout)
+		}
 	})
 
 	t.Run("query tags + metric-view are reflected", func(t *testing.T) {

@@ -218,6 +218,10 @@ func (k *KernelBackend) OpenSession(ctx context.Context) error {
 		return err
 	}
 
+	if err := k.applyRequestTimeout(cfg); err != nil {
+		return err
+	}
+
 	// Retry / backoff policy (WithRetries). See applyRetry.
 	if err := k.applyRetry(cfg); err != nil {
 		return err
@@ -353,6 +357,16 @@ func (k *KernelBackend) applyProxy(cfg *C.KernelSessionConfig) error {
 		return C.kernel_session_config_set_proxy(cfg, url.c, user.c, pass.c, bypass.c)
 	}); err != nil {
 		return fmt.Errorf("kernel: set_proxy: %w", toConnError(err))
+	}
+	return nil
+}
+
+func (k *KernelBackend) applyRequestTimeout(cfg *C.KernelSessionConfig) error {
+	timeoutMs := requestTimeoutMilliseconds(k.cfg.RequestTimeout)
+	if err := call(func() C.KernelStatusCode {
+		return C.kernel_session_config_set_request_timeout(cfg, C.uint64_t(timeoutMs))
+	}); err != nil {
+		return fmt.Errorf("kernel: set_request_timeout: %w", toConnError(err))
 	}
 	return nil
 }
@@ -539,6 +553,18 @@ func trySetTokenCacheConfig(auth Auth, enabled bool) error {
 	defer C.kernel_session_config_free(cfg)
 	k := &KernelBackend{cfg: Config{Auth: auth, TokenCacheEnabled: enabled}}
 	return k.setAuth(cfg)
+}
+
+// trySetRequestTimeout exercises the request-timeout C setter without opening a
+// network session. It is used only by the tagged kernel tests.
+func trySetRequestTimeout(cfg Config) error {
+	var c *C.KernelSessionConfig
+	if err := call(func() C.KernelStatusCode { return C.kernel_session_config_new(&c) }); err != nil {
+		return fmt.Errorf("config_new: %w", err)
+	}
+	defer C.kernel_session_config_free(c)
+	k := &KernelBackend{cfg: cfg}
+	return k.applyRequestTimeout(c)
 }
 
 // applyInitialNamespace runs USE CATALOG / USE SCHEMA to select the configured

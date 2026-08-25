@@ -21,6 +21,11 @@ type Config struct {
 	// attributed to this driver (not the kernel's built-in UA). Empty leaves it unset.
 	UserAgent string
 
+	// RequestTimeout is the total HTTP request deadline, from connect through
+	// response-body completion. Zero selects the kernel's 120s default; it is
+	// neither unlimited nor an immediate timeout.
+	RequestTimeout time.Duration
+
 	// SessionConf carries server-bound session confs verbatim — the same map the
 	// Thrift backend forwards (STATEMENT_TIMEOUT, QUERY_TAGS, TIMEZONE, …).
 	SessionConf map[string]string
@@ -104,4 +109,14 @@ type RetryConfig struct {
 	// OverallTimeout is the cumulative retry budget; zero => keep the kernel
 	// default (900s). Mirrors the pyo3/napi retry_overall_timeout knob.
 	OverallTimeout time.Duration
+}
+
+func requestTimeoutMilliseconds(timeout time.Duration) uint64 {
+	if timeout <= 0 {
+		return 0
+	}
+	if timeout < time.Millisecond {
+		return 1
+	}
+	return uint64(timeout.Milliseconds()) //nolint:gosec // timeout is positive and bounded by time.Duration
 }

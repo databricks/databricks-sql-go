@@ -20,9 +20,8 @@ import (
 // to actually emit it. Pure Go so it is unit-testable in the default build.
 //
 // It reports only what the kernel path genuinely applies: EnableArrow is always
-// true (the kernel returns Arrow results), UseProxy reflects whether a proxy was
-// resolved (env-var or WithKernelProxy), and it does not claim direct-results or a
-// socket timeout the kernel C ABI has no knob for.
+// true, UseProxy reflects the resolved proxy, and SocketTimeout reflects the same
+// ClientTimeout forwarded to the kernel. It does not claim direct-results.
 func kernelConnectionTelemetry(cfg *config.Config) *telemetry.DriverConnectionParameters {
 	params := &telemetry.DriverConnectionParameters{
 		HTTPPath: cfg.HTTPPath,
@@ -40,6 +39,7 @@ func kernelConnectionTelemetry(cfg *config.Config) *telemetry.DriverConnectionPa
 		},
 		UseProxy:             kernelUsesProxy(cfg),
 		EnableMetricViewMeta: cfg.EnableMetricViewMetadata,
+		SocketTimeout:        cfg.ClientTimeout.Milliseconds(),
 	}
 	if qt := cfg.SessionParams["QUERY_TAGS"]; qt != "" {
 		params.QueryTags = qt

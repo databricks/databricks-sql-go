@@ -226,6 +226,10 @@ static authenticators, and custom M2M OAuth scopes
 Unity Catalog volume) is rejected at execute. WithMaxRows is accepted but inert (the
 kernel manages fetching below the C ABI).
 
+Kernel HTTP requests inherit the driver's 900s ClientTimeout. If that value is
+zero, the kernel uses its own 120s default; zero is neither unlimited nor an
+immediate timeout.
+
 OAuth U2M is interactive: on a cache miss, connecting launches the system browser and
 blocks until login completes or the kernel's ~120s callback timeout expires. Because
 the C ABI can't interrupt session open mid-call, a connection-context deadline is not
