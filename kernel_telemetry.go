@@ -1,6 +1,8 @@
 package dbsql
 
 import (
+	"time"
+
 	"github.com/databricks/databricks-sql-go/internal/backend/kernel"
 	"github.com/databricks/databricks-sql-go/internal/config"
 	"github.com/databricks/databricks-sql-go/telemetry"
@@ -20,8 +22,9 @@ import (
 // to actually emit it. Pure Go so it is unit-testable in the default build.
 //
 // It reports only what the kernel path genuinely applies: EnableArrow is always
-// true, UseProxy reflects the resolved proxy, and SocketTimeout reflects the same
-// encoded timeout sent to the kernel C ABI. It does not claim direct-results.
+// true, UseProxy reflects the resolved proxy, and SocketTimeout reports the
+// configured ClientTimeout in the receiver schema's seconds unit. It does not
+// claim direct-results.
 func kernelConnectionTelemetry(cfg *config.Config) *telemetry.DriverConnectionParameters {
 	params := &telemetry.DriverConnectionParameters{
 		HTTPPath: cfg.HTTPPath,
@@ -39,7 +42,7 @@ func kernelConnectionTelemetry(cfg *config.Config) *telemetry.DriverConnectionPa
 		},
 		UseProxy:             kernelUsesProxy(cfg),
 		EnableMetricViewMeta: cfg.EnableMetricViewMetadata,
-		SocketTimeout:        kernel.RequestTimeoutMilliseconds(cfg.ClientTimeout),
+		SocketTimeout:        kernelSocketTimeoutSeconds(cfg.ClientTimeout),
 	}
 	if qt := cfg.SessionParams["QUERY_TAGS"]; qt != "" {
 		params.QueryTags = qt
@@ -65,6 +68,17 @@ func kernelConnectionTelemetry(cfg *config.Config) *telemetry.DriverConnectionPa
 		}
 	}
 	return params
+}
+
+func kernelSocketTimeoutSeconds(timeout time.Duration) int64 {
+	if timeout <= 0 {
+		return 0
+	}
+	seconds := timeout / time.Second
+	if timeout%time.Second >= time.Second/2 {
+		seconds++
+	}
+	return int64(seconds)
 }
 
 // kernelUsesProxy reports whether the kernel connection will route through a

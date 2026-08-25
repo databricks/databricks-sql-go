@@ -43,8 +43,8 @@ func TestKernelConnectionTelemetry(t *testing.T) {
 		if p.HostInfo == nil || p.HostInfo.HostURL != "example.cloud.databricks.com" || p.HostInfo.Port != 443 {
 			t.Errorf("HostInfo = %+v, want host/port populated", p.HostInfo)
 		}
-		if p.SocketTimeout != 900_000 {
-			t.Errorf("SocketTimeout = %d, want 900000", p.SocketTimeout)
+		if p.SocketTimeout != 900 {
+			t.Errorf("SocketTimeout = %d, want 900", p.SocketTimeout)
 		}
 	})
 
@@ -63,16 +63,25 @@ func TestKernelConnectionTelemetry(t *testing.T) {
 		}
 	})
 
-	t.Run("request timeout reports the C ABI value", func(t *testing.T) {
+	t.Run("request timeout reports receiver-schema seconds", func(t *testing.T) {
 		cfg := config.WithDefaults()
-		cfg.ClientTimeout = 0
-		if got := kernelConnectionTelemetry(cfg).SocketTimeout; got != 0 {
-			t.Errorf("SocketTimeout = %d, want 0 (use kernel default)", got)
-		}
-
-		cfg.ClientTimeout = time.Nanosecond
-		if got := kernelConnectionTelemetry(cfg).SocketTimeout; got != 1 {
-			t.Errorf("SocketTimeout = %d, want rounded-up 1", got)
+		for _, tc := range []struct {
+			name    string
+			timeout time.Duration
+			want    int64
+		}{
+			{"zero", 0, 0},
+			{"negative", -time.Second, 0},
+			{"fractional second rounds down", 1499 * time.Millisecond, 1},
+			{"half second rounds up", 1500 * time.Millisecond, 2},
+			{"whole seconds", 12 * time.Second, 12},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				cfg.ClientTimeout = tc.timeout
+				if got := kernelConnectionTelemetry(cfg).SocketTimeout; got != tc.want {
+					t.Errorf("SocketTimeout = %d, want %d", got, tc.want)
+				}
+			})
 		}
 	})
 

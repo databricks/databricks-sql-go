@@ -18,8 +18,8 @@ func TestRequestTimeoutMilliseconds(t *testing.T) {
 		{"seconds", 12 * time.Second, 12_000},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := RequestTimeoutMilliseconds(tc.timeout); got != tc.want {
-				t.Errorf("RequestTimeoutMilliseconds(%v) = %d, want %d", tc.timeout, got, tc.want)
+			if got := requestTimeoutMilliseconds(tc.timeout); got != tc.want {
+				t.Errorf("requestTimeoutMilliseconds(%v) = %d, want %d", tc.timeout, got, tc.want)
 			}
 		})
 	}
