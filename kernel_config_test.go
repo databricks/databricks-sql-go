@@ -426,6 +426,7 @@ var kernelConfigFieldDisposition = map[string]string{
 	"TelemetryBatchSize":       "inert",
 	"TelemetryFlushInterval":   "inert",
 	"UseArrowNativeDecimalDSN": "inert", // DSN carrier; kernel renders decimals exactly regardless
+	"TokenCacheEnabledDSN":     "inert", // DSN carrier; forwarded to KernelExperimental.TokenCacheEnabled
 
 	// Fields promoted from the embedded CloudFetchConfig. The kernel does
 	// CloudFetch internally (below the C ABI), so none is forwarded — but each is
@@ -595,6 +596,23 @@ func TestBuildKernelConfig(t *testing.T) {
 				"apply_client_result_overrides reads this exact key; a mismatch silently "+
 				"no-ops the knob or leaks it to the server",
 				config.KernelMaxChunksInMemoryConfKey, wantKey)
+		}
+	})
+
+	t.Run("TokenCacheEnabled forwarded from KernelExperimental to kernel.Config", func(t *testing.T) {
+		c := baseKernelConfig()
+		c.KernelExperimental = &config.KernelExperimentalConfig{TokenCacheEnabled: true}
+		kc := buildKernelConfig(c, kernel.Auth{Mode: kernel.AuthPAT, Token: "dapi-x"})
+		if !kc.TokenCacheEnabled {
+			t.Error("TokenCacheEnabled = false, want true (WithTokenCache not forwarded)")
+		}
+	})
+
+	t.Run("TokenCacheEnabled false by default (disable on-disk persistence)", func(t *testing.T) {
+		c := baseKernelConfig() // KernelExperimental nil or TokenCacheEnabled = false
+		kc := buildKernelConfig(c, kernel.Auth{Mode: kernel.AuthPAT, Token: "dapi-x"})
+		if kc.TokenCacheEnabled {
+			t.Error("TokenCacheEnabled = true by default, want false (in-memory only by default)")
 		}
 	})
 }

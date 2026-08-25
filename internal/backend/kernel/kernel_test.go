@@ -141,6 +141,35 @@ func TestSetRetry(t *testing.T) {
 	}
 }
 
+// TestSetTokenCache exercises the real kernel_session_config_set_u2m_token_cache_config
+// cgo setter via the trySetTokenCacheConfig seam: enabled=true and enabled=false must
+// succeed on the U2M auth path; a non-U2M path returns nil (no-op). Proves the arg
+// marshalling and the C signature.
+func TestSetTokenCache(t *testing.T) {
+	cases := []struct {
+		name    string
+		auth    Auth
+		enabled bool
+		wantErr bool
+	}{
+		{"U2M enabled", Auth{Mode: AuthU2M, ClientID: "u2m-cid"}, true, false},
+		{"U2M disabled", Auth{Mode: AuthU2M}, false, false},
+		{"PAT (no-op)", Auth{Mode: AuthPAT, Token: "dapi-x"}, true, false},
+		{"M2M (no-op)", Auth{Mode: AuthM2M, ClientID: "cid", ClientSecret: "sec"}, true, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := trySetTokenCacheConfig(c.auth, c.enabled)
+			if c.wantErr && err == nil {
+				t.Errorf("trySetTokenCacheConfig(%s, %v) = nil, want an error", c.name, c.enabled)
+			}
+			if !c.wantErr && err != nil {
+				t.Errorf("trySetTokenCacheConfig(%s, %v) = %v, want nil", c.name, c.enabled, err)
+			}
+		})
+	}
+}
+
 // TestKernelLogLevel and TestResolveKernelLogArg — the pure level-resolution tests —
 // live in the untagged logging_level_test.go so they run under CGO_ENABLED=0. The
 // tests below exercise klog/klogCtx and so need the cgo build.
