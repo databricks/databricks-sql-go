@@ -111,7 +111,9 @@ type RetryConfig struct {
 	OverallTimeout time.Duration
 }
 
-func requestTimeoutMilliseconds(timeout time.Duration) int64 {
+// RequestTimeoutMilliseconds returns the value sent to the C ABI. Zero selects
+// the kernel default; positive sub-millisecond values round up to 1ms.
+func RequestTimeoutMilliseconds(timeout time.Duration) int64 {
 	if timeout <= 0 {
 		return 0
 	}
@@ -119,13 +121,4 @@ func requestTimeoutMilliseconds(timeout time.Duration) int64 {
 		return 1
 	}
 	return timeout.Milliseconds()
-}
-
-// EffectiveRequestTimeoutMilliseconds returns the deadline the kernel applies.
-func EffectiveRequestTimeoutMilliseconds(timeout time.Duration) int64 {
-	timeoutMs := requestTimeoutMilliseconds(timeout)
-	if timeoutMs == 0 {
-		return 120_000
-	}
-	return timeoutMs
 }

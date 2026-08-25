@@ -21,7 +21,7 @@ import (
 //
 // It reports only what the kernel path genuinely applies: EnableArrow is always
 // true, UseProxy reflects the resolved proxy, and SocketTimeout reflects the same
-// ClientTimeout forwarded to the kernel. It does not claim direct-results.
+// encoded timeout sent to the kernel C ABI. It does not claim direct-results.
 func kernelConnectionTelemetry(cfg *config.Config) *telemetry.DriverConnectionParameters {
 	params := &telemetry.DriverConnectionParameters{
 		HTTPPath: cfg.HTTPPath,
@@ -39,7 +39,7 @@ func kernelConnectionTelemetry(cfg *config.Config) *telemetry.DriverConnectionPa
 		},
 		UseProxy:             kernelUsesProxy(cfg),
 		EnableMetricViewMeta: cfg.EnableMetricViewMetadata,
-		SocketTimeout:        kernel.EffectiveRequestTimeoutMilliseconds(cfg.ClientTimeout),
+		SocketTimeout:        kernel.RequestTimeoutMilliseconds(cfg.ClientTimeout),
 	}
 	if qt := cfg.SessionParams["QUERY_TAGS"]; qt != "" {
 		params.QueryTags = qt

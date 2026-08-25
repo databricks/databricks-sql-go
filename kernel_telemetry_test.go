@@ -63,11 +63,11 @@ func TestKernelConnectionTelemetry(t *testing.T) {
 		}
 	})
 
-	t.Run("request timeout reports the effective kernel value", func(t *testing.T) {
+	t.Run("request timeout reports the C ABI value", func(t *testing.T) {
 		cfg := config.WithDefaults()
 		cfg.ClientTimeout = 0
-		if got := kernelConnectionTelemetry(cfg).SocketTimeout; got != 120_000 {
-			t.Errorf("SocketTimeout = %d, want kernel default 120000", got)
+		if got := kernelConnectionTelemetry(cfg).SocketTimeout; got != 0 {
+			t.Errorf("SocketTimeout = %d, want 0 (use kernel default)", got)
 		}
 
 		cfg.ClientTimeout = time.Nanosecond

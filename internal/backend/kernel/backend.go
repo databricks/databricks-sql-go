@@ -362,7 +362,7 @@ func (k *KernelBackend) applyProxy(cfg *C.KernelSessionConfig) error {
 }
 
 func (k *KernelBackend) applyRequestTimeout(cfg *C.KernelSessionConfig) error {
-	timeoutMs := requestTimeoutMilliseconds(k.cfg.RequestTimeout)
+	timeoutMs := RequestTimeoutMilliseconds(k.cfg.RequestTimeout)
 	if err := call(func() C.KernelStatusCode {
 		return C.kernel_session_config_set_request_timeout(cfg, C.uint64_t(timeoutMs))
 	}); err != nil {
