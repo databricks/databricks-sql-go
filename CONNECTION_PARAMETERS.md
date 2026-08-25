@@ -38,6 +38,7 @@ allowlist is tracked in PECOBLR-4153.
 | *(host)* | `WithServerHostname` | ✅ | ✅ | *(required)* | Workspace hostname. |
 | *(path)* | `WithHTTPPath` | ✅ | ✅ | *(required)* | Warehouse/endpoint HTTP path. |
 | *(port)* | `WithPort` | ✅ | ❌ | `443` | Kernel connects on **443 only** and rejects any other port. |
+| *(scheme)* | *(via `WithServerHostname`)* | ✅ | ❌ | `https` | A non-https scheme (`http://…`, or a bare `localhost`, which defaults to `http`) is **rejected** on the kernel path (it connects over https). Honored on Thrift. |
 | `warehouseId` | `WithWarehouseID` | ⚠️ | ✅ | | Bare warehouse id; the kernel routes by it (preferred over the HTTP path). The Thrift backend **silently ignores** it. |
 | `catalog` | `WithInitialNamespace` | ✅ | ✅ | | Initial catalog. Kernel applies it post-connect via `USE CATALOG`. |
 | `schema` | `WithInitialNamespace` | ✅ | ✅ | | Initial schema. Kernel applies it post-connect via `USE SCHEMA`. |
@@ -59,9 +60,19 @@ Notes for the SEA/kernel backend:
   `AndClientID` also forwards the SP-wide client ID. Expired tokens require a new connection.
 - Custom OAuth **M2M scopes** are rejected on the kernel path (the kernel applies its
   own default scopes). Default scopes work on both.
-- **U2M** is interactive: on a cache miss, connecting launches the browser and a
-  connect-context **deadline is not honored** during the login window. U2M scopes are at
-  parity with Thrift. Use PAT or M2M for headless/deadline-bound connects.
+- **U2M** is interactive: on a cache miss, connecting launches the browser to complete the
+  login. Use PAT or M2M for headless connects (they need no browser).
+- On the kernel path U2M always uses the in-house `databricks-sql-connector` OAuth app and
+  fixed `sql` + `offline_access` scopes, **uniformly across clouds** — it does not forward a
+  custom client id or custom scopes. This matches Thrift on AWS/GCP; on **Azure** it
+  deliberately differs (Thrift uses the Entra-direct app id / `user_impersonation` scope,
+  while the kernel drives a single in-house workspace-federated flow).
+- The **connect-context deadline is not honored mid-connect** on the kernel path for *any*
+  auth (not just U2M): the context is checked only at entry to session-open, then the
+  kernel's blocking session-open runs uninterruptibly, so a slow warehouse cold-start or a
+  connect-time network partition can block past the deadline. U2M's browser login is the
+  most visible case, but PAT/M2M are equally uninterruptible mid-connect — this is a kernel
+  C ABI limitation, not U2M-specific.
 - OAuth token caching/refresh is owned by the kernel on the kernel path (no driver
   config).
 
@@ -75,7 +86,58 @@ Notes for the SEA/kernel backend:
 | *(session param)* | `WithSessionParams` | ✅ | ⚠️ | | Arbitrary session confs (e.g. `ansi_mode`, `STATEMENT_TIMEOUT`, `QUERY_TAGS`). Allowlisted confs are honored on both; on kernel a non-allowlisted conf is dropped/rejected (see the note above; PECOBLR-4153). |
 | *(via session param)* | `WithQueryTags` | ✅ | ✅ | | Session-level query tags (serialized into `QUERY_TAGS`). |
 | `timezone` | `WithSessionParams(timezone=…)` | ✅ | ✅ | | Session time zone (e.g. `America/Los_Angeles`). |
-| `enableMetricViewMetadata` | `WithEnableMetricViewMetadata` | ✅ | ⚠️ | `false` | Enables metric-view metadata (sets `spark.sql.thriftserver.metadata.metricview.enabled=true`). The driver forwards the conf on both paths, but the kernel currently hard-rejects it (HTTP 400 `INVALID_CONF_VALUE`), so it does not yet take effect on the kernel path (PECOBLR-4142 / PECOBLR-4153). |
+| `enableMetricViewMetadata` | `WithEnableMetricViewMetadata` | ✅ | ⚠️ | `false` | Enables metric-view metadata (sets `spark.sql.thriftserver.metadata.metricview.enabled=true`). Both paths forward the **identical** conf; the kernel allowlists this key and sends it verbatim — it is **not** rejected driver- or kernel-side. Whether it takes effect on the SEA/kernel path depends on server-side SEA support (a `⚠️` pending confirmation against a live warehouse; PECOBLR-4142 / PECOBLR-4153). |
+
+### Kernel session-conf allowlist
+
+On the **Thrift** path the `WithSessionParams` map is forwarded to the server freely.
+On the **kernel** path each key is matched **case-insensitively** against the allowlist
+below; a key not on it is **dropped with a warning** (never sent), so a conf that takes
+effect on Thrift may silently do nothing on kernel. Broadening the allowlist is tracked in
+PECOBLR-4153.
+
+> **Authoritative source.** This table is transcribed from the vendored kernel's
+> allowlist (`build/kernel-src/src/config.rs`), which is not part of this repo checkout.
+> Only `spark.sql.thriftserver.metadata.metricview.enabled` and the kernel max-chunks key
+> have repo-side anchors (`internal/config/config.go`); the remaining keys and the
+> uppercase-on-send / `spark.*`-verbatim rules have no CI guard here and may lag as the
+> kernel evolves. When in doubt, treat the kernel allowlist as authoritative.
+
+**SET-style SQL parameters** — matched case-insensitively, sent **uppercased** (the server
+echoes these uppercase, so `SET`-readback matches):
+
+| Key | Purpose |
+|---|---|
+| `ANSI_MODE` | Enable/disable ANSI SQL behavior. |
+| `COLLATION` | Default collation. |
+| `ENABLE_PHOTON` | Toggle the Photon engine. |
+| `LEGACY_TIME_PARSER_POLICY` | Legacy datetime parsing behavior. |
+| `MAX_FILE_PARTITION_BYTES` | Max bytes per file partition. |
+| `QUERY_TAGS` | Query tags (comma-separated `key:value`). This is the key `WithQueryTags` writes. |
+| `READ_ONLY_EXTERNAL_METASTORE` | Treat the external metastore as read-only. |
+| `STATEMENT_TIMEOUT` | Server-side per-statement timeout (seconds). The real query-timeout knob on the kernel path, since `WithTimeout` is rejected there. |
+| `TIMEZONE` | Session time zone (e.g. `UTC`). Also settable via the `timezone` DSN param / `WithSessionParams`. |
+| `USE_CACHED_RESULT` | Toggle result caching. |
+
+**Dotted `spark.*` conf** — matched case-insensitively but sent **verbatim** (Spark conf
+keys are case-sensitive and must not be uppercased):
+
+| Key | Purpose |
+|---|---|
+| `spark.sql.thriftserver.metadata.metricview.enabled` | Metric-view metadata; the conf `WithEnableMetricViewMetadata` sets. |
+
+Notes:
+
+- Boolean-valued keys should use the exact strings `"true"` / `"false"` — the kernel does
+  not pre-validate values and forwards them as-is.
+- **`CAN_CLOUD_DOWNLOAD` is deliberately not allowlisted**: SEA has no such session conf
+  (it is accepted at CreateSession but rejected at the first statement with
+  `CONFIG_NOT_AVAILABLE`). Disable Cloud Fetch with `WithCloudFetch(false)` and bound its
+  memory with `WithKernelMaxChunksInMemory` instead of a raw conf.
+- The client-only keys (`cloudfetch_enabled`, `cloudfetch_max_chunks_in_memory`,
+  `complex_types_as_json`, `intervals_as_string`, …) are **not** in this allowlist: the
+  kernel reads them at session creation and strips them before the SEA wire. The driver
+  exposes the relevant ones as dedicated `WithKernel*` options rather than raw confs.
 
 ## Retry / backoff
 
@@ -108,11 +170,22 @@ BINARY as `sql.RawBytes`).
 
 | Connector option | Thrift | Kernel | Notes |
 |---|:---:|:---:|---|
-| `WithSkipTLSHostVerify()` | ✅ | ✅ | Disable TLS chain + hostname verification. **Use only for internal private-link hostnames** — susceptible to machine-in-the-middle attacks. |
-| `WithTransport(http.RoundTripper)` | ✅ | ❌ | Supply a custom HTTP transport (custom CA, mTLS, or proxy). Rejected on the kernel path — the kernel uses its own HTTP stack; use `WithKernelTrustedCerts` / `WithKernelProxy` there. |
-| `WithKernelTrustedCerts(pem)` | ❌ | ✅ | Add a PEM CA bundle on top of the system roots (for a re-signing proxy / on-prem CA). Needed because the kernel's TLS stack does not read `SSL_CERT_FILE`. |
-| `WithKernelClientCertificate(certPEM, keyPEM)` | ❌ | ✅ | Configure a paired mTLS client certificate and unencrypted private key. Both must be non-empty; the certificate may include intermediates and PKCS#8 keys are recommended. |
-| `WithKernelSkipHostnameVerify()` | ❌ | ✅ | Skip **only** the hostname check while keeping chain validation (finer-grained than `WithSkipTLSHostVerify`). |
+| `WithSkipTLSHostVerify()` | ✅ | ✅ | Disable TLS chain + hostname verification. **Use only for internal private-link hostnames** — susceptible to machine-in-the-middle attacks. On the kernel path it maps to the kernel's "accept self-signed" + hostname-skip (relaxes both chain and hostname, matching Thrift). |
+| `WithTransport(http.RoundTripper)` | ✅ | ❌ | Supply a custom HTTP transport (custom CA, mTLS, or proxy). **Rejected** on the kernel path (wraps `ErrRequiresKernelBackend`/`ErrNotSupportedByKernel`): a Go `RoundTripper` is executable Go code that can't cross the C ABI into the kernel's own Rust HTTP stack, so it could only be silently ignored. Use the dedicated `WithKernel*` knobs below (custom CA / client-cert mTLS / hostname-skip / proxy). |
+| `WithKernelTrustedCerts(pem)` | ❌ | ✅ | Add a PEM CA bundle on top of the system roots (for a re-signing proxy / on-prem CA). Needed because the kernel's rustls stack does not read `SSL_CERT_FILE`. Rejected on Thrift (use `WithTransport` there). |
+| `WithKernelClientCertificate(certPEM, keyPEM)` | ❌ | ✅ | Client-certificate **mTLS** identity: a paired PEM certificate + unencrypted private key. Both must be non-empty (an empty pair wraps `ErrInvalidKernelConfig`); the certificate may include intermediates, and a PKCS#8 key is recommended across kernel TLS backends. Server chain/hostname verification stay strict and independently configurable. Rejected on Thrift (`ErrRequiresKernelBackend`) — use `WithTransport` with `tls.Config.Certificates` there. Requires a kernel build pinning [databricks-sql-kernel#289](https://github.com/databricks/databricks-sql-kernel/pull/289) (see `KERNEL_REV`). |
+| `WithKernelSkipHostnameVerify()` | ❌ | ✅ | Skip **only** the hostname check while keeping chain validation (finer-grained than `WithSkipTLSHostVerify`). Rejected on Thrift. |
+
+The `WithTransport` rejection is deliberate — a Go transport can't cross the C ABI into the
+kernel's Rust HTTP stack. The dedicated kernel TLS knobs cover what a custom transport is
+used for:
+
+| Reason for a custom `WithTransport` | Kernel option |
+|---|---|
+| Custom CA bundle (re-signing proxy / on-prem CA) | `WithKernelTrustedCerts(pem)` |
+| Client-certificate mTLS | `WithKernelClientCertificate(certPEM, keyPEM)` |
+| Skip hostname check (private-link host) | `WithKernelSkipHostnameVerify()` (hostname only) or `WithSkipTLSHostVerify()` (blanket) |
+| HTTP proxy | `WithKernelProxy(...)` / `HTTP(S)_PROXY` env (see [Proxy](#proxy)) |
 
 ## Proxy
 
@@ -140,6 +213,12 @@ telemetry is skipped entirely to avoid a second interactive browser flow at conn
 | `telemetry_flush_interval` | ✅ | ✅ | `30s` | Flush interval. |
 | `telemetry_retry_count` | ⚠️ | ⚠️ | — | **Deprecated and ignored** (retries are owned by the HTTP client + circuit breaker); logs a one-time warning. |
 | `telemetry_retry_delay` | ⚠️ | ⚠️ | — | **Deprecated and ignored** (see above). |
+
+These telemetry knobs are **DSN-only** — there are no `WithX` connector options for them.
+An app assembled with `NewConnector(...)` options rather than a DSN cannot tune telemetry:
+whether telemetry is enabled falls back to the server feature flag (since `enableTelemetry`
+is unset), and `telemetry_batch_size` / `telemetry_flush_interval` use their defaults
+(`200` / `30s`).
 
 The kernel path additionally emits a connection-config telemetry event at connect (mode,
 auth mechanism/flow, proxy, arrow, query tags, metric-view); the Thrift path's telemetry
