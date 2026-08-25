@@ -73,8 +73,13 @@ Notes for the SEA/kernel backend:
   connect-time network partition can block past the deadline. U2M's browser login is the
   most visible case, but PAT/M2M are equally uninterruptible mid-connect — this is a kernel
   C ABI limitation, not U2M-specific.
-- OAuth token caching/refresh is owned by the kernel on the kernel path (no driver
-  config).
+- OAuth **U2M** on-disk token caching is controlled by `WithTokenCache(enabled bool)`
+  (DSN `tokenCache=true|false`). **Disabled by default** — the driver forwards a disable
+  unless you opt in, matching its historical no-persistence posture. When enabled, the
+  kernel persists the U2M refresh token to an AES-256 encrypted on-disk cache at
+  `~/.config/databricks-sql-kernel/oauth/`, so a later process skips the browser login.
+  U2M-only (no effect on PAT/M2M); enable-flag only (no passphrase surface). In-session
+  token *refresh* is always owned by the kernel regardless of this flag.
 
 ## Query execution
 
