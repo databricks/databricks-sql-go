@@ -72,6 +72,13 @@ type KernelExperimentalConfig struct {
 	// Needed because the kernel's rustls stack ignores SSL_CERT_FILE, so a custom
 	// CA must be handed to the kernel explicitly.
 	TLSTrustedCertsPEM []byte
+	// TLSClientCertPEM / TLSClientKeyPEM are the paired mTLS client identity
+	// forwarded through kernel_session_config_set_tls_client_certificate.
+	// TLSClientCertConfigured distinguishes an explicit call with empty values
+	// from the option never being set, so invalid input cannot fail open.
+	TLSClientCertPEM        []byte
+	TLSClientKeyPEM         []byte
+	TLSClientCertConfigured bool
 	// TLSSkipHostnameVerify skips only the certificate hostname check, independent
 	// of the blanket InsecureSkipVerify (which relaxes both chain and hostname).
 	// Maps to kernel_session_config_set_tls_skip_hostname_verification.
@@ -121,17 +128,24 @@ func (k *KernelExperimentalConfig) DeepCopy() *KernelExperimentalConfig {
 		return nil
 	}
 	cp := &KernelExperimentalConfig{
-		TLSSkipHostnameVerify: k.TLSSkipHostnameVerify,
-		ProxyURL:              k.ProxyURL,
-		ProxyUsername:         k.ProxyUsername,
-		ProxyPassword:         k.ProxyPassword,
-		ProxyBypassHosts:      k.ProxyBypassHosts,
-		RetryOverallTimeout:   k.RetryOverallTimeout,
-		MaxChunksInMemory:     k.MaxChunksInMemory,
-		DecimalAsFloat:        k.DecimalAsFloat,
+		TLSClientCertConfigured: k.TLSClientCertConfigured,
+		TLSSkipHostnameVerify:   k.TLSSkipHostnameVerify,
+		ProxyURL:                k.ProxyURL,
+		ProxyUsername:           k.ProxyUsername,
+		ProxyPassword:           k.ProxyPassword,
+		ProxyBypassHosts:        k.ProxyBypassHosts,
+		RetryOverallTimeout:     k.RetryOverallTimeout,
+		MaxChunksInMemory:       k.MaxChunksInMemory,
+		DecimalAsFloat:          k.DecimalAsFloat,
 	}
 	if k.TLSTrustedCertsPEM != nil {
 		cp.TLSTrustedCertsPEM = append([]byte(nil), k.TLSTrustedCertsPEM...)
+	}
+	if k.TLSClientCertPEM != nil {
+		cp.TLSClientCertPEM = append([]byte(nil), k.TLSClientCertPEM...)
+	}
+	if k.TLSClientKeyPEM != nil {
+		cp.TLSClientKeyPEM = append([]byte(nil), k.TLSClientKeyPEM...)
 	}
 	return cp
 }

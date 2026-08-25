@@ -27,15 +27,18 @@ import (
 // deliberate decision and a setter in KernelBackend.OpenSession so it can't be
 // silently dropped.
 var kernelExperimentalFieldDisposition = map[string]string{
-	"TLSTrustedCertsPEM":    "forwarded", // set_tls_trusted_certs
-	"TLSSkipHostnameVerify": "forwarded", // set_tls_skip_hostname_verification
-	"ProxyURL":              "forwarded", // set_proxy (url)
-	"ProxyUsername":         "forwarded", // set_proxy (username)
-	"ProxyPassword":         "forwarded", // set_proxy (password)
-	"ProxyBypassHosts":      "forwarded", // set_proxy (bypass_hosts)
-	"RetryOverallTimeout":   "forwarded", // set_retry_config (overall_timeout_ms, 4th knob)
-	"MaxChunksInMemory":     "forwarded", // set_session_conf (cloudfetch_max_chunks_in_memory, client-only)
-	"DecimalAsFloat":        "forwarded", // kernel.Config.DecimalAsFloat → kernelOp → arrowscan (client-side scan choice)
+	"TLSTrustedCertsPEM":      "forwarded", // set_tls_trusted_certs
+	"TLSClientCertPEM":        "forwarded", // set_tls_client_certificate (cert)
+	"TLSClientKeyPEM":         "forwarded", // set_tls_client_certificate (key)
+	"TLSClientCertConfigured": "validated", // distinguishes explicit empty input from unset
+	"TLSSkipHostnameVerify":   "forwarded", // set_tls_skip_hostname_verification
+	"ProxyURL":                "forwarded", // set_proxy (url)
+	"ProxyUsername":           "forwarded", // set_proxy (username)
+	"ProxyPassword":           "forwarded", // set_proxy (password)
+	"ProxyBypassHosts":        "forwarded", // set_proxy (bypass_hosts)
+	"RetryOverallTimeout":     "forwarded", // set_retry_config (overall_timeout_ms, 4th knob)
+	"MaxChunksInMemory":       "forwarded", // set_session_conf (cloudfetch_max_chunks_in_memory, client-only)
+	"DecimalAsFloat":          "forwarded", // kernel.Config.DecimalAsFloat → kernelOp → arrowscan (client-side scan choice)
 }
 
 func TestKernelExperimentalFieldsClassified(t *testing.T) {
@@ -71,6 +74,10 @@ func TestWithKernelTLSOptionsSetExperimental(t *testing.T) {
 	}{
 		{"trusted certs", WithKernelTrustedCerts([]byte("ca")), func(k *config.KernelExperimentalConfig) bool {
 			return string(k.TLSTrustedCertsPEM) == "ca"
+		}},
+		{"client certificate", WithKernelClientCertificate([]byte("cert"), []byte("key")), func(k *config.KernelExperimentalConfig) bool {
+			return k.TLSClientCertConfigured && string(k.TLSClientCertPEM) == "cert" &&
+				string(k.TLSClientKeyPEM) == "key"
 		}},
 		{"skip hostname", WithKernelSkipHostnameVerify(), func(k *config.KernelExperimentalConfig) bool {
 			return k.TLSSkipHostnameVerify
@@ -116,6 +123,7 @@ func TestWithKernelOptionsRejectedOnThriftPath(t *testing.T) {
 		opt  ConnOption
 	}{
 		{"trusted certs", WithKernelTrustedCerts([]byte("ca"))},
+		{"client certificate", WithKernelClientCertificate([]byte("cert"), []byte("key"))},
 		{"skip hostname", WithKernelSkipHostnameVerify()},
 		{"proxy", WithKernelProxy(KernelProxy{URL: "http://proxy:3128"})},
 		{"retry overall timeout", WithKernelRetryOverallTimeout(5 * time.Minute)},
@@ -175,19 +183,42 @@ func TestWithKernelTrustedCertsCopiesPEM(t *testing.T) {
 	}
 }
 
+func TestWithKernelClientCertificateCopiesPEM(t *testing.T) {
+	cert := []byte("client-cert")
+	key := []byte("client-key")
+	cfg := config.WithDefaults()
+	WithKernelClientCertificate(cert, key)(cfg)
+
+	cert[0] = 'X'
+	key[0] = 'X'
+
+	if cfg.KernelExperimental == nil {
+		t.Fatal("KernelExperimental should be non-nil after WithKernelClientCertificate")
+	}
+	if got := string(cfg.KernelExperimental.TLSClientCertPEM); got != "client-cert" {
+		t.Errorf("client certificate aliased caller input: got %q", got)
+	}
+	if got := string(cfg.KernelExperimental.TLSClientKeyPEM); got != "client-key" {
+		t.Errorf("client key aliased caller input: got %q", got)
+	}
+}
+
 // DeepCopy must copy the CA byte slice, not alias it — the connector may DeepCopy
 // the whole Config per conn, and a shared backing array would let one conn's
 // mutation reach another.
 func TestKernelExperimentalDeepCopy(t *testing.T) {
 	orig := &config.KernelExperimentalConfig{
-		TLSTrustedCertsPEM:    []byte("ca-bundle"),
-		TLSSkipHostnameVerify: true,
-		ProxyURL:              "http://proxy:3128",
-		ProxyUsername:         "u",
-		ProxyPassword:         "p",
-		ProxyBypassHosts:      "*.internal",
-		RetryOverallTimeout:   5 * time.Minute,
-		MaxChunksInMemory:     4,
+		TLSTrustedCertsPEM:      []byte("ca-bundle"),
+		TLSClientCertPEM:        []byte("client-cert"),
+		TLSClientKeyPEM:         []byte("client-key"),
+		TLSClientCertConfigured: true,
+		TLSSkipHostnameVerify:   true,
+		ProxyURL:                "http://proxy:3128",
+		ProxyUsername:           "u",
+		ProxyPassword:           "p",
+		ProxyBypassHosts:        "*.internal",
+		RetryOverallTimeout:     5 * time.Minute,
+		MaxChunksInMemory:       4,
 	}
 	cp := orig.DeepCopy()
 	if cp == nil || string(cp.TLSTrustedCertsPEM) != "ca-bundle" || !cp.TLSSkipHostnameVerify {
@@ -203,9 +234,18 @@ func TestKernelExperimentalDeepCopy(t *testing.T) {
 	if cp.MaxChunksInMemory != 4 {
 		t.Errorf("DeepCopy lost MaxChunksInMemory: %v", cp.MaxChunksInMemory)
 	}
+	if !cp.TLSClientCertConfigured || string(cp.TLSClientCertPEM) != "client-cert" ||
+		string(cp.TLSClientKeyPEM) != "client-key" {
+		t.Errorf("DeepCopy lost mTLS fields: %+v", cp)
+	}
 	cp.TLSTrustedCertsPEM[0] = 'X'
 	if orig.TLSTrustedCertsPEM[0] == 'X' {
 		t.Error("DeepCopy aliased the CA byte slice; a copy mutation reached the original")
+	}
+	cp.TLSClientCertPEM[0] = 'X'
+	cp.TLSClientKeyPEM[0] = 'X'
+	if orig.TLSClientCertPEM[0] == 'X' || orig.TLSClientKeyPEM[0] == 'X' {
+		t.Error("DeepCopy aliased the mTLS byte slices")
 	}
 	if (*config.KernelExperimentalConfig)(nil).DeepCopy() != nil {
 		t.Error("nil.DeepCopy() should be nil")

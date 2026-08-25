@@ -289,10 +289,9 @@ func (k *KernelBackend) OpenSession(ctx context.Context) error {
 }
 
 // applyKernelTLS forwards the experimental kernel-only TLS knobs to the session
-// config: a custom CA bundle and an independent hostname-skip. Each is a no-op
-// when its field is unset, so this is safe to call unconditionally. (mTLS client
-// cert/key is a separate follow-up — it needs a kernel C-ABI setter that is not
-// yet on kernel main.)
+// config: a custom CA bundle, paired mTLS client identity, and an independent
+// hostname-skip. Each is a no-op when its field is unset, so this is safe to call
+// unconditionally.
 func (k *KernelBackend) applyKernelTLS(cfg *C.KernelSessionConfig) error {
 	if len(k.cfg.TLSTrustedCertsPEM) > 0 {
 		ca := newCBytes(k.cfg.TLSTrustedCertsPEM)
@@ -301,6 +300,23 @@ func (k *KernelBackend) applyKernelTLS(cfg *C.KernelSessionConfig) error {
 			return C.kernel_session_config_set_tls_trusted_certs(cfg, ca.ptr, ca.len)
 		}); err != nil {
 			return fmt.Errorf("kernel: set_tls_trusted_certs: %w", toConnError(err))
+		}
+	}
+	if len(k.cfg.TLSClientCertPEM) > 0 && len(k.cfg.TLSClientKeyPEM) > 0 {
+		cert := newCBytes(k.cfg.TLSClientCertPEM)
+		defer cert.free()
+		key := newCBytes(k.cfg.TLSClientKeyPEM)
+		defer key.free()
+		if err := call(func() C.KernelStatusCode {
+			return C.kernel_session_config_set_tls_client_certificate(
+				cfg,
+				cert.ptr,
+				cert.len,
+				key.ptr,
+				key.len,
+			)
+		}); err != nil {
+			return fmt.Errorf("kernel: set_tls_client_certificate: %w", toConnError(err))
 		}
 	}
 	if k.cfg.TLSSkipHostnameVerify {
