@@ -118,6 +118,15 @@ type KernelExperimentalConfig struct {
 	// DecimalAsFloat scans top-level DECIMAL columns to a lossy float64 instead of
 	// the exact string (WithKernelDecimalAsFloat). Kernel-only; off by default.
 	DecimalAsFloat bool
+
+	// TokenCacheEnabled controls the kernel's on-disk OAuth U2M token-cache persistence
+	// (WithTokenCache). When false (the default), tokens are held in memory only;
+	// when true, the refresh token is persisted encrypted to ~/.config/databricks-sql-kernel/oauth/.
+	// U2M-only: PAT and M2M ignore this setting. Maps to
+	// kernel_session_config_set_u2m_token_cache_config; a nil KernelExperimental or
+	// false TokenCacheEnabled calls the setter with enabled=false so the kernel does
+	// NOT persist to disk by default.
+	TokenCacheEnabled bool
 }
 
 // DeepCopy returns a deep copy of the experimental config, or nil for a nil
@@ -137,6 +146,7 @@ func (k *KernelExperimentalConfig) DeepCopy() *KernelExperimentalConfig {
 		RetryOverallTimeout:     k.RetryOverallTimeout,
 		MaxChunksInMemory:       k.MaxChunksInMemory,
 		DecimalAsFloat:          k.DecimalAsFloat,
+		TokenCacheEnabled:       k.TokenCacheEnabled,
 	}
 	if k.TLSTrustedCertsPEM != nil {
 		cp.TLSTrustedCertsPEM = append([]byte(nil), k.TLSTrustedCertsPEM...)
@@ -265,6 +275,14 @@ type UserConfig struct {
 	// addresses a warehouse by id) in preference to HTTPPath. The Thrift backend
 	// ignores it and routes by HTTPPath. DSN: warehouseId=<id>.
 	WarehouseID string
+	// TokenCacheEnabledDSN is a DSN-only carrier for the tokenCache parameter (U2M-only).
+	// The authoritative setting lives on KernelExperimentalConfig; ParseDSN records the
+	// DSN value here (because it can only return a UserConfig) and the connector copies
+	// it into Config.KernelExperimental.TokenCacheEnabled when it is assembled. The name
+	// intentionally differs from KernelExperimentalConfig's field so the setting stays
+	// unambiguous. False by default; when true, enables on-disk token-cache persistence
+	// for U2M OAuth. DSN: tokenCache=true.
+	TokenCacheEnabledDSN bool
 }
 
 // DeepCopy returns a true deep copy of UserConfig
@@ -313,6 +331,7 @@ func (ucfg UserConfig) DeepCopy() UserConfig {
 		TelemetryFlushInterval:   ucfg.TelemetryFlushInterval,
 		UseKernel:                ucfg.UseKernel,
 		WarehouseID:              ucfg.WarehouseID,
+		TokenCacheEnabledDSN:     ucfg.TokenCacheEnabledDSN,
 	}
 }
 
@@ -471,6 +490,12 @@ func ParseDSN(dsn string) (UserConfig, error) {
 	}
 	if warehouseID, ok := params.extract("warehouseId"); ok {
 		ucfg.WarehouseID = warehouseID
+	}
+	if tokenCache, ok, err := params.extractAsBool("tokenCache"); ok {
+		if err != nil {
+			return UserConfig{}, err
+		}
+		ucfg.TokenCacheEnabledDSN = tokenCache
 	}
 
 	// Telemetry parameters

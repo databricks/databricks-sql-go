@@ -39,6 +39,7 @@ var kernelExperimentalFieldDisposition = map[string]string{
 	"RetryOverallTimeout":     "forwarded", // set_retry_config (overall_timeout_ms, 4th knob)
 	"MaxChunksInMemory":       "forwarded", // set_session_conf (cloudfetch_max_chunks_in_memory, client-only)
 	"DecimalAsFloat":          "forwarded", // kernel.Config.DecimalAsFloat → kernelOp → arrowscan (client-side scan choice)
+	"TokenCacheEnabled":       "forwarded", // set_u2m_token_cache_config (enabled, nil passphrase)
 }
 
 func TestKernelExperimentalFieldsClassified(t *testing.T) {
@@ -95,6 +96,9 @@ func TestWithKernelTLSOptionsSetExperimental(t *testing.T) {
 		{"decimal as float", WithKernelDecimalAsFloat(true), func(k *config.KernelExperimentalConfig) bool {
 			return k.DecimalAsFloat
 		}},
+		{"token cache", WithTokenCache(true), func(k *config.KernelExperimentalConfig) bool {
+			return k.TokenCacheEnabled
+		}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -129,6 +133,7 @@ func TestWithKernelOptionsRejectedOnThriftPath(t *testing.T) {
 		{"retry overall timeout", WithKernelRetryOverallTimeout(5 * time.Minute)},
 		{"max chunks in memory", WithKernelMaxChunksInMemory(4)},
 		{"decimal as float", WithKernelDecimalAsFloat(true)},
+		{"token cache", WithTokenCache(true)},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -219,6 +224,7 @@ func TestKernelExperimentalDeepCopy(t *testing.T) {
 		ProxyBypassHosts:        "*.internal",
 		RetryOverallTimeout:     5 * time.Minute,
 		MaxChunksInMemory:       4,
+		TokenCacheEnabled:       true,
 	}
 	cp := orig.DeepCopy()
 	if cp == nil || string(cp.TLSTrustedCertsPEM) != "ca-bundle" || !cp.TLSSkipHostnameVerify {
@@ -233,6 +239,9 @@ func TestKernelExperimentalDeepCopy(t *testing.T) {
 	}
 	if cp.MaxChunksInMemory != 4 {
 		t.Errorf("DeepCopy lost MaxChunksInMemory: %v", cp.MaxChunksInMemory)
+	}
+	if !cp.TokenCacheEnabled {
+		t.Errorf("DeepCopy lost TokenCacheEnabled: %v", cp.TokenCacheEnabled)
 	}
 	if !cp.TLSClientCertConfigured || string(cp.TLSClientCertPEM) != "client-cert" ||
 		string(cp.TLSClientKeyPEM) != "client-key" {

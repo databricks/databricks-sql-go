@@ -429,6 +429,14 @@ func (k *KernelBackend) setAuth(cfg *C.KernelSessionConfig) error {
 		}); err != nil {
 			return fmt.Errorf("kernel: set_auth_u2m: %w", toConnError(err))
 		}
+		// Configure token-cache persistence for U2M (disabled by default; enabled
+		// by WithTokenCache / tokenCache DSN param). Pass nil for passphrase to use
+		// the kernel's machine-local derived key (matching ODBC driver defaults).
+		if err := call(func() C.KernelStatusCode {
+			return C.kernel_session_config_set_u2m_token_cache_config(cfg, C.bool(k.cfg.TokenCacheEnabled), nil)
+		}); err != nil {
+			return fmt.Errorf("kernel: set_u2m_token_cache_config: %w", toConnError(err))
+		}
 	default: // AuthPAT
 		tok := newCStr(k.cfg.Auth.Token)
 		defer tok.free()
@@ -513,6 +521,24 @@ func trySetRetry(cfg Config) error {
 	defer C.kernel_session_config_free(c)
 	k := &KernelBackend{cfg: cfg}
 	return k.applyRetry(c)
+}
+
+// trySetTokenCacheConfig allocates a throwaway session config, applies auth (with
+// the given TokenCacheEnabled flag) to it via the production setAuth, and frees it
+// — the analogous test seam to trySetRetry. Routing through setAuth (rather than
+// calling the setter standalone) means a tagged test exercises the real
+// kernel_session_config_set_u2m_token_cache_config wiring inside setAuth's U2M
+// branch — including setAuth reading k.cfg.TokenCacheEnabled == true — end to end.
+// Not used in production. Returns the setter error (nil on success); non-U2M modes
+// take setAuth's other branches and do not touch the token-cache setter.
+func trySetTokenCacheConfig(auth Auth, enabled bool) error {
+	var cfg *C.KernelSessionConfig
+	if err := call(func() C.KernelStatusCode { return C.kernel_session_config_new(&cfg) }); err != nil {
+		return fmt.Errorf("config_new: %w", err)
+	}
+	defer C.kernel_session_config_free(cfg)
+	k := &KernelBackend{cfg: Config{Auth: auth, TokenCacheEnabled: enabled}}
+	return k.setAuth(cfg)
 }
 
 // applyInitialNamespace runs USE CATALOG / USE SCHEMA to select the configured

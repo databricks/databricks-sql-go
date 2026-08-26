@@ -79,6 +79,15 @@ type Config struct {
 	// DecimalAsFloat scans top-level DECIMAL columns to a lossy float64 instead of
 	// the exact string (from WithKernelDecimalAsFloat). Kernel still sends Decimal128.
 	DecimalAsFloat bool
+
+	// TokenCacheEnabled controls the kernel's on-disk OAuth U2M token-cache persistence
+	// (WithTokenCache / tokenCache DSN param). When false (the default), tokens are held
+	// in memory only; when true, the refresh token is persisted encrypted to
+	// ~/.config/databricks-sql-kernel/oauth/. U2M-only: PAT and M2M ignore this.
+	// Note the zero value is not "unapplied": on the U2M path false is still
+	// forwarded to the setter to explicitly disable on-disk persistence by default.
+	// Maps to kernel_session_config_set_u2m_token_cache_config.
+	TokenCacheEnabled bool
 }
 
 // RetryConfig is the driver's HTTP retry policy forwarded to the kernel: the

@@ -291,6 +291,23 @@ func withUserConfig(ucfg config.UserConfig) ConnOption {
 		// ParseDSN can return) but is consumed from ArrowConfig. This is the one
 		// place that bridges the two.
 		c.ArrowConfig.UseArrowNativeDecimal = ucfg.UseArrowNativeDecimalDSN
+		// The tokenCache DSN parameter is carried on UserConfig but is consumed from
+		// KernelExperimental (kernel-only). This is the one place that bridges the two.
+		//
+		// Intentional divergence from WithTokenCache: we only allocate/set
+		// KernelExperimental when tokenCache=true. WithTokenCache(false) allocates it
+		// unconditionally, which makes KernelExperimental != nil and is rejected on the
+		// Thrift path with ErrRequiresKernelBackend. Here we treat DSN tokenCache=false
+		// as a harmless no-op (in-memory is already the default) rather than opting the
+		// connection into the kernel-only backend just to disable a feature.
+		//
+		// Precedence: because false is a no-op, a tokenCache=false DSN cannot reset a
+		// TokenCacheEnabled that a prior WithTokenCache(true) set, while tokenCache=true
+		// does override. This only matters if a caller mixes DSN and option sources;
+		// with a single source the default (false) is correct.
+		if ucfg.TokenCacheEnabledDSN {
+			kernelExperimental(c).TokenCacheEnabled = true
+		}
 	}
 }
 
@@ -766,5 +783,27 @@ func WithKernelRetryOverallTimeout(d time.Duration) ConnOption {
 func WithKernelMaxChunksInMemory(n int) ConnOption {
 	return func(c *config.Config) {
 		kernelExperimental(c).MaxChunksInMemory = n
+	}
+}
+
+// WithTokenCache controls the kernel's on-disk OAuth U2M token-cache persistence.
+// When enabled is true, the refresh token is persisted encrypted to
+// ~/.config/databricks-sql-kernel/oauth/ so the user is not sent through the browser
+// on every connection. When false (the default), tokens are held in memory only.
+// U2M-only: PAT and M2M ignore this setting.
+//
+// EXPERIMENTAL, kernel-only: the default (Thrift) backend rejects this at connect.
+// Via this option, either value (WithTokenCache(true) or WithTokenCache(false)) opts
+// the connection into the kernel backend — the setter allocates KernelExperimental
+// unconditionally — so it must be paired with WithUseKernel(true)/useKernel=true or the
+// connection is rejected at connect with ErrRequiresKernelBackend; this is not a silent
+// no-op. Only tokenCache=false carried in a DSN is a no-op: that carrier is not
+// forwarded into KernelExperimental (in-memory is already the default), so it does not
+// opt into the kernel backend. (tokenCache=true in a DSN opts in, same as the option.)
+// Mirrors the EnableTokenCache option exposed by the ODBC driver, but does not expose
+// a passphrase option — pass NULL (empty) to the kernel (derived key).
+func WithTokenCache(enabled bool) ConnOption {
+	return func(c *config.Config) {
+		kernelExperimental(c).TokenCacheEnabled = enabled
 	}
 }

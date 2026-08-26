@@ -174,6 +174,8 @@ func buildKernelConfig(cfg *config.Config, kauth kernel.Auth) kernel.Config {
 		}
 		// Client-side scan choice: lossy float64 decimals instead of exact strings.
 		kc.DecimalAsFloat = ke.DecimalAsFloat
+		// U2M token-cache control (WithTokenCache / tokenCache DSN param): forward to kernel.
+		kc.TokenCacheEnabled = ke.TokenCacheEnabled
 	}
 	// Retry / backoff policy from WithRetries (+ the kernel-only overall budget).
 	// nil leaves the kernel's own default policy in place.

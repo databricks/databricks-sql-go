@@ -73,8 +73,15 @@ Notes for the SEA/kernel backend:
   connect-time network partition can block past the deadline. U2M's browser login is the
   most visible case, but PAT/M2M are equally uninterruptible mid-connect — this is a kernel
   C ABI limitation, not U2M-specific.
-- OAuth token caching/refresh is owned by the kernel on the kernel path (no driver
-  config).
+- OAuth **U2M** on-disk token caching is controlled by `WithTokenCache` / the `tokenCache`
+  DSN param — see the table just below. In-session token *refresh* is always owned by the
+  kernel regardless of this flag.
+
+### OAuth U2M token cache
+
+| DSN parameter | Connector option | Thrift | Kernel | Default | Notes |
+|---|---|:---:|:---:|---|---|
+| `tokenCache` | `WithTokenCache(bool)` | ❌ | ✅ | `false` (disabled) | **Kernel U2M-only.** Persists the U2M refresh token to an AES-256 encrypted on-disk cache in the OS config dir (`~/Library/Application Support/databricks-sql-kernel/oauth/` on macOS, `~/.config/databricks-sql-kernel/oauth/` on Linux), so a later process skips the browser login. **Disabled by default** — the driver forwards a disable unless you opt in (`WithTokenCache(true)` / `tokenCache=true`); omitting `tokenCache` from a DSN leaves the disabled default. No effect on PAT/M2M; enable-flag only (no passphrase surface). Thrift has no token cache. **`tokenCache=true` requires `useKernel=true`:** enabling the cache opts the connection into the kernel-only backend, so `...?tokenCache=true` without `useKernel=true` is **rejected at connect** with `ErrRequiresKernelBackend` — it is not a silent no-op. (`tokenCache=false` is a no-op on any backend.) |
 
 ## Query execution
 
