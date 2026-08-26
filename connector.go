@@ -793,6 +793,10 @@ func WithKernelMaxChunksInMemory(n int) ConnOption {
 // U2M-only: PAT and M2M ignore this setting.
 //
 // EXPERIMENTAL, kernel-only: the default (Thrift) backend rejects this at connect.
+// Enabling it (WithTokenCache(true) or tokenCache=true) opts the connection into the
+// kernel backend, so it must be paired with WithUseKernel(true)/useKernel=true or the
+// connection is rejected at connect with ErrRequiresKernelBackend — this is not a
+// silent no-op. (Disabling is a no-op on any backend.)
 // Mirrors the EnableTokenCache option exposed by the ODBC driver, but does not expose
 // a passphrase option — pass NULL (empty) to the kernel (derived key).
 func WithTokenCache(enabled bool) ConnOption {
