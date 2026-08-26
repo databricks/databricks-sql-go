@@ -337,6 +337,35 @@ func TestNewConnector(t *testing.T) {
 		assert.True(t, coni.cfg.ArrowConfig.UseArrowNativeDecimal)
 	})
 
+	t.Run("Connector test tokenCache DSN param propagates to KernelExperimental", func(t *testing.T) {
+		// Covers the full DSN path: ParseDSN -> withUserConfig -> KernelExperimental,
+		// which is what buildKernelConfig reads. This is the bridge that makes the
+		// DSN parameter actually take effect (mirrors the useArrowNativeDecimal test).
+		ucfg, err := config.ParseDSN("token:supersecret@databricks-host:443/sql/1.0/endpoints/abc?tokenCache=true")
+		require.NoError(t, err)
+		con, err := NewConnector(withUserConfig(ucfg))
+		require.NoError(t, err)
+
+		coni, ok := con.(*connector)
+		require.True(t, ok)
+		require.NotNil(t, coni.cfg.KernelExperimental)
+		assert.True(t, coni.cfg.KernelExperimental.TokenCacheEnabled)
+	})
+
+	t.Run("Connector test tokenCache=false DSN param is a no-op", func(t *testing.T) {
+		// tokenCache=false must not allocate KernelExperimental (in-memory is the
+		// default); allocating it would opt the connection into the kernel-only
+		// backend just to disable a feature.
+		ucfg, err := config.ParseDSN("token:supersecret@databricks-host:443/sql/1.0/endpoints/abc?tokenCache=false")
+		require.NoError(t, err)
+		con, err := NewConnector(withUserConfig(ucfg))
+		require.NoError(t, err)
+
+		coni, ok := con.(*connector)
+		require.True(t, ok)
+		assert.Nil(t, coni.cfg.KernelExperimental)
+	})
+
 	t.Run("Connector test WithTransport sets HTTPClient in CloudFetchConfig", func(t *testing.T) {
 		host := "databricks-host"
 		accessToken := "token"
