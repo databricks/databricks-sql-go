@@ -95,6 +95,11 @@ Notes for the SEA/kernel backend:
 | `timezone` | `WithSessionParams(timezone=…)` | ✅ | ✅ | | Session time zone (e.g. `America/Los_Angeles`). |
 | `enableMetricViewMetadata` | `WithEnableMetricViewMetadata` | ✅ | ⚠️ | `false` | Enables metric-view metadata (sets `spark.sql.thriftserver.metadata.metricview.enabled=true`). Both paths forward the **identical** conf; the kernel allowlists this key and sends it verbatim — it is **not** rejected driver- or kernel-side. Whether it takes effect on the SEA/kernel path depends on server-side SEA support (a `⚠️` pending confirmation against a live warehouse; PECOBLR-4142 / PECOBLR-4153). |
 
+**Kernel request timeout.** Kernel HTTP requests inherit the driver's internal
+`ClientTimeout` (900s by default). A zero value keeps the kernel's 120s default;
+it does not disable the timeout or cause an immediate timeout. `ClientTimeout`
+is not currently exposed as a DSN parameter or `WithX` connector option.
+
 ### Kernel session-conf allowlist
 
 On the **Thrift** path the `WithSessionParams` map is forwarded to the server freely.
