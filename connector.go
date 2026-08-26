@@ -293,6 +293,18 @@ func withUserConfig(ucfg config.UserConfig) ConnOption {
 		c.ArrowConfig.UseArrowNativeDecimal = ucfg.UseArrowNativeDecimalDSN
 		// The tokenCache DSN parameter is carried on UserConfig but is consumed from
 		// KernelExperimental (kernel-only). This is the one place that bridges the two.
+		//
+		// Intentional divergence from WithTokenCache: we only allocate/set
+		// KernelExperimental when tokenCache=true. WithTokenCache(false) allocates it
+		// unconditionally, which makes KernelExperimental != nil and is rejected on the
+		// Thrift path with ErrRequiresKernelBackend. Here we treat DSN tokenCache=false
+		// as a harmless no-op (in-memory is already the default) rather than opting the
+		// connection into the kernel-only backend just to disable a feature.
+		//
+		// Precedence: because false is a no-op, a tokenCache=false DSN cannot reset a
+		// TokenCacheEnabled that a prior WithTokenCache(true) set, while tokenCache=true
+		// does override. This only matters if a caller mixes DSN and option sources;
+		// with a single source the default (false) is correct.
 		if ucfg.TokenCacheEnabledDSN {
 			kernelExperimental(c).TokenCacheEnabled = true
 		}

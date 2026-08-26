@@ -84,6 +84,8 @@ type Config struct {
 	// (WithTokenCache / tokenCache DSN param). When false (the default), tokens are held
 	// in memory only; when true, the refresh token is persisted encrypted to
 	// ~/.config/databricks-sql-kernel/oauth/. U2M-only: PAT and M2M ignore this.
+	// Note the zero value is not "unapplied": on the U2M path false is still
+	// forwarded to the setter to explicitly disable on-disk persistence by default.
 	// Maps to kernel_session_config_set_u2m_token_cache_config.
 	TokenCacheEnabled bool
 }
