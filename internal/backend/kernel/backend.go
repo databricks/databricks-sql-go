@@ -523,27 +523,22 @@ func trySetRetry(cfg Config) error {
 	return k.applyRetry(c)
 }
 
-// trySetTokenCacheConfig allocates a throwaway session config, applies the token-cache
-// config from cfg to it (on the U2M auth path only), and frees it — the analogous test
-// seam to trySetRetry, so a tagged test can exercise the real
-// kernel_session_config_set_u2m_token_cache_config cgo setter end to end. Not used in
-// production. Returns the setter error (nil on success), or nil if not on the U2M path.
+// trySetTokenCacheConfig allocates a throwaway session config, applies auth (with
+// the given TokenCacheEnabled flag) to it via the production setAuth, and frees it
+// — the analogous test seam to trySetRetry. Routing through setAuth (rather than
+// calling the setter standalone) means a tagged test exercises the real
+// kernel_session_config_set_u2m_token_cache_config wiring inside setAuth's U2M
+// branch — including setAuth reading k.cfg.TokenCacheEnabled == true — end to end.
+// Not used in production. Returns the setter error (nil on success); non-U2M modes
+// take setAuth's other branches and do not touch the token-cache setter.
 func trySetTokenCacheConfig(auth Auth, enabled bool) error {
-	if auth.Mode != AuthU2M {
-		return nil
-	}
 	var cfg *C.KernelSessionConfig
 	if err := call(func() C.KernelStatusCode { return C.kernel_session_config_new(&cfg) }); err != nil {
 		return fmt.Errorf("config_new: %w", err)
 	}
 	defer C.kernel_session_config_free(cfg)
-	// Exercise the setter directly with the resolved enabled flag (U2M-only path).
-	if err := call(func() C.KernelStatusCode {
-		return C.kernel_session_config_set_u2m_token_cache_config(cfg, C.bool(enabled), nil)
-	}); err != nil {
-		return fmt.Errorf("set_u2m_token_cache_config: %w", toConnError(err))
-	}
-	return nil
+	k := &KernelBackend{cfg: Config{Auth: auth, TokenCacheEnabled: enabled}}
+	return k.setAuth(cfg)
 }
 
 // applyInitialNamespace runs USE CATALOG / USE SCHEMA to select the configured
