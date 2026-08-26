@@ -537,9 +537,7 @@ func trySetTokenCacheConfig(auth Auth, enabled bool) error {
 		return fmt.Errorf("config_new: %w", err)
 	}
 	defer C.kernel_session_config_free(cfg)
-	// Set auth first; technically we just need to set U2M, but setAuth is the real path.
-	k := &KernelBackend{cfg: Config{Auth: auth, TokenCacheEnabled: enabled}}
-	// Call the setter directly: setAuth would set auth first, but we want to test just the setter.
+	// Exercise the setter directly with the resolved enabled flag (U2M-only path).
 	if err := call(func() C.KernelStatusCode {
 		return C.kernel_session_config_set_u2m_token_cache_config(cfg, C.bool(enabled), nil)
 	}); err != nil {
