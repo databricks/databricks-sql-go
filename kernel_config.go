@@ -138,6 +138,8 @@ func buildKernelConfig(cfg *config.Config, kauth kernel.Auth) kernel.Config {
 		WarehouseID: cfg.WarehouseID,
 		Auth:        kauth,
 		Location:    cfg.Location,
+		// ClientTimeout is the Go HTTP client's total request deadline.
+		RequestTimeout: cfg.ClientTimeout,
 		// Same UA the Thrift path sends, so query history attributes both alike.
 		UserAgent: client.BuildUserAgent(cfg),
 		// Initial namespace: no kernel config setter, so the kernel backend applies

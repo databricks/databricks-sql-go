@@ -541,6 +541,9 @@ func TestBuildKernelConfig(t *testing.T) {
 		if kc.Auth.Mode != kauth.Mode || kc.Auth.Token != kauth.Token {
 			t.Errorf("auth not forwarded: got %+v, want %+v", kc.Auth, kauth)
 		}
+		if kc.RequestTimeout != c.ClientTimeout {
+			t.Errorf("RequestTimeout = %v, want ClientTimeout %v", kc.RequestTimeout, c.ClientTimeout)
+		}
 		// UserAgent must be the driver's composed UA, non-empty — else query
 		// history mis-attributes SEA-path queries to the kernel's built-in UA.
 		if want := client.BuildUserAgent(c); kc.UserAgent == "" || kc.UserAgent != want {

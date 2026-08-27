@@ -170,6 +170,23 @@ func TestSetTokenCache(t *testing.T) {
 	}
 }
 
+func TestSetRequestTimeout(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		timeout time.Duration
+	}{
+		{"default", 900 * time.Second},
+		{"zero keeps kernel default", 0},
+		{"sub-millisecond rounds up", time.Nanosecond},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := trySetRequestTimeout(Config{RequestTimeout: tc.timeout}); err != nil {
+				t.Errorf("applyRequestTimeout(%s) = %v, want nil", tc.name, err)
+			}
+		})
+	}
+}
+
 // TestKernelLogLevel and TestResolveKernelLogArg — the pure level-resolution tests —
 // live in the untagged logging_level_test.go so they run under CGO_ENABLED=0. The
 // tests below exercise klog/klogCtx and so need the cgo build.
