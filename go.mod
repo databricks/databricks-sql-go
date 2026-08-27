@@ -37,10 +37,11 @@ require (
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/zeebo/xxh3 v1.0.2 // indirect
 	golang.org/x/crypto v0.52.0 // indirect
-	golang.org/x/mod v0.8.0 // indirect
-	golang.org/x/sync v0.1.0 // indirect
+	golang.org/x/mod v0.40.0 // indirect
+	golang.org/x/sync v0.22.0 // indirect
+	golang.org/x/telemetry v0.0.0-20260811182544-a038080d80e5 // indirect
 	golang.org/x/term v0.43.0 // indirect
-	golang.org/x/tools v0.6.0 // indirect
+	golang.org/x/tools v0.49.0 // indirect
 	golang.org/x/xerrors v0.0.0-20220609144429-65e65417b02f // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
@@ -50,5 +51,5 @@ require (
 	github.com/pkg/browser v0.0.0-20210911075715-681adbf594b8
 	github.com/pkg/errors v0.9.1
 	github.com/rs/zerolog v1.28.0
-	golang.org/x/sys v0.45.0 // indirect
+	golang.org/x/sys v0.47.0 // indirect
 )
