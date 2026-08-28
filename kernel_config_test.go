@@ -232,11 +232,8 @@ func TestValidateKernelConfig(t *testing.T) {
 				if a.Mode != kernel.AuthPAT || a.Token != tc.token || a.ClientID != tc.clientID {
 					t.Errorf("auth = %+v, want PAT token=%q clientID=%q", a, tc.token, tc.clientID)
 				}
-				if mech, flow := kernelAuthMech(c); mech != "PAT" || flow != "" {
-					t.Errorf("kernelAuthMech = (%q, %q), want (PAT, empty)", mech, flow)
-				}
 				if calls != 1 {
-					t.Errorf("connection-config telemetry classification resolved the provider: calls = %d, want 1", calls)
+					t.Errorf("validateKernelConfig resolved the provider: calls = %d, want 1", calls)
 				}
 			})
 		}
@@ -420,11 +417,13 @@ var kernelConfigFieldDisposition = map[string]string{
 	// Rides in the forwarded User-Agent header (set_custom_header).
 	"UserAgentEntry": "forwarded",
 
-	// Not applicable to the kernel path (Thrift/HTTP-transport or telemetry knobs
-	// that don't reach the kernel binding).
-	"EnableTelemetry":          "inert",
-	"TelemetryBatchSize":       "inert",
-	"TelemetryFlushInterval":   "inert",
+	// Forwarded to kernel-owned telemetry. The Go wrapper interceptor is disabled
+	// on the kernel path, but the kernel still needs these knobs for its own
+	// telemetry runtime.
+	"EnableTelemetry":    "forwarded",
+	"TelemetryBatchSize": "forwarded",
+	// Forwarded to the kernel's telemetry scheduler on the kernel path.
+	"TelemetryFlushInterval":   "forwarded",
 	"UseArrowNativeDecimalDSN": "inert", // DSN carrier; kernel renders decimals exactly regardless
 	"TokenCacheEnabledDSN":     "inert", // DSN carrier; forwarded to KernelExperimental.TokenCacheEnabled
 
@@ -528,6 +527,7 @@ func TestBuildKernelConfig(t *testing.T) {
 
 	t.Run("core fields + auth forwarded", func(t *testing.T) {
 		c := baseKernelConfig()
+		c.DriverVersion = "9.8.7-test"
 		c.Catalog = "main"
 		c.Schema = "sys"
 		kauth := kernel.Auth{Mode: kernel.AuthPAT, Token: "dapi-x"}
@@ -548,6 +548,61 @@ func TestBuildKernelConfig(t *testing.T) {
 		// history mis-attributes SEA-path queries to the kernel's built-in UA.
 		if want := client.BuildUserAgent(c); kc.UserAgent == "" || kc.UserAgent != want {
 			t.Errorf("UserAgent not forwarded: got %q, want %q", kc.UserAgent, want)
+		}
+		if kc.DriverSystemConfiguration == nil {
+			t.Fatal("DriverSystemConfiguration not forwarded")
+		}
+		if kc.DriverSystemConfiguration.DriverName != "databricks-sql-go" {
+			t.Errorf("DriverSystemConfiguration.DriverName = %q, want databricks-sql-go",
+				kc.DriverSystemConfiguration.DriverName)
+		}
+		if kc.DriverSystemConfiguration.DriverVersion != "9.8.7-test" {
+			t.Errorf("DriverSystemConfiguration.DriverVersion = %q, want 9.8.7-test",
+				kc.DriverSystemConfiguration.DriverVersion)
+		}
+		if kc.DriverSystemConfiguration.RuntimeName != "go" {
+			t.Errorf("DriverSystemConfiguration.RuntimeName = %q, want go",
+				kc.DriverSystemConfiguration.RuntimeName)
+		}
+	})
+
+	t.Run("kernel telemetry config defaults enabled and omits unset batch size", func(t *testing.T) {
+		c := baseKernelConfig()
+		kc := buildKernelConfig(c, kernel.Auth{Mode: kernel.AuthPAT, Token: "dapi-x"})
+		if kc.Telemetry == nil {
+			t.Fatal("Telemetry not forwarded")
+		}
+		if !kc.Telemetry.Enabled {
+			t.Error("Telemetry.Enabled = false, want true when enableTelemetry is unset")
+		}
+		if kc.Telemetry.BatchSize != 0 {
+			t.Errorf("Telemetry.BatchSize = %d, want 0 when telemetry_batch_size is unset", kc.Telemetry.BatchSize)
+		}
+	})
+
+	t.Run("kernel telemetry config follows explicit enableTelemetry and batch size", func(t *testing.T) {
+		c := baseKernelConfig()
+		c.EnableTelemetry = config.NewConfigValue(false)
+		c.TelemetryBatchSize = 17
+		c.TelemetryFlushInterval = 9 * time.Second
+		kc := buildKernelConfig(c, kernel.Auth{Mode: kernel.AuthPAT, Token: "dapi-x"})
+		if kc.Telemetry == nil {
+			t.Fatal("Telemetry not forwarded")
+		}
+		if kc.Telemetry.Enabled {
+			t.Error("Telemetry.Enabled = true, want false from explicit enableTelemetry=false")
+		}
+		if kc.Telemetry.BatchSize != 17 {
+			t.Errorf("Telemetry.BatchSize = %d, want 17", kc.Telemetry.BatchSize)
+		}
+		if kc.Telemetry.FlushInterval != 9*time.Second {
+			t.Errorf("Telemetry.FlushInterval = %v, want 9s", kc.Telemetry.FlushInterval)
+		}
+
+		c.EnableTelemetry = config.NewConfigValue(true)
+		kc = buildKernelConfig(c, kernel.Auth{Mode: kernel.AuthPAT, Token: "dapi-x"})
+		if !kc.Telemetry.Enabled {
+			t.Error("Telemetry.Enabled = false, want true from explicit enableTelemetry=true")
 		}
 	})
 

@@ -393,13 +393,14 @@ backends — the driver exposes no `GetCatalogs`/`GetSchemas`/`GetTables`/`GetCo
 
 ## Telemetry
 
-The driver includes optional telemetry to help improve performance and reliability; it
-applies to both backends. When `enableTelemetry` is left unset (the default), a
-**server-side feature flag** decides whether telemetry is active — so it may be enabled
-without an explicit opt-in. Setting `enableTelemetry` explicitly overrides the flag.
-(One exception: on the kernel backend with OAuth **U2M**, telemetry is skipped entirely
-— regardless of `enableTelemetry` — to avoid a second interactive browser flow at
-connect.)
+The driver includes optional telemetry to help improve performance and reliability.
+Go wrapper telemetry applies to the default Thrift backend. When `enableTelemetry` is
+left unset (the default), a **server-side feature flag** decides whether wrapper
+telemetry is active — so it may be enabled without an explicit opt-in. Setting
+`enableTelemetry` explicitly overrides the flag. On the kernel backend, the Go wrapper
+skips its telemetry interceptor entirely so it does not duplicate kernel-owned
+telemetry; `enableTelemetry` and `telemetry_batch_size` are forwarded into the kernel
+telemetry config instead.
 
 ```
 # force on (regardless of the server flag):
