@@ -566,14 +566,14 @@ func TestBuildKernelConfig(t *testing.T) {
 		}
 	})
 
-	t.Run("kernel telemetry config defaults enabled and omits unset batch size", func(t *testing.T) {
+	t.Run("kernel telemetry config defaults disabled and omits unset batch size", func(t *testing.T) {
 		c := baseKernelConfig()
 		kc := buildKernelConfig(c, kernel.Auth{Mode: kernel.AuthPAT, Token: "dapi-x"})
 		if kc.Telemetry == nil {
 			t.Fatal("Telemetry not forwarded")
 		}
-		if !kc.Telemetry.Enabled {
-			t.Error("Telemetry.Enabled = false, want true when enableTelemetry is unset")
+		if kc.Telemetry.Enabled {
+			t.Error("Telemetry.Enabled = true, want false when enableTelemetry is unset")
 		}
 		if kc.Telemetry.BatchSize != 0 {
 			t.Errorf("Telemetry.BatchSize = %d, want 0 when telemetry_batch_size is unset", kc.Telemetry.BatchSize)
