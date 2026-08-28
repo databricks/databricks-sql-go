@@ -47,6 +47,14 @@ func getSystemConfiguration(driverVersion string) *DriverSystemConfiguration {
 	}
 }
 
+// GetSystemConfiguration returns the driver/runtime identity used in telemetry
+// payloads. Kernel-backed connections pass the same identity into the kernel so
+// kernel-owned telemetry is attributed to the Go driver rather than the kernel
+// binding defaults.
+func GetSystemConfiguration(driverVersion string) *DriverSystemConfiguration {
+	return getSystemConfiguration(driverVersion)
+}
+
 func getOSName() string {
 	switch runtime.GOOS {
 	case "darwin":

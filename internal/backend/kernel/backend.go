@@ -22,6 +22,27 @@ static inline KernelStatusCode go_kernel_set_retry_config(
   return kernel_session_config_set_retry_config(
       config, min_wait_ms, max_wait_ms, max_retries, overall_timeout_ms);
 }
+
+static inline KernelStatusCode go_kernel_set_telemetry_config(
+    KernelSessionConfig* config, bool enabled, size_t batch_size,
+    uint64_t flush_interval_ms, uint32_t max_retries, uint64_t retry_delay_ms,
+    uint64_t close_flush_timeout_ms) {
+  return kernel_session_config_set_telemetry_config(
+      config, enabled, batch_size, flush_interval_ms, max_retries, retry_delay_ms,
+      close_flush_timeout_ms);
+}
+
+static inline KernelStatusCode go_kernel_set_driver_system_configuration(
+    KernelSessionConfig* config, const char* driver_name, const char* driver_version,
+    const char* runtime_name, const char* runtime_version, const char* runtime_vendor,
+    const char* os_name, const char* os_version, const char* os_arch,
+    const char* client_app_name, const char* locale_name, const char* char_set_encoding,
+    const char* process_name) {
+  return kernel_session_config_set_driver_system_configuration(
+      config, driver_name, driver_version, runtime_name, runtime_version, runtime_vendor,
+      os_name, os_version, os_arch, client_app_name, locale_name, char_set_encoding,
+      process_name);
+}
 */
 import "C"
 
@@ -31,6 +52,7 @@ import (
 	"fmt"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 	"github.com/databricks/databricks-sql-go/internal/backend"
@@ -227,6 +249,16 @@ func (k *KernelBackend) OpenSession(ctx context.Context) error {
 		return err
 	}
 
+	// Kernel-owned telemetry and driver/runtime identity. The Go wrapper
+	// telemetry interceptor is disabled on the kernel path, so these setters are
+	// what enable kernel-side operation telemetry for this session.
+	if err := k.applyTelemetry(cfg); err != nil {
+		return err
+	}
+	if err := k.applyDriverSystemConfiguration(cfg); err != nil {
+		return err
+	}
+
 	// Session confs (STATEMENT_TIMEOUT, QUERY_TAGS, TIMEZONE, …) — the same map
 	// the Thrift backend forwards, applied one key at a time.
 	for key, val := range k.cfg.SessionConf {
@@ -389,6 +421,101 @@ func (k *KernelBackend) applyRetry(cfg *C.KernelSessionConfig) error {
 			C.uint32_t(r.MaxRetries), C.uint64_t(r.OverallTimeout.Milliseconds()))
 	}); err != nil {
 		return fmt.Errorf("kernel: set_retry_config: %w", toConnError(err))
+	}
+	return nil
+}
+
+const (
+	defaultTelemetryBatchSize         = 100
+	defaultTelemetryFlushInterval     = 5 * time.Second
+	defaultTelemetryMaxRetries        = 3
+	defaultTelemetryRetryDelay        = 100 * time.Millisecond
+	defaultTelemetryCloseFlushTimeout = 5 * time.Second
+)
+
+// applyTelemetry forwards the Go driver's kernel-owned telemetry policy to the
+// kernel C ABI. The setter requires positive batch / interval / close-timeout
+// values even when the caller did not override them, so zero-valued fields are
+// filled with the kernel defaults before crossing the ABI.
+func (k *KernelBackend) applyTelemetry(cfg *C.KernelSessionConfig) error {
+	t := k.cfg.Telemetry
+	if t == nil {
+		return nil
+	}
+	batchSize := t.BatchSize
+	if batchSize <= 0 {
+		batchSize = defaultTelemetryBatchSize
+	}
+	flushInterval := t.FlushInterval
+	if flushInterval <= 0 {
+		flushInterval = defaultTelemetryFlushInterval
+	}
+	maxRetries := t.MaxRetries
+	if maxRetries == 0 {
+		maxRetries = defaultTelemetryMaxRetries
+	}
+	retryDelay := t.RetryDelay
+	if retryDelay < 0 {
+		retryDelay = 0
+	}
+	if retryDelay == 0 {
+		retryDelay = defaultTelemetryRetryDelay
+	}
+	closeFlushTimeout := t.CloseFlushTimeout
+	if closeFlushTimeout <= 0 {
+		closeFlushTimeout = defaultTelemetryCloseFlushTimeout
+	}
+	if err := call(func() C.KernelStatusCode {
+		return C.go_kernel_set_telemetry_config(cfg,
+			C.bool(t.Enabled), C.size_t(batchSize), C.uint64_t(flushInterval.Milliseconds()),
+			C.uint32_t(maxRetries), C.uint64_t(retryDelay.Milliseconds()),
+			C.uint64_t(closeFlushTimeout.Milliseconds()))
+	}); err != nil {
+		return fmt.Errorf("kernel: set_telemetry_config: %w", toConnError(err))
+	}
+	return nil
+}
+
+// applyDriverSystemConfiguration stamps Go driver/runtime identity onto
+// kernel-owned telemetry. Empty strings cross as NULL so the kernel fills any
+// fields it can derive itself.
+func (k *KernelBackend) applyDriverSystemConfiguration(cfg *C.KernelSessionConfig) error {
+	s := k.cfg.DriverSystemConfiguration
+	if s == nil {
+		return nil
+	}
+	driverName := newCStrOrNull(s.DriverName)
+	defer driverName.free()
+	driverVersion := newCStrOrNull(s.DriverVersion)
+	defer driverVersion.free()
+	runtimeName := newCStrOrNull(s.RuntimeName)
+	defer runtimeName.free()
+	runtimeVersion := newCStrOrNull(s.RuntimeVersion)
+	defer runtimeVersion.free()
+	runtimeVendor := newCStrOrNull(s.RuntimeVendor)
+	defer runtimeVendor.free()
+	osName := newCStrOrNull(s.OSName)
+	defer osName.free()
+	osVersion := newCStrOrNull(s.OSVersion)
+	defer osVersion.free()
+	osArch := newCStrOrNull(s.OSArch)
+	defer osArch.free()
+	clientAppName := newCStrOrNull(s.ClientAppName)
+	defer clientAppName.free()
+	localeName := newCStrOrNull(s.LocaleName)
+	defer localeName.free()
+	charSetEncoding := newCStrOrNull(s.CharSetEncoding)
+	defer charSetEncoding.free()
+	processName := newCStrOrNull(s.ProcessName)
+	defer processName.free()
+
+	if err := call(func() C.KernelStatusCode {
+		return C.go_kernel_set_driver_system_configuration(cfg,
+			driverName.c, driverVersion.c, runtimeName.c, runtimeVersion.c, runtimeVendor.c,
+			osName.c, osVersion.c, osArch.c, clientAppName.c, localeName.c,
+			charSetEncoding.c, processName.c)
+	}); err != nil {
+		return fmt.Errorf("kernel: set_driver_system_configuration: %w", toConnError(err))
 	}
 	return nil
 }
@@ -565,6 +692,31 @@ func trySetRequestTimeout(cfg Config) error {
 	defer C.kernel_session_config_free(c)
 	k := &KernelBackend{cfg: cfg}
 	return k.applyRequestTimeout(c)
+}
+
+// trySetTelemetry exercises the telemetry C setter without opening a network
+// session. It is used only by the tagged kernel tests.
+func trySetTelemetry(cfg Config) error {
+	var c *C.KernelSessionConfig
+	if err := call(func() C.KernelStatusCode { return C.kernel_session_config_new(&c) }); err != nil {
+		return fmt.Errorf("config_new: %w", err)
+	}
+	defer C.kernel_session_config_free(c)
+	k := &KernelBackend{cfg: cfg}
+	return k.applyTelemetry(c)
+}
+
+// trySetDriverSystemConfiguration exercises the driver-system-configuration C
+// setter without opening a network session. It is used only by the tagged kernel
+// tests.
+func trySetDriverSystemConfiguration(cfg Config) error {
+	var c *C.KernelSessionConfig
+	if err := call(func() C.KernelStatusCode { return C.kernel_session_config_new(&c) }); err != nil {
+		return fmt.Errorf("config_new: %w", err)
+	}
+	defer C.kernel_session_config_free(c)
+	k := &KernelBackend{cfg: cfg}
+	return k.applyDriverSystemConfiguration(c)
 }
 
 // applyInitialNamespace runs USE CATALOG / USE SCHEMA to select the configured
