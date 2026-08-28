@@ -24,6 +24,7 @@ linters:
           allow:
             - $gostd
             - github.com/databricks/databricks-sql-go
+            - github.com/databricks/databricks-sql-kernel-bindings
             - github.com/apache/arrow/go/v12
             - github.com/apache/thrift/lib/go/thrift
             - github.com/coreos/go-oidc/v3/oidc

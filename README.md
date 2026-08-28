@@ -9,6 +9,7 @@ standard `database/sql` interface.
 ## Contents
 
 - [Quick start](#quick-start)
+- [Cloning the repository](#cloning-the-repository)
 - [Choosing a backend (Thrift vs SEA/kernel)](#choosing-a-backend-thrift-vs-seakernel)
 - [Building](#building)
 - [Connecting](#connecting)
@@ -45,6 +46,42 @@ defer rows.Close()
 
 See [`doc.go`](./doc.go) for full package documentation or the Databricks documentation
 for the [SQL Driver for Go](https://docs.databricks.com/dev-tools/go-sql-driver.html).
+
+> **Using the driver in your own project?** You never clone this repository — you
+> add it with `go get github.com/databricks/databricks-sql-go` and `go build`.
+> `go get` fetches per-version module archives, not git history, and for a
+> default Thrift build it pulls **no** kernel binaries at all. The guidance below
+> is only for people who `git clone` this repo directly (contributors / CI).
+
+## Cloning the repository
+
+This driver repo itself is **small**: for the SEA/kernel backend it commits only
+the platform-independent C header
+(`internal/backend/kernel/include/databricks_kernel.h`). The **prebuilt kernel
+binaries** (per-platform `libdatabricks_sql_kernel.a`, ~60–95 MB each) live in a
+**separate** repository,
+[`databricks-sql-kernel-bindings`](https://github.com/databricks/databricks-sql-kernel-bindings),
+one nested Go module per platform. This driver `require`s those modules, so the
+SEA/kernel backend works straight from `go get` with **no build step** (see
+[SEA/kernel](#seakernel--cgo--a-linked-rust-static-library)). A consumer's
+`go get` pulls only the **target platform's** archive at the driver-pinned
+version — never all platforms.
+
+A plain `git clone` of *this* repo is therefore cheap. The partial/sparse-clone
+guidance matters instead for the **bindings** repo, whose committed archives
+(which git cannot delta-compress) accumulate across releases:
+
+```bash
+# Cheap history + only your platform's archive materialized:
+git clone --filter=blob:none --sparse https://github.com/databricks/databricks-sql-kernel-bindings
+cd databricks-sql-kernel-bindings
+git sparse-checkout set --no-cone '/*' '!/lib' \
+    'lib/darwin_arm64'   # keep only your platform
+```
+
+`--filter=blob:none` fetches commits and trees immediately and pulls file blobs
+lazily, keeping `.git` small; GitHub serves it by default. CI checkouts of the
+bindings repo use `--filter=blob:none` for the same reason.
 
 ## Choosing a backend (Thrift vs SEA/kernel)
 

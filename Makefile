@@ -102,8 +102,21 @@ KERNEL_INC_DIR    = internal/backend/kernel/include
 KERNEL_GO         = CGO_ENABLED=1 go
 KERNEL_TAGS       = -tags databricks_kernel
 
+# SHIPPED PATH (consumers): the kernel archives are NOT built here. They come from
+# the external per-platform modules in github.com/databricks/databricks-sql-kernel-bindings
+# that this repo requires in go.mod; a kernel opt-in `go get` build downloads only
+# the target platform's archive (no Rust, no build step). The targets below are
+# for LOCAL DEVELOPMENT against a kernel source checkout only.
+#
+# Local-dev flow: `make kernel-lib` builds the host-platform archive from the
+# pinned KERNEL_REV into $(KERNEL_LIB_DIR) (a .gitignore'd scratch dir). To have a
+# `-tags databricks_kernel` build actually LINK that freshly built archive instead
+# of the published bindings module, point the matching lib/<platform> module at a
+# local bindings checkout via a go.work whose lib/<platform>/ holds the built .a
+#. TODO(dev-loop): wire this go.work step into the targets
+# so `make test-kernel` links the local build end-to-end without manual setup.
 .PHONY: kernel-lib
-kernel-lib:  ## Build the pinned kernel static lib + header into the cgo link dir (source build).
+kernel-lib:  ## Build the pinned kernel static lib + header locally (source build, dev only).
 	KERNEL_REPO="$(KERNEL_REPO)" KERNEL_REV="$(KERNEL_REV)" KERNEL_SRC="$(KERNEL_SRC)" \
 	KERNEL_LIB_DIR="$(KERNEL_LIB_DIR)" KERNEL_INC_DIR="$(KERNEL_INC_DIR)" \
 	KERNEL_GOOS="$(KERNEL_GOOS)" KERNEL_GOARCH="$(KERNEL_GOARCH)" \
@@ -112,15 +125,9 @@ kernel-lib:  ## Build the pinned kernel static lib + header into the cgo link di
 	./build/kernel-lib.sh
 
 .PHONY: build-kernel
-build-kernel: kernel-lib  ## Build the driver with the kernel backend linked.
+build-kernel:  ## Build the driver with the kernel backend linked (against the bindings modules).
 	$(KERNEL_GO) build $(KERNEL_TAGS) ./...
 
 .PHONY: test-kernel
-test-kernel: kernel-lib  ## Run the kernel-tagged unit tests (no warehouse needed).
+test-kernel:  ## Run the kernel-tagged unit tests (no warehouse needed; links the bindings modules).
 	$(KERNEL_GO) test $(KERNEL_TAGS) ./...
-
-.PHONY: kernel-lib-download
-kernel-lib-download:  ## Prod mode (download prebuilt .a): blocked until the kernel publishes release artifacts.
-	@echo "kernel-lib-download: blocked — the kernel does not yet publish per-platform .a release artifacts."
-	@echo "Use 'make kernel-lib' (source build) meanwhile. See the distribution design doc."
-	@false

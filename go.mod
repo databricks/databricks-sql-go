@@ -53,3 +53,24 @@ require (
 	github.com/rs/zerolog v1.28.0
 	golang.org/x/sys v0.47.0 // indirect
 )
+
+// Per-platform kernel library modules, distributed by the separate
+// github.com/databricks/databricks-sql-kernel-bindings repo (one nested Go
+// module per platform, lib/<os>_<arch>). Each carries that platform's prebuilt
+// kernel static archive + its cgo link directive; a kernel build downloads only
+// the archive for the platform it targets (build-tag gated), and a pure-Go
+// Thrift build downloads none of them.
+//
+// The versions are pinned in lockstep with the driver release. A consumer's
+// `go get github.com/databricks/databricks-sql-go@vX.Y.Z` transitively pins the
+// matching per-platform kernel archive; upgrading the driver moves the kernel
+// version. See the databricks-sql-kernel-bindings repo README.
+require (
+	github.com/databricks/databricks-sql-kernel-bindings/lib/darwin_amd64 v0.2.3
+	github.com/databricks/databricks-sql-kernel-bindings/lib/darwin_arm64 v0.2.3
+	github.com/databricks/databricks-sql-kernel-bindings/lib/linux_amd64 v0.2.3
+	github.com/databricks/databricks-sql-kernel-bindings/lib/linux_arm v0.2.3
+	github.com/databricks/databricks-sql-kernel-bindings/lib/linux_arm64 v0.2.3
+	github.com/databricks/databricks-sql-kernel-bindings/lib/windows_amd64 v0.2.3
+	github.com/databricks/databricks-sql-kernel-bindings/lib/windows_arm64 v0.2.3
+)
