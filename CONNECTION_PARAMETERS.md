@@ -217,7 +217,7 @@ kernel config.
 
 | DSN parameter | Thrift | Kernel | Default | Notes |
 |---|:---:|:---:|---|---|
-| `enableTelemetry` | ✅ | ✅ | unset (server flag decides wrapper telemetry; kernel telemetry defaults on) | Force Go wrapper telemetry on/off on the Thrift path, overriding the server feature flag. On the kernel path, forwarded to kernel-owned telemetry; unset forwards enabled. |
+| `enableTelemetry` | ✅ | ✅ | unset (server flag decides wrapper telemetry; kernel telemetry defaults off) | Force Go wrapper telemetry on/off on the Thrift path, overriding the server feature flag. On the kernel path, forwarded to kernel-owned telemetry; unset forwards disabled. |
 | `telemetry_batch_size` | ✅ | ✅ | `200` wrapper default; kernel default when unset | Events per batch. Forwarded to the kernel only when explicitly set. |
 | `telemetry_flush_interval` | ✅ | ✅ | `30s` wrapper default; kernel default when unset | Flush interval. Forwarded to the kernel only when explicitly set. |
 | `telemetry_retry_count` | ⚠️ | ⚠️ | — | **Deprecated and ignored** (retries are owned by the HTTP client + circuit breaker); logs a one-time warning. |
@@ -226,7 +226,7 @@ kernel config.
 These telemetry knobs are **DSN-only** — there are no `WithX` connector options for them.
 An app assembled with `NewConnector(...)` options rather than a DSN cannot tune telemetry:
 wrapper telemetry falls back to the server feature flag (since `enableTelemetry` is
-unset), kernel telemetry defaults on, and `telemetry_batch_size` /
+unset), kernel telemetry defaults off, and `telemetry_batch_size` /
 `telemetry_flush_interval` use their backend defaults.
 
 The Go wrapper telemetry interceptor is skipped on the kernel path so it does not
