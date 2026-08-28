@@ -47,41 +47,28 @@ defer rows.Close()
 See [`doc.go`](./doc.go) for full package documentation or the Databricks documentation
 for the [SQL Driver for Go](https://docs.databricks.com/dev-tools/go-sql-driver.html).
 
-> **Using the driver in your own project?** You never clone this repository — you
-> add it with `go get github.com/databricks/databricks-sql-go` and `go build`.
-> `go get` fetches per-version module archives, not git history, and for a
-> default Thrift build it pulls **no** kernel binaries at all. The guidance below
-> is only for people who `git clone` this repo directly (contributors / CI).
+> **Using the driver in your own project?** Add it with `go get
+> github.com/databricks/databricks-sql-go` and `go build` — you never clone this repo.
+> A default Thrift build pulls **no** kernel binaries. The "Cloning" section below is
+> only for contributors working in this repo directly.
 
 ## Cloning the repository
 
-This driver repo itself is **small**: for the SEA/kernel backend it commits only
-the platform-independent C header
-(`internal/backend/kernel/include/databricks_kernel.h`). The **prebuilt kernel
-binaries** (per-platform `libdatabricks_sql_kernel.a`, ~60–95 MB each) live in a
-**separate** repository,
+This repo is **small**: for the SEA/kernel backend it commits only the C header
+(`internal/backend/kernel/include/databricks_kernel.h`). The **prebuilt kernel archives**
+(per-platform `libdatabricks_sql_kernel.a`, ~60–95 MB each) live in a separate repo,
 [`databricks-sql-kernel-bindings`](https://github.com/databricks/databricks-sql-kernel-bindings),
-one nested Go module per platform. This driver `require`s those modules, so the
-SEA/kernel backend works straight from `go get` with **no build step** (see
-[SEA/kernel](#seakernel--cgo--a-linked-rust-static-library)). A consumer's
-`go get` pulls only the **target platform's** archive at the driver-pinned
-version — never all platforms.
+one Go module per platform. The driver `require`s them, so `go get` pulls only your
+platform's archive — no build step (see [Building](#building)).
 
-A plain `git clone` of *this* repo is therefore cheap. The partial/sparse-clone
-guidance matters instead for the **bindings** repo, whose committed archives
-(which git cannot delta-compress) accumulate across releases:
+A plain `git clone` of *this* repo is cheap. Sparse-clone the **bindings** repo instead
+if its committed archives make a full clone heavy:
 
 ```bash
-# Cheap history + only your platform's archive materialized:
 git clone --filter=blob:none --sparse https://github.com/databricks/databricks-sql-kernel-bindings
 cd databricks-sql-kernel-bindings
-git sparse-checkout set --no-cone '/*' '!/lib' \
-    'lib/darwin_arm64'   # keep only your platform
+git sparse-checkout set --no-cone '/*' '!/lib' 'lib/darwin_arm64'   # keep only your platform
 ```
-
-`--filter=blob:none` fetches commits and trees immediately and pulls file blobs
-lazily, keeping `.git` small; GitHub serves it by default. CI checkouts of the
-bindings repo use `--filter=blob:none` for the same reason.
 
 ## Choosing a backend (Thrift vs SEA/kernel)
 
@@ -128,50 +115,37 @@ make test       # pure-Go unit tests
 
 Cross-compiling is free, e.g. `GOOS=windows GOARCH=amd64 go build ./...`.
 
-### SEA/kernel — cgo + a linked Rust static library
+### SEA/kernel — cgo, no Rust
 
 The kernel backend compiles in **only** under the `databricks_kernel` build tag with
-`CGO_ENABLED=1`, and links the Rust kernel's C ABI as a static library
-(`libdatabricks_sql_kernel.a`). That archive is **not committed** — build it first.
-
-**Prerequisites for a source build:**
-
-- A C toolchain (cgo) and `CGO_ENABLED=1`.
-- A Rust toolchain (`cargo`), pinned to the channel in
-  [`rust-toolchain.toml`](./rust-toolchain.toml) so the archive is reproducible.
-- Network access to clone the kernel repo at the pinned revision (the
-  [`KERNEL_REV`](./KERNEL_REV) file).
-
-```bash
-# 1. Build the pinned kernel static lib + C header into the cgo link dir.
-#    Clones databricks-sql-kernel @ KERNEL_REV and cargo-builds a self-contained
-#    archive with pure-Rust TLS.
-make kernel-lib
-
-# 2. Build the driver with the kernel backend linked (implies step 1).
-make build-kernel        # == CGO_ENABLED=1 go build -tags databricks_kernel ./...
-
-# Run the kernel-tagged unit tests (no warehouse needed; step 1 implied):
-make test-kernel         # == CGO_ENABLED=1 go test -tags databricks_kernel ./...
-```
-
-Once the archive exists you can invoke `go` directly, but you must carry **both**
-`CGO_ENABLED=1` and `-tags databricks_kernel` — dropping either produces a pure-Go
-binary where `WithUseKernel(true)` fails at connect:
+`CGO_ENABLED=1`. The prebuilt `libdatabricks_sql_kernel.a` for your platform is pulled
+automatically as a Go module dependency and linked — **no Rust toolchain, no build
+step**. You need only a C toolchain (cgo) on a supported platform: linux
+`amd64`/`arm64`/`arm`, darwin `amd64`/`arm64`, windows `amd64`/`arm64`.
 
 ```bash
 CGO_ENABLED=1 go build -tags databricks_kernel ./...
 ```
 
-**Cross-compiling.** The source build is host-native only (`cargo` emits a host-native
-`.a`, and `make kernel-lib` rejects a cross-build). For a non-host target, either build
-on a native per-OS runner, or stage a prebuilt archive and skip the clone + cargo
-entirely (no Rust toolchain needed):
+Carry **both** flags — dropping either produces a pure-Go binary where
+`WithUseKernel(true)` fails at connect. Then select the backend per connection with
+`WithUseKernel(true)` (or `useKernel=true` in the DSN).
+
+#### Build from source (contributors)
+
+To build the archive from the pinned kernel revision instead of using the prebuilt
+module — for kernel development or an unsupported platform — you need a Rust toolchain
+(`cargo`, pinned in [`rust-toolchain.toml`](./rust-toolchain.toml)) and network access to
+clone `databricks-sql-kernel` at [`KERNEL_REV`](./KERNEL_REV):
 
 ```bash
-make kernel-lib KERNEL_LOCAL_A=/path/to/libdatabricks_sql_kernel.a \
-                KERNEL_LOCAL_HEADER=/path/to/databricks_kernel.h   # header optional
+make kernel-lib     # clone + cargo-build the pinned archive into the cgo link dir
+make build-kernel   # == CGO_ENABLED=1 go build -tags databricks_kernel ./...
+make test-kernel    # kernel-tagged unit tests
 ```
+
+Stage a prebuilt archive without Rust via
+`make kernel-lib KERNEL_LOCAL_A=/path/to/libdatabricks_sql_kernel.a`.
 
 ### Build differences at a glance
 
@@ -179,11 +153,11 @@ make kernel-lib KERNEL_LOCAL_A=/path/to/libdatabricks_sql_kernel.a \
 |---|---|---|
 | Build tag | none | `-tags databricks_kernel` |
 | cgo | `CGO_ENABLED=0` | `CGO_ENABLED=1` |
-| Native lib | none | links `libdatabricks_sql_kernel.a` (not committed) |
-| Extra toolchain | none | Rust (`cargo`) + C toolchain |
-| Prep step | none | `make kernel-lib` (or stage `.a` via `KERNEL_LOCAL_A`) |
-| One-shot build | `go build ./...` | `make build-kernel` |
-| Cross-compile | free (any `GOOS`/`GOARCH`) | host-native only; per-OS runner or staged `.a` |
+| Native lib | none | prebuilt `libdatabricks_sql_kernel.a`, auto-linked via Go module |
+| Extra toolchain | none | C toolchain (cgo) — **no Rust** |
+| Prep step | none | none (prebuilt); `make kernel-lib` only for a source build |
+| One-shot build | `go build ./...` | `CGO_ENABLED=1 go build -tags databricks_kernel ./...` |
+| Platforms | any `GOOS`/`GOARCH` | linux amd64/arm64/arm · darwin amd64/arm64 · windows amd64/arm64 |
 
 ## Connecting
 
@@ -453,7 +427,7 @@ We use `golangci-lint`. In VS Code:
 
 ```bash
 go test           # default (Thrift) backend, pure Go
-make test-kernel  # kernel-tagged unit tests (requires make kernel-lib)
+make test-kernel  # kernel-tagged unit tests (links the prebuilt bindings; no Rust)
 ```
 
 ## Issues
