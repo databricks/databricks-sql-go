@@ -362,8 +362,9 @@ left unset (the default), a **server-side feature flag** decides whether wrapper
 telemetry is active — so it may be enabled without an explicit opt-in. Setting
 `enableTelemetry` explicitly overrides the flag. On the kernel backend, the Go wrapper
 skips its telemetry interceptor entirely so it does not duplicate kernel-owned
-telemetry; `enableTelemetry` and `telemetry_batch_size` are forwarded into the kernel
-telemetry config instead.
+telemetry; when `enableTelemetry` is explicitly supplied, it and any telemetry tuning
+knobs are forwarded into the kernel telemetry config. When `enableTelemetry` is unset,
+telemetry config is left for the kernel default.
 
 ```
 # force on (regardless of the server flag):

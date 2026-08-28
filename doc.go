@@ -282,7 +282,8 @@ Features above the backend seam are inherited unchanged: the database/sql connec
 pool and connection lifecycle. The Go wrapper telemetry interceptor is skipped on the
 kernel path so it does not duplicate kernel-owned telemetry for the same connection and
 statements; `enableTelemetry`, `telemetry_batch_size`, and
-`telemetry_flush_interval` are forwarded to kernel-owned telemetry config. Result types render byte-for-byte identical to the
+`telemetry_flush_interval` are forwarded to kernel-owned telemetry config only when
+`enableTelemetry` is explicitly supplied. Result types render byte-for-byte identical to the
 Thrift backend: scalars, DECIMAL (exact string), TIMESTAMP / TIMESTAMP_NTZ (shifted
 into the session time zone), INTERVAL, nested Array/Map/Struct and VARIANT (as JSON),
 and GEOMETRY / GEOGRAPHY (WKT). The server query id is surfaced on the success path, so a
