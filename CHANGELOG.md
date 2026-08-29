@@ -1,5 +1,8 @@
 # Release History
 
+## Unreleased
+- Fix a data race when timestamp results are read from concurrent queries: Arrow v12's `TimestampType.GetToTimeFunc` lazily caches the type's `*time.Location` without synchronization, and the driver calls it on the shared `arrow.FixedWidthTypes` singletons. The cache is now warmed at package init so later calls are read-only (databricks/databricks-sql-go#179)
+
 ## v1.15.1 (2026-09-01)
 - Pin the seven per-platform kernel bindings modules to v1.0.0.
 - Disable kernel telemetry by default when `enableTelemetry` is unset; explicit `true` and `false` values are unchanged (databricks/databricks-sql-go#464).

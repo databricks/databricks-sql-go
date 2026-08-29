@@ -35,6 +35,23 @@ type SparkArrowRecord interface {
 	arrow.Record
 }
 
+// Arrow v12's TimestampType caches its *time.Location lazily on the first
+// GetZone/GetToTimeFunc call without synchronization (apache/arrow#38795,
+// fixed in later Arrow versions). NewArrowRowScanner calls GetToTimeFunc on
+// the shared arrow.FixedWidthTypes singletons, so concurrent queries race on
+// that first call. Warming the cache here, before any concurrency is
+// possible, makes every later call a plain read.
+func init() {
+	for _, dt := range []arrow.DataType{
+		arrow.FixedWidthTypes.Timestamp_s,
+		arrow.FixedWidthTypes.Timestamp_ms,
+		arrow.FixedWidthTypes.Timestamp_us,
+		arrow.FixedWidthTypes.Timestamp_ns,
+	} {
+		_, _ = dt.(*arrow.TimestampType).GetToTimeFunc()
+	}
+}
+
 type timeStampFn func(arrow.Timestamp) time.Time
 
 type colInfo struct {
