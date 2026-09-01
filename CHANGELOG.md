@@ -1,5 +1,10 @@
 # Release History
 
+## v1.15.1 (2026-09-01)
+- Pin the seven per-platform kernel bindings modules to v1.0.0.
+- Disable kernel telemetry by default when `enableTelemetry` is unset; explicit `true` and `false` values are unchanged (databricks/databricks-sql-go#464).
+- Bump `golang.org/x/crypto` to v0.55.0 for security scanning (databricks/databricks-sql-go#464).
+
 ## v1.15.0 (2026-08-28)
 - **New experimental SEA/kernel backend (opt-in).** Set `WithUseKernel(true)` (or `useKernel=true` in the DSN) to route execution through the Statement Execution API instead of Thrift, backed by the Rust `databricks-sql-kernel` over cgo. It requires a build with `-tags databricks_kernel` and `CGO_ENABLED=1`; the default Thrift build is unchanged and returns a clear error if the kernel backend is selected without the tag. The prebuilt kernel binaries ship as per-platform Go modules, so `go get` pulls the one for your platform automatically — **no Rust toolchain or build step** — across 7 platforms (linux amd64/arm64/arm, darwin amd64/arm64, windows amd64/arm64). Kernel-backend features in this release: mTLS client certificates (`WithKernelClientCertificate`), identity federation (`WithFederatedTokenProvider*`), U2M on-disk token cache (`WithTokenCache`), configurable request timeout, opt-in lossy float64 decimals (`WithKernelDecimalAsFloat`), `GetArrowBatches` on the public `Rows` interface, kernel logs routed through the driver logger, cause-categorized telemetry errors, and an Azure U2M OAuth fix (databricks/databricks-sql-go#393, #399, #412, #440).
 - Bump `golang.org/x/mod` to v0.40.0 to clear CVE-2026-56864 / CVE-2026-56865 (databricks/databricks-sql-go#460)

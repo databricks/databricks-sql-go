@@ -66,11 +66,11 @@ require (
 // matching per-platform kernel archive; upgrading the driver moves the kernel
 // version. See the databricks-sql-kernel-bindings repo README.
 require (
-	github.com/databricks/databricks-sql-kernel-bindings/lib/darwin_amd64 v0.2.3
-	github.com/databricks/databricks-sql-kernel-bindings/lib/darwin_arm64 v0.2.3
-	github.com/databricks/databricks-sql-kernel-bindings/lib/linux_amd64 v0.2.3
-	github.com/databricks/databricks-sql-kernel-bindings/lib/linux_arm v0.2.3
-	github.com/databricks/databricks-sql-kernel-bindings/lib/linux_arm64 v0.2.3
-	github.com/databricks/databricks-sql-kernel-bindings/lib/windows_amd64 v0.2.3
-	github.com/databricks/databricks-sql-kernel-bindings/lib/windows_arm64 v0.2.3
+	github.com/databricks/databricks-sql-kernel-bindings/lib/darwin_amd64 v1.0.0
+	github.com/databricks/databricks-sql-kernel-bindings/lib/darwin_arm64 v1.0.0
+	github.com/databricks/databricks-sql-kernel-bindings/lib/linux_amd64 v1.0.0
+	github.com/databricks/databricks-sql-kernel-bindings/lib/linux_arm v1.0.0
+	github.com/databricks/databricks-sql-kernel-bindings/lib/linux_arm64 v1.0.0
+	github.com/databricks/databricks-sql-kernel-bindings/lib/windows_amd64 v1.0.0
+	github.com/databricks/databricks-sql-kernel-bindings/lib/windows_arm64 v1.0.0
 )
