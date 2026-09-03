@@ -23,6 +23,11 @@ static inline KernelStatusCode go_kernel_set_retry_config(
       config, min_wait_ms, max_wait_ms, max_retries, overall_timeout_ms);
 }
 
+static inline KernelStatusCode go_kernel_set_max_connections(
+    KernelSessionConfig* config, size_t max_connections) {
+  return kernel_session_config_set_max_connections(config, max_connections);
+}
+
 static inline KernelStatusCode go_kernel_set_telemetry_config(
     KernelSessionConfig* config, bool enabled, size_t batch_size,
     uint64_t flush_interval_ms, uint32_t max_retries, uint64_t retry_delay_ms,
@@ -243,6 +248,9 @@ func (k *KernelBackend) OpenSession(ctx context.Context) error {
 	if err := k.applyRequestTimeout(cfg); err != nil {
 		return err
 	}
+	if err := k.applyMaxConnections(cfg); err != nil {
+		return err
+	}
 
 	// Retry / backoff policy (WithRetries). See applyRetry.
 	if err := k.applyRetry(cfg); err != nil {
@@ -399,6 +407,18 @@ func (k *KernelBackend) applyRequestTimeout(cfg *C.KernelSessionConfig) error {
 		return C.kernel_session_config_set_request_timeout(cfg, C.uint64_t(timeoutMs))
 	}); err != nil {
 		return fmt.Errorf("kernel: set_request_timeout: %w", toConnError(err))
+	}
+	return nil
+}
+
+func (k *KernelBackend) applyMaxConnections(cfg *C.KernelSessionConfig) error {
+	if k.cfg.MaxConnections == 0 {
+		return nil
+	}
+	if err := call(func() C.KernelStatusCode {
+		return C.go_kernel_set_max_connections(cfg, C.size_t(k.cfg.MaxConnections))
+	}); err != nil {
+		return fmt.Errorf("kernel: set_max_connections: %w", toConnError(err))
 	}
 	return nil
 }
@@ -692,6 +712,18 @@ func trySetRequestTimeout(cfg Config) error {
 	defer C.kernel_session_config_free(c)
 	k := &KernelBackend{cfg: cfg}
 	return k.applyRequestTimeout(c)
+}
+
+// trySetMaxConnections exercises the max-connections C setter without opening
+// a network session. It is used only by the tagged kernel tests.
+func trySetMaxConnections(cfg Config) error {
+	var c *C.KernelSessionConfig
+	if err := call(func() C.KernelStatusCode { return C.kernel_session_config_new(&c) }); err != nil {
+		return fmt.Errorf("config_new: %w", err)
+	}
+	defer C.kernel_session_config_free(c)
+	k := &KernelBackend{cfg: cfg}
+	return k.applyMaxConnections(c)
 }
 
 // trySetTelemetry exercises the telemetry C setter without opening a network

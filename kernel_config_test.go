@@ -369,6 +369,17 @@ func TestValidateKernelConfig(t *testing.T) {
 			})
 		}
 	})
+
+	t.Run("non-positive WithKernelMaxConnections rejected as ErrInvalidKernelConfig", func(t *testing.T) {
+		for _, value := range []int{0, -1} {
+			c := baseKernelConfig()
+			WithKernelMaxConnections(value)(c)
+			_, err := validateKernelConfig(c)
+			if !errors.Is(err, dbsqlerr.ErrInvalidKernelConfig) {
+				t.Errorf("WithKernelMaxConnections(%d) should be ErrInvalidKernelConfig, got %v", value, err)
+			}
+		}
+	})
 }
 
 // kernelConfigFieldDisposition records, for every UserConfig field, how the kernel
@@ -483,6 +494,15 @@ func TestKernelConfigFieldsClassified(t *testing.T) {
 // TestKernelExperimentalFieldsClassified only asserts the disposition map, not the
 // runtime copy). These run in the default CGO_ENABLED=0 build.
 func TestBuildKernelConfig(t *testing.T) {
+	t.Run("max connections forwarded", func(t *testing.T) {
+		c := baseKernelConfig()
+		WithKernelMaxConnections(37)(c)
+		kc := buildKernelConfig(c, kernel.Auth{Mode: kernel.AuthPAT, Token: "dapi-x"})
+		if kc.MaxConnections != 37 {
+			t.Errorf("MaxConnections = %d, want 37", kc.MaxConnections)
+		}
+	})
+
 	t.Run("experimental TLS fields forwarded", func(t *testing.T) {
 		c := baseKernelConfig()
 		c.KernelExperimental = &config.KernelExperimentalConfig{

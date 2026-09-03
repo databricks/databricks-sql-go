@@ -751,6 +751,18 @@ func WithKernelRetryOverallTimeout(d time.Duration) ConnOption {
 	}
 }
 
+// WithKernelMaxConnections sets the maximum number of idle HTTP connections
+// retained per host by the kernel. The default is 100.
+//
+// EXPERIMENTAL, kernel-only: n must be positive, and the default (Thrift)
+// backend rejects this option at connect.
+func WithKernelMaxConnections(n int) ConnOption {
+	return func(c *config.Config) {
+		max := n
+		kernelExperimental(c).MaxConnections = &max
+	}
+}
+
 // WithKernelMaxChunksInMemory bounds how many decompressed CloudFetch chunks the
 // kernel holds in memory at once on the kernel backend — the knob that trades
 // large-result throughput for peak RSS. Lower it (e.g. 4) to cap memory on wide,

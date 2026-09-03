@@ -37,6 +37,7 @@ var kernelExperimentalFieldDisposition = map[string]string{
 	"ProxyPassword":           "forwarded", // set_proxy (password)
 	"ProxyBypassHosts":        "forwarded", // set_proxy (bypass_hosts)
 	"RetryOverallTimeout":     "forwarded", // set_retry_config (overall_timeout_ms, 4th knob)
+	"MaxConnections":          "forwarded", // set_max_connections
 	"MaxChunksInMemory":       "forwarded", // set_session_conf (cloudfetch_max_chunks_in_memory, client-only)
 	"DecimalAsFloat":          "forwarded", // kernel.Config.DecimalAsFloat → kernelOp → arrowscan (client-side scan choice)
 	"TokenCacheEnabled":       "forwarded", // set_u2m_token_cache_config (enabled, nil passphrase)
@@ -90,6 +91,9 @@ func TestWithKernelTLSOptionsSetExperimental(t *testing.T) {
 		{"retry overall timeout", WithKernelRetryOverallTimeout(5 * time.Minute), func(k *config.KernelExperimentalConfig) bool {
 			return k.RetryOverallTimeout == 5*time.Minute
 		}},
+		{"max connections", WithKernelMaxConnections(37), func(k *config.KernelExperimentalConfig) bool {
+			return k.MaxConnections != nil && *k.MaxConnections == 37
+		}},
 		{"max chunks in memory", WithKernelMaxChunksInMemory(4), func(k *config.KernelExperimentalConfig) bool {
 			return k.MaxChunksInMemory == 4
 		}},
@@ -131,6 +135,7 @@ func TestWithKernelOptionsRejectedOnThriftPath(t *testing.T) {
 		{"skip hostname", WithKernelSkipHostnameVerify()},
 		{"proxy", WithKernelProxy(KernelProxy{URL: "http://proxy:3128"})},
 		{"retry overall timeout", WithKernelRetryOverallTimeout(5 * time.Minute)},
+		{"max connections", WithKernelMaxConnections(37)},
 		{"max chunks in memory", WithKernelMaxChunksInMemory(4)},
 		{"decimal as float", WithKernelDecimalAsFloat(true)},
 		{"token cache", WithTokenCache(true)},
@@ -212,6 +217,7 @@ func TestWithKernelClientCertificateCopiesPEM(t *testing.T) {
 // the whole Config per conn, and a shared backing array would let one conn's
 // mutation reach another.
 func TestKernelExperimentalDeepCopy(t *testing.T) {
+	maxConnections := 37
 	orig := &config.KernelExperimentalConfig{
 		TLSTrustedCertsPEM:      []byte("ca-bundle"),
 		TLSClientCertPEM:        []byte("client-cert"),
@@ -223,6 +229,7 @@ func TestKernelExperimentalDeepCopy(t *testing.T) {
 		ProxyPassword:           "p",
 		ProxyBypassHosts:        "*.internal",
 		RetryOverallTimeout:     5 * time.Minute,
+		MaxConnections:          &maxConnections,
 		MaxChunksInMemory:       4,
 		TokenCacheEnabled:       true,
 	}
@@ -236,6 +243,11 @@ func TestKernelExperimentalDeepCopy(t *testing.T) {
 	}
 	if cp.RetryOverallTimeout != 5*time.Minute {
 		t.Errorf("DeepCopy lost RetryOverallTimeout: %v", cp.RetryOverallTimeout)
+	}
+	if cp.MaxConnections == nil || *cp.MaxConnections != 37 {
+		t.Errorf("DeepCopy lost MaxConnections: %v", cp.MaxConnections)
+	} else if cp.MaxConnections == orig.MaxConnections {
+		t.Error("DeepCopy aliased MaxConnections pointer")
 	}
 	if cp.MaxChunksInMemory != 4 {
 		t.Errorf("DeepCopy lost MaxChunksInMemory: %v", cp.MaxChunksInMemory)

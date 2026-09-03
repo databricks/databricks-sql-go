@@ -106,6 +106,10 @@ type KernelExperimentalConfig struct {
 	// retry_overall_timeout knob).
 	RetryOverallTimeout time.Duration
 
+	// MaxConnections is the maximum number of idle HTTP connections retained per
+	// host by the kernel. Nil keeps the kernel default (100).
+	MaxConnections *int
+
 	// MaxChunksInMemory bounds how many decompressed CloudFetch chunks the kernel
 	// holds in memory at once (WithKernelMaxChunksInMemory) — the knob that trades
 	// throughput for peak RSS on large result sets. Zero = keep the kernel default
@@ -147,6 +151,10 @@ func (k *KernelExperimentalConfig) DeepCopy() *KernelExperimentalConfig {
 		MaxChunksInMemory:       k.MaxChunksInMemory,
 		DecimalAsFloat:          k.DecimalAsFloat,
 		TokenCacheEnabled:       k.TokenCacheEnabled,
+	}
+	if k.MaxConnections != nil {
+		max := *k.MaxConnections
+		cp.MaxConnections = &max
 	}
 	if k.TLSTrustedCertsPEM != nil {
 		cp.TLSTrustedCertsPEM = append([]byte(nil), k.TLSTrustedCertsPEM...)

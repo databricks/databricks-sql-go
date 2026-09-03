@@ -804,6 +804,7 @@ func TestConfig_DeepCopy(t *testing.T) {
 		}
 	})
 	t.Run("copy config with all values", func(t *testing.T) {
+		maxConnections := 37
 		cfg := &Config{
 			UserConfig:                UserConfig{}.WithDefaults(),
 			TLSConfig:                 &tls.Config{MinVersion: tls.VersionTLS12},
@@ -823,6 +824,7 @@ func TestConfig_DeepCopy(t *testing.T) {
 				TLSClientKeyPEM:         []byte("client-key"),
 				TLSClientCertConfigured: true,
 				TLSSkipHostnameVerify:   true,
+				MaxConnections:          &maxConnections,
 			},
 		}
 
@@ -833,6 +835,9 @@ func TestConfig_DeepCopy(t *testing.T) {
 		// The experimental block must be deep-copied, not aliased.
 		if cfg_copy.KernelExperimental == cfg.KernelExperimental {
 			t.Error("DeepCopy aliased KernelExperimental pointer")
+		}
+		if cfg_copy.KernelExperimental.MaxConnections == cfg.KernelExperimental.MaxConnections {
+			t.Error("DeepCopy aliased KernelExperimental MaxConnections pointer")
 		}
 		cfg_copy.KernelExperimental.TLSTrustedCertsPEM[0] = 'X'
 		if cfg.KernelExperimental.TLSTrustedCertsPEM[0] == 'X' {
