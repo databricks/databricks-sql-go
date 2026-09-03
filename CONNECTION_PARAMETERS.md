@@ -15,7 +15,7 @@ sections of the README, laid out as one comparison matrix per concern.
 |:---:|---|
 | ✅ | Supported and honored. |
 | ❌ | Not supported — **rejected** at connect/execute (wraps `dbsqlerr.ErrNotSupportedByKernel` or `dbsqlerr.ErrRequiresKernelBackend`), never silently ignored. |
-| ⚠️ | Accepted but not fully honored — either inert ("silently ignored") or only partially/conditionally honored (e.g. some session confs are honored while others are dropped/rejected on the kernel path). |
+| ⚠️ | Accepted but not fully honored — either inert ("silently ignored") or only partially/conditionally honored. |
 | — | Not applicable. |
 
 **Backend selection.** Both backends are selected once per connection via
@@ -25,11 +25,8 @@ sections of the README, laid out as one comparison matrix per concern.
 See [Building](./README.md#building).
 
 Any parameter not listed below (e.g. `ansi_mode`) is passed through as a
-**session parameter**. On the **Thrift** path the session-conf map is forwarded freely.
-On the **kernel** path conf keys are matched (case-insensitively) against an allowlist —
-non-allowlisted keys are dropped with a warning, and a few are hard-rejected — so a conf
-that takes effect on Thrift may silently be ignored on kernel. Broadening the kernel
-allowlist is tracked in PECOBLR-4153.
+**session parameter**. Both backends forward server-bound session confs; the kernel
+preserves their names and values unchanged.
 
 ## Endpoint & routing
 
@@ -90,60 +87,27 @@ Notes for the SEA/kernel backend:
 | `maxRows` | `WithMaxRows` | ✅ | ⚠️ | `100000` | Max rows per fetch. On the kernel path the kernel manages paging, so this is accepted but has no effect. |
 | `timeout` | `WithTimeout` | ✅ | ❌ | no timeout | Server-side query timeout, in seconds. On the kernel path use the `STATEMENT_TIMEOUT` session parameter instead. |
 | `userAgentEntry` | `WithUserAgentEntry` | ✅ | ✅ | | Identifies your application (partners/ISVs), format `<isv-name+product-name>`. |
-| *(session param)* | `WithSessionParams` | ✅ | ⚠️ | | Arbitrary session confs (e.g. `ansi_mode`, `STATEMENT_TIMEOUT`, `QUERY_TAGS`). Allowlisted confs are honored on both; on kernel a non-allowlisted conf is dropped/rejected (see the note above; PECOBLR-4153). |
+| *(session param)* | `WithSessionParams` | ✅ | ✅ | | Arbitrary server session confs (e.g. `ansi_mode`, `STATEMENT_TIMEOUT`, `QUERY_TAGS`) are forwarded unchanged. |
 | *(via session param)* | `WithQueryTags` | ✅ | ✅ | | Session-level query tags (serialized into `QUERY_TAGS`). |
 | `timezone` | `WithSessionParams(timezone=…)` | ✅ | ✅ | | Session time zone (e.g. `America/Los_Angeles`). |
-| `enableMetricViewMetadata` | `WithEnableMetricViewMetadata` | ✅ | ⚠️ | `false` | Enables metric-view metadata (sets `spark.sql.thriftserver.metadata.metricview.enabled=true`). Both paths forward the **identical** conf; the kernel allowlists this key and sends it verbatim — it is **not** rejected driver- or kernel-side. Whether it takes effect on the SEA/kernel path depends on server-side SEA support (a `⚠️` pending confirmation against a live warehouse; PECOBLR-4142 / PECOBLR-4153). |
+| `enableMetricViewMetadata` | `WithEnableMetricViewMetadata` | ✅ | ⚠️ | `false` | Enables metric-view metadata (sets `spark.sql.thriftserver.metadata.metricview.enabled=true`). Both paths forward the identical conf. Whether it takes effect on the SEA/kernel path depends on server-side SEA support (PECOBLR-4142). |
 
-### Kernel session-conf allowlist
+### Kernel session confs
 
-On the **Thrift** path the `WithSessionParams` map is forwarded to the server freely.
-On the **kernel** path each key is matched **case-insensitively** against the allowlist
-below; a key not on it is **dropped with a warning** (never sent), so a conf that takes
-effect on Thrift may silently do nothing on kernel. Broadening the allowlist is tracked in
-PECOBLR-4153.
-
-> **Authoritative source.** This table is transcribed from the vendored kernel's
-> allowlist (`build/kernel-src/src/config.rs`), which is not part of this repo checkout.
-> Only `spark.sql.thriftserver.metadata.metricview.enabled` and the kernel max-chunks key
-> have repo-side anchors (`internal/config/config.go`); the remaining keys and the
-> uppercase-on-send / `spark.*`-verbatim rules have no CI guard here and may lag as the
-> kernel evolves. When in doubt, treat the kernel allowlist as authoritative.
-
-**SET-style SQL parameters** — matched case-insensitively, sent **uppercased** (the server
-echoes these uppercase, so `SET`-readback matches):
-
-| Key | Purpose |
-|---|---|
-| `ANSI_MODE` | Enable/disable ANSI SQL behavior. |
-| `COLLATION` | Default collation. |
-| `ENABLE_PHOTON` | Toggle the Photon engine. |
-| `LEGACY_TIME_PARSER_POLICY` | Legacy datetime parsing behavior. |
-| `MAX_FILE_PARTITION_BYTES` | Max bytes per file partition. |
-| `QUERY_TAGS` | Query tags (comma-separated `key:value`). This is the key `WithQueryTags` writes. |
-| `READ_ONLY_EXTERNAL_METASTORE` | Treat the external metastore as read-only. |
-| `STATEMENT_TIMEOUT` | Server-side per-statement timeout (seconds). The real query-timeout knob on the kernel path, since `WithTimeout` is rejected there. |
-| `TIMEZONE` | Session time zone (e.g. `UTC`). Also settable via the `timezone` DSN param / `WithSessionParams`. |
-| `USE_CACHED_RESULT` | Toggle result caching. |
-
-**Dotted `spark.*` conf** — matched case-insensitively but sent **verbatim** (Spark conf
-keys are case-sensitive and must not be uppercased):
-
-| Key | Purpose |
-|---|---|
-| `spark.sql.thriftserver.metadata.metricview.enabled` | Metric-view metadata; the conf `WithEnableMetricViewMetadata` sets. |
+The kernel forwards server-bound `WithSessionParams` entries unchanged and lets the
+server validate them. An unsupported key may therefore fail session creation or a later
+statement instead of being dropped client-side.
 
 Notes:
 
 - Boolean-valued keys should use the exact strings `"true"` / `"false"` — the kernel does
   not pre-validate values and forwards them as-is.
-- **`CAN_CLOUD_DOWNLOAD` is deliberately not allowlisted**: SEA has no such session conf
-  (it is accepted at CreateSession but rejected at the first statement with
-  `CONFIG_NOT_AVAILABLE`). Disable Cloud Fetch with `WithCloudFetch(false)` and bound its
-  memory with `WithKernelMaxChunksInMemory` instead of a raw conf.
+- **`CAN_CLOUD_DOWNLOAD` is not a valid SEA session conf**: it may be accepted at
+  CreateSession and rejected by the first statement with `CONFIG_NOT_AVAILABLE`.
+  Disable Cloud Fetch with `WithCloudFetch(false)` instead of setting this raw conf.
 - The client-only keys (`cloudfetch_enabled`, `cloudfetch_max_chunks_in_memory`,
-  `complex_types_as_json`, `intervals_as_string`, …) are **not** in this allowlist: the
-  kernel reads them at session creation and strips them before the SEA wire. The driver
+  `complex_types_as_json`, `intervals_as_string`, …) are read by the kernel at session
+  creation and stripped before the SEA wire. The driver
   exposes the relevant ones as dedicated `WithKernel*` options rather than raw confs.
 
 ## Retry / backoff

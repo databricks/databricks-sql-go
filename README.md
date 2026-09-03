@@ -141,7 +141,7 @@ clone `databricks-sql-kernel` at [`KERNEL_REV`](./KERNEL_REV):
 ```bash
 make kernel-lib     # clone + cargo-build the pinned archive into the cgo link dir
 make build-kernel   # == CGO_ENABLED=1 go build -tags databricks_kernel ./...
-make test-kernel    # kernel-tagged unit tests
+make test-kernel    # build KERNEL_REV and run kernel-tagged unit tests against it
 ```
 
 Stage a prebuilt archive without Rust via
@@ -427,7 +427,7 @@ We use `golangci-lint`. In VS Code:
 
 ```bash
 go test           # default (Thrift) backend, pure Go
-make test-kernel  # kernel-tagged unit tests (links the prebuilt bindings; no Rust)
+make test-kernel  # kernel-tagged unit tests against the source-built KERNEL_REV
 ```
 
 ## Issues
