@@ -16,9 +16,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/databricks/databricks-sql-go/driverctx"
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 	"github.com/databricks/databricks-sql-go/internal/backend"
 	dbsqlerrint "github.com/databricks/databricks-sql-go/internal/errors"
+	"github.com/databricks/databricks-sql-go/internal/querytags"
 	dbsqlrows "github.com/databricks/databricks-sql-go/internal/rows"
 )
 
@@ -76,6 +78,30 @@ func (k *KernelBackend) execute(ctx context.Context, req backend.ExecRequest) (b
 		C.kernel_statement_close(stmt)
 		k.evictIfSessionFatal(err)
 		return &kernelOp{}, fmt.Errorf("kernel: bind params: %w", toStatementError(err))
+	}
+
+	// Per-statement query tags from context — the same source and serializer the
+	// Thrift backend uses; here the serialized wire string goes to the kernel's
+	// per-statement setter instead of Thrift confOverlay. Empty/absent → skip.
+	if queryTags := driverctx.QueryTagsFromContext(ctx); len(queryTags) > 0 {
+		if serialized := querytags.Serialize(queryTags); serialized != "" {
+			// Guard against an interior NUL before the length-less C setter
+			// silently truncates it — same parity guard as set_sql/bind_parameter.
+			if err := checkQueryTags(serialized); err != nil {
+				C.kernel_statement_close(stmt)
+				return &kernelOp{}, fmt.Errorf("kernel: %w", err)
+			}
+			tags := newCStr(serialized)
+			err := call(func() C.KernelStatusCode {
+				return C.kernel_statement_set_query_tags(stmt, tags.c)
+			})
+			tags.free()
+			if err != nil {
+				C.kernel_statement_close(stmt)
+				k.evictIfSessionFatal(err)
+				return &kernelOp{}, fmt.Errorf("kernel: set_query_tags: %w", toStatementError(err))
+			}
+		}
 	}
 
 	// Detached canceller, obtained before execute so it observes the server

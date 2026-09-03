@@ -689,6 +689,20 @@ KernelStatusCode kernel_statement_bind_parameter(kernel_statement_t* stmt,
                                                  const char* value);
 
 /*
+ * Set per-statement query tags — key/value annotations sent with this
+ * statement's execution for cost attribution and tracking. `query_tags` is the
+ * serialized wire form: comma-separated `key:value` pairs, with a bare `key`
+ * (no colon) for a valueless tag, e.g. "team:eng,job:etl,production"; backslash
+ * escapes the separators in a value ("\:", "\,", "\\"). This is the same string
+ * a host already builds for the Thrift `confOverlay` path, so it is passed
+ * through unchanged and re-parsed into the native SEA query_tags array at
+ * execute time. An empty string is a no-op; calling again replaces the
+ * statement's tags. `query_tags` must be a NUL-terminated UTF-8 string.
+ */
+KernelStatusCode kernel_statement_set_query_tags(kernel_statement_t* stmt,
+                                                 const char* query_tags);
+
+/*
  * Wait-for-result execution. On success, `*out` holds an executed handle
  * released with `kernel_executed_statement_close`.
  */
