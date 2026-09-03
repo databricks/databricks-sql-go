@@ -236,6 +236,7 @@ jobs:
       # secrets + drop the -skip to cover it.
       - name: Run kernel E2E
         env:
+          CGO_LDFLAGS: -L${{ github.workspace }}/internal/backend/kernel/lib/linux_amd64 -l:libdatabricks_sql_kernel.a
           DATABRICKS_PECOTESTING_SERVER_HOSTNAME: ${{ secrets.DATABRICKS_PECOTESTING_SERVER_HOSTNAME }}
           DATABRICKS_PECOTESTING_HTTP_PATH2: ${{ secrets.DATABRICKS_PECOTESTING_HTTP_PATH2 }}
           DATABRICKS_PECOTESTING_TOKEN: ${{ secrets.DATABRICKS_PECOTESTING_TOKEN }}
@@ -255,6 +256,7 @@ jobs:
       - name: Run kernel E2E against Reyden (non-blocking)
         continue-on-error: true
         env:
+          CGO_LDFLAGS: -L${{ github.workspace }}/internal/backend/kernel/lib/linux_amd64 -l:libdatabricks_sql_kernel.a
           DATABRICKS_PECOTESTING_SERVER_HOSTNAME: ${{ secrets.DATABRICKS_PECOTESTING_SERVER_HOSTNAME }}
           DATABRICKS_PECOTESTING_HTTP_PATH2: ${{ secrets.DATABRICKS_PECOTESTING_HTTP_PATH2 }}
           DATABRICKS_PECOTESTING_TOKEN: ${{ secrets.DATABRICKS_PECOTESTING_TOKEN }}

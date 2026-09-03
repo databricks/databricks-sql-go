@@ -101,6 +101,7 @@ KERNEL_LIB_DIR    = internal/backend/kernel/lib/$(KERNEL_GOOS)_$(KERNEL_GOARCH)
 KERNEL_INC_DIR    = internal/backend/kernel/include
 KERNEL_GO         = CGO_ENABLED=1 go
 KERNEL_TAGS       = -tags databricks_kernel
+KERNEL_LOCAL_LDFLAGS = -L$(abspath $(KERNEL_LIB_DIR)) -l:libdatabricks_sql_kernel.a
 
 # SHIPPED PATH (consumers): the kernel archives are NOT built here. They come from
 # the external per-platform modules in github.com/databricks/databricks-sql-kernel-bindings
@@ -108,13 +109,8 @@ KERNEL_TAGS       = -tags databricks_kernel
 # the target platform's archive (no Rust, no build step). The targets below are
 # for LOCAL DEVELOPMENT against a kernel source checkout only.
 #
-# Local-dev flow: `make kernel-lib` builds the host-platform archive from the
-# pinned KERNEL_REV into $(KERNEL_LIB_DIR) (a .gitignore'd scratch dir). To have a
-# `-tags databricks_kernel` build actually LINK that freshly built archive instead
-# of the published bindings module, point the matching lib/<platform> module at a
-# local bindings checkout via a go.work whose lib/<platform>/ holds the built .a
-#. TODO(dev-loop): wire this go.work step into the targets
-# so `make test-kernel` links the local build end-to-end without manual setup.
+# Local-dev flow: `make test-kernel` builds the host-platform archive from the
+# pinned KERNEL_REV and puts it before the published archive on the linker line.
 .PHONY: kernel-lib
 kernel-lib:  ## Build the pinned kernel static lib + header locally (source build, dev only).
 	KERNEL_REPO="$(KERNEL_REPO)" KERNEL_REV="$(KERNEL_REV)" KERNEL_SRC="$(KERNEL_SRC)" \
@@ -125,9 +121,9 @@ kernel-lib:  ## Build the pinned kernel static lib + header locally (source buil
 	./build/kernel-lib.sh
 
 .PHONY: build-kernel
-build-kernel:  ## Build the driver with the kernel backend linked (against the bindings modules).
-	$(KERNEL_GO) build $(KERNEL_TAGS) ./...
+build-kernel: kernel-lib  ## Build the driver against the source-built KERNEL_REV archive.
+	CGO_LDFLAGS='$(KERNEL_LOCAL_LDFLAGS) $(CGO_LDFLAGS)' $(KERNEL_GO) build $(KERNEL_TAGS) ./...
 
 .PHONY: test-kernel
-test-kernel:  ## Run the kernel-tagged unit tests (no warehouse needed; links the bindings modules).
-	$(KERNEL_GO) test $(KERNEL_TAGS) ./...
+test-kernel: kernel-lib  ## Run kernel-tagged tests against the source-built KERNEL_REV archive.
+	CGO_LDFLAGS='$(KERNEL_LOCAL_LDFLAGS) $(CGO_LDFLAGS)' $(KERNEL_GO) test $(KERNEL_TAGS) ./...
