@@ -750,8 +750,8 @@ func (k *KernelBackend) runNamespaceStmt(ctx context.Context, sql string) error 
 	return closeErr
 }
 
-// CloseSession tears down the server-side session. Best-effort: the kernel's
-// close is async (see the C header), so an error is logged, not hard-failed.
+// CloseSession tears down the server-side session and returns the kernel's
+// awaited close result.
 //
 // Deferred (tracked): this ignores ctx and blocks in the synchronous call() until
 // kernel_session_close returns, with no deadline — a stalled kernel-side close

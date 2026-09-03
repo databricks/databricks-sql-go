@@ -173,7 +173,7 @@ const MetricViewMetadataConfKey = "spark.sql.thriftserver.metadata.metricview.en
 // (WithKernelMaxChunksInMemory). Unlike MetricViewMetadataConfKey this is NOT a
 // server SET parameter and is NOT added by EffectiveSessionParams: the kernel
 // backend injects it into its own SessionConf only, and the kernel strips it
-// before the SEA wire (it is absent from the kernel's server allowlist). It must
+// before the SEA wire. It must
 // match the key the kernel's apply_client_result_overrides looks for.
 const KernelMaxChunksInMemoryConfKey = "cloudfetch_max_chunks_in_memory"
 

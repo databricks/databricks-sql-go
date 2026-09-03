@@ -352,6 +352,12 @@ KernelStatusCode kernel_session_config_set_custom_header(KernelSessionConfig* co
 KernelStatusCode kernel_session_config_set_request_timeout(KernelSessionConfig* config,
                                                            uint64_t request_timeout_ms);
 
+/* Configure the maximum number of idle HTTP connections retained per host.
+ * `max_connections` must be greater than zero. Omitting this setter keeps the
+ * kernel default (100). */
+KernelStatusCode kernel_session_config_set_max_connections(KernelSessionConfig* config,
+                                                            size_t max_connections);
+
 /* Initialize kernel logging, process-wide and ONCE (first non-OFF call wins;
  * later calls are no-ops). `level` is OFF/ERROR/WARN/INFO/DEBUG/TRACE
  * (NULL → RUST_LOG, default warn); `file_path` NULL → stderr. Not tied to
