@@ -110,12 +110,13 @@ Notes:
   creation and stripped before the SEA wire. The driver
   exposes the relevant ones as dedicated `WithKernel*` options rather than raw confs.
 
-## Retry / backoff
+## HTTP client / retry
 
 | Connector option | Thrift | Kernel | Default | Notes |
 |---|:---:|:---:|---|---|
 | `WithRetries(retryMax, waitMin, waitMax)` | ✅ | ✅ | `4`, `1s`, `30s` | Retry attempts and exponential-backoff bounds. `retryMax < 0` disables retries. |
 | `WithKernelRetryOverallTimeout(d)` | ❌ | ✅ | kernel default (900s) | Cumulative retry budget across all attempts. No Thrift equivalent. |
+| `WithKernelMaxConnections(n)` | ❌ | ✅ | kernel default (100) | Maximum idle HTTP connections retained per host, not a hard concurrency cap. `n` must be positive. |
 
 ## Result rendering
 

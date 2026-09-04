@@ -187,6 +187,22 @@ func TestSetRequestTimeout(t *testing.T) {
 	}
 }
 
+func TestSetMaxConnections(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		max  int
+	}{
+		{"configured", 37},
+		{"unset is no-op", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := trySetMaxConnections(Config{MaxConnections: tc.max}); err != nil {
+				t.Errorf("applyMaxConnections(%s) = %v, want nil", tc.name, err)
+			}
+		})
+	}
+}
+
 func TestSetTelemetry(t *testing.T) {
 	for _, tc := range []struct {
 		name    string

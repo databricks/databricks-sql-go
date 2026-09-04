@@ -267,6 +267,8 @@ WithKernel* prefix marks them experimental):
     is kernel-only because the Thrift WithRetries surface has no overall-budget
     equivalent; it mirrors the pyo3/napi retry_overall_timeout knob. Zero keeps the
     kernel's default budget (900s).
+  - WithKernelMaxConnections(n) sets the maximum number of idle HTTP connections
+    retained per host. The default is 100; n must be positive.
   - WithKernelMaxChunksInMemory(n) bounds how many decompressed CloudFetch chunks the
     kernel holds in memory at once — the knob that trades large-result download
     throughput for peak RSS. Lower it (e.g. 4) to cap memory on wide, row-heavy result

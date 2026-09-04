@@ -122,6 +122,12 @@ func validateKernelConfigContext(ctx context.Context, cfg *config.Config) (kerne
 			)
 		}
 	}
+	if ke := cfg.KernelExperimental; ke != nil && ke.MaxConnections != nil && *ke.MaxConnections <= 0 {
+		return kernel.Auth{}, fmt.Errorf(
+			"databricks: WithKernelMaxConnections requires a positive value: %w",
+			dbsqlerr.ErrInvalidKernelConfig,
+		)
+	}
 	return kauth, nil
 }
 
@@ -171,6 +177,9 @@ func buildKernelConfig(cfg *config.Config, kauth kernel.Auth) kernel.Config {
 		kc.TLSClientCertPEM = ke.TLSClientCertPEM
 		kc.TLSClientKeyPEM = ke.TLSClientKeyPEM
 		kc.TLSSkipHostnameVerify = ke.TLSSkipHostnameVerify
+		if ke.MaxConnections != nil {
+			kc.MaxConnections = *ke.MaxConnections
+		}
 		// Kernel-only CloudFetch in-memory-chunk knob (WithKernelMaxChunksInMemory).
 		// Injected into the kernel backend's own SessionConf ONLY (not via
 		// EffectiveSessionParams, which both backends share) as the client-only key

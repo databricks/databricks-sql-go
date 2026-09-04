@@ -26,6 +26,10 @@ type Config struct {
 	// neither unlimited nor an immediate timeout.
 	RequestTimeout time.Duration
 
+	// MaxConnections is the maximum number of idle HTTP connections retained
+	// per host. Zero keeps the kernel default (100).
+	MaxConnections int
+
 	// SessionConf carries server-bound session confs verbatim — the same map the
 	// Thrift backend forwards (STATEMENT_TIMEOUT, QUERY_TAGS, TIMEZONE, …).
 	SessionConf map[string]string
