@@ -18,6 +18,10 @@ sections of the README, laid out as one comparison matrix per concern.
 | ⚠️ | Accepted but not fully honored — either inert ("silently ignored") or only partially/conditionally honored. |
 | — | Not applicable. |
 
+For fixed-value constraints such as the kernel's port and scheme, ⚠️ means the
+supported value is accepted but any other value is hard-rejected; it does not mean
+an unsupported value is silently ignored.
+
 **Backend selection.** Both backends are selected once per connection via
 `useKernel` / `WithUseKernel(true)`. If the binary was **not** built with the
 `databricks_kernel` tag, selecting the kernel backend fails at connect
@@ -26,17 +30,19 @@ See [Building](./README.md#building).
 
 Any parameter not listed below (e.g. `ansi_mode`) is passed through as a
 **session parameter**. Both backends forward server-bound session confs; the kernel
-preserves their names and values unchanged.
+preserves their names and values unchanged. The kernel's reserved client-result
+keys are the exception: it consumes them locally and strips them before the SEA
+wire. They are listed under [Kernel client-result confs](#kernel-client-result-confs).
 
 ## Endpoint & routing
 
 | DSN parameter | Connector option | Thrift | Kernel | Default | Notes |
 |---|---|:---:|:---:|---|---|
 | *(host)* | `WithServerHostname` | ✅ | ✅ | *(required)* | Workspace hostname. |
-| *(path)* | `WithHTTPPath` | ✅ | ✅ | *(required)* | Warehouse/endpoint HTTP path. |
-| *(port)* | `WithPort` | ✅ | ❌ | `443` | Kernel connects on **443 only** and rejects any other port. |
-| *(scheme)* | *(via `WithServerHostname`)* | ✅ | ❌ | `https` | A non-https scheme (`http://…`, or a bare `localhost`, which defaults to `http`) is **rejected** on the kernel path (it connects over https). Honored on Thrift. |
-| `warehouseId` | `WithWarehouseID` | ⚠️ | ✅ | | Bare warehouse id; the kernel routes by it (preferred over the HTTP path). The Thrift backend **silently ignores** it. |
+| *(path)* | `WithHTTPPath` | ✅ | ✅ | required on Thrift except localhost; required on kernel unless `warehouseId` is set | Warehouse/endpoint HTTP path. On the kernel path, a bare warehouse id can be used instead. |
+| *(port)* | `WithPort` | ✅ | ⚠️ | `443` for connector options; required in a DSN | Kernel accepts **443 only** and rejects any other port. |
+| *(scheme)* | *(via `WithServerHostname`)* | ✅ | ⚠️ | `https` | Kernel accepts `https` only and rejects `http`. A bare `localhost` passed to `WithServerHostname` selects `http`; a scheme-less DSN, including localhost, is prefixed with `https`. |
+| `warehouseId` | `WithWarehouseID` | ⚠️ | ✅ | | Bare warehouse id. The kernel normally prefers it over the HTTP path; a canonical path carrying `?o=` takes precedence so workspace-org routing is preserved. The Thrift backend **silently ignores** it. |
 | `catalog` | `WithInitialNamespace` | ✅ | ✅ | | Initial catalog. Kernel applies it post-connect via `USE CATALOG`. |
 | `schema` | `WithInitialNamespace` | ✅ | ✅ | | Initial schema. Kernel applies it post-connect via `USE SCHEMA`. |
 | `useKernel` | `WithUseKernel` | ✅ | ✅ | `false` | Select the SEA/kernel backend. Requires a `databricks_kernel` build. |
@@ -46,17 +52,22 @@ preserves their names and values unchanged.
 | Method | DSN | Connector option | Thrift | Kernel |
 |---|---|---|:---:|:---:|
 | Personal access token (PAT) | `token:<t>@…`, or `accessToken=` / `authType=Pat` | `WithAccessToken` | ✅ | ✅ |
-| OAuth machine-to-machine (M2M) | `clientID=`+`clientSecret=` / `authType=OauthM2M` | `WithClientCredentials` | ✅ | ✅ |
+| OAuth machine-to-machine (M2M) | `clientID=` (or `clientId=`) + `clientSecret=` / `authType=OauthM2M` | `WithClientCredentials` | ✅ | ✅ |
 | OAuth user-to-machine (U2M) | `authType=OauthU2M` | `WithAuthenticator` (u2m) | ✅ | ✅ |
 | Custom / external / static token provider | — | `WithTokenProvider`, `WithExternalToken`, `WithStaticToken` | ✅ | ❌ |
-| Federated token provider | — | `WithFederatedTokenProvider*` | ✅ | ✅ |
+| Custom authenticator | — | `WithAuthenticator(custom)` | ✅ | ❌ |
+| Federated token provider | — | `WithFederatedTokenProvider`, `WithFederatedTokenProviderAndClientID` | ✅ | ✅ |
 
 Notes for the SEA/kernel backend:
 
-- The kernel snapshots one `WithFederatedTokenProvider*` token during setup;
-  `AndClientID` also forwards the SP-wide client ID. Expired tokens require a new connection.
+- The kernel snapshots one federated-provider token during setup;
+  `WithFederatedTokenProviderAndClientID` also forwards the SP-wide client ID. Expired
+  tokens require a new connection.
 - Custom OAuth **M2M scopes** are rejected on the kernel path (the kernel applies its
   own default scopes). Default scopes work on both.
+- `WithAuthenticator` is kernel-compatible only when its concrete authenticator is
+  one of the supported PAT, M2M, or U2M implementations. An arbitrary custom
+  `auth.Authenticator` is supported on Thrift and rejected on the kernel path.
 - **U2M** is interactive: on a cache miss, connecting launches the browser to complete the
   login. Use PAT or M2M for headless connects (they need no browser).
 - On the kernel path U2M always uses the in-house `databricks-sql-connector` OAuth app and
@@ -78,7 +89,8 @@ Notes for the SEA/kernel backend:
 
 | DSN parameter | Connector option | Thrift | Kernel | Default | Notes |
 |---|---|:---:|:---:|---|---|
-| `tokenCache` | `WithTokenCache(bool)` | ❌ | ✅ | `false` (disabled) | **Kernel U2M-only.** Persists the U2M refresh token to an AES-256 encrypted on-disk cache in the OS config dir (`~/Library/Application Support/databricks-sql-kernel/oauth/` on macOS, `~/.config/databricks-sql-kernel/oauth/` on Linux), so a later process skips the browser login. **Disabled by default** — the driver forwards a disable unless you opt in (`WithTokenCache(true)` / `tokenCache=true`); omitting `tokenCache` from a DSN leaves the disabled default. No effect on PAT/M2M; enable-flag only (no passphrase surface). Thrift has no token cache. **`tokenCache=true` requires `useKernel=true`:** enabling the cache opts the connection into the kernel-only backend, so `...?tokenCache=true` without `useKernel=true` is **rejected at connect** with `ErrRequiresKernelBackend` — it is not a silent no-op. (`tokenCache=false` is a no-op on any backend.) |
+| `tokenCache` | — | ⚠️ | ✅ | `false` (disabled) | **Kernel U2M-only.** Persists the U2M refresh token to an encrypted on-disk cache in the kernel's OS config directory, so a later process skips the browser login. `tokenCache=true` requires `useKernel=true` and is rejected on Thrift with `ErrRequiresKernelBackend`; `tokenCache=false` is a harmless no-op there. No effect on PAT/M2M; enable-flag only (no passphrase surface). |
+| — | `WithTokenCache(bool)` | ❌ | ✅ | `false` (disabled) | Either value allocates kernel-only configuration, so even `WithTokenCache(false)` is rejected on Thrift unless paired with `WithUseKernel(true)`. |
 
 ## Query execution
 
@@ -104,11 +116,31 @@ Notes:
   not pre-validate values and forwards them as-is.
 - **`CAN_CLOUD_DOWNLOAD` is not a valid SEA session conf**: it may be accepted at
   CreateSession and rejected by the first statement with `CONFIG_NOT_AVAILABLE`.
-  Disable Cloud Fetch with `WithCloudFetch(false)` instead of setting this raw conf.
-- The client-only keys (`cloudfetch_enabled`, `cloudfetch_max_chunks_in_memory`,
-  `complex_types_as_json`, `intervals_as_string`, …) are read by the kernel at session
-  creation and stripped before the SEA wire. The driver
-  exposes the relevant ones as dedicated `WithKernel*` options rather than raw confs.
+  To disable Cloud Fetch on the kernel path, set the client-result conf
+  `cloudfetch_enabled=false`; `WithCloudFetch(false)` is a Thrift option and is inert
+  on the kernel path.
+
+### Kernel client-result confs
+
+These reserved keys may be supplied as DSN parameters or through
+`WithSessionParams`. The kernel consumes them locally and strips them before the SEA
+wire. Thrift does not interpret them as client settings: it forwards them as ordinary
+server session confs, where they may be rejected or have no effect. Use the dedicated
+Thrift options where available.
+
+| DSN / session-conf key | Dedicated connector option | Thrift | Kernel | Default | Notes |
+|---|---|:---:|:---:|---|---|
+| `cloudfetch_enabled` | *(none; use `WithSessionParams`)* | ⚠️ | ✅ | `true` | Kernel Cloud Fetch toggle; `false` forces inline results. On Thrift use `WithCloudFetch`. |
+| `cloudfetch_link_prefetch_window` | *(none; use `WithSessionParams`)* | ⚠️ | ✅ | `10` | Number of presigned Cloud Fetch links prefetched ahead of the consumer. |
+| `cloudfetch_max_chunks_in_memory` | `WithKernelMaxChunksInMemory` | ⚠️ | ✅ | `16` | Maximum decompressed Cloud Fetch chunks held in memory. Values above 256 are clamped with a warning, not rejected. |
+| `inline_max_chunks_in_memory` | *(none; use `WithSessionParams`)* | ⚠️ | ✅ | `4` | Inline-Arrow prefetch window; `1` disables prefetching. |
+| `complex_types_as_json` | *(none; use `WithSessionParams`)* | ⚠️ | ✅ | `false` | Render ARRAY / MAP / STRUCT / VARIANT / GEOMETRY / GEOGRAPHY as JSON text. |
+| `intervals_as_string` | *(none; use `WithSessionParams`)* | ⚠️ | ✅ | `false` | Render INTERVAL / DURATION values as canonical Databricks text. |
+
+Client-result key matching is case-insensitive. Boolean values are `true` or `false`
+(case-insensitive, with surrounding whitespace ignored); window values must be
+positive integers. Invalid values supplied through the mixed session-conf map are
+ignored with a warning and still stripped from the SEA wire.
 
 ## HTTP client / retry
 
@@ -125,7 +157,8 @@ Notes:
 | `useArrowNativeDecimal` | `WithArrowNativeDecimal` | ✅ | ⚠️ | `false` | Thrift: return DECIMAL as native Arrow `decimal128` (lossless string when scanned via `database/sql`). The kernel path already renders DECIMAL as the exact string regardless, so the flag is inert there. |
 | | `WithKernelDecimalAsFloat(b)` | ❌ | ✅ | `false` | Scan top-level DECIMAL as lossy `float64` instead of the exact string. |
 
-Otherwise results render **byte-for-byte identically** on both backends (scalars,
+With the default client-result settings, results otherwise render **byte-for-byte
+identically** on both backends (scalars,
 DECIMAL as exact string, TIMESTAMP / TIMESTAMP_NTZ shifted into the session time zone,
 INTERVAL, nested ARRAY / MAP / STRUCT and VARIANT as JSON, GEOMETRY / GEOGRAPHY as WKT,
 BINARY as `sql.RawBytes`).
@@ -134,7 +167,7 @@ BINARY as `sql.RawBytes`).
 
 | DSN parameter | Connector option | Thrift | Kernel | Default | Notes |
 |---|---|:---:|:---:|---|---|
-| `useCloudFetch` | `WithCloudFetch` | ✅ | ⚠️ | `true` | Enable Cloud Fetch. On the kernel path Cloud Fetch is always managed internally, so the flag is inert. |
+| `useCloudFetch` | `WithCloudFetch` | ✅ | ⚠️ | `true` | Enable Cloud Fetch on Thrift. This option is inert on the kernel path; use the `cloudfetch_enabled` client-result conf there. |
 | `maxDownloadThreads` | `WithMaxDownloadThreads` | ✅ | ⚠️ | `10` | Concurrent download goroutines (Thrift). Inert on the kernel path. |
 | | `WithKernelMaxChunksInMemory(n)` | ❌ | ✅ | kernel default (16) | Bounds decompressed Cloud Fetch chunks held in memory — trades large-result throughput for peak memory. |
 
@@ -143,7 +176,7 @@ BINARY as `sql.RawBytes`).
 | Connector option | Thrift | Kernel | Notes |
 |---|:---:|:---:|---|
 | `WithSkipTLSHostVerify()` | ✅ | ✅ | Disable TLS chain + hostname verification. **Use only for internal private-link hostnames** — susceptible to machine-in-the-middle attacks. On the kernel path it maps to the kernel's "accept self-signed" + hostname-skip (relaxes both chain and hostname, matching Thrift). |
-| `WithTransport(http.RoundTripper)` | ✅ | ❌ | Supply a custom HTTP transport (custom CA, mTLS, or proxy). **Rejected** on the kernel path (wraps `ErrRequiresKernelBackend`/`ErrNotSupportedByKernel`): a Go `RoundTripper` is executable Go code that can't cross the C ABI into the kernel's own Rust HTTP stack, so it could only be silently ignored. Use the dedicated `WithKernel*` knobs below (custom CA / client-cert mTLS / hostname-skip / proxy). |
+| `WithTransport(http.RoundTripper)` | ✅ | ❌ | Supply a custom HTTP transport (custom CA, mTLS, or proxy). **Rejected** on the kernel path (wraps `ErrNotSupportedByKernel`): a Go `RoundTripper` is executable Go code that can't cross the C ABI into the kernel's own Rust HTTP stack, so it could only be silently ignored. Use the dedicated `WithKernel*` knobs below (custom CA / client-cert mTLS / hostname-skip / proxy). |
 | `WithKernelTrustedCerts(pem)` | ❌ | ✅ | Add a PEM CA bundle on top of the system roots (for a re-signing proxy / on-prem CA). Needed because the kernel's rustls stack does not read `SSL_CERT_FILE`. Rejected on Thrift (use `WithTransport` there). |
 | `WithKernelClientCertificate(certPEM, keyPEM)` | ❌ | ✅ | Client-certificate **mTLS** identity: a paired PEM certificate + unencrypted private key. Both must be non-empty (an empty pair wraps `ErrInvalidKernelConfig`); the certificate may include intermediates, and a PKCS#8 key is recommended across kernel TLS backends. Server chain/hostname verification stay strict and independently configurable. Rejected on Thrift (`ErrRequiresKernelBackend`) — use `WithTransport` with `tls.Config.Certificates` there. Requires a kernel build pinning [databricks-sql-kernel#289](https://github.com/databricks/databricks-sql-kernel/pull/289) (see `KERNEL_REV`). |
 | `WithKernelSkipHostnameVerify()` | ❌ | ✅ | Skip **only** the hostname check while keeping chain validation (finer-grained than `WithSkipTLSHostVerify`). Rejected on Thrift. |
