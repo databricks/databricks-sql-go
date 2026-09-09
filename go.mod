@@ -4,7 +4,7 @@ go 1.25.0
 
 require (
 	github.com/apache/arrow/go/v12 v12.0.1
-	github.com/apache/thrift v0.23.0
+	github.com/apache/thrift v0.24.0
 	github.com/coreos/go-oidc/v3 v3.5.0
 	github.com/golang-jwt/jwt/v5 v5.2.2
 	github.com/joho/godotenv v1.4.0

@@ -37,3 +37,23 @@ id = "GO-2026-5932"
 # package is still unimported before re-adding the suppression.
 ignoreUntil = 2027-01-02
 reason = "golang.org/x/crypto/openpgp not imported by this driver (verified via go list -deps); advisory has no fixed version by design (package deprecated). Re-review on expiry: confirm openpgp still unimported before renewing."
+
+[[IgnoredVulns]]
+id = "GO-2026-6354"
+# CVE-2026-78662 is a denial of service in golang.org/x/crypto/ssh.
+# The driver does not import ssh: `go list -buildvcs=false -deps -test ./...`
+# resolves only golang.org/x/crypto/pbkdf2. There is no official v0.55.x
+# backport; the first fixed release (v0.56.0) requires Go 1.26 and would raise
+# the supported Go floor for code that cannot reach the vulnerable package.
+ignoreUntil = 2027-03-09
+reason = "golang.org/x/crypto/ssh is not imported by this driver or its tests (verified via go list -deps -test); only x/crypto/pbkdf2 is reachable. Re-review on expiry: confirm ssh remains unimported before renewing."
+
+[[IgnoredVulns]]
+id = "GO-2026-6355"
+# CVE-2026-56855 is a denial of service in golang.org/x/crypto/ssh.
+# The driver does not import ssh: `go list -buildvcs=false -deps -test ./...`
+# resolves only golang.org/x/crypto/pbkdf2. There is no official v0.55.x
+# backport; the first fixed release (v0.56.0) requires Go 1.26 and would raise
+# the supported Go floor for code that cannot reach the vulnerable package.
+ignoreUntil = 2027-03-09
+reason = "golang.org/x/crypto/ssh is not imported by this driver or its tests (verified via go list -deps -test); only x/crypto/pbkdf2 is reachable. Re-review on expiry: confirm ssh remains unimported before renewing."
