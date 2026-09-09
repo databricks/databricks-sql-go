@@ -49,6 +49,16 @@ func skipDriverTelemetry(cfg *config.Config) bool {
 	return cfg.UseKernel
 }
 
+// shouldSkipDriverTelemetry reports whether driver-side telemetry should be
+// skipped for the active backend. The kernel backend owns telemetry, so the
+// driver skips its own to avoid duplication. This is derived from the backend
+// that actually opened (not the config) so a Reyden auto-recovery onto the
+// kernel — which does not set cfg.UseKernel — is still attributed correctly.
+func shouldSkipDriverTelemetry(be backend.Backend) bool {
+	_, isThrift := be.(*thrift.Backend)
+	return !isThrift
+}
+
 // federatedTokenAuthenticator preserves the base provider for the kernel.
 type federatedTokenAuthenticator struct {
 	auth.Authenticator
@@ -88,7 +98,7 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 	// Skip driver telemetry on the kernel path. The kernel owns query execution
 	// below the driver backend, so keeping the Go telemetry interceptor active
 	// would duplicate kernel telemetry for the same connection/statements.
-	skipTelemetry := skipDriverTelemetry(c.cfg)
+	skipTelemetry := shouldSkipDriverTelemetry(be)
 	if skipTelemetry {
 		log.Debug().Msg("telemetry skipped: kernel backend owns telemetry")
 	}

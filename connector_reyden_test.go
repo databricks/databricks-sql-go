@@ -8,6 +8,7 @@ import (
 
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 	"github.com/databricks/databricks-sql-go/internal/backend"
+	"github.com/databricks/databricks-sql-go/internal/backend/thrift"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/client"
 	"github.com/databricks/databricks-sql-go/internal/config"
@@ -344,6 +345,16 @@ func TestReydenDoubleFailureChaining(t *testing.T) {
 		assert.ErrorIs(t, err, dbsqlerr.ErrReydenThriftUnsupported,
 			"chain should preserve the Thrift rejection marker")
 	})
+}
+
+func TestReydenSkipDriverTelemetryFollowsActualBackend(t *testing.T) {
+	// Driver telemetry must be skipped whenever the ACTIVE backend is the
+	// kernel — including after a Reyden recovery, where cfg.UseKernel stays
+	// false. The decision is derived from the backend, not the config.
+	assert.True(t, shouldSkipDriverTelemetry(&fakeKernelBackend{}),
+		"kernel backend owns telemetry; driver telemetry should be skipped")
+	assert.False(t, shouldSkipDriverTelemetry(&thrift.Backend{}),
+		"thrift backend: driver telemetry should stay active")
 }
 
 func TestReydenDefaultBuildKernelNotCompiled(t *testing.T) {
