@@ -398,6 +398,12 @@ func CheckStatus(resp interface{}) error {
 	if ok {
 		status := rpcresp.GetStatus()
 		if status.StatusCode == cli_service.TStatusCode_ERROR_STATUS {
+			// Detect Reyden warehouse rejection: SQLSTATE KP001 indicates the warehouse
+			// rejects the legacy Thrift protocol. Surface a distinct marker so the
+			// connection layer can transparently re-open on the kernel backend.
+			if status.GetSqlState() == "KP001" {
+				return dbsqlerrint.NewReydenThriftUnsupportedError(status.GetErrorMessage())
+			}
 			return errors.New(status.GetErrorMessage())
 		}
 		if status.StatusCode == cli_service.TStatusCode_INVALID_HANDLE_STATUS {

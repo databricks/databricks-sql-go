@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"database/sql/driver"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -22,13 +23,26 @@ import (
 	"github.com/databricks/databricks-sql-go/internal/client"
 	"github.com/databricks/databricks-sql-go/internal/config"
 	"github.com/databricks/databricks-sql-go/internal/debuglog"
+	"github.com/databricks/databricks-sql-go/internal/warehouse_cache"
 	"github.com/databricks/databricks-sql-go/logger"
 	"github.com/databricks/databricks-sql-go/telemetry"
 )
 
+// backendFactory is a function type for creating kernel backends. This seam allows
+// tests to inject a fake kernel backend without requiring the build-tag gated
+// newKernelBackend. In production, the factory is nil and newKernelBackend is used directly.
+type backendFactory func(ctx context.Context, cfg *config.Config) (backend.Backend, error)
+
+// thriftBackendFactory is the analogous seam for the Thrift backend, letting tests
+// inject a fake Thrift backend (e.g. one that rejects OpenSession with the Reyden
+// marker) instead of the real thrift.New. In production the factory is nil.
+type thriftBackendFactory func(ctx context.Context, cfg *config.Config, client *http.Client) (backend.Backend, error)
+
 type connector struct {
-	cfg    *config.Config
-	client *http.Client
+	cfg                  *config.Config
+	client               *http.Client
+	kernelBackendFactory backendFactory       // Seam for testing; nil in production
+	thriftBackendFactory thriftBackendFactory // Seam for testing; nil in production
 }
 
 func skipDriverTelemetry(cfg *config.Config) bool {
@@ -46,39 +60,13 @@ type federatedTokenAuthenticator struct {
 func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 	defer debuglog.Track(ctx, "connector.Connect", "host=%s", c.cfg.Host)()
 
-	// Build the execution backend. Thrift is the default; the SEA-via-kernel
-	// backend is selected when UseKernel is set. newKernelBackend is build-tag
-	// gated: in the default pure-Go build it returns a clear "not linked in"
-	// error, so the kernel path compiles and links only under -tags
-	// databricks_kernel + CGO_ENABLED=1.
-	var be backend.Backend
-	var err error
-	if c.cfg.UseKernel {
-		be, err = newKernelBackend(ctx, c.cfg)
-	} else {
-		// The experimental WithKernel* options have no Thrift-path equivalent — reject
-		// them loudly rather than silently ignore, so a caller who sets one (a
-		// trusted-CA bundle, a hostname-verify skip, a proxy, a retry budget, or a
-		// CloudFetch chunk cap) and forgets WithUseKernel learns the option had no
-		// effect instead of connecting as if it were never set. Every WithKernel*
-		// option allocates KernelExperimental, so this one gate covers them all; the
-		// message names the family rather than a stale subset that drifts as options
-		// are added.
-		if c.cfg.KernelExperimental != nil {
-			return nil, fmt.Errorf("databricks: a WithKernel* option %w; "+
-				"add WithUseKernel(true) or remove it", dbsqlerr.ErrRequiresKernelBackend)
-		}
-		be, err = thrift.New(ctx, c.cfg, c.client)
-	}
+	// openSessionWithReydenFallback handles the session opening with automatic
+	// recovery for Reyden / Real-Time warehouses that reject Thrift. It returns
+	// the backend, latency, and error.
+	be, sessionLatencyMs, err := c.openSessionWithReydenFallback(ctx)
 	if err != nil {
 		return nil, err
 	}
-
-	sessionStart := time.Now()
-	if err := be.OpenSession(ctx); err != nil {
-		return nil, err
-	}
-	sessionLatencyMs := time.Since(sessionStart).Milliseconds()
 
 	conn := &conn{
 		id:      be.SessionID(),
@@ -137,6 +125,24 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 // Driver returns underlying databricksDriver for compatibility with sql.DB Driver method
 func (c *connector) Driver() driver.Driver {
 	return &databricksDriver{}
+}
+
+// getKernelBackend returns a kernel backend, using the injected factory if available
+// (for tests), otherwise using the build-tag-gated newKernelBackend (production).
+func (c *connector) getKernelBackend(ctx context.Context) (backend.Backend, error) {
+	if c.kernelBackendFactory != nil {
+		return c.kernelBackendFactory(ctx, c.cfg)
+	}
+	return newKernelBackend(ctx, c.cfg)
+}
+
+// getThriftBackend returns a Thrift backend, using the injected factory if available
+// (for tests), otherwise the real thrift.New (production).
+func (c *connector) getThriftBackend(ctx context.Context) (backend.Backend, error) {
+	if c.thriftBackendFactory != nil {
+		return c.thriftBackendFactory(ctx, c.cfg, c.client)
+	}
+	return thrift.New(ctx, c.cfg, c.client)
 }
 
 var _ driver.Connector = (*connector)(nil)
@@ -801,4 +807,108 @@ func WithTokenCache(enabled bool) ConnOption {
 	return func(c *config.Config) {
 		kernelExperimental(c).TokenCacheEnabled = enabled
 	}
+}
+
+// openSessionWithReydenFallback opens a session with automatic recovery for
+// Reyden / Real-Time warehouses that reject the Thrift protocol. When a
+// warehouse rejects the default Thrift OpenSession (SQLSTATE KP001), it
+// transparently re-opens on the kernel backend and remembers the warehouse
+// so later connections skip the doomed Thrift attempt.
+//
+// Auto-recovery applies only when no backend was chosen explicitly (neither
+// UseKernel nor other backend-selecting options). On success or failure, it
+// returns the backend, session latency, and error.
+func (c *connector) openSessionWithReydenFallback(ctx context.Context) (backend.Backend, int64, error) {
+	// Extract warehouse ID from HTTPPath for cache lookups.
+	warehouseID := warehouse_cache.ExtractWarehouseID(c.cfg.HTTPPath)
+
+	// Pre-check: if this warehouse is already known to reject Thrift, open
+	// directly on the kernel backend and skip the doomed Thrift attempt.
+	if warehouseID != "" && warehouse_cache.IsKnownReyden(c.cfg.Host, warehouseID) {
+		logger.Debug().Msgf(
+			"warehouse %s on %s is known to require kernel backend; skipping Thrift",
+			warehouseID, c.cfg.Host)
+		var be backend.Backend
+		var err error
+		if be, err = c.getKernelBackend(ctx); err != nil {
+			return nil, 0, err
+		}
+		sessionStart := time.Now()
+		if err := be.OpenSession(ctx); err != nil {
+			return nil, 0, err
+		}
+		return be, time.Since(sessionStart).Milliseconds(), nil
+	}
+
+	// Build the execution backend. Thrift is the default; the SEA-via-kernel
+	// backend is selected when UseKernel is set. newKernelBackend is build-tag
+	// gated: in the default pure-Go build it returns a clear "not linked in"
+	// error, so the kernel path compiles and links only under -tags
+	// databricks_kernel + CGO_ENABLED=1.
+	var be backend.Backend
+	var err error
+	if c.cfg.UseKernel {
+		be, err = c.getKernelBackend(ctx)
+	} else {
+		// The experimental WithKernel* options have no Thrift-path equivalent — reject
+		// them loudly rather than silently ignore, so a caller who sets one (a
+		// trusted-CA bundle, a hostname-verify skip, a proxy, a retry budget, or a
+		// CloudFetch chunk cap) and forgets WithUseKernel learns the option had no
+		// effect instead of connecting as if it were never set. Every WithKernel*
+		// option allocates KernelExperimental, so this one gate covers them all; the
+		// message names the family rather than a stale subset that drifts as options
+		// are added.
+		if c.cfg.KernelExperimental != nil {
+			return nil, 0, fmt.Errorf("databricks: a WithKernel* option %w; "+
+				"add WithUseKernel(true) or remove it", dbsqlerr.ErrRequiresKernelBackend)
+		}
+		be, err = c.getThriftBackend(ctx)
+	}
+	if err != nil {
+		return nil, 0, err
+	}
+
+	// Attempt to open the session. If an explicit backend was selected, honor it
+	// even on a Reyden rejection — auto-recovery applies only on the default path.
+	sessionStart := time.Now()
+	err = be.OpenSession(ctx)
+	sessionLatency := time.Since(sessionStart).Milliseconds()
+
+	// Check for Reyden Thrift rejection on the default (non-UseKernel) path.
+	// If detected, mark the warehouse and retry on the kernel backend.
+	if err != nil && !c.cfg.UseKernel && errors.Is(err, dbsqlerr.ErrReydenThriftUnsupported) {
+		logger.Info().Msg("Thrift is not supported for this Reyden/Real-Time warehouse; " +
+			"transparently re-opening the session on the kernel backend")
+
+		// Remember the rejection regardless of the retry's outcome — the
+		// warehouse is Reyden either way, so future connects should skip Thrift;
+		// a kernel failure below is a separate, orthogonal problem.
+		if warehouseID != "" {
+			warehouse_cache.MarkReyden(c.cfg.Host, warehouseID)
+		}
+
+		// Retry on the kernel backend.
+		var kernelConstructErr error
+		be, kernelConstructErr = c.getKernelBackend(ctx)
+		if kernelConstructErr != nil {
+			// Surface the kernel construction error, wrapped with the original
+			// Thrift rejection in the chain for diagnosis.
+			return nil, 0, errors.Join(kernelConstructErr, err)
+		}
+
+		kernelStart := time.Now()
+		kernelOpenErr := be.OpenSession(ctx)
+		kernelLatency := time.Since(kernelStart).Milliseconds()
+
+		if kernelOpenErr != nil {
+			// Surface the kernel failure (the actionable one) while keeping
+			// the original Thrift rejection in the chain for diagnosis.
+			return nil, kernelLatency, errors.Join(kernelOpenErr, err)
+		}
+		return be, kernelLatency, nil
+	}
+
+	// Either the session opened successfully or failed for a reason other than
+	// Reyden rejection on the default Thrift path. Return the outcome as-is.
+	return be, sessionLatency, err
 }
