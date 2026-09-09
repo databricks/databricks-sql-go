@@ -127,7 +127,8 @@ func (tsc *ThriftServiceClient) OpenSession(ctx context.Context, req *cli_servic
 
 	recordResult(ctx, resp)
 
-	return resp, CheckStatus(resp)
+	// OpenSession is the only RPC that opts into Reyden KP001 detection.
+	return resp, CheckOpenSessionStatus(resp)
 }
 
 // CloseSession is a wrapper around the thrift operation CloseSession
@@ -398,12 +399,6 @@ func CheckStatus(resp interface{}) error {
 	if ok {
 		status := rpcresp.GetStatus()
 		if status.StatusCode == cli_service.TStatusCode_ERROR_STATUS {
-			// Detect Reyden warehouse rejection: SQLSTATE KP001 indicates the warehouse
-			// rejects the legacy Thrift protocol. Surface a distinct marker so the
-			// connection layer can transparently re-open on the kernel backend.
-			if status.GetSqlState() == "KP001" {
-				return dbsqlerrint.NewReydenThriftUnsupportedError(status.GetErrorMessage())
-			}
 			return errors.New(status.GetErrorMessage())
 		}
 		if status.StatusCode == cli_service.TStatusCode_INVALID_HANDLE_STATUS {
@@ -414,6 +409,23 @@ func CheckStatus(resp interface{}) error {
 		return nil
 	}
 	return errors.New("thrift: invalid response")
+}
+
+// CheckOpenSessionStatus is CheckStatus plus Reyden KP001 detection, used only
+// for the OpenSession response. A Reyden / Real-Time warehouse rejects the
+// legacy Thrift protocol with SQLSTATE KP001, and the connection layer's
+// recovery only wraps session open — so the marker is scoped to this call
+// rather than the shared CheckStatus, keeping a stray KP001 on any other RPC a
+// plain error.
+func CheckOpenSessionStatus(resp interface{}) error {
+	if rpcresp, ok := resp.(ThriftResponse); ok {
+		status := rpcresp.GetStatus()
+		if status.StatusCode == cli_service.TStatusCode_ERROR_STATUS &&
+			status.GetSqlState() == "KP001" {
+			return dbsqlerrint.NewReydenThriftUnsupportedError(status.GetErrorMessage())
+		}
+	}
+	return CheckStatus(resp)
 }
 
 // SprintGuid is a convenience function to format a byte array into GUID.

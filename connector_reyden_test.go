@@ -18,28 +18,39 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestCheckStatusReydenDetection tests that CheckStatus detects SQLSTATE KP001
-// and returns a distinct error vs. other ERROR_STATUS codes.
+// TestCheckStatusReydenDetection tests that KP001 maps to the Reyden marker
+// ONLY on the OpenSession-scoped check, and stays a generic error everywhere
+// else (the shared CheckStatus).
 func TestCheckStatusReydenDetection(t *testing.T) {
-	t.Run("KP001 on ERROR_STATUS returns ReydenThriftUnsupported marker", func(t *testing.T) {
+	reydenStatus := func() *cli_service.TOpenSessionResp {
 		sqlState := "KP001"
 		errMsg := "Lakehouse/RT is not supported for Thrift protocol"
-		reydenResp := &cli_service.TOpenSessionResp{
+		return &cli_service.TOpenSessionResp{
 			Status: &cli_service.TStatus{
 				StatusCode:   cli_service.TStatusCode_ERROR_STATUS,
 				SqlState:     &sqlState,
 				ErrorMessage: &errMsg,
 			},
 		}
+	}
 
-		err := client.CheckStatus(reydenResp)
+	t.Run("KP001 via CheckOpenSessionStatus returns the Reyden marker", func(t *testing.T) {
+		err := client.CheckOpenSessionStatus(reydenStatus())
 		require.Error(t, err)
-		// Verify it's the Reyden marker.
 		assert.True(t, errors.Is(err, dbsqlerr.ErrReydenThriftUnsupported),
-			"error should satisfy errors.Is for ErrReydenThriftUnsupported")
+			"OpenSession KP001 should satisfy errors.Is for ErrReydenThriftUnsupported")
 	})
 
-	t.Run("non-KP001 ERROR_STATUS returns generic error, NOT Reyden marker", func(t *testing.T) {
+	t.Run("KP001 via the shared CheckStatus is a generic error, NOT the marker", func(t *testing.T) {
+		// A KP001 on any non-OpenSession RPC must not become the marker — the
+		// recovery layer only handles it at session open.
+		err := client.CheckStatus(reydenStatus())
+		require.Error(t, err)
+		assert.False(t, errors.Is(err, dbsqlerr.ErrReydenThriftUnsupported),
+			"a KP001 outside OpenSession must stay a generic error")
+	})
+
+	t.Run("non-KP001 ERROR_STATUS is never the marker, even at OpenSession", func(t *testing.T) {
 		sqlState := "42000" // Syntax error
 		errMsg := "a syntax error"
 		syntaxResp := &cli_service.TOpenSessionResp{
@@ -50,9 +61,8 @@ func TestCheckStatusReydenDetection(t *testing.T) {
 			},
 		}
 
-		err := client.CheckStatus(syntaxResp)
+		err := client.CheckOpenSessionStatus(syntaxResp)
 		require.Error(t, err)
-		// Verify it's NOT the Reyden marker.
 		assert.False(t, errors.Is(err, dbsqlerr.ErrReydenThriftUnsupported),
 			"generic error should NOT satisfy errors.Is for ErrReydenThriftUnsupported")
 	})
@@ -64,7 +74,7 @@ func TestCheckStatusReydenDetection(t *testing.T) {
 			},
 		}
 
-		err := client.CheckStatus(successResp)
+		err := client.CheckOpenSessionStatus(successResp)
 		assert.NoError(t, err)
 	})
 }
