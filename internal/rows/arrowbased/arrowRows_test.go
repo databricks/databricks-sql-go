@@ -9,6 +9,7 @@ import (
 	"math/big"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -2397,4 +2398,36 @@ func TestDecimalInComplexTypes(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, `{"col2":null}`, v)
 	})
+}
+
+// Regression test for databricks/databricks-sql-go#179: Arrow v12's
+// TimestampType.GetToTimeFunc lazily caches the type's *time.Location without
+// synchronization, so the first concurrent calls on the shared
+// arrow.FixedWidthTypes timestamp singletons were a data race. The package
+// init() in arrowRows.go warms that cache; without it, this test fails under
+// the race detector.
+func TestSharedTimestampGetToTimeFuncConcurrency(t *testing.T) {
+	sharedTimestampTypes := []arrow.DataType{
+		arrow.FixedWidthTypes.Timestamp_s,
+		arrow.FixedWidthTypes.Timestamp_ms,
+		arrow.FixedWidthTypes.Timestamp_us,
+		arrow.FixedWidthTypes.Timestamp_ns,
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 32; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for _, dt := range sharedTimestampTypes {
+				toTime, err := dt.(*arrow.TimestampType).GetToTimeFunc()
+				if err != nil {
+					t.Errorf("GetToTimeFunc failed for %s: %v", dt, err)
+					return
+				}
+				_ = toTime(arrow.Timestamp(0))
+			}
+		}()
+	}
+	wg.Wait()
 }
