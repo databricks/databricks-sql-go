@@ -45,10 +45,6 @@ type connector struct {
 	thriftBackendFactory thriftBackendFactory // Seam for testing; nil in production
 }
 
-func skipDriverTelemetry(cfg *config.Config) bool {
-	return cfg.UseKernel
-}
-
 // shouldSkipDriverTelemetry reports whether driver-side telemetry should be
 // skipped for the active backend. The kernel backend owns telemetry, so the
 // driver skips its own to avoid duplication. This is derived from the backend
@@ -829,6 +825,18 @@ func WithTokenCache(enabled bool) ConnOption {
 // UseKernel nor other backend-selecting options). On success or failure, it
 // returns the backend, session latency, and error.
 func (c *connector) openSessionWithReydenFallback(ctx context.Context) (backend.Backend, int64, error) {
+	// Guardrail, checked up front — before the cache pre-check — so the outcome does not depend
+	// on process-global cache state. The experimental WithKernel* options have no Thrift-path
+	// equivalent, so a caller who sets one (a trusted-CA bundle, a hostname-verify skip, a proxy,
+	// a retry budget, or a CloudFetch chunk cap) and forgets WithUseKernel is rejected loudly
+	// rather than connecting as if it were never set. Every WithKernel* option allocates
+	// KernelExperimental, so this one gate covers them all; the message names the family rather
+	// than a stale subset that drifts as options are added.
+	if !c.cfg.UseKernel && c.cfg.KernelExperimental != nil {
+		return nil, 0, fmt.Errorf("databricks: a WithKernel* option %w; "+
+			"add WithUseKernel(true) or remove it", dbsqlerr.ErrRequiresKernelBackend)
+	}
+
 	// Extract warehouse ID from HTTPPath for cache lookups.
 	warehouseID := warehouse_cache.ExtractWarehouseID(c.cfg.HTTPPath)
 
@@ -860,18 +868,8 @@ func (c *connector) openSessionWithReydenFallback(ctx context.Context) (backend.
 	if c.cfg.UseKernel {
 		be, err = c.getKernelBackend(ctx)
 	} else {
-		// The experimental WithKernel* options have no Thrift-path equivalent — reject
-		// them loudly rather than silently ignore, so a caller who sets one (a
-		// trusted-CA bundle, a hostname-verify skip, a proxy, a retry budget, or a
-		// CloudFetch chunk cap) and forgets WithUseKernel learns the option had no
-		// effect instead of connecting as if it were never set. Every WithKernel*
-		// option allocates KernelExperimental, so this one gate covers them all; the
-		// message names the family rather than a stale subset that drifts as options
-		// are added.
-		if c.cfg.KernelExperimental != nil {
-			return nil, 0, fmt.Errorf("databricks: a WithKernel* option %w; "+
-				"add WithUseKernel(true) or remove it", dbsqlerr.ErrRequiresKernelBackend)
-		}
+		// WithKernel*-without-WithUseKernel was already rejected up front; the default
+		// path is Thrift.
 		be, err = c.getThriftBackend(ctx)
 	}
 	if err != nil {

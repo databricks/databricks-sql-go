@@ -176,10 +176,15 @@ func TestReydenReactiveRecovery(t *testing.T) {
 
 		tt := NewTestReydenFallback()
 
-		// Fake Thrift backend that rejects OpenSession with the Reyden marker.
+		// Fake Thrift backend that rejects OpenSession with the Reyden marker, wrapped exactly
+		// as production does: thrift.Backend.OpenSession wraps every failure in NewRequestError,
+		// so this pins the errors.Is unwrap chain the recovery relies on.
 		fakeThrift := &fakeThriftBackend{
-			openSessionErr: dbsqlerrint.NewReydenThriftUnsupportedError(
-				"Lakehouse/RT is not supported for Thrift protocol"),
+			openSessionErr: dbsqlerrint.NewRequestError(
+				context.Background(),
+				"error connecting",
+				dbsqlerrint.NewReydenThriftUnsupportedError(
+					"Lakehouse/RT is not supported for Thrift protocol")),
 		}
 		kernelBackend := &fakeKernelBackend{}
 
@@ -300,6 +305,25 @@ func TestReydenGuardrail(t *testing.T) {
 		_, ok := be.(*fakeKernelBackend)
 		assert.True(t, ok, "explicit UseKernel should return the kernel backend, got %T", be)
 	})
+
+	t.Run("WithKernel* without WithUseKernel is rejected up front, even on a warm cache", func(t *testing.T) {
+		// The guardrail runs before the cache pre-check, so the same misconfiguration errors
+		// deterministically whether or not a sibling connection already cached the warehouse.
+		defer warehouse_cache.ClearCache()
+
+		tt := NewTestReydenFallback()
+		// Prime the cache so the pre-check would otherwise fire and open the kernel directly.
+		warehouse_cache.MarkReyden(tt.host, tt.warehouseID)
+
+		// Factories are nil: the guardrail must reject before any backend is built.
+		conn := tt.makeConnector(nil, nil)
+		conn.cfg.KernelExperimental = &config.KernelExperimentalConfig{}
+
+		_, _, err := conn.openSessionWithReydenFallback(context.Background())
+		require.Error(t, err)
+		assert.ErrorIs(t, err, dbsqlerr.ErrRequiresKernelBackend,
+			"a WithKernel* option without WithUseKernel must be rejected regardless of cache state")
+	})
 }
 
 func TestReydenNonReydenError(t *testing.T) {
@@ -335,8 +359,13 @@ func TestReydenDoubleFailureChaining(t *testing.T) {
 
 		tt := NewTestReydenFallback()
 
-		thriftErr := dbsqlerrint.NewReydenThriftUnsupportedError(
-			"Lakehouse/RT is not supported for Thrift protocol")
+		// Wrap the marker as production does (NewRequestError), so the double-failure chain is
+		// exercised against the real error shape the connector sees.
+		thriftErr := dbsqlerrint.NewRequestError(
+			context.Background(),
+			"error connecting",
+			dbsqlerrint.NewReydenThriftUnsupportedError(
+				"Lakehouse/RT is not supported for Thrift protocol"))
 		kernelErr := errors.New("kernel open failed")
 		conn := tt.makeConnector(
 			func(ctx context.Context, cfg *config.Config, client *http.Client) (backend.Backend, error) {
