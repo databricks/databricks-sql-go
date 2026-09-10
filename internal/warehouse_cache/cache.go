@@ -80,8 +80,8 @@ func (c *Cache) MarkReyden(host, warehouseID string) {
 	// rejection (rare), so purging every expired entry here is near-free
 	// and bounds the cache to warehouses seen within the TTL window
 	// rather than every warehouse ever seen.
-	for key := range c.expiry {
-		if c.expiry[key].Before(now) {
+	for key, deadline := range c.expiry {
+		if deadline.Before(now) {
 			delete(c.expiry, key)
 		}
 	}

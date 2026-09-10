@@ -846,14 +846,22 @@ func (c *connector) openSessionWithReydenFallback(ctx context.Context) (backend.
 		logger.Debug().Msgf(
 			"warehouse %s on %s is known to require kernel backend; skipping Thrift",
 			warehouseID, c.cfg.Host)
+		// Wrap failures with context: the pre-check trusted a cached "Reyden" marker
+		// and deliberately skipped Thrift, so a bare kernel error (including a default-build
+		// ErrKernelNotCompiled from a sibling connection's marking) would otherwise hide why
+		// Thrift was never attempted. %w keeps the underlying error for errors.Is.
 		var be backend.Backend
 		var err error
 		if be, err = c.getKernelBackend(ctx); err != nil {
-			return nil, 0, err
+			return nil, 0, fmt.Errorf(
+				"databricks: warehouse %s is cached as Reyden so Thrift was skipped, but the "+
+					"kernel backend could not be created: %w", warehouseID, err)
 		}
 		sessionStart := time.Now()
 		if err := be.OpenSession(ctx); err != nil {
-			return nil, 0, err
+			return nil, 0, fmt.Errorf(
+				"databricks: warehouse %s is cached as Reyden so Thrift was skipped, but the "+
+					"kernel OpenSession failed: %w", warehouseID, err)
 		}
 		return be, time.Since(sessionStart).Milliseconds(), nil
 	}

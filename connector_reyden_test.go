@@ -242,6 +242,28 @@ func TestReydenPreCheck(t *testing.T) {
 		assert.False(t, thriftCalled, "pre-check must skip the Thrift OpenSession round-trip")
 		assert.GreaterOrEqual(t, latency, int64(0), "latency should be non-negative")
 	})
+
+	t.Run("Kernel failure on the pre-check path is wrapped with context but preserves the chain", func(t *testing.T) {
+		defer warehouse_cache.ClearCache()
+
+		tt := NewTestReydenFallback()
+		warehouse_cache.MarkReyden(tt.host, tt.warehouseID)
+
+		kernelErr := errors.New("kernel open failed")
+		conn := tt.makeConnector(
+			nil, // Thrift must not be attempted on the pre-check path.
+			func(ctx context.Context, cfg *config.Config) (backend.Backend, error) {
+				return &fakeKernelBackend{openSessionErr: kernelErr}, nil
+			},
+		)
+
+		_, _, err := conn.openSessionWithReydenFallback(context.Background())
+		require.Error(t, err)
+		// The underlying kernel error stays reachable for errors.Is, and the message explains
+		// that Thrift was skipped due to the cache.
+		assert.ErrorIs(t, err, kernelErr, "the underlying kernel error must be preserved")
+		assert.Contains(t, err.Error(), "cached as Reyden")
+	})
 }
 
 func TestReydenCacheMarking(t *testing.T) {
