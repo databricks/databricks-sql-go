@@ -264,6 +264,38 @@ func TestReydenPreCheck(t *testing.T) {
 		assert.ErrorIs(t, err, kernelErr, "the underlying kernel error must be preserved")
 		assert.Contains(t, err.Error(), "cached as Reyden")
 	})
+
+	t.Run("Explicit UseKernel with a warm cache surfaces the plain kernel error, not the Thrift-skipped framing", func(t *testing.T) {
+		// The pre-check is part of Thrift auto-recovery, so it must not fire for an
+		// explicit UseKernel connection even when the warehouse is cached as Reyden:
+		// Thrift was never in play, so the "cached as Reyden so Thrift was skipped"
+		// wrapping would be misleading. Such a connection falls through to the normal
+		// kernel branch and returns the plain kernel error.
+		defer warehouse_cache.ClearCache()
+
+		tt := NewTestReydenFallback()
+		warehouse_cache.MarkReyden(tt.host, tt.warehouseID)
+
+		kernelErr := errors.New("kernel open failed")
+		thriftCalled := false
+		conn := tt.makeConnector(
+			func(ctx context.Context, cfg *config.Config, client *http.Client) (backend.Backend, error) {
+				thriftCalled = true
+				return &fakeThriftBackend{}, nil
+			},
+			func(ctx context.Context, cfg *config.Config) (backend.Backend, error) {
+				return &fakeKernelBackend{openSessionErr: kernelErr}, nil
+			},
+		)
+		conn.cfg.UseKernel = true // explicit backend selection
+
+		_, _, err := conn.openSessionWithReydenFallback(context.Background())
+		require.Error(t, err)
+		assert.Same(t, kernelErr, err, "explicit UseKernel should surface the plain kernel error")
+		assert.NotContains(t, err.Error(), "cached as Reyden",
+			"the auto-recovery framing must not apply to an explicit-kernel connection")
+		assert.False(t, thriftCalled, "explicit UseKernel must not attempt Thrift")
+	})
 }
 
 func TestReydenCacheMarking(t *testing.T) {

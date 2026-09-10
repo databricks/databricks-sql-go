@@ -841,8 +841,13 @@ func (c *connector) openSessionWithReydenFallback(ctx context.Context) (backend.
 	warehouseID := warehouse_cache.ExtractWarehouseID(c.cfg.HTTPPath)
 
 	// Pre-check: if this warehouse is already known to reject Thrift, open
-	// directly on the kernel backend and skip the doomed Thrift attempt.
-	if warehouseID != "" && warehouse_cache.IsKnownReyden(c.cfg.Host, warehouseID) {
+	// directly on the kernel backend and skip the doomed Thrift attempt. Gated
+	// on the default (non-UseKernel) path: the pre-check is part of Thrift
+	// auto-recovery, so an explicit UseKernel connection falls through to the
+	// normal kernel branch below and gets its plain error surface — never the
+	// "Thrift was skipped" framing, which would be misleading when Thrift was
+	// never in play.
+	if !c.cfg.UseKernel && warehouseID != "" && warehouse_cache.IsKnownReyden(c.cfg.Host, warehouseID) {
 		logger.Debug().Msgf(
 			"warehouse %s on %s is known to require kernel backend; skipping Thrift",
 			warehouseID, c.cfg.Host)
