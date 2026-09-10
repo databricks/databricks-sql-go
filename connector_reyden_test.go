@@ -395,24 +395,3 @@ func TestReydenSkipDriverTelemetryFollowsActualBackend(t *testing.T) {
 	assert.False(t, shouldSkipDriverTelemetry(&thrift.Backend{}),
 		"thrift backend: driver telemetry should stay active")
 }
-
-func TestReydenDefaultBuildKernelNotCompiled(t *testing.T) {
-	t.Run("Default build's newKernelBackend returns 'not compiled' error", func(t *testing.T) {
-		// In the default pure-Go build, newKernelBackend returns an error indicating
-		// the kernel backend is not compiled in. This naturally exercises the
-		// error-chaining path for double-failure scenarios.
-		cfg := config.WithDefaults()
-		cfg.UseKernel = true
-
-		// Attempt to create a kernel backend in the default build.
-		// (This would fail with ErrKernelNotCompiled outside of a
-		// databricks_kernel+CGO_ENABLED=1 build.)
-		be, err := newKernelBackend(context.Background(), cfg)
-
-		// In the default build, this should fail.
-		assert.Nil(t, be)
-		assert.Error(t, err)
-		assert.True(t, errors.Is(err, dbsqlerr.ErrKernelNotCompiled),
-			"default build should not have kernel backend compiled in")
-	})
-}

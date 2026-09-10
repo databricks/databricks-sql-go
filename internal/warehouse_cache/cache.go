@@ -41,7 +41,7 @@ func ExtractWarehouseID(httpPath string) string {
 		return ""
 	}
 	match := warehousePathRE.FindStringSubmatch(httpPath)
-	if match != nil && len(match) > 1 {
+	if len(match) > 1 {
 		return match[1]
 	}
 	return ""
@@ -49,7 +49,7 @@ func ExtractWarehouseID(httpPath string) string {
 
 // Cache is a thread-safe cache of warehouses known to reject Thrift.
 type Cache struct {
-	mu     sync.RWMutex
+	mu sync.RWMutex
 	// (host_lowercased, warehouse_id) -> expiry deadline (monotonic time)
 	expiry map[[2]string]time.Time
 }
