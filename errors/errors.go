@@ -91,6 +91,13 @@ var ErrRequiresKernelBackend error = errors.New("requires the SEA-via-kernel bac
 // retryable error instead of matching on message text.
 var ErrInvalidKernelConfig error = errors.New("invalid kernel backend configuration")
 
+// value to be used with errors.Is() to determine that a Reyden / Real-Time
+// warehouse rejected the legacy Thrift protocol (SQLSTATE KP001). The connection
+// layer transparently recovers by re-opening the session on the kernel backend.
+// Subclassing under a distinct sentinel lets a caller detect this specific
+// recoverable condition programmatically instead of matching on error message.
+var ErrReydenThriftUnsupported error = errors.New("Reyden warehouse rejects legacy Thrift protocol")
+
 // Base interface for driver errors
 type DBError interface {
 	// Descriptive message describing the error

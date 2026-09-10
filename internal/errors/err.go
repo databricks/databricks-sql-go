@@ -311,3 +311,35 @@ func (e badConnectionError) Error() string {
 func NewBadConnectionError(err error) error {
 	return badConnectionError{err: err}
 }
+
+// reydenThriftUnsupportedError signals that a Reyden / Real-Time warehouse
+// rejected the legacy Thrift protocol (SQLSTATE KP001). The connection layer
+// transparently recovers by re-opening the session on the kernel backend.
+type reydenThriftUnsupportedError struct {
+	err error
+}
+
+func (e reydenThriftUnsupportedError) Is(err error) bool {
+	return err == dbsqlerr.ErrReydenThriftUnsupported
+}
+
+func (e reydenThriftUnsupportedError) Unwrap() error {
+	return e.err
+}
+
+func (e reydenThriftUnsupportedError) Error() string {
+	if e.err != nil {
+		return e.err.Error()
+	}
+	return "Reyden warehouse rejects legacy Thrift protocol"
+}
+
+// NewReydenThriftUnsupportedError creates a marker error for Reyden warehouse
+// rejection of Thrift protocol (SQLSTATE KP001).
+func NewReydenThriftUnsupportedError(msg string) error {
+	var err error
+	if msg != "" {
+		err = errors.New(msg)
+	}
+	return reydenThriftUnsupportedError{err: err}
+}
