@@ -8,6 +8,8 @@ import (
 
 	"github.com/databricks/databricks-sql-go/auth/pat"
 	"github.com/databricks/databricks-sql-go/auth/tokenprovider"
+	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
+	"github.com/databricks/databricks-sql-go/internal/backend/kernel"
 	"github.com/databricks/databricks-sql-go/internal/client"
 	"github.com/databricks/databricks-sql-go/internal/config"
 	"github.com/golang-jwt/jwt/v5"
@@ -53,6 +55,82 @@ func TestFederatedTokenAuthenticatorPreservesThriftTokenExchange(t *testing.T) {
 	exchange := <-exchangeRequests
 	assert.Equal(t, "/oidc/v1/token", exchange.path)
 	assert.Equal(t, subjectToken, exchange.subjectToken)
+}
+
+func TestWithClientQueryTimeout(t *testing.T) {
+	t.Run("omitted remains distinguishable from explicit zero", func(t *testing.T) {
+		con, err := NewConnector(WithUseKernel(true))
+		require.NoError(t, err)
+		got := con.(*connector).cfg.ClientQueryTimeout
+		assert.Nil(t, got)
+
+		con, err = NewConnector(WithUseKernel(true), WithClientQueryTimeout(0))
+		require.NoError(t, err)
+		got = con.(*connector).cfg.ClientQueryTimeout
+		require.NotNil(t, got)
+		assert.Equal(t, time.Duration(0), *got)
+	})
+
+	t.Run("finite value is stored independently of server timeout", func(t *testing.T) {
+		con, err := NewConnector(
+			WithUseKernel(true),
+			WithTimeout(11*time.Second),
+			WithClientQueryTimeout(2*time.Second),
+		)
+		require.NoError(t, err)
+		cfg := con.(*connector).cfg
+		require.NotNil(t, cfg.ClientQueryTimeout)
+		assert.Equal(t, 2*time.Second, *cfg.ClientQueryTimeout)
+		assert.Equal(t, 11*time.Second, cfg.QueryTimeout)
+	})
+
+	t.Run("maximum duration is the unlimited sentinel", func(t *testing.T) {
+		maximumDuration := time.Duration(1<<63 - 1)
+		con, err := NewConnector(WithUseKernel(true), WithClientQueryTimeout(maximumDuration))
+		require.NoError(t, err)
+		got := con.(*connector).cfg.ClientQueryTimeout
+		require.NotNil(t, got)
+		assert.Equal(t, maximumDuration, *got)
+	})
+
+	t.Run("negative value is rejected during connector construction", func(t *testing.T) {
+		_, err := NewConnector(WithUseKernel(true), WithClientQueryTimeout(-time.Nanosecond))
+		require.Error(t, err)
+		assert.ErrorIs(t, err, dbsqlerr.ErrInvalidKernelConfig)
+		assert.Contains(t, err.Error(), "negative")
+	})
+
+	t.Run("value that rounds beyond the C ABI range is rejected", func(t *testing.T) {
+		maxFinite := time.Duration(kernel.MaxClientQueryTimeoutMilliseconds) * time.Millisecond
+		_, err := NewConnector(WithUseKernel(true), WithClientQueryTimeout(maxFinite+time.Nanosecond))
+		require.Error(t, err)
+		assert.ErrorIs(t, err, dbsqlerr.ErrInvalidKernelConfig)
+		assert.Contains(t, err.Error(), "maximum")
+	})
+
+	t.Run("requires explicit kernel backend", func(t *testing.T) {
+		for _, timeout := range []time.Duration{0, time.Second, time.Duration(1<<63 - 1)} {
+			_, err := NewConnector(WithClientQueryTimeout(timeout))
+			require.Error(t, err)
+			assert.ErrorIs(t, err, dbsqlerr.ErrRequiresKernelBackend)
+		}
+	})
+
+	t.Run("reusing an option does not alias connector configuration", func(t *testing.T) {
+		option := WithClientQueryTimeout(2 * time.Second)
+		first, err := NewConnector(WithUseKernel(true), option)
+		require.NoError(t, err)
+		second, err := NewConnector(WithUseKernel(true), option)
+		require.NoError(t, err)
+
+		firstTimeout := first.(*connector).cfg.ClientQueryTimeout
+		secondTimeout := second.(*connector).cfg.ClientQueryTimeout
+		require.NotNil(t, firstTimeout)
+		require.NotNil(t, secondTimeout)
+		assert.NotSame(t, firstTimeout, secondTimeout)
+		*firstTimeout = 7 * time.Second
+		assert.Equal(t, 2*time.Second, *secondTimeout)
+	})
 }
 
 func TestNewConnector(t *testing.T) {

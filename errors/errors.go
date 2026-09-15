@@ -74,7 +74,7 @@ var ErrNotSupportedByKernel error = errors.New("not supported by the kernel back
 var ErrKernelNotCompiled error = errors.New("the SEA-via-kernel backend is not compiled into this binary")
 
 // value to be used with errors.Is() to determine that a kernel-only option (e.g.
-// WithKernelTrustedCerts / WithKernelSkipHostnameVerify) was set without
+// WithClientQueryTimeout or WithKernelTrustedCerts) was set without
 // WithUseKernel, so the default (Thrift) backend rejected it rather than
 // connecting with a weaker-than-intended TLS trust store. This is the mirror of
 // ErrNotSupportedByKernel — that sentinel means "the kernel can't honor this
@@ -83,7 +83,7 @@ var ErrKernelNotCompiled error = errors.New("the SEA-via-kernel backend is not c
 var ErrRequiresKernelBackend error = errors.New("requires the SEA-via-kernel backend")
 
 // value to be used with errors.Is() to determine that a kernel-backend option was
-// itself malformed (e.g. a WithKernelProxy URL that does not parse) — as opposed to
+// itself malformed (e.g. a bad proxy URL or client query timeout) — as opposed to
 // unsupported (ErrNotSupportedByKernel) or a transient connect failure. The kernel
 // path validates such options in the Go layer before handing them to the kernel's C
 // ABI, where the failure would otherwise surface as an opaque wrapped string a

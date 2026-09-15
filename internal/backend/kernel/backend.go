@@ -78,8 +78,8 @@ var kernelSessionSeq atomic.Uint64
 // KernelBackend implements backend.Backend over the kernel C ABI. One backend
 // backs one conn, which database/sql serializes to a single goroutine at a time,
 // so the kernel session inherits single-owner-ship and needs no locks; the only
-// concurrency is the per-statement cancel watcher (see operation.go), which
-// touches only the kernel's internal inflight-id slot.
+// concurrency is the detached per-statement cancel watcher (see operation.go),
+// which may briefly outlive a client-timeout return while its cancel RPC ends.
 type KernelBackend struct {
 	cfg       Config
 	session   *C.kernel_session_t

@@ -88,6 +88,15 @@ func TestValidateKernelConfig(t *testing.T) {
 		}
 	})
 
+	t.Run("client query timeout accepted and kept separate from server timeout", func(t *testing.T) {
+		c := baseKernelConfig()
+		timeout := 2 * time.Second
+		c.ClientQueryTimeout = &timeout
+		if _, err := validateKernelConfig(c); err != nil {
+			t.Errorf("client query timeout should validate on the kernel path, got %v", err)
+		}
+	})
+
 	t.Run("PAT resolves to a PAT auth descriptor", func(t *testing.T) {
 		c := baseKernelConfig() // AccessToken = "dapi-x"
 		a, err := validateKernelConfig(c)
@@ -494,6 +503,28 @@ func TestKernelConfigFieldsClassified(t *testing.T) {
 // TestKernelExperimentalFieldsClassified only asserts the disposition map, not the
 // runtime copy). These run in the default CGO_ENABLED=0 build.
 func TestBuildKernelConfig(t *testing.T) {
+	t.Run("client query timeout presence and value forwarded without aliasing", func(t *testing.T) {
+		c := baseKernelConfig()
+		kc := buildKernelConfig(c, kernel.Auth{Mode: kernel.AuthPAT, Token: "dapi-x"})
+		if kc.ClientQueryTimeout != nil {
+			t.Fatalf("omitted ClientQueryTimeout forwarded as %v, want nil", *kc.ClientQueryTimeout)
+		}
+
+		timeout := time.Duration(0)
+		c.ClientQueryTimeout = &timeout
+		kc = buildKernelConfig(c, kernel.Auth{Mode: kernel.AuthPAT, Token: "dapi-x"})
+		if kc.ClientQueryTimeout == nil || *kc.ClientQueryTimeout != 0 {
+			t.Fatalf("explicit zero ClientQueryTimeout = %v, want pointer to zero", kc.ClientQueryTimeout)
+		}
+		if kc.ClientQueryTimeout == c.ClientQueryTimeout {
+			t.Fatal("buildKernelConfig aliased the driver ClientQueryTimeout pointer")
+		}
+		timeout = 5 * time.Second
+		if *kc.ClientQueryTimeout != 0 {
+			t.Errorf("kernel ClientQueryTimeout changed after source mutation: got %v, want 0", *kc.ClientQueryTimeout)
+		}
+	})
+
 	t.Run("max connections forwarded", func(t *testing.T) {
 		c := baseKernelConfig()
 		WithKernelMaxConnections(37)(c)
