@@ -32,6 +32,17 @@ import (
 // resolveKernelAuth's U2M case.
 const u2mKernelClientID = "databricks-sql-connector"
 
+func validateClientQueryTimeout(timeout *time.Duration) error {
+	if timeout == nil {
+		return nil
+	}
+	if _, err := kernel.ClientQueryTimeoutMilliseconds(*timeout); err != nil {
+		return fmt.Errorf("databricks: invalid WithClientQueryTimeout value: %v: %w",
+			err, dbsqlerr.ErrInvalidKernelConfig)
+	}
+	return nil
+}
+
 // validateKernelConfig enforces the kernel backend's "nothing silently ignored"
 // contract: it rejects every option the kernel path can't yet honor with a clear
 // error (rather than dropping it, which would behave differently than Thrift) and
@@ -50,6 +61,9 @@ func validateKernelConfig(cfg *config.Config) (kernel.Auth, error) {
 }
 
 func validateKernelConfigContext(ctx context.Context, cfg *config.Config) (kernel.Auth, error) {
+	if err := validateClientQueryTimeout(cfg.ClientQueryTimeout); err != nil {
+		return kernel.Auth{}, err
+	}
 	// Initial namespace (WithInitialNamespace) is forwarded, not rejected: the
 	// kernel C ABI has no catalog/schema setter, so KernelBackend.OpenSession
 	// selects it post-connect with USE CATALOG / USE SCHEMA. No per-backend handling
@@ -162,6 +176,10 @@ func buildKernelConfig(cfg *config.Config, kauth kernel.Auth) kernel.Config {
 		// this binding's system identity for its own runtime.
 		Telemetry:                 kernelTelemetryConfig(cfg),
 		DriverSystemConfiguration: kernelDriverSystemConfiguration(cfg),
+	}
+	if cfg.ClientQueryTimeout != nil {
+		timeout := *cfg.ClientQueryTimeout
+		kc.ClientQueryTimeout = &timeout
 	}
 	// TLS: the driver honors TLSConfig only for InsecureSkipVerify (see
 	// internal/client), so map exactly that knob to the kernel.

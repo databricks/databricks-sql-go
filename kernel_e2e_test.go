@@ -488,6 +488,57 @@ func TestKernelE2ECancellation(t *testing.T) {
 	t.Logf("cancelled after %v with err=%v", elapsed, err)
 }
 
+// TestKernelE2EClientQueryTimeout verifies the kernel-owned execution deadline
+// returns HYT00 promptly and leaves the same connection reusable.
+func TestKernelE2EClientQueryTimeout(t *testing.T) {
+	const queryTimeout = 5 * time.Second
+	db := kernelTestDBWith(t, WithClientQueryTimeout(queryTimeout))
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+
+	conn, err := db.Conn(context.Background())
+	if err != nil {
+		t.Fatalf("conn: %v", err)
+	}
+	defer conn.Close()
+	if err := conn.PingContext(context.Background()); err != nil {
+		t.Fatalf("prime connection: %v", err)
+	}
+
+	start := time.Now()
+	rows, err := conn.QueryContext(context.Background(),
+		"SELECT count(*) FROM range(0, 100000000000) WHERE id % 7 = 0")
+	elapsed := time.Since(start)
+	if rows != nil {
+		rows.Close()
+	}
+	if err == nil {
+		t.Fatal("expected a client query timeout, got nil")
+	}
+	var executionErr dbsqlerr.DBExecutionError
+	if !errors.As(err, &executionErr) {
+		t.Fatalf("timeout is not a DBExecutionError: %v", err)
+	}
+	if executionErr.SqlState() != "HYT00" {
+		t.Fatalf("timeout SQLSTATE = %q, want HYT00 (err: %v)", executionErr.SqlState(), err)
+	}
+	if executionErr.IsRetryable() {
+		t.Error("client query timeout must not be retryable")
+	}
+	if elapsed < queryTimeout-time.Second || elapsed > queryTimeout+10*time.Second {
+		t.Errorf("timeout returned after %v, want approximately %v", elapsed, queryTimeout)
+	}
+
+	var got int64
+	if err := conn.QueryRowContext(context.Background(), "SELECT 1").Scan(&got); err != nil {
+		t.Fatalf("reuse connection after timeout: %v", err)
+	}
+	if got != 1 {
+		t.Errorf("SELECT 1 after timeout = %d, want 1", got)
+	}
+	t.Logf("client timeout returned after %v; connection reuse succeeded", elapsed)
+}
+
 // TestKernelE2EInitialNamespace proves WithInitialNamespace selects the initial
 // catalog/schema on the kernel session — applied post-connect via USE CATALOG /
 // USE SCHEMA, since the kernel C ABI has no namespace setter. current_catalog() /

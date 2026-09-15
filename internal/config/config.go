@@ -49,6 +49,12 @@ type Config struct {
 	ThriftProtocolVersion     cli_service.TProtocolVersion
 	ThriftDebugClientProtocol bool
 
+	// ClientQueryTimeout is the connector-only, kernel execution deadline set by
+	// WithClientQueryTimeout. nil means the option was omitted, which preserves
+	// the legacy kernel_statement_execute contract. A non-nil zero explicitly
+	// selects unlimited execution through the timeout-aware C API.
+	ClientQueryTimeout *time.Duration
+
 	// KernelExperimental carries experimental, kernel-backend-only options that
 	// have no equivalent on the default (Thrift) path — currently the richer TLS
 	// surface (a trusted-CA bundle and an independent hostname-skip) the kernel
@@ -223,7 +229,7 @@ func (c *Config) DeepCopy() *Config {
 		return nil
 	}
 
-	return &Config{
+	cp := &Config{
 		UserConfig:                c.UserConfig.DeepCopy(),
 		TLSConfig:                 c.TLSConfig.Clone(),
 		ArrowConfig:               c.ArrowConfig.DeepCopy(),
@@ -239,6 +245,11 @@ func (c *Config) DeepCopy() *Config {
 		ThriftDebugClientProtocol: c.ThriftDebugClientProtocol,
 		KernelExperimental:        c.KernelExperimental.DeepCopy(),
 	}
+	if c.ClientQueryTimeout != nil {
+		timeout := *c.ClientQueryTimeout
+		cp.ClientQueryTimeout = &timeout
+	}
+	return cp
 }
 
 // UserConfig is the set of configurations exposed to users

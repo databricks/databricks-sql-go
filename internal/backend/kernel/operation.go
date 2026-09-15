@@ -29,10 +29,11 @@ import (
 //  1. new_statement + set_sql
 //  2. canceller_new BEFORE execute, so it can observe the server statement id
 //  3. a watcher goroutine that fires the canceller on ctx.Done()
-//  4. the single blocking kernel_statement_execute (inline/CloudFetch and
-//     long-query polling all happen inside the kernel, invisibly)
-//  5. drain the watcher before returning, so a late cancel cannot land on a
-//     statement that reuses this handle
+//  4. the selected synchronous execute entry point (inline/CloudFetch and
+//     long-query polling all happen inside the kernel)
+//  5. on the legacy path, drain the watcher before returning; on the explicit
+//     client-timeout path, let an in-flight cancel finish in the background so
+//     it cannot extend the client deadline
 //
 // Binds any query parameters (bindParams) before executing; staging statements
 // are rejected up front by Execute, so none reach here.
@@ -41,6 +42,14 @@ func (k *KernelBackend) execute(ctx context.Context, req backend.ExecRequest) (b
 	// WHERE/INSERT/SET, and this goes to stderr. Matches the driver's own
 	// debuglog convention (conn.ExecContext logs sql.len=%d).
 	klogCtx(ctx, "Execute sql.len=%d", len(req.Query))
+
+	// Snapshot the immutable connector option once for this execution. Presence
+	// selects the C entry point, so an explicit zero must remain distinguishable
+	// from an omitted option.
+	clientQueryTimeoutMs, err := configuredClientQueryTimeoutMilliseconds(k.cfg.ClientQueryTimeout)
+	if err != nil {
+		return &kernelOp{}, fmt.Errorf("kernel: invalid client query timeout: %w", err)
+	}
 
 	// Reject statement text with an interior NUL before touching the kernel: set_sql
 	// takes a NUL-terminated C string with no length, so a NUL would silently
@@ -126,10 +135,17 @@ func (k *KernelBackend) execute(ctx context.Context, req backend.ExecRequest) (b
 	// returns (done) if the RPC never dispatches.
 	done := make(chan struct{})
 	var watcherWg sync.WaitGroup
+	watcherOwnsCanceller := clientQueryTimeoutMs != nil && canceller != nil && ctx.Done() != nil
 	if canceller != nil && ctx.Done() != nil {
 		watcherWg.Add(1)
 		go func() {
 			defer watcherWg.Done()
+			if watcherOwnsCanceller {
+				// A cancel RPC can retry for minutes. The timeout-aware execute path
+				// must be free to return while it finishes, so transfer ownership to
+				// this goroutine and free only after the RPC is quiescent.
+				defer C.kernel_statement_canceller_free(canceller)
+			}
 			select {
 			case <-ctx.Done():
 			case <-done:
@@ -170,17 +186,16 @@ func (k *KernelBackend) execute(ctx context.Context, req backend.ExecRequest) (b
 	// The one blocking call. inline vs CloudFetch and long-query polling are all
 	// resolved inside the kernel; Go just waits here.
 	var exec *C.kernel_executed_statement_t
-	execErr := call(func() C.KernelStatusCode {
-		return C.kernel_statement_execute(stmt, &exec)
-	})
+	execErr := callStatementExecute(stmt, clientQueryTimeoutMs, &exec)
 
-	// Drain the watcher before returning so a late canceller fire cannot land on
-	// a subsequent statement reusing this handle.
-	close(done)
-	watcherWg.Wait()
-	if canceller != nil {
-		C.kernel_statement_canceller_free(canceller)
-	}
+	// Preserve the legacy join contract when no client timeout was configured.
+	// On the timeout-aware path the watcher owns the canceller and may outlive
+	// this call, ensuring a blocked cancel RPC cannot delay the deadline result.
+	finishCancelWatcher(done, &watcherWg, watcherOwnsCanceller, func() {
+		if canceller != nil {
+			C.kernel_statement_canceller_free(canceller)
+		}
+	})
 
 	op := &kernelOp{backend: k, stmt: stmt, location: k.cfg.Location, decimalAsFloat: k.cfg.DecimalAsFloat}
 	if execErr != nil {
@@ -236,6 +251,42 @@ func (k *KernelBackend) execute(ctx context.Context, req backend.ExecRequest) (b
 	}
 	klogCtx(ctx, "Execute OK stmt=%p exec=%p affectedRows=%d statementID=%q", stmt, exec, op.affectedRows, op.statementID)
 	return op, nil
+}
+
+func finishCancelWatcher(done chan struct{}, wg *sync.WaitGroup, detached bool, free func()) {
+	close(done)
+	if detached {
+		return
+	}
+	wg.Wait()
+	free()
+}
+
+// callStatementExecute keeps the compatibility split explicit: nil invokes the
+// legacy API (and its existing 600s polling ceiling), while every configured
+// value invokes the timeout-aware API. In particular, timeoutMs==0 means
+// unlimited execution; it must not fall back to the legacy function.
+func callStatementExecute(
+	stmt *C.kernel_statement_t,
+	timeoutMs *uint64,
+	out **C.kernel_executed_statement_t,
+) error {
+	if timeoutMs == nil {
+		return call(func() C.KernelStatusCode {
+			return C.kernel_statement_execute(stmt, out)
+		})
+	}
+	return call(func() C.KernelStatusCode {
+		return C.kernel_statement_execute_with_timeout_ms(stmt, C.uint64_t(*timeoutMs), out)
+	})
+}
+
+// tryStatementExecuteRoute lets tagged tests exercise the real C symbol routing
+// with a null statement, avoiding a live session. The selected entry point is
+// observable in the kernel's InvalidArgument message.
+func tryStatementExecuteRoute(timeoutMs *uint64) error {
+	var out *C.kernel_executed_statement_t
+	return callStatementExecute(nil, timeoutMs, &out)
 }
 
 // bindParams binds the driver's backend.Param list onto the statement via the

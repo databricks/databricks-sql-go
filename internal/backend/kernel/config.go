@@ -6,7 +6,10 @@ package kernel
 // dbsql) name kernel.Config and be unit-tested under CGO_ENABLED=0; OpenSession
 // (tagged) is what maps the assembled Config onto the kernel's C setters.
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 // Config is the flat connection config for the kernel backend. The connector
 // fills it from the driver's config so the user-facing options are unchanged.
@@ -25,6 +28,13 @@ type Config struct {
 	// response-body completion. Zero selects the kernel's 120s default; it is
 	// neither unlimited nor an immediate timeout.
 	RequestTimeout time.Duration
+
+	// ClientQueryTimeout is nil when the connector option was omitted. That
+	// distinction is behavioral: nil uses kernel_statement_execute and retains
+	// its legacy 600s polling ceiling, while any non-nil value (including zero)
+	// uses kernel_statement_execute_with_timeout_ms. The pointer is copied while
+	// assembling this Config and each execution snapshots its value.
+	ClientQueryTimeout *time.Duration
 
 	// MaxConnections is the maximum number of idle HTTP connections retained
 	// per host. Zero keeps the kernel default (100).
@@ -106,6 +116,50 @@ type Config struct {
 	// DriverSystemConfiguration is the driver/runtime identity stamped onto
 	// kernel-owned telemetry. Nil lets the kernel use its built-in defaults.
 	DriverSystemConfiguration *DriverSystemConfiguration
+}
+
+// MaxClientQueryTimeoutMilliseconds is the C ABI's largest finite timeout.
+// Keep it in lockstep with DATABRICKS_KERNEL_MAX_CLIENT_QUERY_TIMEOUT_MS.
+const MaxClientQueryTimeoutMilliseconds uint64 = 9_223_372_036_854
+
+const unlimitedClientQueryTimeout = time.Duration(1<<63 - 1)
+
+// ClientQueryTimeoutMilliseconds converts the public time.Duration to the C ABI
+// value. Zero and time.Duration's maximum are explicit unlimited sentinels.
+// Positive fractional milliseconds round up so they cannot accidentally become
+// unlimited. Values whose rounded form exceeds the C ABI maximum are rejected.
+func ClientQueryTimeoutMilliseconds(timeout time.Duration) (uint64, error) {
+	if timeout < 0 {
+		return 0, fmt.Errorf("client query timeout must not be negative")
+	}
+	if timeout == 0 || timeout == unlimitedClientQueryTimeout {
+		return 0, nil
+	}
+
+	milliseconds := uint64(timeout / time.Millisecond)
+	if timeout%time.Millisecond != 0 {
+		milliseconds++
+	}
+	if milliseconds > MaxClientQueryTimeoutMilliseconds {
+		return 0, fmt.Errorf("client query timeout rounds above the maximum of %d ms", MaxClientQueryTimeoutMilliseconds)
+	}
+	return milliseconds, nil
+}
+
+// configuredClientQueryTimeoutMilliseconds preserves option presence while
+// snapshotting its value for one execution. nil means use the legacy execute
+// entry point; a non-nil pointer (including one containing zero) means use the
+// timeout-aware entry point.
+func configuredClientQueryTimeoutMilliseconds(timeout *time.Duration) (*uint64, error) {
+	if timeout == nil {
+		return nil, nil
+	}
+	configured := *timeout
+	milliseconds, err := ClientQueryTimeoutMilliseconds(configured)
+	if err != nil {
+		return nil, err
+	}
+	return &milliseconds, nil
 }
 
 // RetryConfig is the driver's HTTP retry policy forwarded to the kernel: the
