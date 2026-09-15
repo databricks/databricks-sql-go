@@ -2,6 +2,7 @@ package rowscanner
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 
@@ -114,6 +115,11 @@ var _ ResultPageIterator = (*resultPageIterator)(nil)
 
 // Returns true if there are more pages in the result set.
 func (rpf *resultPageIterator) HasNext() bool {
+	// Keep iteration alive until Next surfaces a pending fetch error.
+	if rpf.err != nil {
+		return !errors.Is(rpf.err, io.EOF)
+	}
+
 	if rpf.isFinished && rpf.nextResultPage == nil {
 		// There are no more pages to load and there isn't an already fetched
 		// page waiting to retrieved by Next()
@@ -128,7 +134,7 @@ func (rpf *resultPageIterator) HasNext() bool {
 			rpf.Close() //nolint:errcheck,gosec // G104: close in error path
 			rpf.isFinished = true
 			rpf.err = err
-			return false
+			return true
 		}
 
 		rpf.err = nil
@@ -151,6 +157,12 @@ func (rpf *resultPageIterator) Next() (*cli_service.TFetchResultsResp, error) {
 
 	if !rpf.HasNext() && rpf.nextResultPage == nil {
 		return nil, rpf.err
+	}
+	if rpf.err != nil {
+		err := rpf.err
+		// Return fetch errors once, then terminate the iterator.
+		rpf.err = io.EOF
+		return nil, err
 	}
 
 	nrp := rpf.nextResultPage

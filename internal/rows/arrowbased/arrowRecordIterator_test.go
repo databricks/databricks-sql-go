@@ -3,6 +3,7 @@ package arrowbased
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -191,6 +192,34 @@ func TestArrowRecordIterator(t *testing.T) {
 		assert.Equal(t, fetchResp3.Results.ArrowBatches[1].RowCount, r6.NumRows())
 		r6.Release()
 	})
+}
+
+func TestArrowRecordIteratorReturnsPageFetchError(t *testing.T) {
+	fetchErr := errors.New("fetch failed")
+	rpi := rowscanner.NewResultPageIterator(
+		context.Background(),
+		rowscanner.NewDelimiter(0, 0),
+		5000,
+		nil,
+		false,
+		&client.TestClient{
+			FnFetchResults: func(context.Context, *cli_service.TFetchResultsReq) (*cli_service.TFetchResultsResp, error) {
+				return nil, fetchErr
+			},
+		},
+		dbsqllog.WithContext("connectionId", "correlationId", ""),
+	)
+	rs := NewArrowRecordIterator(context.Background(), rpi, nil, nil, *config.WithDefaults())
+	defer rs.Close()
+
+	assert.True(t, rs.HasNext())
+	record, err := rs.Next()
+	assert.Nil(t, record)
+	assert.ErrorIs(t, err, fetchErr)
+	assert.False(t, rs.HasNext())
+	record, err = rs.Next()
+	assert.Nil(t, record)
+	assert.ErrorIs(t, err, io.EOF)
 }
 
 func TestArrowRecordIteratorSchema(t *testing.T) {

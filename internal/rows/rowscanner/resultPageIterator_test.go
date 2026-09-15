@@ -2,6 +2,8 @@ package rowscanner
 
 import (
 	"context"
+	"errors"
+	"io"
 	"testing"
 
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
@@ -43,6 +45,28 @@ func TestFetchResultPageination(t *testing.T) {
 		{direction: cli_service.TFetchOrientation_FETCH_NEXT, resultStartRec: 5},
 	}
 	assert.Equal(t, expected, fetches)
+}
+
+func TestFetchErrorIsReturnedByNext(t *testing.T) {
+	fetchErr := errors.New("fetch failed")
+	rf := &resultPageIterator{
+		Delimiter: NewDelimiter(0, 0),
+		client: &client.TestClient{
+			FnFetchResults: func(context.Context, *cli_service.TFetchResultsReq) (*cli_service.TFetchResultsResp, error) {
+				return nil, fetchErr
+			},
+		},
+		logger: dbsqllog.WithContext("connId", "correlationId", ""),
+	}
+
+	assert.True(t, rf.HasNext())
+	page, err := rf.Next()
+	assert.Nil(t, page)
+	assert.ErrorIs(t, err, fetchErr)
+	assert.False(t, rf.HasNext())
+	page, err = rf.Next()
+	assert.Nil(t, page)
+	assert.ErrorIs(t, err, io.EOF)
 }
 
 type fetch struct {

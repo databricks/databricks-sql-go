@@ -2,6 +2,7 @@
 
 ## Unreleased
 - Transparently auto-recover Thrift connections to Reyden / Real-Time warehouses: when a warehouse rejects the default Thrift protocol (SQLSTATE `KP001`), the session is re-opened on the SEA/kernel backend and the warehouse is remembered so later connections skip Thrift. Applies only when no backend was chosen explicitly (`WithUseKernel`). Note: recovery requires a `databricks_kernel` build, since the kernel backend is otherwise not linked in.
+- Return page-fetch failures from Arrow batch iterators instead of treating partial results as EOF.
 
 ## v1.15.1 (2026-09-01)
 - Pin the seven per-platform kernel bindings modules to v1.0.0.
