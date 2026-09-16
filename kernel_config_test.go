@@ -311,6 +311,31 @@ func TestValidateKernelConfig(t *testing.T) {
 		}
 	})
 
+	t.Run("mixed-case HTTP scheme with mTLS rejected before kernel", func(t *testing.T) {
+		for _, host := range []string{"http://example.com", "HTTP://example.com", "HtTp://example.com"} {
+			t.Run(host, func(t *testing.T) {
+				c := baseKernelConfig()
+				WithServerHostname(host)(c)
+				WithKernelClientCertificate([]byte("cert"), []byte("key"))(c)
+
+				_, err := validateKernelConfig(c)
+				if !errors.Is(err, dbsqlerr.ErrNotSupportedByKernel) {
+					t.Errorf("mTLS over %q should reject before entering the kernel, got %v", host, err)
+				}
+			})
+		}
+	})
+
+	t.Run("mixed-case HTTPS scheme with mTLS accepted", func(t *testing.T) {
+		c := baseKernelConfig()
+		WithServerHostname("HtTpS://example.com")(c)
+		WithKernelClientCertificate([]byte("cert"), []byte("key"))(c)
+
+		if _, err := validateKernelConfig(c); err != nil {
+			t.Errorf("mTLS over mixed-case HTTPS should validate, got %v", err)
+		}
+	})
+
 	t.Run("valid WithKernelProxy URL accepted", func(t *testing.T) {
 		c := baseKernelConfig()
 		WithKernelProxy(KernelProxy{URL: "http://proxy.internal:3128", Username: "u", Password: "p", BypassHosts: "*.internal"})(c)
