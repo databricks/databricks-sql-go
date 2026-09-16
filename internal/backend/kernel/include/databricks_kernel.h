@@ -719,9 +719,11 @@ KernelStatusCode kernel_statement_execute(kernel_statement_t* stmt,
  * Wait-for-result execution with a client-side deadline in milliseconds.
  * Zero selects unlimited execution; values above
  * DATABRICKS_KERNEL_MAX_CLIENT_QUERY_TIMEOUT_MS return InvalidArgument. A finite
- * deadline starts on entry and covers execution
- * through terminal-state mapping, and excludes result materialisation and
- * fetching. It is never sent to the server.
+ * deadline starts on entry and covers execution through terminal-state mapping,
+ * and excludes result materialisation and fetching. A status request already in
+ * flight at the deadline may finish within a fixed five-second grace period; no
+ * new status request starts after the deadline. The deadline is never sent to
+ * the server.
  *
  * Timeout returns KernelStatusCode_Timeout with SQLSTATE HYT00 and leaves
  * `*out` NULL. Cleanup is best effort and asynchronous; `stmt` remains reusable.
