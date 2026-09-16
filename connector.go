@@ -320,17 +320,17 @@ func WithServerHostname(host string) ConnOption {
 
 func parseHostName(host string) (protocol, hostname string) {
 	hostname = host
-	if strings.HasPrefix(host, "https") {
-		hostname = strings.TrimPrefix(host, "https")
-		protocol = "https"
-	} else if strings.HasPrefix(host, "http") {
-		hostname = strings.TrimPrefix(host, "http")
-		protocol = "http"
-	}
-
-	if protocol != "" {
-		hostname = strings.TrimPrefix(hostname, ":")
-		hostname = strings.TrimPrefix(hostname, "//")
+	// URI schemes are case-insensitive. Require the ':' delimiter so ordinary
+	// hostnames such as httpbin.example.com are not mistaken for a scheme.
+	if scheme, remainder, ok := strings.Cut(host, ":"); ok {
+		switch {
+		case strings.EqualFold(scheme, "https"):
+			protocol = "https"
+			hostname = strings.TrimPrefix(remainder, "//")
+		case strings.EqualFold(scheme, "http"):
+			protocol = "http"
+			hostname = strings.TrimPrefix(remainder, "//")
+		}
 	}
 
 	if hostname == "localhost" && protocol == "" {
