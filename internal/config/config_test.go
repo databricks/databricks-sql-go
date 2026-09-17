@@ -805,6 +805,7 @@ func TestConfig_DeepCopy(t *testing.T) {
 	})
 	t.Run("copy config with all values", func(t *testing.T) {
 		maxConnections := 37
+		clientQueryTimeout := 2 * time.Second
 		cfg := &Config{
 			UserConfig:                UserConfig{}.WithDefaults(),
 			TLSConfig:                 &tls.Config{MinVersion: tls.VersionTLS12},
@@ -818,6 +819,7 @@ func TestConfig_DeepCopy(t *testing.T) {
 			ThriftTransport:           "http",
 			ThriftProtocolVersion:     cli_service.TProtocolVersion_SPARK_CLI_SERVICE_PROTOCOL_V8,
 			ThriftDebugClientProtocol: false,
+			ClientQueryTimeout:        &clientQueryTimeout,
 			KernelExperimental: &KernelExperimentalConfig{
 				TLSTrustedCertsPEM:      []byte("ca-bundle"),
 				TLSClientCertPEM:        []byte("client-cert"),
@@ -835,6 +837,13 @@ func TestConfig_DeepCopy(t *testing.T) {
 		// The experimental block must be deep-copied, not aliased.
 		if cfg_copy.KernelExperimental == cfg.KernelExperimental {
 			t.Error("DeepCopy aliased KernelExperimental pointer")
+		}
+		if cfg_copy.ClientQueryTimeout == cfg.ClientQueryTimeout {
+			t.Error("DeepCopy aliased ClientQueryTimeout pointer")
+		}
+		*cfg_copy.ClientQueryTimeout = 9 * time.Second
+		if *cfg.ClientQueryTimeout != 2*time.Second {
+			t.Error("mutating the copy changed the original ClientQueryTimeout")
 		}
 		if cfg_copy.KernelExperimental.MaxConnections == cfg.KernelExperimental.MaxConnections {
 			t.Error("DeepCopy aliased KernelExperimental MaxConnections pointer")

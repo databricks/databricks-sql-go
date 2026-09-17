@@ -9,6 +9,8 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -18,6 +20,89 @@ import (
 	dbsqlrows "github.com/databricks/databricks-sql-go/internal/rows"
 	"github.com/databricks/databricks-sql-go/logger"
 )
+
+func TestStatementExecuteTimeoutRouting(t *testing.T) {
+	err := tryStatementExecuteRoute(nil)
+	if err == nil || !strings.Contains(err.Error(), "kernel_statement_execute: stmt must not be null") {
+		t.Fatalf("omitted timeout routed error = %v, want legacy kernel_statement_execute", err)
+	}
+
+	zero := uint64(0)
+	err = tryStatementExecuteRoute(&zero)
+	if err == nil || !strings.Contains(err.Error(), "kernel_statement_execute_with_timeout_ms: stmt must not be null") {
+		t.Fatalf("explicit zero routed error = %v, want timeout-aware execute", err)
+	}
+}
+
+func TestClientQueryTimeoutMaximumMatchesCABI(t *testing.T) {
+	if got := maxClientQueryTimeoutMillisecondsFromC(); got != MaxClientQueryTimeoutMilliseconds {
+		t.Fatalf("Go client timeout maximum = %d, C ABI maximum = %d", MaxClientQueryTimeoutMilliseconds, got)
+	}
+}
+
+func TestFinishCancelWatcherPreservesLegacyJoinAndDetachesForClientTimeout(t *testing.T) {
+	t.Run("client timeout does not wait", func(t *testing.T) {
+		done := make(chan struct{})
+		blockWatcher := make(chan struct{})
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-done
+			<-blockWatcher
+		}()
+
+		freeCalled := make(chan struct{})
+		returned := make(chan struct{})
+		go func() {
+			finishCancelWatcher(done, &wg, true, func() { close(freeCalled) })
+			close(returned)
+		}()
+
+		select {
+		case <-returned:
+		case <-time.After(time.Second):
+			t.Fatal("detached client-timeout cleanup waited for the watcher")
+		}
+		select {
+		case <-freeCalled:
+			t.Fatal("detached cleanup freed a canceller still owned by the watcher")
+		default:
+		}
+		close(blockWatcher)
+		wg.Wait()
+	})
+
+	t.Run("legacy execution still joins", func(t *testing.T) {
+		done := make(chan struct{})
+		var wg sync.WaitGroup
+		wg.Add(1)
+		freeCalled := make(chan struct{})
+		returned := make(chan struct{})
+		go func() {
+			finishCancelWatcher(done, &wg, false, func() { close(freeCalled) })
+			close(returned)
+		}()
+
+		<-done
+		select {
+		case <-returned:
+			t.Fatal("legacy cleanup returned before the watcher drained")
+		default:
+		}
+		wg.Done()
+		select {
+		case <-returned:
+		case <-time.After(time.Second):
+			t.Fatal("legacy cleanup did not return after the watcher drained")
+		}
+		select {
+		case <-freeCalled:
+		default:
+			t.Fatal("legacy cleanup did not free the canceller")
+		}
+	})
+}
 
 // setAuth maps each Auth mode to exactly one kernel_session_config_set_auth_*
 // value-setter. These are pure config setters (no network), so we can assert the
