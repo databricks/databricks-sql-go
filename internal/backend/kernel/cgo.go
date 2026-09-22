@@ -152,6 +152,10 @@ func fireCancel(canceller *C.kernel_statement_canceller_t) bool {
 	return bool(dispatched)
 }
 
+func maxClientQueryTimeoutMillisecondsFromC() uint64 {
+	return uint64(C.DATABRICKS_KERNEL_MAX_CLIENT_QUERY_TIMEOUT_MS)
+}
+
 // lastError reads the kernel's thread-local last error and copies its string
 // fields out immediately — the C `char*` fields are valid only until the next
 // FFI call on this thread. Must run on the same OS thread as the failing call;
