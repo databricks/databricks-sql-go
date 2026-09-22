@@ -96,6 +96,7 @@ func TestWithClientQueryTimeout(t *testing.T) {
 	t.Run("negative value is rejected during connector construction", func(t *testing.T) {
 		_, err := NewConnector(WithUseKernel(true), WithClientQueryTimeout(-time.Nanosecond))
 		require.Error(t, err)
+		assert.ErrorIs(t, err, dbsqlerr.ErrInvalidClientQueryTimeout)
 		assert.ErrorIs(t, err, dbsqlerr.ErrInvalidKernelConfig)
 		assert.Contains(t, err.Error(), "negative")
 	})
@@ -104,15 +105,18 @@ func TestWithClientQueryTimeout(t *testing.T) {
 		maxFinite := time.Duration(kernel.MaxClientQueryTimeoutMilliseconds) * time.Millisecond
 		_, err := NewConnector(WithUseKernel(true), WithClientQueryTimeout(maxFinite+time.Nanosecond))
 		require.Error(t, err)
+		assert.ErrorIs(t, err, dbsqlerr.ErrInvalidClientQueryTimeout)
 		assert.ErrorIs(t, err, dbsqlerr.ErrInvalidKernelConfig)
 		assert.Contains(t, err.Error(), "maximum")
 	})
 
-	t.Run("requires explicit kernel backend", func(t *testing.T) {
+	t.Run("is accepted by the default Thrift backend", func(t *testing.T) {
 		for _, timeout := range []time.Duration{0, time.Second, time.Duration(1<<63 - 1)} {
-			_, err := NewConnector(WithClientQueryTimeout(timeout))
-			require.Error(t, err)
-			assert.ErrorIs(t, err, dbsqlerr.ErrRequiresKernelBackend)
+			con, err := NewConnector(WithClientQueryTimeout(timeout))
+			require.NoError(t, err)
+			got := con.(*connector).cfg.ClientQueryTimeout
+			require.NotNil(t, got)
+			assert.Equal(t, timeout, *got)
 		}
 	})
 

@@ -87,7 +87,7 @@ Supported functional options include:
   - WithMaxRows(<max_rows> int): Sets up the max rows fetched per request. Default is 100000. Optional
   - WithSessionParams(<params_map> map[string]string): Sets up session parameters including "timezone" and "ansi_mode". Optional
   - WithTimeout(<timeout> Duration). Adds timeout (in time.Duration) for the server query execution. Default is no timeout. Optional
-  - WithClientQueryTimeout(<timeout> Duration). Bounds client-side statement execution on the kernel backend. Omitted preserves the legacy 600s ceiling; zero or the maximum Duration is unlimited. Requires WithUseKernel(true). Optional
+  - WithClientQueryTimeout(<timeout> Duration). Bounds client-side statement execution on both backends. Omission preserves each backend's legacy behavior; zero or the maximum Duration is unlimited. Optional
   - WithUserAgentEntry(<isv-name+product-name> string). Used to identify partners. Optional
   - WithCloudFetch (bool). Used to enable cloud fetch for the query execution. Default is true. Optional
   - WithMaxDownloadThreads (<num_threads> int). Sets up the max number of concurrent workers for cloud fetch. Default is 10. Optional
@@ -104,10 +104,11 @@ Cancelling a query via context cancellation or timeout is supported.
 	ctx, cancel := context.WithTimeout(context.Background(), 30 * time.Second)
 	defer cancel()
 
-WithClientQueryTimeout is a separate, connector-only kernel option. Its deadline
-covers execution through terminal-state mapping, including the initial execute RPC
-and status polling, but not result materialization or fetching. WithTimeout remains
-the independent server-side Thrift option.
+WithClientQueryTimeout is a separate, connector-only option shared by Thrift and
+SEA/kernel. Its deadline covers execution through terminal-state mapping, including
+the initial execute RPC and status polling, but not result materialization or
+fetching. An in-flight status RPC gets up to five seconds to return a terminal
+result. WithTimeout remains the independent server-side Thrift option.
 
 	// Execute query. Query will be cancelled after 30 seconds if still running
 	res, err := db.ExecContext(ctx, "CREATE TABLE example(id int, message string)")

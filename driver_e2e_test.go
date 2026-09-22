@@ -650,6 +650,49 @@ func getServer(state *callState) *httptest.Server {
 	})
 }
 
+// TestE2EClientQueryTimeoutThrift verifies the public timeout contract and
+// connection reuse on the default Thrift backend.
+func TestE2EClientQueryTimeoutThrift(t *testing.T) {
+	host, httpPath, token := pecoTestingCreds(t)
+	const queryTimeout = 5 * time.Second
+
+	connector, err := NewConnector(
+		WithServerHostname(host),
+		WithPort(443),
+		WithHTTPPath(httpPath),
+		WithAccessToken(token),
+		WithClientQueryTimeout(queryTimeout),
+	)
+	require.NoError(t, err)
+	db := sql.OpenDB(connector)
+	defer db.Close() //nolint:errcheck
+	db.SetMaxOpenConns(1)
+
+	conn, err := db.Conn(context.Background())
+	require.NoError(t, err)
+	defer conn.Close() //nolint:errcheck
+	require.NoError(t, conn.PingContext(context.Background()))
+
+	start := time.Now()
+	rows, err := conn.QueryContext(context.Background(),
+		"SELECT count(*) FROM range(0, 100000000000) WHERE id % 7 = 0")
+	elapsed := time.Since(start)
+	if rows != nil {
+		_ = rows.Close()
+	}
+	require.Error(t, err)
+	var executionErr dbsqlerr.DBExecutionError
+	require.ErrorAs(t, err, &executionErr)
+	assert.Equal(t, "HYT00", executionErr.SqlState())
+	assert.False(t, executionErr.IsRetryable())
+	assert.GreaterOrEqual(t, elapsed, queryTimeout-time.Second)
+	assert.Less(t, elapsed, queryTimeout+10*time.Second)
+
+	var got int64
+	require.NoError(t, conn.QueryRowContext(context.Background(), "SELECT 1").Scan(&got))
+	assert.Equal(t, int64(1), got)
+}
+
 // TestE2ECloudFetchExactRowCount validates that a large CloudFetch result drains
 // the EXACT number of rows requested. CloudFetch Arrow IPC files can carry padding
 // rows beyond a link's server-declared RowCount; without capping to RowCount the

@@ -13,8 +13,8 @@ import (
 // newKernelBackend builds the SEA-via-kernel backend from the driver config; the
 // connector opens the session right after, matching the Thrift path. It reads the
 // same config fields Thrift does and translates them to the kernel's flat
-// connection config. WithClientQueryTimeout is the one execution-specific public
-// option consumed only by this backend; all other routing behavior is unchanged.
+// connection config. WithClientQueryTimeout is also consumed by Thrift, with the
+// same explicit timeout contract; all other routing behavior is unchanged.
 func newKernelBackend(ctx context.Context, cfg *config.Config) (backend.Backend, error) {
 	// Reject options the kernel path can't honor yet + resolve the auth form. The
 	// validation is pure Go and lives in kernel_config.go (untagged) so its tests —

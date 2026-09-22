@@ -168,10 +168,6 @@ func NewConnector(options ...ConnOption) (driver.Connector, error) {
 	if err := validateClientQueryTimeout(cfg.ClientQueryTimeout); err != nil {
 		return nil, err
 	}
-	if cfg.ClientQueryTimeout != nil && !cfg.UseKernel {
-		return nil, fmt.Errorf("databricks: WithClientQueryTimeout %w; "+
-			"add WithUseKernel(true) or remove it", dbsqlerr.ErrRequiresKernelBackend)
-	}
 
 	client := client.RetryableClient(cfg)
 
@@ -426,14 +422,16 @@ func WithTimeout(n time.Duration) ConnOption {
 	}
 }
 
-// WithClientQueryTimeout sets a client-side deadline for kernel statement
-// execution. It is independent of WithTimeout, which remains a server-side
-// Thrift option. A positive duration is rounded up to the next millisecond;
-// zero and the maximum time.Duration select unlimited execution. Omitting this
-// option preserves the kernel's legacy 600-second polling ceiling.
+// WithClientQueryTimeout sets a client-side statement execution deadline on
+// both Thrift and SEA/kernel. It is independent of WithTimeout, which remains a
+// server-side Thrift option. A positive duration is rounded up to the next
+// millisecond; zero and the maximum time.Duration select unlimited execution.
+// Omitting the option preserves each backend's legacy behavior: no client
+// deadline on Thrift and the kernel's legacy 600-second polling ceiling.
+// Result materialization and fetching are outside this deadline.
 //
-// This connector-only option requires WithUseKernel(true). Negative or
-// out-of-range durations are rejected by NewConnector.
+// This option is connector-only. Negative or out-of-range durations are
+// rejected by NewConnector.
 func WithClientQueryTimeout(timeout time.Duration) ConnOption {
 	return func(c *config.Config) {
 		configured := timeout
@@ -847,13 +845,6 @@ func WithTokenCache(enabled bool) ConnOption {
 // UseKernel nor other backend-selecting options). On success or failure, it
 // returns the backend, session latency, and error.
 func (c *connector) openSessionWithReydenFallback(ctx context.Context) (backend.Backend, int64, error) {
-	// NewConnector enforces this for public construction. Keep the connect-time
-	// guard as defense in depth for package-internal connectors assembled directly.
-	if !c.cfg.UseKernel && c.cfg.ClientQueryTimeout != nil {
-		return nil, 0, fmt.Errorf("databricks: WithClientQueryTimeout %w; "+
-			"add WithUseKernel(true) or remove it", dbsqlerr.ErrRequiresKernelBackend)
-	}
-
 	// Guardrail, checked up front — before the cache pre-check — so the outcome does not depend
 	// on process-global cache state. The experimental WithKernel* options have no Thrift-path
 	// equivalent, so a caller who sets one (a trusted-CA bundle, a hostname-verify skip, a proxy,

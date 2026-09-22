@@ -24,6 +24,7 @@ import (
 	"github.com/databricks/databricks-sql-go/internal/debuglog"
 	dbsqlerrint "github.com/databricks/databricks-sql-go/internal/errors"
 	"github.com/databricks/databricks-sql-go/internal/querytags"
+	"github.com/databricks/databricks-sql-go/internal/querytimeout"
 	"github.com/databricks/databricks-sql-go/internal/sentinel"
 	"github.com/databricks/databricks-sql-go/internal/thrift_protocol"
 	"github.com/databricks/databricks-sql-go/logger"
@@ -34,9 +35,13 @@ import (
 // conn and is used by a single goroutine at a time (database/sql pool
 // discipline), so it holds no locks.
 type Backend struct {
-	cfg     *config.Config
-	client  cli_service.TCLIService
-	session *cli_service.TOpenSessionResp
+	cfg    *config.Config
+	client cli_service.TCLIService
+	// Timeout cleanup cannot share the non-concurrent Thrift client with a
+	// connection that has already returned to its caller.
+	newClient           func() (cli_service.TCLIService, error)
+	timeoutCleanupSlots chan struct{}
+	session             *cli_service.TOpenSessionResp
 	// sessionID is the formatted session GUID, computed once in OpenSession and
 	// reused. Formatting it (SprintGuid) allocates, and it is read on every query
 	// (connId enrichment, logging, telemetry), so it is cached rather than
@@ -57,7 +62,14 @@ func New(ctx context.Context, cfg *config.Config, httpClient *http.Client) (*Bac
 		debuglog.Logf(ctx, "thrift.New", "InitThriftClient failed: %v", err)
 		return nil, dbsqlerrint.NewDriverError(ctx, dbsqlerr.ErrThriftClient, err)
 	}
-	return &Backend{cfg: cfg, client: tclient}, nil
+	return &Backend{
+		cfg:                 cfg,
+		client:              tclient,
+		timeoutCleanupSlots: make(chan struct{}, maxConcurrentClientTimeoutCleanups),
+		newClient: func() (cli_service.TCLIService, error) {
+			return client.InitThriftClient(cfg, httpClient)
+		},
+	}, nil
 }
 
 // OpenSession opens the server-side Thrift session, wiring the session params
@@ -154,9 +166,10 @@ func (b *Backend) Execute(ctx context.Context, req backend.ExecRequest) (backend
 
 	exStmtResp, opStatusResp, err := b.runQuery(ctx, req)
 	op := &thriftOperation{
-		backend:      b,
-		exStmtResp:   exStmtResp,
-		opStatusResp: opStatusResp,
+		backend:        b,
+		exStmtResp:     exStmtResp,
+		opStatusResp:   opStatusResp,
+		clientTimedOut: errors.Is(err, errClientQueryTimeout),
 	}
 	if err != nil {
 		debuglog.Logf(ctx, "thrift.Backend.Execute", "runQuery error: %v", err)
@@ -169,12 +182,28 @@ func (b *Backend) Execute(ctx context.Context, req backend.ExecRequest) (backend
 func (b *Backend) runQuery(ctx context.Context, req backend.ExecRequest) (*cli_service.TExecuteStatementResp, *cli_service.TGetOperationStatusResp, error) {
 	defer debuglog.Track(ctx, "thrift.Backend.runQuery", "")()
 
-	exStmtResp, err := b.executeStatement(ctx, req)
+	var clientTimeout *time.Duration
+	if timeout, finite, err := querytimeout.FiniteDuration(b.cfg.ClientQueryTimeout); err != nil {
+		return nil, nil, fmt.Errorf("thrift: invalid client query timeout: %w", err)
+	} else if finite {
+		clientTimeout = &timeout
+	}
+
+	exStmtResp, clientDeadline, err := b.executeStatementWithClientTimeout(ctx, req, clientTimeout)
 	var log *logger.DBSQLLogger
 	log, ctx = client.LoggerAndContext(ctx, exStmtResp)
 
 	if err != nil {
+		if errors.Is(err, errClientQueryTimeout) {
+			return exStmtResp, clientQueryTimeoutStatus(), err
+		}
 		return exStmtResp, nil, err
+	}
+	if clientDeadlineExpired(clientDeadline) {
+		if operationNeedsCleanup(exStmtResp) {
+			b.startClientTimeoutCleanup(ctx, exStmtResp.OperationHandle)
+		}
+		return exStmtResp, clientQueryTimeoutStatus(), errClientQueryTimeout
 	}
 
 	opHandle := exStmtResp.OperationHandle
@@ -199,9 +228,13 @@ func (b *Backend) runQuery(ctx context.Context, req backend.ExecRequest) (*cli_s
 		case cli_service.TOperationState_INITIALIZED_STATE,
 			cli_service.TOperationState_PENDING_STATE,
 			cli_service.TOperationState_RUNNING_STATE:
-			statusResp, err := b.pollOperation(ctx, opHandle)
+			statusResp, err := b.pollOperationWithClientDeadline(ctx, opHandle, clientDeadline)
 			if err != nil {
 				return exStmtResp, statusResp, err
+			}
+			if clientStatusGraceExpired(clientDeadline) {
+				b.startClientTimeoutCleanup(ctx, opHandle)
+				return exStmtResp, clientQueryTimeoutStatus(), errClientQueryTimeout
 			}
 			switch statusResp.GetOperationState() {
 			// terminal states
@@ -227,9 +260,13 @@ func (b *Backend) runQuery(ctx context.Context, req backend.ExecRequest) (*cli_s
 		}
 
 	} else {
-		statusResp, err := b.pollOperation(ctx, opHandle)
+		statusResp, err := b.pollOperationWithClientDeadline(ctx, opHandle, clientDeadline)
 		if err != nil {
 			return exStmtResp, statusResp, err
+		}
+		if clientStatusGraceExpired(clientDeadline) {
+			b.startClientTimeoutCleanup(ctx, opHandle)
+			return exStmtResp, clientQueryTimeoutStatus(), errClientQueryTimeout
 		}
 		switch statusResp.GetOperationState() {
 		// terminal states
@@ -255,6 +292,15 @@ func (b *Backend) runQuery(ctx context.Context, req backend.ExecRequest) (*cli_s
 // (direct results, LZ4, CloudFetch, Arrow, parameters, query tags) on server
 // protocol support, and cancels the operation if the context is done.
 func (b *Backend) executeStatement(ctx context.Context, req backend.ExecRequest) (*cli_service.TExecuteStatementResp, error) {
+	resp, _, err := b.executeStatementWithClientTimeout(ctx, req, nil)
+	return resp, err
+}
+
+func (b *Backend) executeStatementWithClientTimeout(
+	ctx context.Context,
+	req backend.ExecRequest,
+	clientTimeout *time.Duration,
+) (*cli_service.TExecuteStatementResp, *time.Time, error) {
 	ctx = driverctx.NewContextWithConnId(ctx, b.SessionID())
 	defer debuglog.Track(ctx, "thrift.Backend.executeStatement", "")()
 
@@ -314,27 +360,25 @@ func (b *Backend) executeStatement(ctx context.Context, req backend.ExecRequest)
 		}
 	}
 
+	var clientDeadline *time.Time
+	rpcCtx := ctx
+	if clientTimeout != nil {
+		deadline := time.Now().Add(*clientTimeout)
+		clientDeadline = &deadline
+		var cancel context.CancelFunc
+		rpcCtx, cancel = context.WithDeadline(ctx, deadline)
+		defer cancel()
+	}
+
 	debuglog.Logf(ctx, "thrift.Backend.executeStatement", "sending ExecuteStatement runAsync=true directResults=%t params=%d", thriftReq.GetDirectResults != nil, len(parameters))
-	resp, err := b.client.ExecuteStatement(ctx, &thriftReq)
+	resp, err := b.client.ExecuteStatement(rpcCtx, &thriftReq)
 	var log *logger.DBSQLLogger
 	log, ctx = client.LoggerAndContext(ctx, resp)
 
-	var shouldCancel = func(resp *cli_service.TExecuteStatementResp) bool {
-		if resp == nil {
-			return false
-		}
-		hasHandle := resp.OperationHandle != nil
-		isOpen := resp.DirectResults == nil || resp.DirectResults.CloseOperation == nil
-		return hasHandle && isOpen
-	}
-
-	select {
-	default:
-		// Non-blocking check: continue if context not done
-	case <-ctx.Done():
+	if ctx.Err() != nil {
 		newCtx := driverctx.NewContextFromBackground(ctx)
 		// in case context is done, we need to cancel the operation if necessary
-		if err == nil && shouldCancel(resp) {
+		if err == nil && operationNeedsCleanup(resp) {
 			debuglog.Logf(newCtx, "thrift.Backend.executeStatement", "context done, canceling query")
 			log.Debug().Msg("databricks: canceling query")
 			_, err1 := b.client.CancelOperation(newCtx, &cli_service.TCancelOperationReq{
@@ -349,10 +393,17 @@ func (b *Backend) executeStatement(ctx context.Context, req backend.ExecRequest)
 		} else {
 			log.Debug().Msg("databricks: query did not need cancellation")
 		}
-		return nil, ctx.Err()
+		return nil, clientDeadline, ctx.Err()
 	}
 
-	return resp, err
+	if clientDeadlineExpired(clientDeadline) {
+		if operationNeedsCleanup(resp) {
+			b.startClientTimeoutCleanup(ctx, resp.OperationHandle)
+		}
+		return resp, clientDeadline, errClientQueryTimeout
+	}
+
+	return resp, clientDeadline, err
 }
 
 // pollOperation polls the operation status until it reaches a terminal state,

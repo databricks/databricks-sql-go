@@ -73,17 +73,30 @@ var ErrNotSupportedByKernel error = errors.New("not supported by the kernel back
 // ErrNotSupportedByKernel — instead of matching on message text.
 var ErrKernelNotCompiled error = errors.New("the SEA-via-kernel backend is not compiled into this binary")
 
-// value to be used with errors.Is() to determine that a kernel-only option (e.g.
-// WithClientQueryTimeout or WithKernelTrustedCerts) was set without
-// WithUseKernel, so the default (Thrift) backend rejected it rather than
+// value to be used with errors.Is() to determine that a kernel-only option such
+// as WithKernelTrustedCerts was set without WithUseKernel, so the default
+// (Thrift) backend rejected it rather than
 // connecting with a weaker-than-intended TLS trust store. This is the mirror of
 // ErrNotSupportedByKernel — that sentinel means "the kernel can't honor this
 // option"; this one means "this option requires the kernel". Lets a caller detect
 // the case programmatically instead of matching on message text.
 var ErrRequiresKernelBackend error = errors.New("requires the SEA-via-kernel backend")
 
+type invalidClientQueryTimeoutError struct{}
+
+func (invalidClientQueryTimeoutError) Error() string { return "invalid client query timeout" }
+
+// Is preserves the sentinel used when WithClientQueryTimeout was SEA-only.
+func (invalidClientQueryTimeoutError) Is(target error) bool {
+	return target == ErrInvalidKernelConfig
+}
+
+// value to be used with errors.Is() when WithClientQueryTimeout is negative or
+// exceeds the common Thrift/SEA range after millisecond rounding.
+var ErrInvalidClientQueryTimeout error = invalidClientQueryTimeoutError{}
+
 // value to be used with errors.Is() to determine that a kernel-backend option was
-// itself malformed (e.g. a bad proxy URL or client query timeout) — as opposed to
+// itself malformed (e.g. a bad proxy URL) — as opposed to
 // unsupported (ErrNotSupportedByKernel) or a transient connect failure. The kernel
 // path validates such options in the Go layer before handing them to the kernel's C
 // ABI, where the failure would otherwise surface as an opaque wrapped string a

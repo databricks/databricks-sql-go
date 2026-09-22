@@ -23,7 +23,15 @@ func ParamsToSparkForTest(params []backend.Param) []*cli_service.TSparkParameter
 // conn with an injected mock client. It populates the cached sessionID from the
 // handle exactly as OpenSession would.
 func NewForTest(cli cli_service.TCLIService, session *cli_service.TOpenSessionResp, cfg *config.Config) *Backend {
-	b := &Backend{cfg: cfg, client: cli, session: session}
+	b := &Backend{
+		cfg:                 cfg,
+		client:              cli,
+		session:             session,
+		timeoutCleanupSlots: make(chan struct{}, maxConcurrentClientTimeoutCleanups),
+		newClient: func() (cli_service.TCLIService, error) {
+			return cli, nil
+		},
+	}
 	if session != nil && session.SessionHandle != nil {
 		b.sessionID = client.SprintGuid(session.SessionHandle.GetSessionId().GUID)
 	}

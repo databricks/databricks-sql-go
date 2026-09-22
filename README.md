@@ -250,7 +250,7 @@ session parameter on both backends.
 |---|---|---|---|---|
 | `maxRows` | `WithMaxRows` | Thrift only (inert on kernel) | `100000` | Max rows per fetch. On the kernel path the kernel manages paging, so this is accepted but has no effect. |
 | `timeout` | `WithTimeout` | Thrift only | no timeout | Server-side query timeout, in seconds. On the kernel path use the `STATEMENT_TIMEOUT` session parameter instead. |
-| — | `WithClientQueryTimeout` | SEA only | legacy 600s ceiling | Client-side execution deadline. Zero or the maximum `time.Duration` is unlimited. Connector-only; no DSN spelling. |
+| — | `WithClientQueryTimeout` | Both | backend legacy | Client-side execution deadline. Omission preserves the backend's prior behavior (Thrift unlimited; SEA legacy 600s); zero or the maximum `time.Duration` is unlimited. Connector-only; no DSN spelling. An in-flight status RPC gets up to five seconds to return a terminal result. |
 | `userAgentEntry` | `WithUserAgentEntry` | Both | | Identifies your application (partners/ISVs), format `<isv-name+product-name>`. |
 | *(session param)* | `WithSessionParams` | Both | | Arbitrary session confs (e.g. `ansi_mode`, `STATEMENT_TIMEOUT`, `QUERY_TAGS`). |
 | *(via session param)* | `WithQueryTags` | Both | | Session-level query tags (serialized into `QUERY_TAGS`). |

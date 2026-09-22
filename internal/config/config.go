@@ -49,10 +49,9 @@ type Config struct {
 	ThriftProtocolVersion     cli_service.TProtocolVersion
 	ThriftDebugClientProtocol bool
 
-	// ClientQueryTimeout is the connector-only, kernel execution deadline set by
-	// WithClientQueryTimeout. nil means the option was omitted, which preserves
-	// the legacy kernel_statement_execute contract. A non-nil zero explicitly
-	// selects unlimited execution through the timeout-aware C API.
+	// ClientQueryTimeout is the connector-only execution deadline shared by the
+	// Thrift and kernel backends. nil preserves each backend's legacy behavior;
+	// a non-nil zero explicitly selects unlimited execution.
 	ClientQueryTimeout *time.Duration
 
 	// KernelExperimental carries experimental, kernel-backend-only options that

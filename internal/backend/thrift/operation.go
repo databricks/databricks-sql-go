@@ -21,6 +21,9 @@ type thriftOperation struct {
 	backend      *Backend
 	exStmtResp   *cli_service.TExecuteStatementResp
 	opStatusResp *cli_service.TGetOperationStatusResp
+	// A client timeout hands cancel/close to bounded background cleanup. The
+	// foreground error path must not issue metadata or close RPCs afterward.
+	clientTimedOut bool
 	// statementID caches the formatted operation GUID (SprintGuid allocates and
 	// StatementID is read several times per query). An Operation is used by one
 	// goroutine at a time (pool discipline), so a plain memo needs no lock.
@@ -84,7 +87,7 @@ func (o *thriftOperation) Results(ctx context.Context, callbacks *dbsqlrows.Tele
 func (o *thriftOperation) IsStaging(ctx context.Context) (bool, error) {
 	defer debuglog.Track(ctx, "thrift.Operation.IsStaging", "stmt=%s", o.StatementID())()
 
-	if !o.hasHandle() {
+	if o.clientTimedOut || !o.hasHandle() {
 		return false, nil
 	}
 	if o.exStmtResp.DirectResults != nil && o.exStmtResp.DirectResults.ResultSetMetadata != nil {
@@ -110,7 +113,7 @@ func (o *thriftOperation) IsStaging(ctx context.Context) (bool, error) {
 func (o *thriftOperation) Close(ctx context.Context) (bool, error) {
 	defer debuglog.Track(ctx, "thrift.Operation.Close", "stmt=%s", o.StatementID())()
 
-	if o.closed {
+	if o.closed || o.clientTimedOut {
 		return false, nil
 	}
 	if !o.hasHandle() {

@@ -7,8 +7,9 @@ package kernel
 // (tagged) is what maps the assembled Config onto the kernel's C setters.
 
 import (
-	"fmt"
 	"time"
+
+	"github.com/databricks/databricks-sql-go/internal/querytimeout"
 )
 
 // Config is the flat connection config for the kernel backend. The connector
@@ -120,30 +121,14 @@ type Config struct {
 
 // MaxClientQueryTimeoutMilliseconds is the C ABI's largest finite timeout.
 // Keep it in lockstep with DATABRICKS_KERNEL_MAX_CLIENT_QUERY_TIMEOUT_MS.
-const MaxClientQueryTimeoutMilliseconds uint64 = 9_223_372_036_854
-
-const unlimitedClientQueryTimeout = time.Duration(1<<63 - 1)
+const MaxClientQueryTimeoutMilliseconds = querytimeout.MaxMilliseconds
 
 // ClientQueryTimeoutMilliseconds converts the public time.Duration to the C ABI
 // value. Zero and time.Duration's maximum are explicit unlimited sentinels.
 // Positive fractional milliseconds round up so they cannot accidentally become
 // unlimited. Values whose rounded form exceeds the C ABI maximum are rejected.
 func ClientQueryTimeoutMilliseconds(timeout time.Duration) (uint64, error) {
-	if timeout < 0 {
-		return 0, fmt.Errorf("client query timeout must not be negative")
-	}
-	if timeout == 0 || timeout == unlimitedClientQueryTimeout {
-		return 0, nil
-	}
-
-	milliseconds := uint64(timeout / time.Millisecond)
-	if timeout%time.Millisecond != 0 {
-		milliseconds++
-	}
-	if milliseconds > MaxClientQueryTimeoutMilliseconds {
-		return 0, fmt.Errorf("client query timeout rounds above the maximum of %d ms", MaxClientQueryTimeoutMilliseconds)
-	}
-	return milliseconds, nil
+	return querytimeout.Milliseconds(timeout)
 }
 
 // configuredClientQueryTimeoutMilliseconds preserves option presence while

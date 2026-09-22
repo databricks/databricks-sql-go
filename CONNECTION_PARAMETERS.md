@@ -98,7 +98,7 @@ Notes for the SEA/kernel backend:
 |---|---|:---:|:---:|---|---|
 | `maxRows` | `WithMaxRows` | ✅ | ⚠️ | `100000` | Max rows per fetch. On the kernel path the kernel manages paging, so this is accepted but has no effect. |
 | `timeout` | `WithTimeout` | ✅ | ❌ | no timeout | Server-side query timeout, in seconds. On the kernel path use the `STATEMENT_TIMEOUT` session parameter instead. |
-| — | `WithClientQueryTimeout` | ❌ | ✅ | legacy 600s ceiling | Client-side execution deadline through terminal-state mapping. Zero or the maximum `time.Duration` is unlimited. Connector-only; no DSN spelling. |
+| — | `WithClientQueryTimeout` | ✅ | ✅ | backend legacy | Client-side execution deadline through terminal-state mapping. Omission preserves the backend's prior behavior (Thrift unlimited; kernel legacy 600s); zero or the maximum `time.Duration` is unlimited. An in-flight status RPC gets up to five seconds to return a terminal result. Connector-only; no DSN spelling. |
 | `userAgentEntry` | `WithUserAgentEntry` | ✅ | ✅ | | Identifies your application (partners/ISVs), format `<isv-name+product-name>`. |
 | *(session param)* | `WithSessionParams` | ✅ | ✅ | | Arbitrary server session confs (e.g. `ansi_mode`, `STATEMENT_TIMEOUT`, `QUERY_TAGS`) are forwarded unchanged. |
 | *(via session param)* | `WithQueryTags` | ✅ | ✅ | | Session-level query tags (serialized into `QUERY_TAGS`). |

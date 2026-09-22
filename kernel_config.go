@@ -14,6 +14,7 @@ import (
 	"github.com/databricks/databricks-sql-go/internal/backend/kernel"
 	"github.com/databricks/databricks-sql-go/internal/client"
 	"github.com/databricks/databricks-sql-go/internal/config"
+	"github.com/databricks/databricks-sql-go/internal/querytimeout"
 	"github.com/databricks/databricks-sql-go/telemetry"
 )
 
@@ -36,9 +37,9 @@ func validateClientQueryTimeout(timeout *time.Duration) error {
 	if timeout == nil {
 		return nil
 	}
-	if _, err := kernel.ClientQueryTimeoutMilliseconds(*timeout); err != nil {
+	if _, err := querytimeout.Milliseconds(*timeout); err != nil {
 		return fmt.Errorf("databricks: invalid WithClientQueryTimeout value: %v: %w",
-			err, dbsqlerr.ErrInvalidKernelConfig)
+			err, dbsqlerr.ErrInvalidClientQueryTimeout)
 	}
 	return nil
 }
