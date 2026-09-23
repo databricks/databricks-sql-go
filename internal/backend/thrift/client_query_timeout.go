@@ -5,20 +5,19 @@ import (
 	"time"
 
 	"github.com/databricks/databricks-sql-go/driverctx"
-	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/client"
 	context2 "github.com/databricks/databricks-sql-go/internal/compat/context"
 	dbsqlerrint "github.com/databricks/databricks-sql-go/internal/errors"
-	"github.com/databricks/databricks-sql-go/internal/querytimeout"
 	"github.com/databricks/databricks-sql-go/internal/sentinel"
 	"github.com/databricks/databricks-sql-go/logger"
-	"github.com/pkg/errors"
 )
 
 const (
 	clientQueryTimeoutCleanupBudget    = 30 * time.Second
+	clientQueryStatusRPCGrace          = 5 * time.Second
 	maxConcurrentClientTimeoutCleanups = 64
+	unlimitedClientQueryTimeout        = time.Duration(1<<63 - 1)
 )
 
 type clientQueryTimeoutError struct{}
@@ -86,12 +85,25 @@ func operationNeedsCleanup(resp *cli_service.TExecuteStatementResp) bool {
 	return resp.DirectResults == nil || resp.DirectResults.CloseOperation == nil
 }
 
+// finiteClientQueryTimeout snapshots and rounds a validated connector option.
+// nil and both public unlimited sentinels preserve the legacy Thrift path.
+func finiteClientQueryTimeout(configured *time.Duration) *time.Duration {
+	if configured == nil || *configured == 0 || *configured == unlimitedClientQueryTimeout {
+		return nil
+	}
+	timeout := *configured
+	if remainder := timeout % time.Millisecond; remainder != 0 {
+		timeout += time.Millisecond - remainder
+	}
+	return &timeout
+}
+
 func clientDeadlineExpired(deadline *time.Time) bool {
 	return deadline != nil && !time.Now().Before(*deadline)
 }
 
 func clientStatusGraceExpired(deadline *time.Time) bool {
-	return deadline != nil && time.Now().After(deadline.Add(querytimeout.StatusRPCGrace))
+	return deadline != nil && time.Now().After(deadline.Add(clientQueryStatusRPCGrace))
 }
 
 func (b *Backend) startClientTimeoutCleanup(ctx context.Context, opHandle *cli_service.TOperationHandle) {
@@ -138,8 +150,8 @@ func (b *Backend) pollOperationWithClientDeadline(
 		interval = sentinel.DEFAULT_INTERVAL
 	}
 	for {
-		if err := ctx.Err(); err != nil {
-			return b.cancelForCallerContext(ctx, opHandle, err)
+		if ctx.Err() != nil {
+			return b.pollOperation(ctx, opHandle)
 		}
 		remaining := time.Until(*clientDeadline)
 		if remaining <= 0 {
@@ -154,7 +166,7 @@ func (b *Backend) pollOperationWithClientDeadline(
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return b.cancelForCallerContext(ctx, opHandle, ctx.Err())
+			return b.pollOperation(ctx, opHandle)
 		case <-timer.C:
 		}
 
@@ -163,7 +175,7 @@ func (b *Backend) pollOperationWithClientDeadline(
 			return clientQueryTimeoutStatus(), errClientQueryTimeout
 		}
 
-		pollCtx, cancel := context.WithDeadline(context2.WithoutCancel(ctx), clientDeadline.Add(querytimeout.StatusRPCGrace))
+		pollCtx, cancel := context.WithDeadline(context2.WithoutCancel(ctx), clientDeadline.Add(clientQueryStatusRPCGrace))
 		statusResp, err := b.client.GetOperationStatus(pollCtx, &cli_service.TGetOperationStatusReq{OperationHandle: opHandle})
 		cancel()
 		if err == nil && isTerminalOperationStatus(statusResp) &&
@@ -171,7 +183,7 @@ func (b *Backend) pollOperationWithClientDeadline(
 			return statusResp, nil
 		}
 		if ctx.Err() != nil && clientDeadlineExpired(clientDeadline) {
-			return b.cancelForCallerContext(ctx, opHandle, ctx.Err())
+			return b.pollOperation(ctx, opHandle)
 		}
 		if clientDeadlineExpired(clientDeadline) {
 			b.startClientTimeoutCleanup(ctx, opHandle)
@@ -184,25 +196,7 @@ func (b *Backend) pollOperationWithClientDeadline(
 			return statusResp, nil
 		}
 		if ctx.Err() != nil {
-			return b.cancelForCallerContext(ctx, opHandle, ctx.Err())
+			return b.pollOperation(ctx, opHandle)
 		}
 	}
-}
-
-func (b *Backend) cancelForCallerContext(
-	ctx context.Context,
-	opHandle *cli_service.TOperationHandle,
-	cause error,
-) (*cli_service.TGetOperationStatusResp, error) {
-	newCtx := context2.WithoutCancel(ctx)
-	_, cancelErr := b.client.CancelOperation(newCtx, &cli_service.TCancelOperationReq{OperationHandle: opHandle})
-	if cancelErr != nil {
-		logger.WithContext(b.SessionID(), driverctx.CorrelationIdFromContext(ctx), operationID(opHandle)).
-			Err(cancelErr).Msg("databricks: cancel failed")
-	}
-	if errors.Is(cause, context.Canceled) {
-		cause = dbsqlerrint.NewExecutionError(ctx, dbsqlerr.ErrQueryExecution, cause, nil).
-			WithCategory(dbsqlerrint.CategoryStatementCancelled)
-	}
-	return nil, cause
 }

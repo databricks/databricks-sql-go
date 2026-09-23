@@ -24,7 +24,6 @@ import (
 	"github.com/databricks/databricks-sql-go/internal/debuglog"
 	dbsqlerrint "github.com/databricks/databricks-sql-go/internal/errors"
 	"github.com/databricks/databricks-sql-go/internal/querytags"
-	"github.com/databricks/databricks-sql-go/internal/querytimeout"
 	"github.com/databricks/databricks-sql-go/internal/sentinel"
 	"github.com/databricks/databricks-sql-go/internal/thrift_protocol"
 	"github.com/databricks/databricks-sql-go/logger"
@@ -182,13 +181,7 @@ func (b *Backend) Execute(ctx context.Context, req backend.ExecRequest) (backend
 func (b *Backend) runQuery(ctx context.Context, req backend.ExecRequest) (*cli_service.TExecuteStatementResp, *cli_service.TGetOperationStatusResp, error) {
 	defer debuglog.Track(ctx, "thrift.Backend.runQuery", "")()
 
-	var clientTimeout *time.Duration
-	if timeout, finite, err := querytimeout.FiniteDuration(b.cfg.ClientQueryTimeout); err != nil {
-		return nil, nil, fmt.Errorf("thrift: invalid client query timeout: %w", err)
-	} else if finite {
-		clientTimeout = &timeout
-	}
-
+	clientTimeout := finiteClientQueryTimeout(b.cfg.ClientQueryTimeout)
 	exStmtResp, clientDeadline, err := b.executeStatementWithClientTimeout(ctx, req, clientTimeout)
 	var log *logger.DBSQLLogger
 	log, ctx = client.LoggerAndContext(ctx, exStmtResp)
@@ -232,10 +225,6 @@ func (b *Backend) runQuery(ctx context.Context, req backend.ExecRequest) (*cli_s
 			if err != nil {
 				return exStmtResp, statusResp, err
 			}
-			if clientStatusGraceExpired(clientDeadline) {
-				b.startClientTimeoutCleanup(ctx, opHandle)
-				return exStmtResp, clientQueryTimeoutStatus(), errClientQueryTimeout
-			}
 			switch statusResp.GetOperationState() {
 			// terminal states
 			// good
@@ -263,10 +252,6 @@ func (b *Backend) runQuery(ctx context.Context, req backend.ExecRequest) (*cli_s
 		statusResp, err := b.pollOperationWithClientDeadline(ctx, opHandle, clientDeadline)
 		if err != nil {
 			return exStmtResp, statusResp, err
-		}
-		if clientStatusGraceExpired(clientDeadline) {
-			b.startClientTimeoutCleanup(ctx, opHandle)
-			return exStmtResp, clientQueryTimeoutStatus(), errClientQueryTimeout
 		}
 		switch statusResp.GetOperationState() {
 		// terminal states

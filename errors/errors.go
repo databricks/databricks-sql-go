@@ -82,21 +82,8 @@ var ErrKernelNotCompiled error = errors.New("the SEA-via-kernel backend is not c
 // the case programmatically instead of matching on message text.
 var ErrRequiresKernelBackend error = errors.New("requires the SEA-via-kernel backend")
 
-type invalidClientQueryTimeoutError struct{}
-
-func (invalidClientQueryTimeoutError) Error() string { return "invalid client query timeout" }
-
-// Is preserves the sentinel used when WithClientQueryTimeout was SEA-only.
-func (invalidClientQueryTimeoutError) Is(target error) bool {
-	return target == ErrInvalidKernelConfig
-}
-
-// value to be used with errors.Is() when WithClientQueryTimeout is negative or
-// exceeds the common Thrift/SEA range after millisecond rounding.
-var ErrInvalidClientQueryTimeout error = invalidClientQueryTimeoutError{}
-
 // value to be used with errors.Is() to determine that a kernel-backend option was
-// itself malformed (e.g. a bad proxy URL) — as opposed to
+// itself malformed (e.g. a bad proxy URL or client query timeout) — as opposed to
 // unsupported (ErrNotSupportedByKernel) or a transient connect failure. The kernel
 // path validates such options in the Go layer before handing them to the kernel's C
 // ABI, where the failure would otherwise surface as an opaque wrapped string a

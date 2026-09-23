@@ -96,7 +96,6 @@ func TestWithClientQueryTimeout(t *testing.T) {
 	t.Run("negative value is rejected during connector construction", func(t *testing.T) {
 		_, err := NewConnector(WithUseKernel(true), WithClientQueryTimeout(-time.Nanosecond))
 		require.Error(t, err)
-		assert.ErrorIs(t, err, dbsqlerr.ErrInvalidClientQueryTimeout)
 		assert.ErrorIs(t, err, dbsqlerr.ErrInvalidKernelConfig)
 		assert.Contains(t, err.Error(), "negative")
 	})
@@ -105,7 +104,6 @@ func TestWithClientQueryTimeout(t *testing.T) {
 		maxFinite := time.Duration(kernel.MaxClientQueryTimeoutMilliseconds) * time.Millisecond
 		_, err := NewConnector(WithUseKernel(true), WithClientQueryTimeout(maxFinite+time.Nanosecond))
 		require.Error(t, err)
-		assert.ErrorIs(t, err, dbsqlerr.ErrInvalidClientQueryTimeout)
 		assert.ErrorIs(t, err, dbsqlerr.ErrInvalidKernelConfig)
 		assert.Contains(t, err.Error(), "maximum")
 	})
