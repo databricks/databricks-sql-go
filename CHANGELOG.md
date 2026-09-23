@@ -1,6 +1,7 @@
 # Release History
 
 ## Unreleased
+- Upgrade the seven per-platform kernel bindings modules and source-build pin to v1.1.0; the kernel dependency is now stable and no longer experimental.
 - Add `WithClientQueryTimeout` for client-side kernel execution deadlines while preserving the legacy execute contract when the option is omitted.
 - Transparently auto-recover Thrift connections to Reyden / Real-Time warehouses: when a warehouse rejects the default Thrift protocol (SQLSTATE `KP001`), the session is re-opened on the SEA/kernel backend and the warehouse is remembered so later connections skip Thrift. Applies only when no backend was chosen explicitly (`WithUseKernel`). Note: recovery requires a `databricks_kernel` build, since the kernel backend is otherwise not linked in.
 - Parse explicit HTTP(S) server schemes case-insensitively, so mixed-case HTTP is rejected correctly by the SEA/kernel backend.
