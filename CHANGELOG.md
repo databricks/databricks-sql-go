@@ -1,10 +1,11 @@
 # Release History
 
-## Unreleased
-- Upgrade the seven per-platform kernel bindings modules and source-build pin to v1.1.0; the kernel dependency is now stable and no longer experimental.
-- Add `WithClientQueryTimeout` for client-side kernel execution deadlines while preserving the legacy execute contract when the option is omitted.
-- Transparently auto-recover Thrift connections to Reyden / Real-Time warehouses: when a warehouse rejects the default Thrift protocol (SQLSTATE `KP001`), the session is re-opened on the SEA/kernel backend and the warehouse is remembered so later connections skip Thrift. Applies only when no backend was chosen explicitly (`WithUseKernel`). Note: recovery requires a `databricks_kernel` build, since the kernel backend is otherwise not linked in.
-- Parse explicit HTTP(S) server schemes case-insensitively, so mixed-case HTTP is rejected correctly by the SEA/kernel backend.
+## v1.16.0 (2026-09-24)
+- Upgrade the kernel bindings to v1.1.0; the kernel dependency is now stable.
+- Expand the kernel backend with client query timeouts, configurable idle HTTP connections, and per-statement query tags.
+- Transparently recover Reyden/Real-Time warehouse connections from Thrift to the kernel backend.
+- Parse explicit HTTP(S) server schemes case-insensitively.
+- Upgrade Apache Thrift to v0.24.0 for dependency security findings.
 
 ## v1.15.1 (2026-09-01)
 - Pin the seven per-platform kernel bindings modules to v1.0.0.
