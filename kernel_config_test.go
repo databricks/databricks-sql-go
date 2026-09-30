@@ -471,6 +471,7 @@ var kernelConfigFieldDisposition = map[string]string{
 	"TelemetryFlushInterval":   "forwarded",
 	"UseArrowNativeDecimalDSN": "inert", // DSN carrier; kernel renders decimals exactly regardless
 	"TokenCacheEnabledDSN":     "inert", // DSN carrier; forwarded to KernelExperimental.TokenCacheEnabled
+	"GeospatialAsStringDSN":    "inert", // DSN carrier; forwarded to KernelExperimental.GeospatialAsString
 
 	// Fields promoted from the embedded CloudFetchConfig. The kernel does
 	// CloudFetch internally (below the C ABI), so none is forwarded — but each is
@@ -556,6 +557,26 @@ func TestBuildKernelConfig(t *testing.T) {
 		kc := buildKernelConfig(c, kernel.Auth{Mode: kernel.AuthPAT, Token: "dapi-x"})
 		if kc.MaxConnections != 37 {
 			t.Errorf("MaxConnections = %d, want 37", kc.MaxConnections)
+		}
+	})
+
+	t.Run("geospatial representation preserves omitted true and false", func(t *testing.T) {
+		c := baseKernelConfig()
+		kc := buildKernelConfig(c, kernel.Auth{Mode: kernel.AuthPAT, Token: "dapi-x"})
+		if kc.GeospatialAsString != nil {
+			t.Fatalf("omitted GeospatialAsString = %v, want nil", *kc.GeospatialAsString)
+		}
+
+		WithKernelGeospatialAsString(true)(c)
+		kc = buildKernelConfig(c, kernel.Auth{Mode: kernel.AuthPAT, Token: "dapi-x"})
+		if kc.GeospatialAsString == nil || !*kc.GeospatialAsString {
+			t.Fatalf("explicit string GeospatialAsString = %v, want true", kc.GeospatialAsString)
+		}
+
+		WithKernelGeospatialAsString(false)(c)
+		kc = buildKernelConfig(c, kernel.Auth{Mode: kernel.AuthPAT, Token: "dapi-x"})
+		if kc.GeospatialAsString == nil || *kc.GeospatialAsString {
+			t.Fatalf("explicit binary GeospatialAsString = %v, want false", kc.GeospatialAsString)
 		}
 	})
 

@@ -693,6 +693,39 @@ func TestParseConfig(t *testing.T) {
 	}
 }
 
+func TestParseDSNGeospatialAsString(t *testing.T) {
+	base := "token:supersecret@example.cloud.databricks.com:443/sql/1.0/endpoints/abc"
+	for _, tc := range []struct {
+		name  string
+		query string
+		want  *bool
+	}{
+		{name: "omitted", query: "", want: nil},
+		{name: "string", query: "?geospatialAsString=true", want: func() *bool { v := true; return &v }()},
+		{name: "binary", query: "?geospatialAsString=false", want: func() *bool { v := false; return &v }()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := ParseDSN(base + tc.query)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.want == nil {
+				if got.GeospatialAsStringDSN != nil {
+					t.Errorf("GeospatialAsStringDSN = %v, want nil", *got.GeospatialAsStringDSN)
+				}
+				return
+			}
+			if got.GeospatialAsStringDSN == nil || *got.GeospatialAsStringDSN != *tc.want {
+				t.Errorf("GeospatialAsStringDSN = %v, want %v", got.GeospatialAsStringDSN, *tc.want)
+			}
+		})
+	}
+
+	if _, err := ParseDSN(base + "?geospatialAsString=notabool"); err == nil {
+		t.Error("malformed geospatialAsString should fail DSN parsing")
+	}
+}
+
 func TestEffectiveSessionParams(t *testing.T) {
 	t.Run("no metric view leaves params unchanged", func(t *testing.T) {
 		c := &Config{UserConfig: UserConfig{SessionParams: map[string]string{"QUERY_TAGS": "a:1"}}}

@@ -255,6 +255,25 @@ func TestSetTokenCache(t *testing.T) {
 	}
 }
 
+func TestSetGeospatialAsString(t *testing.T) {
+	stringMode := true
+	binaryMode := false
+	for _, tc := range []struct {
+		name string
+		cfg  Config
+	}{
+		{name: "omitted is a no-op", cfg: Config{}},
+		{name: "string", cfg: Config{GeospatialAsString: &stringMode}},
+		{name: "binary", cfg: Config{GeospatialAsString: &binaryMode}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := trySetGeospatialAsString(tc.cfg); err != nil {
+				t.Errorf("applyGeospatialAsString(%s) = %v, want nil", tc.name, err)
+			}
+		})
+	}
+}
+
 func TestSetRequestTimeout(t *testing.T) {
 	for _, tc := range []struct {
 		name    string

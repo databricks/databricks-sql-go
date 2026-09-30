@@ -137,6 +137,12 @@ type KernelExperimentalConfig struct {
 	// false TokenCacheEnabled calls the setter with enabled=false so the kernel does
 	// NOT persist to disk by default.
 	TokenCacheEnabled bool
+
+	// GeospatialAsString selects the kernel's client-side GEOMETRY / GEOGRAPHY
+	// result representation. Nil keeps the kernel default (EWKT strings); true
+	// requests EWKT; false requests the canonical struct<srid,wkb> Arrow value.
+	// A pointer preserves omitted versus explicitly false.
+	GeospatialAsString *bool
 }
 
 // DeepCopy returns a deep copy of the experimental config, or nil for a nil
@@ -157,6 +163,10 @@ func (k *KernelExperimentalConfig) DeepCopy() *KernelExperimentalConfig {
 		MaxChunksInMemory:       k.MaxChunksInMemory,
 		DecimalAsFloat:          k.DecimalAsFloat,
 		TokenCacheEnabled:       k.TokenCacheEnabled,
+	}
+	if k.GeospatialAsString != nil {
+		asString := *k.GeospatialAsString
+		cp.GeospatialAsString = &asString
 	}
 	if k.MaxConnections != nil {
 		max := *k.MaxConnections
@@ -302,6 +312,10 @@ type UserConfig struct {
 	// unambiguous. False by default; when true, enables on-disk token-cache persistence
 	// for U2M OAuth. DSN: tokenCache=true.
 	TokenCacheEnabledDSN bool
+	// GeospatialAsStringDSN is a DSN-only carrier for
+	// geospatialAsString=true|false. Nil means omitted, preserving the kernel's
+	// default; the connector copies a present value into KernelExperimental.
+	GeospatialAsStringDSN *bool
 }
 
 // DeepCopy returns a true deep copy of UserConfig
@@ -323,7 +337,7 @@ func (ucfg UserConfig) DeepCopy() UserConfig {
 
 	}
 
-	return UserConfig{
+	result := UserConfig{
 		Protocol:                 ucfg.Protocol,
 		Host:                     ucfg.Host,
 		Port:                     ucfg.Port,
@@ -352,6 +366,11 @@ func (ucfg UserConfig) DeepCopy() UserConfig {
 		WarehouseID:              ucfg.WarehouseID,
 		TokenCacheEnabledDSN:     ucfg.TokenCacheEnabledDSN,
 	}
+	if ucfg.GeospatialAsStringDSN != nil {
+		asString := *ucfg.GeospatialAsStringDSN
+		result.GeospatialAsStringDSN = &asString
+	}
+	return result
 }
 
 var defaultMaxRows = 100000
@@ -515,6 +534,12 @@ func ParseDSN(dsn string) (UserConfig, error) {
 			return UserConfig{}, err
 		}
 		ucfg.TokenCacheEnabledDSN = tokenCache
+	}
+	if geospatialAsString, ok, err := params.extractAsBool("geospatialAsString"); ok {
+		if err != nil {
+			return UserConfig{}, err
+		}
+		ucfg.GeospatialAsStringDSN = &geospatialAsString
 	}
 
 	// Telemetry parameters
