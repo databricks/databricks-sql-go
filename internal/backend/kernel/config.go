@@ -99,6 +99,11 @@ type Config struct {
 	// the exact string (from WithKernelDecimalAsFloat). Kernel still sends Decimal128.
 	DecimalAsFloat bool
 
+	// GeospatialAsString selects the local GEOMETRY / GEOGRAPHY result
+	// representation. Nil keeps the kernel default; true requests EWKT strings;
+	// false requests the canonical struct<srid,wkb> Arrow representation.
+	GeospatialAsString *bool
+
 	// TokenCacheEnabled controls the kernel's on-disk OAuth U2M token-cache persistence
 	// (WithTokenCache / tokenCache DSN param). When false (the default), tokens are held
 	// in memory only; when true, the refresh token is persisted encrypted to

@@ -48,6 +48,11 @@ static inline KernelStatusCode go_kernel_set_driver_system_configuration(
       os_name, os_version, os_arch, client_app_name, locale_name, char_set_encoding,
       process_name);
 }
+
+static inline KernelStatusCode go_kernel_set_geospatial_as_string(
+    KernelSessionConfig* config, bool as_string) {
+  return kernel_session_config_set_geospatial_as_string(config, as_string);
+}
 */
 import "C"
 
@@ -251,6 +256,9 @@ func (k *KernelBackend) OpenSession(ctx context.Context) error {
 	if err := k.applyMaxConnections(cfg); err != nil {
 		return err
 	}
+	if err := k.applyGeospatialAsString(cfg); err != nil {
+		return err
+	}
 
 	// Retry / backoff policy (WithRetries). See applyRetry.
 	if err := k.applyRetry(cfg); err != nil {
@@ -419,6 +427,22 @@ func (k *KernelBackend) applyMaxConnections(cfg *C.KernelSessionConfig) error {
 		return C.go_kernel_set_max_connections(cfg, C.size_t(k.cfg.MaxConnections))
 	}); err != nil {
 		return fmt.Errorf("kernel: set_max_connections: %w", toConnError(err))
+	}
+	return nil
+}
+
+// applyGeospatialAsString selects the kernel's client-side representation for
+// GEOMETRY / GEOGRAPHY results. Nil deliberately skips the setter so the kernel
+// owns its default; an explicit false must cross the ABI rather than collapsing
+// into the zero value.
+func (k *KernelBackend) applyGeospatialAsString(cfg *C.KernelSessionConfig) error {
+	if k.cfg.GeospatialAsString == nil {
+		return nil
+	}
+	if err := call(func() C.KernelStatusCode {
+		return C.go_kernel_set_geospatial_as_string(cfg, C.bool(*k.cfg.GeospatialAsString))
+	}); err != nil {
+		return fmt.Errorf("kernel: set_geospatial_as_string: %w", toConnError(err))
 	}
 	return nil
 }
@@ -724,6 +748,18 @@ func trySetMaxConnections(cfg Config) error {
 	defer C.kernel_session_config_free(c)
 	k := &KernelBackend{cfg: cfg}
 	return k.applyMaxConnections(c)
+}
+
+// trySetGeospatialAsString exercises the geospatial representation setter
+// without opening a network session. It is used only by tagged kernel tests.
+func trySetGeospatialAsString(cfg Config) error {
+	var c *C.KernelSessionConfig
+	if err := call(func() C.KernelStatusCode { return C.kernel_session_config_new(&c) }); err != nil {
+		return fmt.Errorf("config_new: %w", err)
+	}
+	defer C.kernel_session_config_free(c)
+	k := &KernelBackend{cfg: cfg}
+	return k.applyGeospatialAsString(c)
 }
 
 // trySetTelemetry exercises the telemetry C setter without opening a network

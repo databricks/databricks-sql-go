@@ -1,5 +1,8 @@
 # Release History
 
+## Unreleased
+- Add kernel-backed GEOMETRY / GEOGRAPHY results in EWKT string or binary WKB mode, selected with `WithKernelGeospatialAsString` or the `geospatialAsString` DSN parameter. Logical column metadata is preserved, and Arrow batch access retains the canonical `struct<srid,wkb>` value in binary mode.
+
 ## v1.16.0 (2026-09-24)
 - Upgrade the kernel bindings to v1.1.0; the kernel dependency is now stable.
 - Expand the kernel backend with client query timeouts, configurable idle HTTP connections, and per-statement query tags.

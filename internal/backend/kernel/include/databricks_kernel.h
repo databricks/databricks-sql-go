@@ -201,10 +201,11 @@ typedef struct kernel_session_config_t KernelSessionConfig;
 typedef struct kernel_session_t kernel_session_t;
 typedef struct kernel_statement_t kernel_statement_t;
 typedef struct kernel_executed_statement_t kernel_executed_statement_t;
-/* Async-consumption executed handle. Reserved: the async submit path is
- * deferred in v0 (see kernel_statement_submit), so no consumer receives a
- * live instance yet. */
+/* Async-consumption executed handle returned by kernel_statement_submit. */
 typedef struct kernel_executed_async_statement_t kernel_executed_async_statement_t;
+/* Execution-scoped canceller detached from an async executed handle. */
+typedef struct kernel_executed_async_statement_canceller_t
+    kernel_executed_async_statement_canceller_t;
 typedef struct kernel_result_stream_t kernel_result_stream_t;
 /* Detached canceller for a sync-executing statement, returned by
  * kernel_statement_canceller_new. The returned handle is safe to use from
@@ -342,6 +343,18 @@ kernel_session_config_set_oauth_scopes(KernelSessionConfig* config,
 KernelStatusCode kernel_session_config_set_session_conf(KernelSessionConfig* config,
                                                         const char* key,
                                                         const char* value);
+
+/* Select the physical Arrow representation for GEOMETRY / GEOGRAPHY results.
+ * `as_string = true` requests EWKT in Arrow UTF-8 values; `false` requests
+ * Arrow `struct<srid: int32, wkb: binary>` values. Omitting this setter uses
+ * the kernel string default. Binary mode requires the native Reyden Arrow
+ * path; legacy text-only results cannot be reconstructed as WKB. This
+ * client-side setting is never sent to SEA.
+ * A raw `geospatial_as_string` entry set through
+ * kernel_session_config_set_session_conf remains server-bound and is forwarded
+ * unchanged. */
+KernelStatusCode kernel_session_config_set_geospatial_as_string(
+    KernelSessionConfig* config, bool as_string);
 
 /* Append one HTTP header sent on every request. Call once per header
  * (order preserved); `name` and `value` are both required. */
@@ -735,13 +748,7 @@ KernelStatusCode kernel_statement_execute_with_timeout_ms(
     kernel_statement_t* stmt, uint64_t timeout_ms,
     kernel_executed_statement_t** out);
 
-/*
- * Submit-and-return (async). DEFERRED in v0: this always returns
- * `KernelStatusCode_InvalidArgument` (with an explanatory last error) and
- * writes nothing to `*out`. Use the synchronous `kernel_statement_execute`
- * path. Declared so the symbol/contract is visible; wired when an ODBC /
- * Go consumer needs caller-driven polling.
- */
+/* Submit-and-return. On success, *out owns an async executed handle. */
 KernelStatusCode kernel_statement_submit(kernel_statement_t* stmt,
                                          kernel_executed_async_statement_t** out);
 
@@ -867,6 +874,50 @@ int64_t kernel_executed_statement_num_modified_rows(const kernel_executed_statem
 const char* kernel_executed_statement_query_id(const kernel_executed_statement_t* exec);
 
 KernelStatusCode kernel_executed_statement_close(kernel_executed_statement_t* exec);
+
+/* ─── Executed statement (caller-driven async) ─────────────────── */
+
+/* Perform at most one status request. Pending, Running, Succeeded, and Closed
+ * return Success. Failed returns SqlError; Cancelled returns Cancelled. On
+ * either non-success terminal outcome, *out is still set and the calling
+ * thread can retrieve the error information with kernel_get_last_error. */
+KernelStatusCode kernel_executed_async_statement_status(
+    kernel_executed_async_statement_t* exec, KernelStatementStatusKind* out);
+
+/* Materialise a successful terminal result as the existing owned result-stream
+ * handle. This is NON-BLOCKING: the caller must first poll
+ * kernel_executed_async_statement_status until it reports Succeeded (or Closed)
+ * before calling this. Invoking it before the statement reaches a terminal
+ * state returns KernelStatusCode_InvalidArgument rather than blocking (v0
+ * collapses invalid-state into that code). This is single-consumption:
+ * a second successful take is rejected. Close the stream with
+ * kernel_result_stream_close. */
+KernelStatusCode kernel_executed_async_statement_get_result_stream(
+    kernel_executed_async_statement_t* exec, kernel_result_stream_t** out);
+
+/* Most recently observed DML count, or -1 when unavailable. */
+int64_t kernel_executed_async_statement_num_modified_rows(
+    const kernel_executed_async_statement_t* exec);
+
+/* Borrowed NUL-terminated server statement id, valid until async close. */
+const char* kernel_executed_async_statement_query_id(
+    const kernel_executed_async_statement_t* exec);
+
+/* Create an execution-scoped canceller. The returned handle owns no borrow of
+ * exec and may cancel concurrently with status or result work. Join any
+ * in-flight cancel before freeing this handle. */
+KernelStatusCode kernel_executed_async_statement_canceller_new(
+    const kernel_executed_async_statement_t* exec,
+    kernel_executed_async_statement_canceller_t** out);
+KernelStatusCode kernel_executed_async_statement_canceller_cancel(
+    kernel_executed_async_statement_canceller_t* canceller);
+KernelStatusCode kernel_executed_async_statement_canceller_free(
+    kernel_executed_async_statement_canceller_t* canceller);
+
+/* Close the server operation and consume the async handle. The handle is
+ * consumed even when close returns an error. */
+KernelStatusCode kernel_executed_async_statement_close(
+    kernel_executed_async_statement_t* exec);
 
 /* ─── Result stream ───────────────────────────────────────────────────
  *

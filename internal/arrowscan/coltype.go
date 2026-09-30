@@ -4,10 +4,13 @@ import (
 	"database/sql"
 	"math"
 	"reflect"
+	"strings"
 	"time"
 
 	"github.com/apache/arrow/go/v12/arrow"
 )
+
+const databricksTypeNameMetadataKey = "databricks.type_name"
 
 // ColumnTypeInfo is the per-column metadata database/sql surfaces through
 // sql.ColumnType. The kernel derives it from the result's Arrow schema via
@@ -108,6 +111,52 @@ func ColumnTypeInfoFor(dt arrow.DataType) ColumnTypeInfo {
 		// (*interface{}) and no database name, rather than inventing one.
 		return ColumnTypeInfo{DatabaseTypeName: "", ScanType: scanTypeUnknown}
 	}
+}
+
+// LogicalGeospatialType returns the top-level Databricks geospatial family
+// recorded by the kernel on an Arrow field. The physical value is UTF-8 in
+// string mode and a struct in binary mode, so DataType alone cannot preserve
+// this database type name.
+func LogicalGeospatialType(field arrow.Field) (string, bool) {
+	name, ok := field.Metadata.GetValue(databricksTypeNameMetadataKey)
+	if !ok {
+		return "", false
+	}
+	switch strings.ToUpper(strings.TrimSpace(name)) {
+	case "GEOMETRY":
+		return "GEOMETRY", true
+	case "GEOGRAPHY":
+		return "GEOGRAPHY", true
+	default:
+		return "", false
+	}
+}
+
+// IsBinaryGeospatialField reports whether field is a logical top-level
+// GEOMETRY / GEOGRAPHY using the kernel's struct representation. The scanner
+// performs the detailed child-shape validation when it reads a non-null value.
+func IsBinaryGeospatialField(field arrow.Field) bool {
+	_, geospatial := LogicalGeospatialType(field)
+	return geospatial && field.Type.ID() == arrow.STRUCT
+}
+
+// ColumnTypeInfoForField preserves logical GEOMETRY / GEOGRAPHY metadata while
+// selecting a scan type that matches the requested physical representation.
+// Other fields retain the Arrow-only mapping.
+func ColumnTypeInfoForField(field arrow.Field) ColumnTypeInfo {
+	name, geospatial := LogicalGeospatialType(field)
+	if !geospatial {
+		return ColumnTypeInfoFor(field.Type)
+	}
+	if field.Type.ID() == arrow.STRUCT {
+		return varLen(name, scanTypeRawBytes)
+	}
+	if field.Type.ID() == arrow.STRING || field.Type.ID() == arrow.LARGE_STRING {
+		return varLen(name, scanTypeString)
+	}
+	info := ColumnTypeInfoFor(field.Type)
+	info.DatabaseTypeName = name
+	return info
 }
 
 // varLen builds a ColumnTypeInfo for a variable-length type, reporting the
