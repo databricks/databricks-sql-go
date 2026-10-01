@@ -255,6 +255,22 @@ func TestSetTokenCache(t *testing.T) {
 	}
 }
 
+func TestSetEnableGeoSpatialSupport(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		cfg  Config
+	}{
+		{name: "enabled", cfg: Config{EnableGeoSpatialSupport: true}},
+		{name: "disabled", cfg: Config{EnableGeoSpatialSupport: false}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := trySetEnableGeoSpatialSupport(tc.cfg); err != nil {
+				t.Errorf("applyEnableGeoSpatialSupport(%s) = %v, want nil", tc.name, err)
+			}
+		})
+	}
+}
+
 func TestSetRequestTimeout(t *testing.T) {
 	for _, tc := range []struct {
 		name    string

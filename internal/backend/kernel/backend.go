@@ -48,6 +48,11 @@ static inline KernelStatusCode go_kernel_set_driver_system_configuration(
       os_name, os_version, os_arch, client_app_name, locale_name, char_set_encoding,
       process_name);
 }
+
+static inline KernelStatusCode go_kernel_set_enable_geospatial_support(
+    KernelSessionConfig* config, bool enabled) {
+  return kernel_session_config_set_enable_geospatial_support(config, enabled);
+}
 */
 import "C"
 
@@ -251,6 +256,9 @@ func (k *KernelBackend) OpenSession(ctx context.Context) error {
 	if err := k.applyMaxConnections(cfg); err != nil {
 		return err
 	}
+	if err := k.applyEnableGeoSpatialSupport(cfg); err != nil {
+		return err
+	}
 
 	// Retry / backoff policy (WithRetries). See applyRetry.
 	if err := k.applyRetry(cfg); err != nil {
@@ -419,6 +427,18 @@ func (k *KernelBackend) applyMaxConnections(cfg *C.KernelSessionConfig) error {
 		return C.go_kernel_set_max_connections(cfg, C.size_t(k.cfg.MaxConnections))
 	}); err != nil {
 		return fmt.Errorf("kernel: set_max_connections: %w", toConnError(err))
+	}
+	return nil
+}
+
+// applyEnableGeoSpatialSupport selects the kernel's client-side representation
+// for GEOMETRY / GEOGRAPHY results. The connector supplies the default-enabled
+// value explicitly, and an explicit false crosses the ABI unchanged.
+func (k *KernelBackend) applyEnableGeoSpatialSupport(cfg *C.KernelSessionConfig) error {
+	if err := call(func() C.KernelStatusCode {
+		return C.go_kernel_set_enable_geospatial_support(cfg, C.bool(k.cfg.EnableGeoSpatialSupport))
+	}); err != nil {
+		return fmt.Errorf("kernel: set_enable_geospatial_support: %w", toConnError(err))
 	}
 	return nil
 }
@@ -724,6 +744,18 @@ func trySetMaxConnections(cfg Config) error {
 	defer C.kernel_session_config_free(c)
 	k := &KernelBackend{cfg: cfg}
 	return k.applyMaxConnections(c)
+}
+
+// trySetEnableGeoSpatialSupport exercises the geospatial representation setter
+// without opening a network session. It is used only by tagged kernel tests.
+func trySetEnableGeoSpatialSupport(cfg Config) error {
+	var c *C.KernelSessionConfig
+	if err := call(func() C.KernelStatusCode { return C.kernel_session_config_new(&c) }); err != nil {
+		return fmt.Errorf("config_new: %w", err)
+	}
+	defer C.kernel_session_config_free(c)
+	k := &KernelBackend{cfg: cfg}
+	return k.applyEnableGeoSpatialSupport(c)
 }
 
 // trySetTelemetry exercises the telemetry C setter without opening a network

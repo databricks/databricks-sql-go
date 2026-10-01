@@ -310,6 +310,10 @@ func withUserConfig(ucfg config.UserConfig) ConnOption {
 		if ucfg.TokenCacheEnabledDSN {
 			kernelExperimental(c).TokenCacheEnabled = true
 		}
+		if ucfg.EnableGeoSpatialSupportDSN != nil {
+			enabled := *ucfg.EnableGeoSpatialSupportDSN
+			kernelExperimental(c).EnableGeoSpatialSupport = &enabled
+		}
 	}
 }
 
@@ -662,6 +666,26 @@ func kernelExperimental(c *config.Config) *config.KernelExperimentalConfig {
 func WithKernelDecimalAsFloat(asFloat bool) ConnOption {
 	return func(c *config.Config) {
 		kernelExperimental(c).DecimalAsFloat = asFloat
+	}
+}
+
+// WithEnableGeoSpatialSupport selects how the kernel path exposes top-level
+// GEOMETRY and GEOGRAPHY result values. True (the default) returns raw WKB bytes
+// ([]byte). False returns WKT / EWKT strings. The logical GEOMETRY / GEOGRAPHY column type remains
+// available through database/sql metadata, and the per-row SRID remains present
+// in the Arrow struct returned by the driver's GetArrowBatches API.
+//
+// The conversion is entirely client-side and is never forwarded to SEA.
+// Nested geospatial values follow the driver's existing complex-value contract:
+// disabled mode renders WKT / EWKT leaves in JSON, while enabled mode preserves the
+// {"srid":...,"wkb":...} shape (with JSON base64 for WKB).
+//
+// EXPERIMENTAL, kernel-only: the default (Thrift) backend rejects this option at
+// connect time.
+func WithEnableGeoSpatialSupport(enabled bool) ConnOption {
+	return func(c *config.Config) {
+		value := enabled
+		kernelExperimental(c).EnableGeoSpatialSupport = &value
 	}
 }
 
