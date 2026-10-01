@@ -270,7 +270,7 @@ session parameter on both backends.
 |---|---|---|---|---|
 | `useArrowNativeDecimal` | `WithArrowNativeDecimal` | Thrift only (inert on kernel) | `false` | Thrift: return DECIMAL as native Arrow `decimal128` (lossless string when scanned via `database/sql`). The kernel path already renders DECIMAL as the exact string regardless. |
 | | `WithKernelDecimalAsFloat(b)` | SEA only | `false` | Scan top-level DECIMAL as lossy `float64` instead of the exact string. |
-| `geospatialAsString` | `WithKernelGeospatialAsString(b)` | SEA only | kernel default (`true`) | `true`: return GEOMETRY / GEOGRAPHY as EWKT strings. `false`: return top-level values as raw WKB `[]byte`; `GetArrowBatches` retains the full `{srid,wkb}` struct. |
+| `enableGeoSpatialSupport` | `WithEnableGeoSpatialSupport(b)` | SEA only | `true` | `true`: return top-level GEOMETRY / GEOGRAPHY as raw WKB `[]byte`; `GetArrowBatches` retains the full `{srid,wkb}` struct. `false`: return WKT / EWKT strings. |
 
 See [Cloud Fetch](#cloud-fetch), [TLS](#tls), and [Proxy](#proxy) for the remaining
 groups. Telemetry parameters are covered under [Telemetry](#telemetry).

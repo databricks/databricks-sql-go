@@ -693,7 +693,7 @@ func TestParseConfig(t *testing.T) {
 	}
 }
 
-func TestParseDSNGeospatialAsString(t *testing.T) {
+func TestParseDSNEnableGeoSpatialSupport(t *testing.T) {
 	base := "token:supersecret@example.cloud.databricks.com:443/sql/1.0/endpoints/abc"
 	for _, tc := range []struct {
 		name  string
@@ -701,8 +701,8 @@ func TestParseDSNGeospatialAsString(t *testing.T) {
 		want  *bool
 	}{
 		{name: "omitted", query: "", want: nil},
-		{name: "string", query: "?geospatialAsString=true", want: func() *bool { v := true; return &v }()},
-		{name: "binary", query: "?geospatialAsString=false", want: func() *bool { v := false; return &v }()},
+		{name: "enabled", query: "?enableGeoSpatialSupport=true", want: func() *bool { v := true; return &v }()},
+		{name: "disabled", query: "?enableGeoSpatialSupport=false", want: func() *bool { v := false; return &v }()},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := ParseDSN(base + tc.query)
@@ -710,19 +710,19 @@ func TestParseDSNGeospatialAsString(t *testing.T) {
 				t.Fatal(err)
 			}
 			if tc.want == nil {
-				if got.GeospatialAsStringDSN != nil {
-					t.Errorf("GeospatialAsStringDSN = %v, want nil", *got.GeospatialAsStringDSN)
+				if got.EnableGeoSpatialSupportDSN != nil {
+					t.Errorf("EnableGeoSpatialSupportDSN = %v, want nil", *got.EnableGeoSpatialSupportDSN)
 				}
 				return
 			}
-			if got.GeospatialAsStringDSN == nil || *got.GeospatialAsStringDSN != *tc.want {
-				t.Errorf("GeospatialAsStringDSN = %v, want %v", got.GeospatialAsStringDSN, *tc.want)
+			if got.EnableGeoSpatialSupportDSN == nil || *got.EnableGeoSpatialSupportDSN != *tc.want {
+				t.Errorf("EnableGeoSpatialSupportDSN = %v, want %v", got.EnableGeoSpatialSupportDSN, *tc.want)
 			}
 		})
 	}
 
-	if _, err := ParseDSN(base + "?geospatialAsString=notabool"); err == nil {
-		t.Error("malformed geospatialAsString should fail DSN parsing")
+	if _, err := ParseDSN(base + "?enableGeoSpatialSupport=notabool"); err == nil {
+		t.Error("malformed enableGeoSpatialSupport should fail DSN parsing")
 	}
 }
 

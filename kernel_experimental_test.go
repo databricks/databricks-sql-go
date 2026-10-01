@@ -40,7 +40,7 @@ var kernelExperimentalFieldDisposition = map[string]string{
 	"MaxConnections":          "forwarded", // set_max_connections
 	"MaxChunksInMemory":       "forwarded", // set_session_conf (cloudfetch_max_chunks_in_memory, client-only)
 	"DecimalAsFloat":          "forwarded", // kernel.Config.DecimalAsFloat → kernelOp → arrowscan (client-side scan choice)
-	"GeospatialAsString":      "forwarded", // set_geospatial_as_string; false is preserved via pointer
+	"EnableGeoSpatialSupport": "forwarded", // set_enable_geospatial_support; false is preserved via pointer
 	"TokenCacheEnabled":       "forwarded", // set_u2m_token_cache_config (enabled, nil passphrase)
 }
 
@@ -101,8 +101,8 @@ func TestWithKernelTLSOptionsSetExperimental(t *testing.T) {
 		{"decimal as float", WithKernelDecimalAsFloat(true), func(k *config.KernelExperimentalConfig) bool {
 			return k.DecimalAsFloat
 		}},
-		{"geospatial as binary", WithKernelGeospatialAsString(false), func(k *config.KernelExperimentalConfig) bool {
-			return k.GeospatialAsString != nil && !*k.GeospatialAsString
+		{"disable geospatial support", WithEnableGeoSpatialSupport(false), func(k *config.KernelExperimentalConfig) bool {
+			return k.EnableGeoSpatialSupport != nil && !*k.EnableGeoSpatialSupport
 		}},
 		{"token cache", WithTokenCache(true), func(k *config.KernelExperimentalConfig) bool {
 			return k.TokenCacheEnabled
@@ -142,7 +142,7 @@ func TestWithKernelOptionsRejectedOnThriftPath(t *testing.T) {
 		{"max connections", WithKernelMaxConnections(37)},
 		{"max chunks in memory", WithKernelMaxChunksInMemory(4)},
 		{"decimal as float", WithKernelDecimalAsFloat(true)},
-		{"geospatial as binary", WithKernelGeospatialAsString(false)},
+		{"disable geospatial support", WithEnableGeoSpatialSupport(false)},
 		{"token cache", WithTokenCache(true)},
 	}
 	for _, tc := range cases {
@@ -223,7 +223,7 @@ func TestWithKernelClientCertificateCopiesPEM(t *testing.T) {
 // mutation reach another.
 func TestKernelExperimentalDeepCopy(t *testing.T) {
 	maxConnections := 37
-	geospatialAsString := false
+	enableGeoSpatialSupport := false
 	orig := &config.KernelExperimentalConfig{
 		TLSTrustedCertsPEM:      []byte("ca-bundle"),
 		TLSClientCertPEM:        []byte("client-cert"),
@@ -237,7 +237,7 @@ func TestKernelExperimentalDeepCopy(t *testing.T) {
 		RetryOverallTimeout:     5 * time.Minute,
 		MaxConnections:          &maxConnections,
 		MaxChunksInMemory:       4,
-		GeospatialAsString:      &geospatialAsString,
+		EnableGeoSpatialSupport: &enableGeoSpatialSupport,
 		TokenCacheEnabled:       true,
 	}
 	cp := orig.DeepCopy()
@@ -259,10 +259,10 @@ func TestKernelExperimentalDeepCopy(t *testing.T) {
 	if cp.MaxChunksInMemory != 4 {
 		t.Errorf("DeepCopy lost MaxChunksInMemory: %v", cp.MaxChunksInMemory)
 	}
-	if cp.GeospatialAsString == nil || *cp.GeospatialAsString {
-		t.Errorf("DeepCopy lost GeospatialAsString: %v", cp.GeospatialAsString)
-	} else if cp.GeospatialAsString == orig.GeospatialAsString {
-		t.Error("DeepCopy aliased GeospatialAsString pointer")
+	if cp.EnableGeoSpatialSupport == nil || *cp.EnableGeoSpatialSupport {
+		t.Errorf("DeepCopy lost EnableGeoSpatialSupport: %v", cp.EnableGeoSpatialSupport)
+	} else if cp.EnableGeoSpatialSupport == orig.EnableGeoSpatialSupport {
+		t.Error("DeepCopy aliased EnableGeoSpatialSupport pointer")
 	}
 	if !cp.TokenCacheEnabled {
 		t.Errorf("DeepCopy lost TokenCacheEnabled: %v", cp.TokenCacheEnabled)

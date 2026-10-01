@@ -310,9 +310,9 @@ func withUserConfig(ucfg config.UserConfig) ConnOption {
 		if ucfg.TokenCacheEnabledDSN {
 			kernelExperimental(c).TokenCacheEnabled = true
 		}
-		if ucfg.GeospatialAsStringDSN != nil {
-			asString := *ucfg.GeospatialAsStringDSN
-			kernelExperimental(c).GeospatialAsString = &asString
+		if ucfg.EnableGeoSpatialSupportDSN != nil {
+			enabled := *ucfg.EnableGeoSpatialSupportDSN
+			kernelExperimental(c).EnableGeoSpatialSupport = &enabled
 		}
 	}
 }
@@ -669,24 +669,23 @@ func WithKernelDecimalAsFloat(asFloat bool) ConnOption {
 	}
 }
 
-// WithKernelGeospatialAsString selects how the kernel path exposes top-level
-// GEOMETRY and GEOGRAPHY result values. True returns EWKT strings. False returns
-// raw WKB bytes ([]byte); the logical GEOMETRY / GEOGRAPHY column type remains
+// WithEnableGeoSpatialSupport selects how the kernel path exposes top-level
+// GEOMETRY and GEOGRAPHY result values. True (the default) returns raw WKB bytes
+// ([]byte). False returns WKT / EWKT strings. The logical GEOMETRY / GEOGRAPHY column type remains
 // available through database/sql metadata, and the per-row SRID remains present
-// in the Arrow struct returned by the driver's GetArrowBatches API. Omitting the
-// option keeps the kernel default (currently EWKT strings).
+// in the Arrow struct returned by the driver's GetArrowBatches API.
 //
 // The conversion is entirely client-side and is never forwarded to SEA.
 // Nested geospatial values follow the driver's existing complex-value contract:
-// string mode renders EWKT leaves in JSON, while binary mode preserves the
+// disabled mode renders WKT / EWKT leaves in JSON, while enabled mode preserves the
 // {"srid":...,"wkb":...} shape (with JSON base64 for WKB).
 //
 // EXPERIMENTAL, kernel-only: the default (Thrift) backend rejects this option at
 // connect time.
-func WithKernelGeospatialAsString(asString bool) ConnOption {
+func WithEnableGeoSpatialSupport(enabled bool) ConnOption {
 	return func(c *config.Config) {
-		value := asString
-		kernelExperimental(c).GeospatialAsString = &value
+		value := enabled
+		kernelExperimental(c).EnableGeoSpatialSupport = &value
 	}
 }
 

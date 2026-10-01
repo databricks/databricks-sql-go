@@ -255,20 +255,17 @@ func TestSetTokenCache(t *testing.T) {
 	}
 }
 
-func TestSetGeospatialAsString(t *testing.T) {
-	stringMode := true
-	binaryMode := false
+func TestSetEnableGeoSpatialSupport(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		cfg  Config
 	}{
-		{name: "omitted is a no-op", cfg: Config{}},
-		{name: "string", cfg: Config{GeospatialAsString: &stringMode}},
-		{name: "binary", cfg: Config{GeospatialAsString: &binaryMode}},
+		{name: "enabled", cfg: Config{EnableGeoSpatialSupport: true}},
+		{name: "disabled", cfg: Config{EnableGeoSpatialSupport: false}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if err := trySetGeospatialAsString(tc.cfg); err != nil {
-				t.Errorf("applyGeospatialAsString(%s) = %v, want nil", tc.name, err)
+			if err := trySetEnableGeoSpatialSupport(tc.cfg); err != nil {
+				t.Errorf("applyEnableGeoSpatialSupport(%s) = %v, want nil", tc.name, err)
 			}
 		})
 	}

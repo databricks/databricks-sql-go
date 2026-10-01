@@ -468,10 +468,10 @@ var kernelConfigFieldDisposition = map[string]string{
 	"EnableTelemetry":    "forwarded",
 	"TelemetryBatchSize": "forwarded",
 	// Forwarded to the kernel's telemetry scheduler on the kernel path.
-	"TelemetryFlushInterval":   "forwarded",
-	"UseArrowNativeDecimalDSN": "inert", // DSN carrier; kernel renders decimals exactly regardless
-	"TokenCacheEnabledDSN":     "inert", // DSN carrier; forwarded to KernelExperimental.TokenCacheEnabled
-	"GeospatialAsStringDSN":    "inert", // DSN carrier; forwarded to KernelExperimental.GeospatialAsString
+	"TelemetryFlushInterval":     "forwarded",
+	"UseArrowNativeDecimalDSN":   "inert", // DSN carrier; kernel renders decimals exactly regardless
+	"TokenCacheEnabledDSN":       "inert", // DSN carrier; forwarded to KernelExperimental.TokenCacheEnabled
+	"EnableGeoSpatialSupportDSN": "inert", // DSN carrier; forwarded to KernelExperimental.EnableGeoSpatialSupport
 
 	// Fields promoted from the embedded CloudFetchConfig. The kernel does
 	// CloudFetch internally (below the C ABI), so none is forwarded — but each is
@@ -560,23 +560,23 @@ func TestBuildKernelConfig(t *testing.T) {
 		}
 	})
 
-	t.Run("geospatial representation preserves omitted true and false", func(t *testing.T) {
+	t.Run("geospatial support defaults true and preserves explicit values", func(t *testing.T) {
 		c := baseKernelConfig()
 		kc := buildKernelConfig(c, kernel.Auth{Mode: kernel.AuthPAT, Token: "dapi-x"})
-		if kc.GeospatialAsString != nil {
-			t.Fatalf("omitted GeospatialAsString = %v, want nil", *kc.GeospatialAsString)
+		if !kc.EnableGeoSpatialSupport {
+			t.Fatal("omitted EnableGeoSpatialSupport = false, want default true")
 		}
 
-		WithKernelGeospatialAsString(true)(c)
+		WithEnableGeoSpatialSupport(false)(c)
 		kc = buildKernelConfig(c, kernel.Auth{Mode: kernel.AuthPAT, Token: "dapi-x"})
-		if kc.GeospatialAsString == nil || !*kc.GeospatialAsString {
-			t.Fatalf("explicit string GeospatialAsString = %v, want true", kc.GeospatialAsString)
+		if kc.EnableGeoSpatialSupport {
+			t.Fatal("explicit EnableGeoSpatialSupport=false was not preserved")
 		}
 
-		WithKernelGeospatialAsString(false)(c)
+		WithEnableGeoSpatialSupport(true)(c)
 		kc = buildKernelConfig(c, kernel.Auth{Mode: kernel.AuthPAT, Token: "dapi-x"})
-		if kc.GeospatialAsString == nil || *kc.GeospatialAsString {
-			t.Fatalf("explicit binary GeospatialAsString = %v, want false", kc.GeospatialAsString)
+		if !kc.EnableGeoSpatialSupport {
+			t.Fatal("explicit EnableGeoSpatialSupport=true was not preserved")
 		}
 	})
 

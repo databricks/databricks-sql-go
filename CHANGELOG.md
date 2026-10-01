@@ -1,7 +1,7 @@
 # Release History
 
 ## Unreleased
-- Add kernel-backed GEOMETRY / GEOGRAPHY results in EWKT string or binary WKB mode, selected with `WithKernelGeospatialAsString` or the `geospatialAsString` DSN parameter. Logical column metadata is preserved, and Arrow batch access retains the canonical `struct<srid,wkb>` value in binary mode.
+- Add default-enabled kernel-backed GEOMETRY / GEOGRAPHY results, selected with `WithEnableGeoSpatialSupport` or the `enableGeoSpatialSupport` DSN parameter. Enabled mode returns raw WKB from `database/sql`; disabled mode returns WKT / EWKT. Logical column metadata is preserved, and Arrow batch access retains the canonical `struct<srid,wkb>` value in enabled mode.
 
 ## v1.16.0 (2026-09-24)
 - Upgrade the kernel bindings to v1.1.0; the kernel dependency is now stable.

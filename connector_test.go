@@ -450,8 +450,8 @@ func TestNewConnector(t *testing.T) {
 		assert.Nil(t, coni.cfg.KernelExperimental)
 	})
 
-	t.Run("Connector test geospatialAsString=false DSN param preserves explicit false", func(t *testing.T) {
-		ucfg, err := config.ParseDSN("token:supersecret@databricks-host:443/sql/1.0/endpoints/abc?geospatialAsString=false")
+	t.Run("Connector test enableGeoSpatialSupport=false DSN param preserves explicit false", func(t *testing.T) {
+		ucfg, err := config.ParseDSN("token:supersecret@databricks-host:443/sql/1.0/endpoints/abc?enableGeoSpatialSupport=false")
 		require.NoError(t, err)
 		con, err := NewConnector(withUserConfig(ucfg))
 		require.NoError(t, err)
@@ -459,8 +459,8 @@ func TestNewConnector(t *testing.T) {
 		coni, ok := con.(*connector)
 		require.True(t, ok)
 		require.NotNil(t, coni.cfg.KernelExperimental)
-		require.NotNil(t, coni.cfg.KernelExperimental.GeospatialAsString)
-		assert.False(t, *coni.cfg.KernelExperimental.GeospatialAsString)
+		require.NotNil(t, coni.cfg.KernelExperimental.EnableGeoSpatialSupport)
+		assert.False(t, *coni.cfg.KernelExperimental.EnableGeoSpatialSupport)
 	})
 
 	t.Run("Connector test WithTransport sets HTTPClient in CloudFetchConfig", func(t *testing.T) {
