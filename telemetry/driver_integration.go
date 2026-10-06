@@ -6,12 +6,16 @@ import (
 	"time"
 
 	"github.com/databricks/databricks-sql-go/internal/config"
+	"github.com/databricks/databricks-sql-go/internal/featureflags"
 )
 
 // TelemetryInitOptions bundles the parameters for InitializeForConnection.
 type TelemetryInitOptions struct {
 	// Host is the Databricks host.
 	Host string
+
+	// WorkspaceID partitions flags when several workspaces share a SPOG host.
+	WorkspaceID string
 
 	// DriverVersion is the driver version string.
 	DriverVersion string
@@ -58,13 +62,16 @@ func InitializeForConnection(ctx context.Context, opts TelemetryInitOptions) *In
 	}
 
 	// Get feature flag cache context FIRST (for reference counting)
-	flagCache := getFeatureFlagCache()
-	flagCache.getOrCreateContext(opts.Host)
+	flagCache := featureflags.GetCache()
+	flagCache.Acquire(opts.Host, opts.WorkspaceID)
 
 	// Check if telemetry should be enabled
-	enabled := isTelemetryEnabled(ctx, cfg, opts.Host, opts.DriverVersion, opts.UserAgent, opts.HTTPClient)
+	enabled := isTelemetryEnabled(ctx, cfg, featureflags.Request{
+		Host: opts.Host, WorkspaceID: opts.WorkspaceID, DriverVersion: opts.DriverVersion,
+		UserAgent: opts.UserAgent, HTTPClient: opts.HTTPClient,
+	})
 	if !enabled {
-		flagCache.releaseContext(opts.Host)
+		flagCache.Release(opts.Host, opts.WorkspaceID)
 		return nil
 	}
 
@@ -73,7 +80,7 @@ func InitializeForConnection(ctx context.Context, opts TelemetryInitOptions) *In
 	telemetryClient := clientMgr.getOrCreateClient(opts.Host, opts.DriverVersion, opts.UserAgent, opts.HTTPClient, cfg)
 	if telemetryClient == nil {
 		// Client failed to start; release the flag cache ref we incremented above
-		flagCache.releaseContext(opts.Host)
+		flagCache.Release(opts.Host, opts.WorkspaceID)
 		return nil
 	}
 
@@ -85,12 +92,12 @@ func InitializeForConnection(ctx context.Context, opts TelemetryInitOptions) *In
 //
 // Parameters:
 //   - host: Databricks host
-func ReleaseForConnection(host string) {
+func ReleaseForConnection(host string, workspaceID ...string) {
 	// Release client manager reference
 	clientMgr := getClientManager()
 	_ = clientMgr.releaseClient(host)
 
 	// Release feature flag cache reference
-	flagCache := getFeatureFlagCache()
-	flagCache.releaseContext(host)
+	flagCache := featureflags.GetCache()
+	flagCache.Release(host, workspaceID...)
 }

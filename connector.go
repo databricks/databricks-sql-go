@@ -87,7 +87,8 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 	// transport that injects x-databricks-org-id. Thrift routes via the URL so
 	// its own c.client doesn't need wrapping.
 	telemetryClient := c.client
-	if spogHeaders := extractSpogHeaders(c.cfg.HTTPPath); len(spogHeaders) > 0 {
+	spogHeaders := extractSpogHeaders(c.cfg.HTTPPath)
+	if len(spogHeaders) > 0 {
 		telemetryClient = withSpogHeaders(c.client, spogHeaders)
 	}
 
@@ -103,6 +104,7 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 	if !skipTelemetry {
 		conn.telemetry = telemetry.InitializeForConnection(ctx, telemetry.TelemetryInitOptions{
 			Host:            c.cfg.Host,
+			WorkspaceID:     spogHeaders["x-databricks-org-id"],
 			DriverVersion:   c.cfg.DriverVersion,
 			UserAgent:       client.BuildUserAgent(c.cfg),
 			HTTPClient:      telemetryClient,

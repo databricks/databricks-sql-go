@@ -75,7 +75,7 @@ func (c *conn) Close() error {
 		}
 		c.telemetry.RecordOperation(ctx, c.id, "", telemetry.OperationTypeDeleteSession, time.Since(closeStart).Milliseconds(), telErr)
 		_ = c.telemetry.Close(ctx)
-		telemetry.ReleaseForConnection(c.cfg.Host)
+		telemetry.ReleaseForConnection(c.cfg.Host, extractSpogHeaders(c.cfg.HTTPPath)["x-databricks-org-id"])
 	}
 
 	if err != nil {

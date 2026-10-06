@@ -12,6 +12,7 @@ require (
 	github.com/pierrec/lz4/v4 v4.1.15
 	github.com/stretchr/testify v1.8.1
 	golang.org/x/oauth2 v0.27.0
+	golang.org/x/sync v0.22.0
 	gotest.tools/gotestsum v1.8.2
 )
 
@@ -38,7 +39,6 @@ require (
 	github.com/zeebo/xxh3 v1.0.2 // indirect
 	golang.org/x/crypto v0.55.0 // indirect
 	golang.org/x/mod v0.40.0 // indirect
-	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/telemetry v0.0.0-20260811182544-a038080d80e5 // indirect
 	golang.org/x/term v0.45.0 // indirect
 	golang.org/x/tools v0.49.0 // indirect
