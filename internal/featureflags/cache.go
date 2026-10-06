@@ -46,6 +46,7 @@ type featureFlagContext struct {
 	refCount      int // protected by Cache.mu
 	cacheDuration time.Duration
 	fetch         singleflight.Group
+	refresh       sync.Mutex // concurrent stale readers skip an in-flight refresh
 }
 
 var (
@@ -122,14 +123,15 @@ func (c *Cache) getValue(ctx context.Context, request Request, name string) (str
 	}
 
 	flagCtx.mu.RLock()
+	cachedFlags := flagCtx.flags
 	if !flagCtx.isExpired() {
-		value := flagCtx.flags[name]
+		value := cachedFlags[name]
 		flagCtx.mu.RUnlock()
 		return value, nil
 	}
 	flagCtx.mu.RUnlock()
 
-	result := flagCtx.fetch.DoChan("", func() (any, error) {
+	load := func() (map[string]string, error) {
 		flagCtx.mu.RLock()
 		if !flagCtx.isExpired() {
 			flags := flagCtx.flags
@@ -148,7 +150,17 @@ func (c *Cache) getValue(ctx context.Context, request Request, name string) (str
 			return flagCtx.flags, nil // Retain stale values on a refresh failure.
 		}
 		return nil, err
-	})
+	}
+	if cachedFlags != nil {
+		if !flagCtx.refresh.TryLock() {
+			return cachedFlags[name], nil
+		}
+		defer flagCtx.refresh.Unlock()
+		flags, err := load()
+		return flags[name], err
+	}
+
+	result := flagCtx.fetch.DoChan("", func() (any, error) { return load() })
 	select {
 	case <-ctx.Done():
 		return "", ctx.Err()

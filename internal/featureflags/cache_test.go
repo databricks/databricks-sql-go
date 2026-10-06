@@ -502,6 +502,56 @@ func TestTypedFlags(t *testing.T) {
 	}
 }
 
+func TestStaleReadersDoNotWaitForRefresh(t *testing.T) {
+	started := make(chan struct{})
+	allowRefresh := make(chan struct{})
+	unblockRefresh := sync.OnceFunc(func() { close(allowRefresh) })
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) == 1 {
+			close(started)
+		}
+		<-allowRefresh
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"flags":       []map[string]string{{"name": "flag", "value": "true"}},
+			"ttl_seconds": 60,
+		})
+	}))
+	defer server.Close()
+	defer unblockRefresh()
+
+	cache := &Cache{contexts: make(map[string]*featureFlagContext)}
+	entry := cache.Acquire(server.URL)
+	entry.flags = map[string]string{"flag": "false"}
+	entry.lastFetched = time.Now().Add(-time.Hour)
+	request := Request{Host: server.URL, DriverVersion: "test-version", HTTPClient: server.Client()}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	refreshed := make(chan error, 1)
+	go func() {
+		_, err := cache.GetBool(ctx, request, "flag")
+		refreshed <- err
+	}()
+	select {
+	case <-started:
+	case <-ctx.Done():
+		t.Fatal("refresh did not start")
+	}
+
+	readerCtx, cancelReader := context.WithTimeout(ctx, 100*time.Millisecond)
+	defer cancelReader()
+	value, err := cache.GetBool(readerCtx, request, "flag")
+	require.NoError(t, err, "a stale reader must not wait for the refresh")
+	require.False(t, value)
+
+	unblockRefresh()
+	require.NoError(t, <-refreshed)
+	value, err = cache.GetBool(ctx, request, "flag")
+	require.NoError(t, err)
+	require.True(t, value)
+	require.Equal(t, int32(1), calls.Load())
+}
+
 func TestWorkspaceFetchAndRefresh(t *testing.T) {
 	var calls atomic.Int32
 	var fail atomic.Bool
