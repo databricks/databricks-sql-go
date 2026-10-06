@@ -17,6 +17,8 @@ func NewAuthenticator(clientID, clientSecret, hostName string) auth.Authenticato
 	return NewAuthenticatorWithScopes(clientID, clientSecret, hostName, []string{})
 }
 
+// NewAuthenticatorWithScopes requests exactly the given scopes, or "all-apis" when
+// scopes is empty.
 func NewAuthenticatorWithScopes(clientID, clientSecret, hostName string, scopes []string) auth.Authenticator {
 	scopes = GetScopes(hostName, scopes)
 	return &authClient{
@@ -45,8 +47,7 @@ func (c *authClient) M2MCredentials() (clientID, clientSecret string) {
 	return c.clientID, c.clientSecret
 }
 
-// M2MScopes exposes the configured scopes so the kernel backend can reject a
-// custom set its scopes-less M2M setter can't carry (M2MScopesSupported).
+// M2MScopes exposes the configured scopes so the kernel backend can forward them.
 func (c *authClient) M2MScopes() []string {
 	return c.scopes
 }
@@ -108,9 +109,11 @@ func GetConfig(ctx context.Context, issuerURL, clientID, clientSecret string, sc
 	return config, nil
 }
 
+// GetScopes returns scopes unchanged, defaulting to "all-apis" only when empty so a
+// least-privilege secret (e.g. scoped to "sql") can authenticate.
 func GetScopes(hostName string, scopes []string) []string {
-	if !oauth.HasScope(scopes, "all-apis") {
-		scopes = append(scopes, "all-apis")
+	if len(scopes) == 0 {
+		return []string{"all-apis"}
 	}
 
 	return scopes

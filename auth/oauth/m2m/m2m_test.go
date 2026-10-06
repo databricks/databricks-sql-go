@@ -24,14 +24,14 @@ func TestM2MScopes(t *testing.T) {
 		assert.Equal(t, []string{"all-apis"}, auth.scopes)
 	})
 
-	t.Run("should add all-apis to passed scopes", func(t *testing.T) {
-		auth := NewAuthenticatorWithScopes("id", "secret", "staging.cloud.company.com", []string{"my-scope"}).(*authClient)
+	t.Run("should not add all-apis to passed scopes", func(t *testing.T) {
+		auth := NewAuthenticatorWithScopes("id", "secret", "staging.cloud.company.com", []string{"sql"}).(*authClient)
 		assert.Equal(t, "id", auth.clientID)
 		assert.Equal(t, "secret", auth.clientSecret)
-		assert.Equal(t, []string{"my-scope", "all-apis"}, auth.scopes)
+		assert.Equal(t, []string{"sql"}, auth.scopes)
 	})
 
-	t.Run("should not add all-apis if already in passed scopes", func(t *testing.T) {
+	t.Run("should keep all-apis if already in passed scopes", func(t *testing.T) {
 		auth := NewAuthenticatorWithScopes("id", "secret", "staging.cloud.company.com", []string{"all-apis", "my-scope"}).(*authClient)
 		assert.Equal(t, "id", auth.clientID)
 		assert.Equal(t, "secret", auth.clientSecret)

@@ -19,8 +19,9 @@ const (
 // for Mode are populated. The connector fills it from the driver config (see
 // validateKernelConfig); OpenSession maps it to exactly one
 // kernel_session_config_set_auth_* call.
-// Scopes and RedirectPort map to the optional args of set_auth_u2m and are wired
-// through to it by setAuth. For U2M, resolveKernelAuth populates ClientID/Scopes
+// For M2M, setAuth forwards Scopes via set_oauth_scopes. For U2M, Scopes and
+// RedirectPort map to the optional args of set_auth_u2m and are wired through to
+// it by setAuth; resolveKernelAuth populates ClientID/Scopes
 // with the fixed in-house databricks-sql-connector client and offline_access + sql
 // on every cloud (NOT the cloud-inferred Thrift values), because the kernel runs one
 // in-house workspace-federated flow with no Azure branching. RedirectPort stays zero
@@ -33,7 +34,7 @@ type Auth struct {
 	Token        string   // PAT
 	ClientID     string   // M2M + U2M (U2M: fixed in-house client, cloud-agnostic); federated PAT uses the optional SP-wide client id
 	ClientSecret string   // M2M
-	Scopes       []string // U2M — fixed offline_access + sql (cloud-agnostic); nil → kernel default
+	Scopes       []string // M2M — the authenticator's scopes; U2M — fixed offline_access + sql (cloud-agnostic); nil → kernel default
 	RedirectPort uint16   // U2M — no user option today; 0 → kernel default port (8030)
 }
 
@@ -50,25 +51,9 @@ type Auth struct {
 type M2MCredentialsProvider interface {
 	// M2MCredentials returns the client id and client secret.
 	M2MCredentials() (clientID, clientSecret string)
-	// M2MScopes returns the configured OAuth scopes. The kernel's C-ABI M2M setter
-	// takes no scopes (it applies its own default set), so resolveKernelAuth rejects
-	// a custom set via M2MScopesSupported rather than silently dropping it.
+	// M2MScopes returns the configured OAuth scopes, forwarded to the kernel via
+	// set_oauth_scopes.
 	M2MScopes() []string
-}
-
-// M2MScopesSupported reports whether an M2M authenticator's scopes can be honored
-// on the kernel path. The kernel's set_auth_m2m has no scopes argument and applies
-// "all-apis" itself, so only an empty set or exactly {"all-apis"} is forwardable;
-// any other set would silently downgrade to the kernel default, so it is rejected.
-func M2MScopesSupported(scopes []string) bool {
-	switch len(scopes) {
-	case 0:
-		return true
-	case 1:
-		return scopes[0] == "all-apis"
-	default:
-		return false
-	}
 }
 
 // U2MCredentialsProvider is implemented by the OAuth U2M authenticator. The kernel

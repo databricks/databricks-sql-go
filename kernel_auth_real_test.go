@@ -38,6 +38,22 @@ func TestResolveKernelAuthRealAuthenticators(t *testing.T) {
 		if a.Mode != kernel.AuthM2M || a.ClientID != "real-cid" || a.ClientSecret != "real-secret" {
 			t.Errorf("auth = %+v, want mode=M2M clientID=real-cid clientSecret=real-secret", a)
 		}
+		if want := []string{"all-apis"}; !reflect.DeepEqual(a.Scopes, want) {
+			t.Errorf("M2M scopes = %v, want %v", a.Scopes, want)
+		}
+	})
+
+	t.Run("real M2M authenticator forwards custom scopes without all-apis", func(t *testing.T) {
+		c := baseKernelConfig()
+		c.AccessToken = ""
+		c.Authenticator = m2m.NewAuthenticatorWithScopes("real-cid", "real-secret", "staging.cloud.databricks.com", []string{"sql"})
+		a, err := validateKernelConfig(c)
+		if err != nil {
+			t.Fatalf("real M2M authenticator with scopes should validate: %v", err)
+		}
+		if want := []string{"sql"}; !reflect.DeepEqual(a.Scopes, want) {
+			t.Errorf("M2M scopes = %v, want %v", a.Scopes, want)
+		}
 	})
 
 	t.Run("real U2M authenticator resolves to a U2M descriptor", func(t *testing.T) {
