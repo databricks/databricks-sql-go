@@ -1,5 +1,8 @@
 # Release History
 
+## Unreleased
+- **Behavior change:** `m2m.NewAuthenticatorWithScopes` now requests exactly the given scopes instead of always appending `all-apis`, so service principals with scoped OAuth secrets (e.g. `sql` only) can authenticate (databricks/databricks-sql-go#476). Callers that relied on `all-apis` being appended must now include it explicitly; `m2m.NewAuthenticator` still requests `all-apis`. The SEA/kernel backend now forwards custom M2M scopes instead of rejecting them.
+
 ## v1.16.0 (2026-09-24)
 - Upgrade the kernel bindings to v1.1.0; the kernel dependency is now stable.
 - Expand the kernel backend with client query timeouts, configurable idle HTTP connections, and per-statement query tags.
