@@ -559,10 +559,11 @@ func describeRetry(r *RetryConfig) string {
 }
 
 // setAuth applies the resolved auth form to the session config via exactly one
-// kernel_session_config_set_auth_* call. PAT and M2M are plain value setters; U2M
-// records the client id / redirect port / scopes and the kernel owns the browser
-// (PKCE) flow, started when the session opens. Empty string args are passed as NULL
-// so the kernel applies its own defaults (e.g. U2M's public client / default port).
+// kernel_session_config_set_auth_* call (M2M scopes go through set_oauth_scopes).
+// PAT and M2M are plain value setters; U2M records the client id / redirect port /
+// scopes and the kernel owns the browser (PKCE) flow, started when the session
+// opens. Empty string args are passed as NULL so the kernel applies its own
+// defaults (e.g. U2M's public client / default port).
 func (k *KernelBackend) setAuth(cfg *C.KernelSessionConfig) error {
 	switch k.cfg.Auth.Mode {
 	case AuthM2M:
@@ -574,6 +575,16 @@ func (k *KernelBackend) setAuth(cfg *C.KernelSessionConfig) error {
 			return C.kernel_session_config_set_auth_m2m(cfg, clientID.c, secret.c)
 		}); err != nil {
 			return fmt.Errorf("kernel: set_auth_m2m: %w", toConnError(err))
+		}
+		// set_auth_m2m has no scopes arg; without this the kernel requests "all-apis".
+		if len(k.cfg.Auth.Scopes) > 0 {
+			scopes := newCStr(joinScopes(k.cfg.Auth.Scopes))
+			defer scopes.free()
+			if err := call(func() C.KernelStatusCode {
+				return C.kernel_session_config_set_oauth_scopes(cfg, scopes.c)
+			}); err != nil {
+				return fmt.Errorf("kernel: set_oauth_scopes: %w", toConnError(err))
+			}
 		}
 	case AuthU2M:
 		// client id / scopes are optional: NULL when empty lets the kernel use its
@@ -619,9 +630,9 @@ func (k *KernelBackend) setAuth(cfg *C.KernelSessionConfig) error {
 	return nil
 }
 
-// joinScopes renders U2M scopes as the comma-separated form the kernel U2M setter
-// expects. Empty (no scopes) yields "" so setAuth passes NULL and the kernel
-// applies its default scope set.
+// joinScopes renders OAuth scopes as the comma-separated form the kernel scope
+// setters expect. Empty (no scopes) yields "" so setAuth passes NULL (U2M) or skips
+// set_oauth_scopes (M2M) and the kernel applies its default scope set.
 func joinScopes(scopes []string) string {
 	return strings.Join(scopes, ",")
 }
