@@ -407,16 +407,8 @@ func resolveKernelAuthContext(ctx context.Context, cfg *config.Config) (kernel.A
 		}
 		return kernel.Auth{Mode: kernel.AuthPAT, Token: token.AccessToken, ClientID: a.clientID}, nil
 	case kernel.M2MCredentialsProvider:
-		// The kernel's set_auth_m2m takes no scopes and applies "all-apis" itself, so
-		// a custom scope set can't be forwarded — reject it instead of silently
-		// downgrading (a least-privilege caller would get broader-than-asked access).
-		if !kernel.M2MScopesSupported(a.M2MScopes()) {
-			return kernel.Auth{}, fmt.Errorf("databricks: custom M2M OAuth scopes are %w "+
-				"(the kernel applies its default scopes); drop the custom scopes "+
-				"(use m2m.NewAuthenticator) or use the default (Thrift) backend", dbsqlerr.ErrNotSupportedByKernel)
-		}
 		clientID, clientSecret := a.M2MCredentials()
-		return kernel.Auth{Mode: kernel.AuthM2M, ClientID: clientID, ClientSecret: clientSecret}, nil
+		return kernel.Auth{Mode: kernel.AuthM2M, ClientID: clientID, ClientSecret: clientSecret, Scopes: a.M2MScopes()}, nil
 	case kernel.U2MCredentialsProvider:
 		// The kernel runs a single, cloud-agnostic in-house U2M flow: it does OIDC
 		// discovery against {host}/oidc and uses that authorize endpoint verbatim —

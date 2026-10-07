@@ -2,6 +2,7 @@
 
 ## Unreleased
 - Add default-enabled kernel-backed GEOMETRY / GEOGRAPHY results, selected with `WithEnableGeoSpatialSupport` or the `enableGeoSpatialSupport` DSN parameter. Enabled mode returns raw WKB from `database/sql`; disabled mode returns WKT / EWKT. Logical column metadata is preserved, and Arrow batch access retains the canonical `struct<srid,wkb>` value in enabled mode.
+- **Behavior change:** `m2m.NewAuthenticatorWithScopes` now requests exactly the given scopes instead of always appending `all-apis`, so service principals with scoped OAuth secrets (e.g. `sql` only) can authenticate (databricks/databricks-sql-go#476). Empty scopes and `m2m.NewAuthenticator` still request `all-apis`; callers that relied on it being appended should pass no scopes, or add `all-apis` to their list if they need both. The SEA/kernel backend now forwards custom M2M scopes instead of rejecting them.
 
 ## v1.16.0 (2026-09-24)
 - Upgrade the kernel bindings to v1.1.0; the kernel dependency is now stable.

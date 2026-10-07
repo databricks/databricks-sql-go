@@ -118,6 +118,7 @@ func TestSetAuthByMode(t *testing.T) {
 		{"PAT", Auth{Mode: AuthPAT, Token: "dapi-x"}},
 		{"federated PAT", Auth{Mode: AuthPAT, Token: "subject-token", ClientID: "federation-client"}},
 		{"M2M", Auth{Mode: AuthM2M, ClientID: "cid", ClientSecret: "sec"}},
+		{"M2M with scopes", Auth{Mode: AuthM2M, ClientID: "cid", ClientSecret: "sec", Scopes: []string{"sql"}}},
 		// "U2M full" populates Scopes/RedirectPort, which no production path sets today
 		// (resolveKernelAuth sources only the client id — see kernel.Auth docs). It is
 		// kept deliberately to pin the marshalling of those optional set_auth_u2m args

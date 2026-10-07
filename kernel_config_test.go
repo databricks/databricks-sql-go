@@ -154,8 +154,7 @@ func TestValidateKernelConfig(t *testing.T) {
 		c := baseKernelConfig()
 		c.AccessToken = ""
 		// An M2M authenticator is the single source of truth; resolveKernelAuth reads
-		// the creds off it via the auth.M2MCredentialsProvider interface. Default
-		// scopes ({"all-apis"}, matching the kernel default) forward fine.
+		// the creds off it via the auth.M2MCredentialsProvider interface.
 		c.Authenticator = fakeM2MAuth{id: "cid", secret: "sec", scopes: []string{"all-apis"}}
 		a, err := validateKernelConfig(c)
 		if err != nil {
@@ -166,16 +165,16 @@ func TestValidateKernelConfig(t *testing.T) {
 		}
 	})
 
-	t.Run("OAuth M2M with custom scopes rejected", func(t *testing.T) {
+	t.Run("OAuth M2M forwards custom scopes", func(t *testing.T) {
 		c := baseKernelConfig()
 		c.AccessToken = ""
-		// The kernel's set_auth_m2m can't carry scopes, so a custom set must be
-		// rejected (not silently downgraded to the kernel default) and wrap
-		// ErrNotSupportedByKernel like every other unsupported option.
-		c.Authenticator = fakeM2MAuth{id: "cid", secret: "sec", scopes: []string{"all-apis", "custom-scope"}}
-		_, err := validateKernelConfig(c)
-		if !errors.Is(err, dbsqlerr.ErrNotSupportedByKernel) {
-			t.Errorf("custom-scope M2M rejection should wrap ErrNotSupportedByKernel, got %v", err)
+		c.Authenticator = fakeM2MAuth{id: "cid", secret: "sec", scopes: []string{"sql", "custom-scope"}}
+		a, err := validateKernelConfig(c)
+		if err != nil {
+			t.Fatalf("M2M with custom scopes should validate, got %v", err)
+		}
+		if want := []string{"sql", "custom-scope"}; !reflect.DeepEqual(a.Scopes, want) {
+			t.Errorf("M2M scopes = %v, want %v", a.Scopes, want)
 		}
 	})
 

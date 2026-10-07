@@ -295,6 +295,9 @@ groups. Telemetry parameters are covered under [Telemetry](#telemetry).
 ```
 
 `authType=OauthM2M` is optional — supplying `clientID` + `clientSecret` selects M2M.
+M2M requests the `all-apis` scope by default. For a secret limited to other scopes
+(e.g. `sql`), use
+`WithAuthenticator(m2m.NewAuthenticatorWithScopes(id, secret, host, []string{"sql"}))`.
 
 **OAuth U2M** (interactive browser login):
 
@@ -306,8 +309,6 @@ Notes for the SEA/kernel backend:
 
 - The kernel snapshots one `WithFederatedTokenProvider*` token during setup;
   `AndClientID` also forwards the SP-wide client ID. Expired tokens require a new connection.
-- Custom OAuth **M2M scopes** are rejected on the kernel path (the kernel applies its
-  own default scopes). Default scopes work on both.
 - **U2M** is interactive: on a cache miss, connecting launches the browser and a
   connect-context **deadline is not honored** during the login window. U2M scopes are at
   parity with Thrift. Use PAT or M2M for headless/deadline-bound connects.

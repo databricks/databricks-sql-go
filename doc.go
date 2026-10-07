@@ -226,9 +226,8 @@ applied post-connect via USE CATALOG / USE SCHEMA); metric-view metadata
 RetryWaitMin / RetryWaitMax / RetryMax, including the disable form, forwarded to the
 kernel's HTTP retry config); and the TLS, proxy, and session-conf (query tags,
 statement timeout, time zone) options. Federated token providers use one token snapshot
-during setup. Nothing is silently ignored: WithTimeout, token-provider / external /
-static authenticators, and custom M2M OAuth scopes
-(the kernel applies its own) are rejected at connect; staging (PUT/GET/REMOVE on a
+during setup. Nothing is silently ignored: WithTimeout and token-provider / external /
+static authenticators are rejected at connect; staging (PUT/GET/REMOVE on a
 Unity Catalog volume) is rejected at execute. WithMaxRows is accepted but inert (the
 kernel manages fetching below the C ABI).
 

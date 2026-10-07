@@ -63,8 +63,6 @@ Notes for the SEA/kernel backend:
 - The kernel snapshots one federated-provider token during setup;
   `WithFederatedTokenProviderAndClientID` also forwards the SP-wide client ID. Expired
   tokens require a new connection.
-- Custom OAuth **M2M scopes** are rejected on the kernel path (the kernel applies its
-  own default scopes). Default scopes work on both.
 - `WithAuthenticator` is kernel-compatible only when its concrete authenticator is
   one of the supported PAT, M2M, or U2M implementations. An arbitrary custom
   `auth.Authenticator` is supported on Thrift and rejected on the kernel path.
