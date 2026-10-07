@@ -61,17 +61,12 @@ func InitializeForConnection(ctx context.Context, opts TelemetryInitOptions) *In
 		cfg.FlushInterval = opts.FlushInterval
 	}
 
-	// Get feature flag cache context FIRST (for reference counting)
-	flagCache := featureflags.GetCache()
-	flagCache.Acquire(opts.Host, opts.WorkspaceID)
-
 	// Check if telemetry should be enabled
 	enabled := isTelemetryEnabled(ctx, cfg, featureflags.Request{
 		Host: opts.Host, WorkspaceID: opts.WorkspaceID, DriverVersion: opts.DriverVersion,
 		UserAgent: opts.UserAgent, HTTPClient: opts.HTTPClient,
 	})
 	if !enabled {
-		flagCache.Release(opts.Host, opts.WorkspaceID)
 		return nil
 	}
 
@@ -79,8 +74,6 @@ func InitializeForConnection(ctx context.Context, opts TelemetryInitOptions) *In
 	clientMgr := getClientManager()
 	telemetryClient := clientMgr.getOrCreateClient(opts.Host, opts.DriverVersion, opts.UserAgent, opts.HTTPClient, cfg)
 	if telemetryClient == nil {
-		// Client failed to start; release the flag cache ref we incremented above
-		flagCache.Release(opts.Host, opts.WorkspaceID)
 		return nil
 	}
 
@@ -92,12 +85,8 @@ func InitializeForConnection(ctx context.Context, opts TelemetryInitOptions) *In
 //
 // Parameters:
 //   - host: Databricks host
-func ReleaseForConnection(host string, workspaceID ...string) {
+func ReleaseForConnection(host string) {
 	// Release client manager reference
 	clientMgr := getClientManager()
 	_ = clientMgr.releaseClient(host)
-
-	// Release feature flag cache reference
-	flagCache := featureflags.GetCache()
-	flagCache.Release(host, workspaceID...)
 }

@@ -23,6 +23,7 @@ import (
 	"github.com/databricks/databricks-sql-go/internal/client"
 	"github.com/databricks/databricks-sql-go/internal/config"
 	"github.com/databricks/databricks-sql-go/internal/debuglog"
+	"github.com/databricks/databricks-sql-go/internal/featureflags"
 	"github.com/databricks/databricks-sql-go/internal/warehouse_cache"
 	"github.com/databricks/databricks-sql-go/logger"
 	"github.com/databricks/databricks-sql-go/telemetry"
@@ -66,11 +67,19 @@ type federatedTokenAuthenticator struct {
 func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 	defer debuglog.Track(ctx, "connector.Connect", "host=%s", c.cfg.Host)()
 
+	flagRequest := c.featureFlagRequest()
+	if !c.cfg.UseKernel {
+		featureflags.GetCache().Acquire(flagRequest.Host, flagRequest.WorkspaceID)
+	}
+
 	// openSessionWithReydenFallback handles the session opening with automatic
 	// recovery for Reyden / Real-Time warehouses that reject Thrift. It returns
 	// the backend, latency, and error.
 	be, sessionLatencyMs, err := c.openSessionWithReydenFallback(ctx)
 	if err != nil {
+		if !c.cfg.UseKernel {
+			featureflags.GetCache().Release(flagRequest.Host, flagRequest.WorkspaceID)
+		}
 		return nil, err
 	}
 
@@ -79,18 +88,10 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 		cfg:     c.cfg,
 		backend: be,
 	}
-	log := logger.WithContext(conn.id, driverctx.CorrelationIdFromContext(ctx), "")
-
-	// Extract SPOG routing headers from HTTPPath. When the workspace ID is
-	// available via ?o=<workspaceId> or a cluster /o/<workspaceId>/ path segment,
-	// wrap the HTTP client used for telemetry + feature-flag calls with a
-	// transport that injects x-databricks-org-id. Thrift routes via the URL so
-	// its own c.client doesn't need wrapping.
-	telemetryClient := c.client
-	spogHeaders := extractSpogHeaders(c.cfg.HTTPPath)
-	if len(spogHeaders) > 0 {
-		telemetryClient = withSpogHeaders(c.client, spogHeaders)
+	if !c.cfg.UseKernel {
+		conn.featureFlags = &flagRequest
 	}
+	log := logger.WithContext(conn.id, driverctx.CorrelationIdFromContext(ctx), "")
 
 	// Skip driver telemetry on the kernel path. The kernel owns query execution
 	// below the driver backend, so keeping the Go telemetry interceptor active
@@ -104,10 +105,10 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 	if !skipTelemetry {
 		conn.telemetry = telemetry.InitializeForConnection(ctx, telemetry.TelemetryInitOptions{
 			Host:            c.cfg.Host,
-			WorkspaceID:     spogHeaders["x-databricks-org-id"],
+			WorkspaceID:     flagRequest.WorkspaceID,
 			DriverVersion:   c.cfg.DriverVersion,
-			UserAgent:       client.BuildUserAgent(c.cfg),
-			HTTPClient:      telemetryClient,
+			UserAgent:       flagRequest.UserAgent,
+			HTTPClient:      flagRequest.HTTPClient,
 			EnableTelemetry: c.cfg.EnableTelemetry,
 			BatchSize:       c.cfg.TelemetryBatchSize,
 			FlushInterval:   c.cfg.TelemetryFlushInterval,
@@ -128,6 +129,19 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 	}
 
 	return conn, nil
+}
+
+func (c *connector) featureFlagRequest() featureflags.Request {
+	headers := extractSpogHeaders(c.cfg.HTTPPath)
+	httpClient := c.client
+	if len(headers) > 0 {
+		httpClient = withSpogHeaders(httpClient, headers)
+	}
+	return featureflags.Request{
+		Host: c.cfg.Host, WorkspaceID: headers["x-databricks-org-id"],
+		DriverVersion: c.cfg.DriverVersion, UserAgent: client.BuildUserAgent(c.cfg),
+		HTTPClient: httpClient,
+	}
 }
 
 // Driver returns underlying databricksDriver for compatibility with sql.DB Driver method
