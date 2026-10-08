@@ -38,8 +38,8 @@ import (
 // Nested types (List/Map/Struct, and VARIANT which
 // arrives nested) render to a JSON string byte-identical to the Thrift path.
 // Top-level binary GEOMETRY / GEOGRAPHY is selected explicitly through
-// ScanOptions and exposes its WKB child as []byte; string mode is handled by the
-// regular string arm. INTERVAL
+// ScanOptions and combines its SRID and WKB children into EWKB []byte; string
+// mode is handled by the regular string arm. INTERVAL
 // day-time/year-month arrive as native arrow duration/month-interval and format to
 // the same string the Thrift path receives pre-formatted from the server. NULLs
 // map to nil. A genuinely unhandled type returns an error rather than a silently
@@ -139,7 +139,7 @@ func scanCell(col arrow.Array, row int, loc *time.Location, keys *StructKeyCache
 		return nil, nil
 	}
 	if options.GeospatialBinary {
-		return scanGeospatialWKB(col, row)
+		return scanGeospatialEWKB(col, row)
 	}
 	switch c := col.(type) {
 	case *array.Null:
@@ -249,12 +249,11 @@ func scanCell(col arrow.Array, row int, loc *time.Location, keys *StructKeyCache
 	}
 }
 
-// scanGeospatialWKB validates and unwraps Reyden's canonical top-level
-// struct<srid:int32,wkb:binary> value. The outer struct null was handled by
-// scanCell before this function is called. Child nulls are malformed because
-// both canonical children are non-nullable; reject them rather than returning a
-// byte slice whose SRID/value pairing is incomplete.
-func scanGeospatialWKB(col arrow.Array, row int) (driver.Value, error) {
+// scanGeospatialEWKB validates Reyden's canonical top-level
+// struct<srid:int32,wkb:binary> value and embeds the sibling SRID into EWKB.
+// database/sql cannot return the two-child Arrow struct as a driver.Value, and
+// returning bare OGC WKB would lose the per-row SRID for GEOMETRY(ANY).
+func scanGeospatialEWKB(col arrow.Array, row int) (driver.Value, error) {
 	values, ok := col.(*array.Struct)
 	if !ok {
 		return nil, fmt.Errorf("binary geospatial column has arrow type %s, want struct<srid:int32,wkb:binary>", col.DataType())
@@ -278,7 +277,11 @@ func scanGeospatialWKB(col arrow.Array, row int) (driver.Value, error) {
 	if wkbs.IsNull(row) {
 		return nil, fmt.Errorf("binary geospatial value at row %d has a null wkb child", row)
 	}
-	return wkbs.Value(row), nil
+	ewkb, err := wkbToEWKB(wkbs.Value(row), srids.Value(row))
+	if err != nil {
+		return nil, fmt.Errorf("binary geospatial value at row %d: %w", row, err)
+	}
+	return ewkb, nil
 }
 
 // formatDayTimeInterval renders an arrow duration (in the given time unit) as the

@@ -1,6 +1,7 @@
 package arrowscan
 
 import (
+	"bytes"
 	"fmt"
 	"strings"
 	"testing"
@@ -688,18 +689,22 @@ func TestScanCellDecimalAsFloat(t *testing.T) {
 
 func TestScanCellBinaryGeospatial(t *testing.T) {
 	pool := memory.NewGoAllocator()
-	wkb := []byte{0x01, 0x01, 0x00, 0x00, 0x00}
+	wkb := []byte{
+		0x01, 0x01, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00, 0x00, 0xf0, 0x3f,
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40,
+	}
 	geoType := arrow.StructOf(
 		arrow.Field{Name: "srid", Type: arrow.PrimitiveTypes.Int32, Nullable: false},
 		arrow.Field{Name: "wkb", Type: arrow.BinaryTypes.Binary, Nullable: false},
 	)
 
-	build := func(outerValid, sridValid, wkbValid bool) *array.Struct {
+	build := func(outerValid, sridValid, wkbValid bool, srid int32) *array.Struct {
 		b := array.NewStructBuilder(pool, geoType)
 		defer b.Release()
 		b.Append(outerValid)
 		if sridValid {
-			b.FieldBuilder(0).(*array.Int32Builder).Append(4326)
+			b.FieldBuilder(0).(*array.Int32Builder).Append(srid)
 		} else {
 			b.FieldBuilder(0).(*array.Int32Builder).AppendNull()
 		}
@@ -711,20 +716,30 @@ func TestScanCellBinaryGeospatial(t *testing.T) {
 		return b.NewStructArray()
 	}
 
-	t.Run("unwraps WKB", func(t *testing.T) {
-		arr := build(true, true, true)
-		defer arr.Release()
-		got, err := ScanCellCachedWithOptions(arr, 0, nil, nil, ScanOptions{GeospatialBinary: true})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if string(got.([]byte)) != string(wkb) {
-			t.Errorf("WKB = %x, want %x", got, wkb)
+	t.Run("embeds each row SRID in EWKB", func(t *testing.T) {
+		for _, tc := range []struct {
+			srid       int32
+			sridLittle []byte
+		}{
+			{srid: 4326, sridLittle: []byte{0xe6, 0x10, 0x00, 0x00}},
+			{srid: 3857, sridLittle: []byte{0x11, 0x0f, 0x00, 0x00}},
+		} {
+			arr := build(true, true, true, tc.srid)
+			got, err := ScanCellCachedWithOptions(arr, 0, nil, nil, ScanOptions{GeospatialBinary: true})
+			arr.Release()
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := append([]byte{0x01, 0x01, 0x00, 0x00, 0x20}, tc.sridLittle...)
+			want = append(want, wkb[5:]...)
+			if !bytes.Equal(got.([]byte), want) {
+				t.Errorf("SRID %d EWKB = %x, want %x", tc.srid, got, want)
+			}
 		}
 	})
 
 	t.Run("outer null wins", func(t *testing.T) {
-		arr := build(false, false, false)
+		arr := build(false, false, false, 0)
 		defer arr.Release()
 		got, err := ScanCellCachedWithOptions(arr, 0, nil, nil, ScanOptions{GeospatialBinary: true})
 		if err != nil || got != nil {
@@ -733,7 +748,7 @@ func TestScanCellBinaryGeospatial(t *testing.T) {
 	})
 
 	t.Run("rejects null srid child", func(t *testing.T) {
-		arr := build(true, false, true)
+		arr := build(true, false, true, 0)
 		defer arr.Release()
 		_, err := ScanCellCachedWithOptions(arr, 0, nil, nil, ScanOptions{GeospatialBinary: true})
 		if err == nil || !strings.Contains(err.Error(), "null srid") {
@@ -742,7 +757,7 @@ func TestScanCellBinaryGeospatial(t *testing.T) {
 	})
 
 	t.Run("rejects null wkb child", func(t *testing.T) {
-		arr := build(true, true, false)
+		arr := build(true, true, false, 4326)
 		defer arr.Release()
 		_, err := ScanCellCachedWithOptions(arr, 0, nil, nil, ScanOptions{GeospatialBinary: true})
 		if err == nil || !strings.Contains(err.Error(), "null wkb") {

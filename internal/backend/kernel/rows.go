@@ -65,7 +65,7 @@ type kernelRows struct {
 
 	cols       []string
 	colTypes   []arrowscan.ColumnTypeInfo // per-column type metadata (PECOBLR-3692)
-	geoBinary  []bool                     // top-level logical geo structs unwrap to WKB for database/sql
+	geoBinary  []bool                     // top-level logical geo structs become EWKB for database/sql
 	schema     *arrow.Schema              // result-set schema, for GetArrowBatches().Schema()
 	cur        arrow.Record               // current batch (nil until first Next)
 	rowInCur   int                        // next row index within cur
