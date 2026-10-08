@@ -34,8 +34,20 @@ type authClient struct {
 	clientSecret string
 	hostName     string
 	scopes       []string
+	httpClient   *http.Client
 	tokenSource  oauth2.TokenSource
 	mx           sync.Mutex
+}
+
+// SetHTTPClient routes OIDC discovery and token requests through the given client
+// instead of http.DefaultClient, so they carry the connector's transport and
+// User-Agent (WithTransport, WithUserAgentEntry) like the rest of the driver's
+// traffic. The driver calls it structurally once the connector config is final;
+// it is a no-op on token sources already created.
+func (c *authClient) SetHTTPClient(client *http.Client) {
+	c.mx.Lock()
+	defer c.mx.Unlock()
+	c.httpClient = client
 }
 
 // M2MCredentials exposes the raw client-credentials so the SEA-via-kernel backend
@@ -66,12 +78,16 @@ func (c *authClient) Authenticate(r *http.Request) error {
 		return nil
 	}
 
-	config, err := GetConfig(context.Background(), c.hostName, c.clientID, c.clientSecret, c.scopes)
+	ctx := context.Background()
+	if c.httpClient != nil {
+		ctx = context.WithValue(ctx, oauth2.HTTPClient, c.httpClient)
+	}
+	config, err := GetConfig(ctx, c.hostName, c.clientID, c.clientSecret, c.scopes)
 	if err != nil {
 		return fmt.Errorf("unable to generate clientCredentials.Config: %w", err)
 	}
 
-	c.tokenSource = GetTokenSource(config)
+	c.tokenSource = config.TokenSource(ctx)
 	token, err := c.tokenSource.Token()
 	if err != nil {
 		logger.Err(err).Msg("failed to get token")

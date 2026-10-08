@@ -1,6 +1,7 @@
 # Release History
 
 ## Unreleased
+- OAuth M2M token requests and the OIDC discovery lookup now go through the connector's transport (`WithTransport`) and carry the driver User-Agent, including `WithUserAgentEntry`, so they are attributable in `system.access.audit` instead of appearing as `Go-http-client` (databricks/databricks-sql-go#413).
 - **Behavior change:** `m2m.NewAuthenticatorWithScopes` now requests exactly the given scopes instead of always appending `all-apis`, so service principals with scoped OAuth secrets (e.g. `sql` only) can authenticate (databricks/databricks-sql-go#476). Empty scopes and `m2m.NewAuthenticator` still request `all-apis`; callers that relied on it being appended should pass no scopes, or add `all-apis` to their list if they need both. The SEA/kernel backend now forwards custom M2M scopes instead of rejecting them.
 
 ## v1.16.0 (2026-09-24)
