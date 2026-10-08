@@ -155,13 +155,14 @@ ignored with a warning and still stripped from the SEA wire.
 |---|---|:---:|:---:|---|---|
 | `useArrowNativeDecimal` | `WithArrowNativeDecimal` | ✅ | ⚠️ | `false` | Thrift: return DECIMAL as native Arrow `decimal128` (lossless string when scanned via `database/sql`). The kernel path already renders DECIMAL as the exact string regardless, so the flag is inert there. |
 | | `WithKernelDecimalAsFloat(b)` | ❌ | ✅ | `false` | Scan top-level DECIMAL as lossy `float64` instead of the exact string. |
-| `enableGeoSpatialSupport` | `WithEnableGeoSpatialSupport(b)` | ❌ | ✅ | `true` | `true`: return top-level GEOMETRY / GEOGRAPHY as raw WKB `[]byte`; `GetArrowBatches` retains the full `{srid,wkb}` struct. `false`: return WKT / EWKT strings. |
+| `enableGeoSpatialSupport` | `WithEnableGeoSpatialSupport(b)` | ❌ | ✅ | `true` | `true`: return top-level GEOMETRY / GEOGRAPHY as raw WKB `[]byte` with logical geo column metadata; `GetArrowBatches` retains the full `{srid,wkb}` struct. `false`: return WKT / EWKT strings reported as `STRING`. |
 
-With the default client-result settings, results otherwise render **byte-for-byte
+Apart from the geospatial representation selected above, results render **byte-for-byte
 identically** on both backends (scalars,
 DECIMAL as exact string, TIMESTAMP / TIMESTAMP_NTZ shifted into the session time zone,
-INTERVAL, nested ARRAY / MAP / STRUCT and VARIANT as JSON, GEOMETRY / GEOGRAPHY as WKT,
-BINARY as `sql.RawBytes`).
+INTERVAL, nested ARRAY / MAP / STRUCT and VARIANT as JSON, and BINARY as
+`sql.RawBytes`). Set `enableGeoSpatialSupport=false` on the kernel path to match
+the Thrift path's WKT / EWKT geospatial values.
 
 ## Cloud Fetch
 

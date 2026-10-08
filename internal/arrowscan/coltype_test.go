@@ -101,7 +101,7 @@ func TestColumnTypeInfoScanTypeCoversScanner(t *testing.T) {
 	}
 }
 
-func TestColumnTypeInfoForFieldPreservesGeospatialType(t *testing.T) {
+func TestColumnTypeInfoForFieldReportsGeospatialByRepresentation(t *testing.T) {
 	raw := reflect.TypeOf(sql.RawBytes{})
 	str := reflect.TypeOf("")
 	metadata := arrow.MetadataFrom(map[string]string{
@@ -113,13 +113,16 @@ func TestColumnTypeInfoForFieldPreservesGeospatialType(t *testing.T) {
 		arrow.Field{Name: "wkb", Type: arrow.BinaryTypes.Binary, Nullable: false},
 	)
 
-	stringField := arrow.Field{Name: "g", Type: arrow.BinaryTypes.String, Nullable: true, Metadata: metadata}
-	stringInfo := ColumnTypeInfoForField(stringField)
-	if stringInfo.DatabaseTypeName != "GEOMETRY" || stringInfo.ScanType != str {
-		t.Errorf("string geo metadata = (%q, %v), want (GEOMETRY, string)", stringInfo.DatabaseTypeName, stringInfo.ScanType)
-	}
-	if IsBinaryGeospatialField(stringField) {
-		t.Error("UTF-8 geospatial field classified as binary")
+	for _, stringType := range []arrow.DataType{arrow.BinaryTypes.String, arrow.BinaryTypes.LargeString} {
+		stringField := arrow.Field{Name: "g", Type: stringType, Nullable: true, Metadata: metadata}
+		stringInfo := ColumnTypeInfoForField(stringField)
+		if stringInfo.DatabaseTypeName != "STRING" || stringInfo.ScanType != str {
+			t.Errorf("%s geo metadata = (%q, %v), want (STRING, string)",
+				stringType, stringInfo.DatabaseTypeName, stringInfo.ScanType)
+		}
+		if IsBinaryGeospatialField(stringField) {
+			t.Errorf("%s geospatial field classified as binary", stringType)
+		}
 	}
 
 	binaryField := arrow.Field{Name: "g", Type: geoStruct, Nullable: true, Metadata: metadata}

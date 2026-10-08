@@ -671,9 +671,10 @@ func WithKernelDecimalAsFloat(asFloat bool) ConnOption {
 
 // WithEnableGeoSpatialSupport selects how the kernel path exposes top-level
 // GEOMETRY and GEOGRAPHY result values. True (the default) returns raw WKB bytes
-// ([]byte). False returns WKT / EWKT strings. The logical GEOMETRY / GEOGRAPHY column type remains
-// available through database/sql metadata, and the per-row SRID remains present
-// in the Arrow struct returned by the driver's GetArrowBatches API.
+// ([]byte) and reports the logical GEOMETRY / GEOGRAPHY type through database/sql
+// metadata. False returns WKT / EWKT strings and reports STRING, matching the
+// existing string-mode driver contract. The per-row SRID remains present in the
+// Arrow struct returned by the driver's GetArrowBatches API in enabled mode.
 //
 // The conversion is entirely client-side and is never forwarded to SEA.
 // Nested geospatial values follow the driver's existing complex-value contract:

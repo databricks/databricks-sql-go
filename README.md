@@ -270,7 +270,7 @@ session parameter on both backends.
 |---|---|---|---|---|
 | `useArrowNativeDecimal` | `WithArrowNativeDecimal` | Thrift only (inert on kernel) | `false` | Thrift: return DECIMAL as native Arrow `decimal128` (lossless string when scanned via `database/sql`). The kernel path already renders DECIMAL as the exact string regardless. |
 | | `WithKernelDecimalAsFloat(b)` | SEA only | `false` | Scan top-level DECIMAL as lossy `float64` instead of the exact string. |
-| `enableGeoSpatialSupport` | `WithEnableGeoSpatialSupport(b)` | SEA only | `true` | `true`: return top-level GEOMETRY / GEOGRAPHY as raw WKB `[]byte`; `GetArrowBatches` retains the full `{srid,wkb}` struct. `false`: return WKT / EWKT strings. |
+| `enableGeoSpatialSupport` | `WithEnableGeoSpatialSupport(b)` | SEA only | `true` | `true`: return top-level GEOMETRY / GEOGRAPHY as raw WKB `[]byte` with logical geo column metadata; `GetArrowBatches` retains the full `{srid,wkb}` struct. `false`: return WKT / EWKT strings reported as `STRING`. |
 
 See [Cloud Fetch](#cloud-fetch), [TLS](#tls), and [Proxy](#proxy) for the remaining
 groups. Telemetry parameters are covered under [Telemetry](#telemetry).
@@ -359,10 +359,12 @@ The Thrift and kernel backends both honor the standard `HTTP_PROXY` / `HTTPS_PRO
 
 ## Data types
 
-Results render **byte-for-byte identically** on both backends. Scalars, DECIMAL (exact
-string), TIMESTAMP / TIMESTAMP_NTZ (shifted into the session time zone), INTERVAL, nested
-ARRAY / MAP / STRUCT and VARIANT (as JSON), and GEOMETRY / GEOGRAPHY (as WKT) are all
-supported. BINARY is returned as `sql.RawBytes`.
+Apart from the configurable geospatial representation, results render **byte-for-byte
+identically** on both backends. Scalars, DECIMAL (exact string), TIMESTAMP /
+TIMESTAMP_NTZ (shifted into the session time zone), INTERVAL, and nested ARRAY / MAP /
+STRUCT and VARIANT (as JSON) are supported. BINARY is returned as `sql.RawBytes`.
+Thrift returns GEOMETRY / GEOGRAPHY as WKT / EWKT; the kernel defaults to raw WKB and
+matches Thrift when `enableGeoSpatialSupport=false`.
 
 Metadata is reached through SQL (`SHOW`, `DESCRIBE`, `information_schema`) on both
 backends — the driver exposes no `GetCatalogs`/`GetSchemas`/`GetTables`/`GetColumns` API

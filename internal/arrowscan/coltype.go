@@ -140,8 +140,9 @@ func IsBinaryGeospatialField(field arrow.Field) bool {
 	return geospatial && field.Type.ID() == arrow.STRUCT
 }
 
-// ColumnTypeInfoForField preserves logical GEOMETRY / GEOGRAPHY metadata while
-// selecting a scan type that matches the requested physical representation.
+// ColumnTypeInfoForField reports logical GEOMETRY / GEOGRAPHY metadata for the
+// native struct representation. String mode follows the existing driver
+// contract and reports STRING, matching its UTF-8 physical representation.
 // Other fields retain the Arrow-only mapping.
 func ColumnTypeInfoForField(field arrow.Field) ColumnTypeInfo {
 	name, geospatial := LogicalGeospatialType(field)
@@ -152,7 +153,7 @@ func ColumnTypeInfoForField(field arrow.Field) ColumnTypeInfo {
 		return varLen(name, scanTypeRawBytes)
 	}
 	if field.Type.ID() == arrow.STRING || field.Type.ID() == arrow.LARGE_STRING {
-		return varLen(name, scanTypeString)
+		return varLen("STRING", scanTypeString)
 	}
 	info := ColumnTypeInfoFor(field.Type)
 	info.DatabaseTypeName = name
