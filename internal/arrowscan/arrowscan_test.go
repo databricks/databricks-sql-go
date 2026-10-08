@@ -1,7 +1,9 @@
 package arrowscan
 
 import (
+	"bytes"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -683,4 +685,101 @@ func TestScanCellDecimalAsFloat(t *testing.T) {
 	if fv < 99.97 || fv > 99.99 {
 		t.Errorf("decimalAsFloat arm = %v, want ~99.98", fv)
 	}
+}
+
+func TestScanCellBinaryGeospatial(t *testing.T) {
+	pool := memory.NewGoAllocator()
+	wkb := []byte{
+		0x01, 0x01, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00, 0x00, 0xf0, 0x3f,
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40,
+	}
+	geoType := arrow.StructOf(
+		arrow.Field{Name: "srid", Type: arrow.PrimitiveTypes.Int32, Nullable: false},
+		arrow.Field{Name: "wkb", Type: arrow.BinaryTypes.Binary, Nullable: false},
+	)
+
+	build := func(outerValid, sridValid, wkbValid bool, srid int32) *array.Struct {
+		b := array.NewStructBuilder(pool, geoType)
+		defer b.Release()
+		b.Append(outerValid)
+		if sridValid {
+			b.FieldBuilder(0).(*array.Int32Builder).Append(srid)
+		} else {
+			b.FieldBuilder(0).(*array.Int32Builder).AppendNull()
+		}
+		if wkbValid {
+			b.FieldBuilder(1).(*array.BinaryBuilder).Append(wkb)
+		} else {
+			b.FieldBuilder(1).(*array.BinaryBuilder).AppendNull()
+		}
+		return b.NewStructArray()
+	}
+
+	t.Run("embeds each row SRID in EWKB", func(t *testing.T) {
+		for _, tc := range []struct {
+			srid       int32
+			sridLittle []byte
+		}{
+			{srid: 4326, sridLittle: []byte{0xe6, 0x10, 0x00, 0x00}},
+			{srid: 3857, sridLittle: []byte{0x11, 0x0f, 0x00, 0x00}},
+		} {
+			arr := build(true, true, true, tc.srid)
+			got, err := ScanCellCachedWithOptions(arr, 0, nil, nil, ScanOptions{GeospatialBinary: true})
+			arr.Release()
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := append([]byte{0x01, 0x01, 0x00, 0x00, 0x20}, tc.sridLittle...)
+			want = append(want, wkb[5:]...)
+			if !bytes.Equal(got.([]byte), want) {
+				t.Errorf("SRID %d EWKB = %x, want %x", tc.srid, got, want)
+			}
+		}
+	})
+
+	t.Run("outer null wins", func(t *testing.T) {
+		arr := build(false, false, false, 0)
+		defer arr.Release()
+		got, err := ScanCellCachedWithOptions(arr, 0, nil, nil, ScanOptions{GeospatialBinary: true})
+		if err != nil || got != nil {
+			t.Errorf("outer-null geo = (%v, %v), want (nil, nil)", got, err)
+		}
+	})
+
+	t.Run("rejects null srid child", func(t *testing.T) {
+		arr := build(true, false, true, 0)
+		defer arr.Release()
+		_, err := ScanCellCachedWithOptions(arr, 0, nil, nil, ScanOptions{GeospatialBinary: true})
+		if err == nil || !strings.Contains(err.Error(), "null srid") {
+			t.Errorf("error = %v, want null-srid validation error", err)
+		}
+	})
+
+	t.Run("rejects null wkb child", func(t *testing.T) {
+		arr := build(true, true, false, 4326)
+		defer arr.Release()
+		_, err := ScanCellCachedWithOptions(arr, 0, nil, nil, ScanOptions{GeospatialBinary: true})
+		if err == nil || !strings.Contains(err.Error(), "null wkb") {
+			t.Errorf("error = %v, want null-wkb validation error", err)
+		}
+	})
+
+	t.Run("rejects a non-canonical struct", func(t *testing.T) {
+		badType := arrow.StructOf(
+			arrow.Field{Name: "srid", Type: arrow.PrimitiveTypes.Int64},
+			arrow.Field{Name: "bytes", Type: arrow.BinaryTypes.Binary},
+		)
+		b := array.NewStructBuilder(pool, badType)
+		defer b.Release()
+		b.Append(true)
+		b.FieldBuilder(0).(*array.Int64Builder).Append(4326)
+		b.FieldBuilder(1).(*array.BinaryBuilder).Append(wkb)
+		arr := b.NewStructArray()
+		defer arr.Release()
+		_, err := ScanCellCachedWithOptions(arr, 0, nil, nil, ScanOptions{GeospatialBinary: true})
+		if err == nil || !strings.Contains(err.Error(), "want struct<srid:int32,wkb:binary>") {
+			t.Errorf("error = %v, want canonical-shape validation error", err)
+		}
+	})
 }

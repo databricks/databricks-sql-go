@@ -65,6 +65,7 @@ type kernelRows struct {
 
 	cols       []string
 	colTypes   []arrowscan.ColumnTypeInfo // per-column type metadata (PECOBLR-3692)
+	geoBinary  []bool                     // top-level logical geo structs become EWKB for database/sql
 	schema     *arrow.Schema              // result-set schema, for GetArrowBatches().Schema()
 	cur        arrow.Record               // current batch (nil until first Next)
 	rowInCur   int                        // next row index within cur
@@ -118,9 +119,11 @@ func newKernelRows(ctx context.Context, op *kernelOp, stream *C.kernel_result_st
 	// (PECOBLR-3692) with no per-call work. Kept in lockstep with the value scanner
 	// (ScanCellCached) via the shared arrowscan.ColumnTypeInfoFor mapper.
 	r.colTypes = make([]arrowscan.ColumnTypeInfo, len(fields))
+	r.geoBinary = make([]bool, len(fields))
 	for i, f := range fields {
 		r.cols[i] = f.Name
-		r.colTypes[i] = arrowscan.ColumnTypeInfoFor(f.Type)
+		r.colTypes[i] = arrowscan.ColumnTypeInfoForField(f)
+		r.geoBinary[i] = arrowscan.IsBinaryGeospatialField(f)
 	}
 	// Construction succeeded — now arm the close telemetry callback so a normal
 	// Close() (after row iteration) records CLOSE_STATEMENT.
@@ -232,7 +235,10 @@ func (r *kernelRows) next(dest []driver.Value) error {
 	}
 	rec := r.cur
 	for c := 0; c < len(dest); c++ {
-		v, err := arrowscan.ScanCellCachedDecimalFloat(rec.Column(c), r.rowInCur, r.op.location, r.keyCache, r.op.decimalAsFloat)
+		v, err := arrowscan.ScanCellCachedWithOptions(rec.Column(c), r.rowInCur, r.op.location, r.keyCache, arrowscan.ScanOptions{
+			DecimalAsFloat:   r.op.decimalAsFloat,
+			GeospatialBinary: r.geoBinary[c],
+		})
 		if err != nil {
 			return fmt.Errorf("kernel: scan col %d (%s): %w", c, r.cols[c], err)
 		}

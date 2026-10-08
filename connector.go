@@ -310,6 +310,10 @@ func withUserConfig(ucfg config.UserConfig) ConnOption {
 		if ucfg.TokenCacheEnabledDSN {
 			kernelExperimental(c).TokenCacheEnabled = true
 		}
+		if ucfg.EnableGeoSpatialSupportDSN != nil {
+			enabled := *ucfg.EnableGeoSpatialSupportDSN
+			kernelExperimental(c).EnableGeoSpatialSupport = &enabled
+		}
 	}
 }
 
@@ -662,6 +666,28 @@ func kernelExperimental(c *config.Config) *config.KernelExperimentalConfig {
 func WithKernelDecimalAsFloat(asFloat bool) ConnOption {
 	return func(c *config.Config) {
 		kernelExperimental(c).DecimalAsFloat = asFloat
+	}
+}
+
+// WithEnableGeoSpatialSupport selects how the kernel path exposes top-level
+// GEOMETRY and GEOGRAPHY result values. True (the default) returns EWKB bytes
+// ([]byte), including the per-row SRID, and reports the logical GEOMETRY /
+// GEOGRAPHY type through database/sql metadata. False returns WKT / EWKT strings and reports STRING, matching the
+// existing string-mode driver contract. The per-row SRID remains present in the
+// Arrow struct returned by the driver's GetArrowBatches API in enabled mode;
+// that raw Arrow value retains Databricks' separate SRID and OGC WKB children.
+//
+// The conversion is entirely client-side and is never forwarded to SEA.
+// Nested geospatial values follow the driver's existing complex-value contract:
+// disabled mode renders WKT / EWKT leaves in JSON, while enabled mode preserves the
+// {"srid":...,"wkb":...} shape (with JSON base64 for WKB).
+//
+// EXPERIMENTAL, kernel-only: the default (Thrift) backend rejects this option at
+// connect time.
+func WithEnableGeoSpatialSupport(enabled bool) ConnOption {
+	return func(c *config.Config) {
+		value := enabled
+		kernelExperimental(c).EnableGeoSpatialSupport = &value
 	}
 }
 
