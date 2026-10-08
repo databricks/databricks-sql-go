@@ -33,7 +33,7 @@ func wkbToEWKB(wkb []byte, srid int32) ([]byte, error) {
 	ewkb := make([]byte, len(wkb)+4)
 	ewkb[0] = wkb[0]
 	order.PutUint32(ewkb[1:5], geometryType|ewkbSRIDFlag)
-	order.PutUint32(ewkb[5:9], uint32(srid))
+	order.PutUint32(ewkb[5:9], uint32(srid)) // #nosec G115 -- EWKB stores the exact 32-bit SRID bit pattern
 	copy(ewkb[9:], wkb[5:])
 	return ewkb, nil
 }
