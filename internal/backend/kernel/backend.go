@@ -28,7 +28,7 @@ static inline KernelStatusCode go_kernel_set_max_connections(
   return kernel_session_config_set_max_connections(config, max_connections);
 }
 
-static inline KernelStatusCode go_kernel_set_telemetry_config_v2(
+static inline KernelStatusCode go_kernel_set_telemetry_config(
     KernelSessionConfig* config, bool has_enabled, bool enabled, size_t batch_size,
     uint64_t flush_interval_ms, uint32_t max_retries, uint64_t retry_delay_ms,
     uint64_t close_flush_timeout_ms) {
@@ -498,7 +498,7 @@ func (k *KernelBackend) applyTelemetry(cfg *C.KernelSessionConfig) error {
 		enabled = *t.Enabled
 	}
 	if err := call(func() C.KernelStatusCode {
-		return C.go_kernel_set_telemetry_config_v2(cfg,
+		return C.go_kernel_set_telemetry_config(cfg,
 			C.bool(hasEnabled), C.bool(enabled), C.size_t(batchSize), C.uint64_t(flushInterval.Milliseconds()),
 			C.uint32_t(maxRetries), C.uint64_t(retryDelay.Milliseconds()),
 			C.uint64_t(closeFlushTimeout.Milliseconds()))
