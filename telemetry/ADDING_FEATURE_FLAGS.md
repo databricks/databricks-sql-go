@@ -1,115 +1,55 @@
 # Adding New Feature Flags
 
-The feature flag system is designed to be easily extensible. Follow these steps to add a new feature flag:
+Driver-side consumers use the shared cache in [`internal/featureflags`](../internal/featureflags/cache.go).
+Confirm the flag is registered with connector-service, then keep its name and
+expected SAFE type at the consuming code. The cache retains every returned flag;
+adding a consumer does not require a new cache method or a list of flags to fetch.
 
-## Step 1: Add Flag Constant
+## Read a Flag
 
-In `featureflag.go`, add your new flag constant:
-
-```go
-const (
-    // ... existing constants ...
-
-    // flagEnableTelemetry controls whether telemetry is enabled for the Go driver
-    flagEnableTelemetry = "databricks.partnerplatform.clientConfigsFeatureFlags.enableTelemetryForGoDriver"
-
-    // YOUR NEW FLAG - Add it here
-    flagEnableNewFeature = "databricks.partnerplatform.clientConfigsFeatureFlags.enableNewFeatureForGoDriver"
-)
-```
-
-## Step 2: Register Flag for Fetching
-
-In `featureflag.go`, add your flag to `getAllFeatureFlags()`:
+Use `GetBool`, `GetInt32`, `GetInt64`, `GetDouble`, `GetString`, or `GetStringList`.
+The caller supplies an authenticated HTTP client and chooses the expected type:
 
 ```go
-func getAllFeatureFlags() []string {
-    return []string{
-        flagEnableTelemetry,
-        flagEnableNewFeature,  // Add your new flag here
-    }
+import "github.com/databricks/databricks-sql-go/internal/featureflags"
+
+request := featureflags.Request{
+    Host:          host,
+    WorkspaceID:   workspaceID,
+    DriverVersion: driverVersion,
+    UserAgent:     userAgent,
+    HTTPClient:    authenticatedClient,
 }
-```
 
-## Step 3: Add Public Method
+flags := featureflags.GetCache()
+flags.Acquire(request.Host, request.WorkspaceID)
+defer flags.Release(request.Host, request.WorkspaceID)
 
-In `featureflag.go`, add a public method to check your flag:
-
-```go
-// isNewFeatureEnabled checks if the new feature is enabled for the host.
-// Uses cached value if available and not expired.
-func (c *featureFlagCache) isNewFeatureEnabled(ctx context.Context, host string, httpClient *http.Client) (bool, error) {
-    return c.getFeatureFlag(ctx, host, httpClient, flagEnableNewFeature)
-}
-```
-
-## Step 4: Use It
-
-```go
-// Example usage in your code:
-flagCache := getFeatureFlagCache()
-enabled, err := flagCache.isNewFeatureEnabled(ctx, host, httpClient)
+enabled, err := flags.GetBool(ctx, request, flagName)
 if err != nil {
-    // Handle error (falls back to false on error with no cache)
-}
-
-if enabled {
-    // Feature is enabled - use new behavior
-} else {
-    // Feature is disabled - use old behavior
+    enabled = false // Choose a safe fallback for this consumer.
 }
 ```
 
-## How It Works
+Acquire once for the consumer's lifetime and release when it closes, not after
+each getter. Existing driver connections already manage this in `connector.Connect`
+and `conn.Close`; consumers on that path can reuse `conn.featureFlags`.
+Acquiring a reference does not fetch flags. The request can be used before session
+open if authentication is already available; it does not initialize authentication
+or select the kernel backend. Explicit kernel connections currently skip this
+driver-side cache and use the kernel's own cache.
 
-### Single Request for All Flags
-All flags are fetched together in a single HTTP request:
-```
-GET /api/2.0/feature-flags?flags=flagOne,flagTwo,flagThree
-```
+## Cache and Failure Behavior
 
-### 15-Minute Cache
-Flags are cached for 15 minutes per host to minimize API calls.
-
-### Graceful Degradation
-- If fetch fails but cache exists → returns stale cache (no error)
-- If fetch fails and no cache → returns error (caller defaults to false)
-
-### Thread-Safe
-Multiple goroutines can safely call feature flag methods concurrently.
-
-## Example: Adding Circuit Breaker Flag
-
-```go
-// Step 1: Add constant
-const (
-    flagEnableTelemetry = "databricks.partnerplatform.clientConfigsFeatureFlags.enableTelemetryForGoDriver"
-    flagEnableCircuitBreaker = "databricks.partnerplatform.clientConfigsFeatureFlags.enableCircuitBreakerForGoDriver"
-)
-
-// Step 2: Register for fetching
-func getAllFeatureFlags() []string {
-    return []string{
-        flagEnableTelemetry,
-        flagEnableCircuitBreaker,
-    }
-}
-
-// Step 3: Add public method
-func (c *featureFlagCache) isCircuitBreakerEnabled(ctx context.Context, host string, httpClient *http.Client) (bool, error) {
-    return c.getFeatureFlag(ctx, host, httpClient, flagEnableCircuitBreaker)
-}
-
-// Step 4: Use it
-if enabled, _ := flagCache.isCircuitBreakerEnabled(ctx, host, httpClient); enabled {
-    // Use circuit breaker
-}
-```
-
-## Benefits
-
-✅ **Single HTTP request** - All flags fetched at once
-✅ **15-minute caching** - Minimal API calls
-✅ **Graceful degradation** - Uses stale cache on errors
-✅ **Thread-safe** - Safe for concurrent access
-✅ **Easy to extend** - Just 3 simple steps
+- One GET retrieves all flags from
+  `/api/2.0/connector-service/feature-flags/GOLANG/{driverVersion}`.
+- Values are shared by workspace ID, with normalized host as a fallback. The
+  cache retains values, not credentials or HTTP clients.
+- The server's `ttl_seconds` controls refresh; a missing or invalid TTL falls back
+  to 15 minutes. Releasing the last consumer removes the workspace entry.
+- A cold read waits for the fetch. During a refresh, other readers can use stale
+  values. A failed refresh keeps the last successful values; a failed initial
+  fetch returns an error.
+- `GetBool` returns `false` without an error for missing/null flags. Other getters
+  return an error for missing/null flags. All getters reject malformed values or
+  values incompatible with the requested type, leaving fallback policy to the caller.
