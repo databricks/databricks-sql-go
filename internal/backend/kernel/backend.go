@@ -29,12 +29,19 @@ static inline KernelStatusCode go_kernel_set_max_connections(
 }
 
 static inline KernelStatusCode go_kernel_set_telemetry_config(
-    KernelSessionConfig* config, bool enabled, size_t batch_size,
+    KernelSessionConfig* config, bool has_enabled, bool enabled, size_t batch_size,
     uint64_t flush_interval_ms, uint32_t max_retries, uint64_t retry_delay_ms,
     uint64_t close_flush_timeout_ms) {
-  return kernel_session_config_set_telemetry_config(
-      config, enabled, batch_size, flush_interval_ms, max_retries, retry_delay_ms,
-      close_flush_timeout_ms);
+  KernelTelemetryConfig telemetry_config = {
+      .has_enabled = has_enabled,
+      .enabled = enabled,
+      .batch_size = batch_size,
+      .flush_interval_ms = flush_interval_ms,
+      .max_retries = max_retries,
+      .retry_delay_ms = retry_delay_ms,
+      .close_flush_timeout_ms = close_flush_timeout_ms,
+  };
+  return kernel_session_config_set_telemetry_config_v2(config, &telemetry_config);
 }
 
 static inline KernelStatusCode go_kernel_set_driver_system_configuration(
@@ -485,9 +492,14 @@ func (k *KernelBackend) applyTelemetry(cfg *C.KernelSessionConfig) error {
 	if closeFlushTimeout <= 0 {
 		closeFlushTimeout = defaultTelemetryCloseFlushTimeout
 	}
+	hasEnabled := t.Enabled != nil
+	enabled := false
+	if hasEnabled {
+		enabled = *t.Enabled
+	}
 	if err := call(func() C.KernelStatusCode {
 		return C.go_kernel_set_telemetry_config(cfg,
-			C.bool(t.Enabled), C.size_t(batchSize), C.uint64_t(flushInterval.Milliseconds()),
+			C.bool(hasEnabled), C.bool(enabled), C.size_t(batchSize), C.uint64_t(flushInterval.Milliseconds()),
 			C.uint32_t(maxRetries), C.uint64_t(retryDelay.Milliseconds()),
 			C.uint64_t(closeFlushTimeout.Milliseconds()))
 	}); err != nil {
