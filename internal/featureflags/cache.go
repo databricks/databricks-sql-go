@@ -156,6 +156,7 @@ func (c *Cache) getValue(ctx context.Context, request Request, name string) (str
 			return cachedFlags[name], nil
 		}
 		defer flagCtx.refresh.Unlock()
+		// Refresh is synchronous, so preserve the caller's deadline; other readers use stale values.
 		flags, err := load(ctx)
 		return flags[name], err
 	}

@@ -8,6 +8,11 @@ adding a consumer does not require a new cache method or a list of flags to fetc
 ## Read a Flag
 
 Use `GetBool`, `GetInt32`, `GetInt64`, `GetDouble`, `GetString`, or `GetStringList`.
+Connector-service returns each `value` as a string containing a JSON literal.
+`GetString` parses an inner value such as `"hello"` (including the JSON quotes),
+and `GetStringList` parses `["a", "b"]`. Unquoted text such as `hello` is invalid
+and returns an error.
+
 The caller supplies an authenticated HTTP client and chooses the expected type:
 
 ```go
