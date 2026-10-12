@@ -487,6 +487,25 @@ KernelStatusCode kernel_session_config_set_telemetry_config(KernelSessionConfig*
                                                             uint64_t retry_delay_ms,
                                                             uint64_t close_flush_timeout_ms);
 
+/* Optional telemetry configuration for hosts that must distinguish an omitted
+ * enablement setting from an explicit false. Passing `telemetry_config == NULL`
+ * leaves the kernel telemetry configuration unchanged. Otherwise the tuning
+ * fields are applied and `has_enabled` controls whether `enabled` overrides the
+ * workspace feature flag. The original positional setter above remains ABI
+ * compatible and is equivalent to this function with `has_enabled = true`. */
+typedef struct KernelTelemetryConfig {
+  bool has_enabled;
+  bool enabled;
+  size_t batch_size;
+  uint64_t flush_interval_ms;
+  uint32_t max_retries;
+  uint64_t retry_delay_ms;
+  uint64_t close_flush_timeout_ms;
+} KernelTelemetryConfig;
+
+KernelStatusCode kernel_session_config_set_telemetry_config_v2(
+    KernelSessionConfig* config, const KernelTelemetryConfig* telemetry_config);
+
 /* Configure telemetry circuit-breaker behavior. `threshold` and `timeout_ms`
  * must be > 0 when circuit breaking is enabled. If this setter is not called,
  * the kernel keeps its default circuit-breaker policy. */

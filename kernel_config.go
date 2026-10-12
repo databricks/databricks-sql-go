@@ -219,9 +219,9 @@ func buildKernelConfig(cfg *config.Config, kauth kernel.Auth) kernel.Config {
 }
 
 func kernelTelemetryConfig(cfg *config.Config) *kernel.TelemetryConfig {
-	enabled := false
+	var enabled *bool
 	if val, isSet := cfg.EnableTelemetry.Get(); isSet {
-		enabled = val
+		enabled = &val
 	}
 	return &kernel.TelemetryConfig{
 		Enabled:       enabled,

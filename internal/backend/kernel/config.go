@@ -191,11 +191,12 @@ func requestTimeoutMilliseconds(timeout time.Duration) int64 {
 }
 
 // TelemetryConfig is the kernel telemetry subset exposed by the Go driver. It
-// mirrors the kernel telemetry C ABI: Enabled follows the user-supplied
-// enableTelemetry value, defaulting to false when unset. Zero-valued tuning fields
-// keep the kernel defaults until applyTelemetry fills them for the setter.
+// mirrors the kernel telemetry C ABI: Enabled is nil when enableTelemetry is
+// unset so the kernel feature flag decides, and non-nil for an explicit client
+// override. Zero-valued tuning fields keep the kernel defaults until
+// applyTelemetry fills them for the setter.
 type TelemetryConfig struct {
-	Enabled           bool
+	Enabled           *bool
 	BatchSize         int
 	FlushInterval     time.Duration
 	MaxRetries        uint32
