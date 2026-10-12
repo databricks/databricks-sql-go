@@ -131,7 +131,7 @@ func (c *Cache) getValue(ctx context.Context, request Request, name string) (str
 	}
 	flagCtx.mu.RUnlock()
 
-	load := func() (map[string]string, error) {
+	load := func(fetchCtx context.Context) (map[string]string, error) {
 		flagCtx.mu.RLock()
 		if !flagCtx.isExpired() {
 			flags := flagCtx.flags
@@ -139,7 +139,7 @@ func (c *Cache) getValue(ctx context.Context, request Request, name string) (str
 			return flags, nil
 		}
 		flagCtx.mu.RUnlock()
-		flags, ttl, err := fetchFeatureFlags(ctx, request)
+		flags, ttl, err := fetchFeatureFlags(fetchCtx, request)
 		flagCtx.mu.Lock()
 		defer flagCtx.mu.Unlock()
 		if err == nil {
@@ -156,11 +156,12 @@ func (c *Cache) getValue(ctx context.Context, request Request, name string) (str
 			return cachedFlags[name], nil
 		}
 		defer flagCtx.refresh.Unlock()
-		flags, err := load()
+		flags, err := load(ctx)
 		return flags[name], err
 	}
 
-	result := flagCtx.fetch.DoChan("", func() (any, error) { return load() })
+	// Each caller can stop waiting without cancelling the shared, timeout-bounded fetch.
+	result := flagCtx.fetch.DoChan("", func() (any, error) { return load(context.WithoutCancel(ctx)) })
 	select {
 	case <-ctx.Done():
 		return "", ctx.Err()

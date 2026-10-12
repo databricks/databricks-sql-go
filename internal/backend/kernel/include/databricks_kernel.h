@@ -201,10 +201,11 @@ typedef struct kernel_session_config_t KernelSessionConfig;
 typedef struct kernel_session_t kernel_session_t;
 typedef struct kernel_statement_t kernel_statement_t;
 typedef struct kernel_executed_statement_t kernel_executed_statement_t;
-/* Async-consumption executed handle. Reserved: the async submit path is
- * deferred in v0 (see kernel_statement_submit), so no consumer receives a
- * live instance yet. */
+/* Async-consumption executed handle returned by kernel_statement_submit. */
 typedef struct kernel_executed_async_statement_t kernel_executed_async_statement_t;
+/* Execution-scoped canceller detached from an async executed handle. */
+typedef struct kernel_executed_async_statement_canceller_t
+    kernel_executed_async_statement_canceller_t;
 typedef struct kernel_result_stream_t kernel_result_stream_t;
 /* Detached canceller for a sync-executing statement, returned by
  * kernel_statement_canceller_new. The returned handle is safe to use from
@@ -347,6 +348,11 @@ KernelStatusCode kernel_session_config_set_session_conf(KernelSessionConfig* con
  * (order preserved); `name` and `value` are both required. */
 KernelStatusCode kernel_session_config_set_custom_header(KernelSessionConfig* config,
                                                          const char* name, const char* value);
+
+/* Configure whether authenticated SEA responses may use HTTP compression.
+ * Disabled by default. */
+KernelStatusCode kernel_session_config_set_sea_response_compression_enabled(
+    KernelSessionConfig* config, bool enabled);
 
 /* Configure the total timeout for one HTTP request, from connection start
  * through response-body completion. A separate 30s connection timeout also
@@ -727,8 +733,8 @@ KernelStatusCode kernel_statement_set_query_tags(kernel_statement_t* stmt,
                                                  const char* query_tags);
 
 /*
- * Wait-for-result execution with the existing 600-second polling ceiling and
- * no caller-supplied deadline. On success, release `*out` with
+ * Wait-for-result execution without an overall client polling deadline.
+ * On success, release `*out` with
  * `kernel_executed_statement_close`.
  */
 KernelStatusCode kernel_statement_execute(kernel_statement_t* stmt,
@@ -754,15 +760,24 @@ KernelStatusCode kernel_statement_execute_with_timeout_ms(
     kernel_statement_t* stmt, uint64_t timeout_ms,
     kernel_executed_statement_t** out);
 
-/*
- * Submit-and-return (async). DEFERRED in v0: this always returns
- * `KernelStatusCode_InvalidArgument` (with an explanatory last error) and
- * writes nothing to `*out`. Use the synchronous `kernel_statement_execute`
- * path. Declared so the symbol/contract is visible; wired when an ODBC /
- * Go consumer needs caller-driven polling.
- */
+/* Submit-and-return. On success, *out owns an async executed handle. */
 KernelStatusCode kernel_statement_submit(kernel_statement_t* stmt,
                                          kernel_executed_async_statement_t** out);
+
+/* Submit-and-return with a client-side execution deadline in milliseconds.
+ * Zero selects unlimited execution; values above
+ * DATABRICKS_KERNEL_MAX_CLIENT_QUERY_TIMEOUT_MS return InvalidArgument. The
+ * deadline starts on entry and is retained by the returned async handle across
+ * status polls. If it expires before a terminal status is observed, status
+ * returns Timeout with SQLSTATE HYT00 and the kernel schedules best-effort
+ * cancel/close cleanup. One exception: if the deadline fires DURING the initial
+ * submit round-trip (before the server returns a statement id), no id is known
+ * yet, so no cancel/close can be scheduled; a statement the server may have
+ * created is left for session-close to reclaim. This window is small because
+ * submit uses wait_timeout=0s. Result fetching is outside this deadline. */
+KernelStatusCode kernel_statement_submit_with_timeout_ms(
+    kernel_statement_t* stmt, uint64_t timeout_ms,
+    kernel_executed_async_statement_t** out);
 
 /*
  * Free the statement lifecycle owner. Does NOT free executed-handle
@@ -887,6 +902,50 @@ const char* kernel_executed_statement_query_id(const kernel_executed_statement_t
 
 KernelStatusCode kernel_executed_statement_close(kernel_executed_statement_t* exec);
 
+/* ─── Executed statement (caller-driven async) ─────────────────── */
+
+/* Perform at most one status request. Pending, Running, Succeeded, and Closed
+ * return Success. Failed returns SqlError; Cancelled returns Cancelled. On
+ * either non-success terminal outcome, *out is still set and the calling
+ * thread can retrieve the error information with kernel_get_last_error. */
+KernelStatusCode kernel_executed_async_statement_status(
+    kernel_executed_async_statement_t* exec, KernelStatementStatusKind* out);
+
+/* Materialise a successful terminal result as the existing owned result-stream
+ * handle. This is NON-BLOCKING: the caller must first poll
+ * kernel_executed_async_statement_status until it reports Succeeded (or Closed)
+ * before calling this. Invoking it before the statement reaches a terminal
+ * state returns KernelStatusCode_InvalidArgument rather than blocking (v0
+ * collapses invalid-state into that code). This is single-consumption:
+ * a second successful take is rejected. Close the stream with
+ * kernel_result_stream_close. */
+KernelStatusCode kernel_executed_async_statement_get_result_stream(
+    kernel_executed_async_statement_t* exec, kernel_result_stream_t** out);
+
+/* Most recently observed DML count, or -1 when unavailable. */
+int64_t kernel_executed_async_statement_num_modified_rows(
+    const kernel_executed_async_statement_t* exec);
+
+/* Borrowed NUL-terminated server statement id, valid until async close. */
+const char* kernel_executed_async_statement_query_id(
+    const kernel_executed_async_statement_t* exec);
+
+/* Create an execution-scoped canceller. The returned handle owns no borrow of
+ * exec and may cancel concurrently with status or result work. Join any
+ * in-flight cancel before freeing this handle. */
+KernelStatusCode kernel_executed_async_statement_canceller_new(
+    const kernel_executed_async_statement_t* exec,
+    kernel_executed_async_statement_canceller_t** out);
+KernelStatusCode kernel_executed_async_statement_canceller_cancel(
+    kernel_executed_async_statement_canceller_t* canceller);
+KernelStatusCode kernel_executed_async_statement_canceller_free(
+    kernel_executed_async_statement_canceller_t* canceller);
+
+/* Close the server operation and consume the async handle. The handle is
+ * consumed even when close returns an error. */
+KernelStatusCode kernel_executed_async_statement_close(
+    kernel_executed_async_statement_t* exec);
+
 /* ─── Result stream ───────────────────────────────────────────────────
  *
  * The schema is exported once; each `next_batch` call exports one Arrow
@@ -898,6 +957,12 @@ KernelStatusCode kernel_result_stream_get_schema(kernel_result_stream_t* stream,
 KernelStatusCode kernel_result_stream_next_batch(kernel_result_stream_t* stream,
                                                  struct ArrowArray* out_array,
                                                  struct ArrowSchema* out_schema);
+/* Fetch one batch without waiting. Success with ready=false means provider
+ * work is still pending and leaves the Arrow outputs untouched. Success with
+ * ready=true transfers a batch, or an empty array at end-of-stream. */
+KernelStatusCode kernel_result_stream_try_next_batch(
+    kernel_result_stream_t* stream, bool* ready, struct ArrowArray* out_array,
+    struct ArrowSchema* out_schema);
 KernelStatusCode kernel_result_stream_close(kernel_result_stream_t* stream);
 
 /* ─── Result-stream cancellation (detached canceller) ─────────────────

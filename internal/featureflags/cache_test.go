@@ -3,9 +3,11 @@ package featureflags
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -547,6 +549,65 @@ func TestStaleReadersDoNotWaitForRefresh(t *testing.T) {
 	unblockRefresh()
 	require.NoError(t, <-refreshed)
 	value, err = cache.GetBool(ctx, request, "flag")
+	require.NoError(t, err)
+	require.True(t, value)
+	require.Equal(t, int32(1), calls.Load())
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestColdFetchSurvivesCallerCancellation(t *testing.T) {
+	started := make(chan context.Context, 1)
+	allowResponse := make(chan struct{})
+	unblock := sync.OnceFunc(func() { close(allowResponse) })
+	defer unblock()
+	var calls atomic.Int32
+	request := Request{Host: "test-host", HTTPClient: &http.Client{
+		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			calls.Add(1)
+			started <- r.Context()
+			<-allowResponse
+			if err := r.Context().Err(); err != nil {
+				return nil, err
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(`{"flags":[{"name":"flag","value":"true"}]}`)),
+			}, nil
+		}),
+	}}
+	cache := &Cache{contexts: make(map[string]*featureFlagContext)}
+	cache.Acquire(request.Host)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	callerCtx, cancelCaller := context.WithCancel(ctx)
+	defer cancelCaller()
+	callerDone := make(chan error, 1)
+	go func() {
+		_, err := cache.GetBool(callerCtx, request, "flag")
+		callerDone <- err
+	}()
+	var fetchCtx context.Context
+	select {
+	case fetchCtx = <-started:
+	case <-ctx.Done():
+		t.Fatal("cold fetch did not start")
+	}
+	cancelCaller()
+	select {
+	case err := <-callerDone:
+		require.ErrorIs(t, err, context.Canceled)
+	case <-ctx.Done():
+		t.Fatal("cancelled caller did not return")
+	}
+	require.NoError(t, fetchCtx.Err(), "one caller must not cancel the shared fetch")
+	_, hasDeadline := fetchCtx.Deadline()
+	require.True(t, hasDeadline, "the shared fetch must still have a timeout")
+
+	unblock()
+	value, err := cache.GetBool(ctx, request, "flag")
 	require.NoError(t, err)
 	require.True(t, value)
 	require.Equal(t, int32(1), calls.Load())
