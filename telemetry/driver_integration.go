@@ -2,29 +2,15 @@ package telemetry
 
 import (
 	"context"
-	"net/http"
 	"time"
 
 	"github.com/databricks/databricks-sql-go/internal/config"
+	"github.com/databricks/databricks-sql-go/internal/featureflags"
 )
 
 // TelemetryInitOptions bundles the parameters for InitializeForConnection.
 type TelemetryInitOptions struct {
-	// Host is the Databricks host.
-	Host string
-
-	// DriverVersion is the driver version string.
-	DriverVersion string
-
-	// UserAgent is the User-Agent header sent on telemetry export and
-	// feature-flag requests. Should match the value the Thrift client uses so
-	// telemetry traffic is attributable to the driver in access logs.
-	UserAgent string
-
-	// HTTPClient is the HTTP client used for both feature-flag checks and
-	// telemetry export. The /telemetry-ext endpoint requires authentication,
-	// so this should be the authenticated driver client.
-	HTTPClient *http.Client
+	FeatureFlags featureflags.Request
 
 	// EnableTelemetry is a tristate from the client DSN:
 	//   unset  — server feature flag controls enablement
@@ -57,23 +43,17 @@ func InitializeForConnection(ctx context.Context, opts TelemetryInitOptions) *In
 		cfg.FlushInterval = opts.FlushInterval
 	}
 
-	// Get feature flag cache context FIRST (for reference counting)
-	flagCache := getFeatureFlagCache()
-	flagCache.getOrCreateContext(opts.Host)
-
 	// Check if telemetry should be enabled
-	enabled := isTelemetryEnabled(ctx, cfg, opts.Host, opts.DriverVersion, opts.UserAgent, opts.HTTPClient)
+	request := opts.FeatureFlags
+	enabled := isTelemetryEnabled(ctx, cfg, request)
 	if !enabled {
-		flagCache.releaseContext(opts.Host)
 		return nil
 	}
 
 	// Get or create telemetry client for this host
 	clientMgr := getClientManager()
-	telemetryClient := clientMgr.getOrCreateClient(opts.Host, opts.DriverVersion, opts.UserAgent, opts.HTTPClient, cfg)
+	telemetryClient := clientMgr.getOrCreateClient(request.Host, request.DriverVersion, request.UserAgent, request.HTTPClient, cfg)
 	if telemetryClient == nil {
-		// Client failed to start; release the flag cache ref we incremented above
-		flagCache.releaseContext(opts.Host)
 		return nil
 	}
 
@@ -89,8 +69,4 @@ func ReleaseForConnection(host string) {
 	// Release client manager reference
 	clientMgr := getClientManager()
 	_ = clientMgr.releaseClient(host)
-
-	// Release feature flag cache reference
-	flagCache := getFeatureFlagCache()
-	flagCache.releaseContext(host)
 }

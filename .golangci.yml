@@ -38,6 +38,7 @@ linters:
             - github.com/rs/zerolog
             - github.com/stretchr/testify
             - golang.org/x/oauth2
+            - golang.org/x/sync/singleflight
     gosec:
       severity: low
       confidence: low
