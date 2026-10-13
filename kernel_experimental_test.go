@@ -176,6 +176,24 @@ func TestWithKernelOptionsRejectedOnThriftPath(t *testing.T) {
 			}
 		})
 	}
+
+	for _, dsn := range []string{
+		"token:supersecret@example.cloud.databricks.com:443/sql/1.0/endpoints/12346a5b5b0e123a?enableGeoSpatialSupport=true",
+		"token:supersecret@example.cloud.databricks.com:443/sql/1.0/endpoints/12346a5b5b0e123a?enableGeoSpatialSupport=false",
+	} {
+		ucfg, err := config.ParseDSN(dsn)
+		if err != nil {
+			t.Fatalf("ParseDSN: %v", err)
+		}
+		c, err := NewConnector(withUserConfig(ucfg))
+		if err != nil {
+			t.Fatalf("NewConnector: %v", err)
+		}
+		_, err = c.Connect(context.Background())
+		if !errors.Is(err, dbsqlerr.ErrRequiresKernelBackend) {
+			t.Errorf("DSN %q error = %v, want ErrRequiresKernelBackend", dsn, err)
+		}
+	}
 }
 
 // WithKernelTrustedCerts must copy the PEM defensively, so a caller mutating its
