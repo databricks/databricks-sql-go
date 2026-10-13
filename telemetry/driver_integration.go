@@ -2,7 +2,6 @@ package telemetry
 
 import (
 	"context"
-	"net/http"
 	"time"
 
 	"github.com/databricks/databricks-sql-go/internal/config"
@@ -11,24 +10,7 @@ import (
 
 // TelemetryInitOptions bundles the parameters for InitializeForConnection.
 type TelemetryInitOptions struct {
-	// Host is the Databricks host.
-	Host string
-
-	// WorkspaceID partitions flags when several workspaces share a SPOG host.
-	WorkspaceID string
-
-	// DriverVersion is the driver version string.
-	DriverVersion string
-
-	// UserAgent is the User-Agent header sent on telemetry export and
-	// feature-flag requests. Should match the value the Thrift client uses so
-	// telemetry traffic is attributable to the driver in access logs.
-	UserAgent string
-
-	// HTTPClient is the HTTP client used for both feature-flag checks and
-	// telemetry export. The /telemetry-ext endpoint requires authentication,
-	// so this should be the authenticated driver client.
-	HTTPClient *http.Client
+	FeatureFlags featureflags.Request
 
 	// EnableTelemetry is a tristate from the client DSN:
 	//   unset  — server feature flag controls enablement
@@ -62,17 +44,15 @@ func InitializeForConnection(ctx context.Context, opts TelemetryInitOptions) *In
 	}
 
 	// Check if telemetry should be enabled
-	enabled := isTelemetryEnabled(ctx, cfg, featureflags.Request{
-		Host: opts.Host, WorkspaceID: opts.WorkspaceID, DriverVersion: opts.DriverVersion,
-		UserAgent: opts.UserAgent, HTTPClient: opts.HTTPClient,
-	})
+	request := opts.FeatureFlags
+	enabled := isTelemetryEnabled(ctx, cfg, request)
 	if !enabled {
 		return nil
 	}
 
 	// Get or create telemetry client for this host
 	clientMgr := getClientManager()
-	telemetryClient := clientMgr.getOrCreateClient(opts.Host, opts.DriverVersion, opts.UserAgent, opts.HTTPClient, cfg)
+	telemetryClient := clientMgr.getOrCreateClient(request.Host, request.DriverVersion, request.UserAgent, request.HTTPClient, cfg)
 	if telemetryClient == nil {
 		return nil
 	}

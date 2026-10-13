@@ -68,28 +68,22 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 	defer debuglog.Track(ctx, "connector.Connect", "host=%s", c.cfg.Host)()
 
 	flagRequest := c.featureFlagRequest()
-	if !c.cfg.UseKernel {
-		featureflags.GetCache().Acquire(flagRequest.Host, flagRequest.WorkspaceID)
-	}
+	featureflags.GetCache().Acquire(flagRequest.Host, flagRequest.WorkspaceID)
 
 	// openSessionWithReydenFallback handles the session opening with automatic
 	// recovery for Reyden / Real-Time warehouses that reject Thrift. It returns
 	// the backend, latency, and error.
 	be, sessionLatencyMs, err := c.openSessionWithReydenFallback(ctx)
 	if err != nil {
-		if !c.cfg.UseKernel {
-			featureflags.GetCache().Release(flagRequest.Host, flagRequest.WorkspaceID)
-		}
+		featureflags.GetCache().Release(flagRequest.Host, flagRequest.WorkspaceID)
 		return nil, err
 	}
 
 	conn := &conn{
-		id:      be.SessionID(),
-		cfg:     c.cfg,
-		backend: be,
-	}
-	if !c.cfg.UseKernel {
-		conn.featureFlags = &flagRequest
+		id:           be.SessionID(),
+		cfg:          c.cfg,
+		backend:      be,
+		featureFlags: &flagRequest,
 	}
 	log := logger.WithContext(conn.id, driverctx.CorrelationIdFromContext(ctx), "")
 
@@ -104,11 +98,7 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 	// Initialize telemetry: client config overlay decides; if unset, feature flags decide
 	if !skipTelemetry {
 		conn.telemetry = telemetry.InitializeForConnection(ctx, telemetry.TelemetryInitOptions{
-			Host:            c.cfg.Host,
-			WorkspaceID:     flagRequest.WorkspaceID,
-			DriverVersion:   c.cfg.DriverVersion,
-			UserAgent:       flagRequest.UserAgent,
-			HTTPClient:      flagRequest.HTTPClient,
+			FeatureFlags:    *conn.featureFlags,
 			EnableTelemetry: c.cfg.EnableTelemetry,
 			BatchSize:       c.cfg.TelemetryBatchSize,
 			FlushInterval:   c.cfg.TelemetryFlushInterval,
