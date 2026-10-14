@@ -1,9 +1,12 @@
 package client
 
 import (
+	"net/http"
 	"testing"
 
+	"github.com/databricks/databricks-sql-go/auth/noop"
 	"github.com/databricks/databricks-sql-go/internal/config"
+	"github.com/stretchr/testify/require"
 )
 
 // clearAgentEnv blanks every env var agent.Detect inspects so the test
@@ -79,4 +82,50 @@ func TestBuildUserAgent(t *testing.T) {
 			t.Errorf("got %q, want %q", got, want)
 		}
 	})
+}
+
+type recordingAuth struct {
+	client *http.Client
+}
+
+func (a *recordingAuth) Authenticate(*http.Request) error { return nil }
+func (a *recordingAuth) SetHTTPClient(c *http.Client)     { a.client = c }
+
+type recordingRoundTripper struct {
+	userAgent string
+}
+
+func (rt *recordingRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	rt.userAgent = req.Header.Get("User-Agent")
+	return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody, Request: req}, nil
+}
+
+func TestPooledClientInjectsUserAgentClientIntoAuthenticator(t *testing.T) {
+	clearAgentEnv(t)
+	base := &recordingRoundTripper{}
+	authr := &recordingAuth{}
+	cfg := &config.Config{
+		DriverName:    "godatabrickssqlconnector",
+		DriverVersion: "9.9.9",
+		UserConfig: config.UserConfig{
+			UserAgentEntry: "isv/product",
+			Authenticator:  authr,
+			Transport:      base,
+		},
+	}
+
+	PooledClient(cfg)
+
+	require.NotNil(t, authr.client, "authenticator should receive an http client")
+	req, _ := http.NewRequest(http.MethodPost, "https://host/oidc/token", nil)
+	resp, err := authr.client.Transport.RoundTrip(req)
+	require.NoError(t, err)
+	defer resp.Body.Close() //nolint:errcheck
+	require.Equal(t, BuildUserAgent(cfg), base.userAgent)
+	require.Empty(t, req.Header.Get("User-Agent"), "caller's request must not be mutated")
+}
+
+func TestPooledClientSkipsAuthenticatorsWithoutSetHTTPClient(t *testing.T) {
+	cfg := &config.Config{UserConfig: config.UserConfig{Authenticator: &noop.NoopAuth{}}}
+	require.NotNil(t, PooledClient(cfg))
 }

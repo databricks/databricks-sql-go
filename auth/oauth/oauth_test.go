@@ -2,11 +2,15 @@ package oauth
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
 	"strings"
 	"testing"
+
+	"golang.org/x/oauth2"
 )
 
 func TestInferCloudFromHost(t *testing.T) {
@@ -278,4 +282,48 @@ func TestFetchHostMetadata_failuresFallBack(t *testing.T) {
 			t.Fatal("ok=true on unreachable host, want false (fallback)")
 		}
 	})
+}
+
+// TestGetEndpointUsesContextHTTPClientTransport asserts that discovery goes
+// through the transport of an oauth2.HTTPClient supplied on ctx: the fake
+// transport answers both the databricks-config lookup and the OIDC discovery
+// document, so no network is touched and the resolved endpoint is the one it served.
+func TestGetEndpointUsesContextHTTPClientTransport(t *testing.T) {
+	const host = "ws.cloud.databricks.com"
+	rt := &scriptedTransport{userAgents: map[string]string{}}
+	ctx := context.WithValue(context.Background(), oauth2.HTTPClient, &http.Client{Transport: rt})
+
+	endpoint, err := GetEndpoint(ctx, host)
+	if err != nil {
+		t.Fatalf("GetEndpoint: %v", err)
+	}
+	if want := "https://" + host + "/oidc/v1/token"; endpoint.TokenURL != want {
+		t.Fatalf("TokenURL = %q, want %q", endpoint.TokenURL, want)
+	}
+	for _, path := range []string{"/.well-known/databricks-config", "/oidc/.well-known/openid-configuration"} {
+		if _, ok := rt.userAgents[path]; !ok {
+			t.Fatalf("%s was not requested through the ctx transport (seen: %v)", path, rt.userAgents)
+		}
+	}
+}
+
+type scriptedTransport struct {
+	userAgents map[string]string
+}
+
+func (rt *scriptedTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	rt.userAgents[req.URL.Path] = req.Header.Get("User-Agent")
+	status, body := http.StatusNotFound, ""
+	if req.URL.Path == "/oidc/.well-known/openid-configuration" {
+		base := "https://" + req.URL.Host + "/oidc"
+		status = http.StatusOK
+		body = fmt.Sprintf(`{"issuer":%q,"authorization_endpoint":%q,"token_endpoint":%q,"jwks_uri":%q}`,
+			base, base+"/v1/authorize", base+"/v1/token", base+"/jwks.json")
+	}
+	return &http.Response{
+		StatusCode: status,
+		Header:     http.Header{"Content-Type": {"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(body)),
+		Request:    req,
+	}, nil
 }

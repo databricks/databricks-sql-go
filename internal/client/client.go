@@ -622,23 +622,37 @@ func PooledClient(cfg *config.Config) *http.Client {
 		return nil
 	}
 
-	var tr *Transport
-	if cfg.Transport != nil {
-		tr = &Transport{
-			Base:  cfg.Transport,
-			Authr: cfg.Authenticator,
-		}
-	} else {
-		tr = &Transport{
-			Base:  PooledTransport(cfg),
-			Authr: cfg.Authenticator,
-		}
+	base := cfg.Transport
+	if base == nil {
+		base = PooledTransport(cfg)
+	}
+
+	// Authenticators that fetch their own tokens (OAuth M2M) get a client on the
+	// same base transport, with the driver User-Agent, so token traffic is
+	// attributed like Thrift traffic. It must not go through the auth Transport
+	// below, which would recurse into Authenticate.
+	if s, ok := cfg.Authenticator.(interface{ SetHTTPClient(*http.Client) }); ok {
+		s.SetHTTPClient(&http.Client{
+			Transport: &userAgentTransport{base: base, userAgent: BuildUserAgent(cfg)},
+			Timeout:   cfg.ClientTimeout,
+		})
 	}
 
 	return &http.Client{
-		Transport: tr,
+		Transport: &Transport{Base: base, Authr: cfg.Authenticator},
 		Timeout:   cfg.ClientTimeout,
 	}
+}
+
+type userAgentTransport struct {
+	base      http.RoundTripper
+	userAgent string
+}
+
+func (t *userAgentTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	req2 := cloneRequest(req)
+	req2.Header.Set("User-Agent", t.userAgent)
+	return t.base.RoundTrip(req2)
 }
 
 // cloneRequest returns a clone of the provided *http.Request.
