@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/databricks/databricks-sql-go/internal/featureflags"
 )
 
 func TestDefaultConfig(t *testing.T) {
@@ -138,6 +140,8 @@ func TestParseTelemetryConfig_AllParams(t *testing.T) {
 	}
 }
 
+func boolPtr(b bool) *bool { return &b }
+
 // TestIsTelemetryEnabled_ExplicitOptOut: client sets enableTelemetry=false →
 // disabled even when server flag is true. Server is not consulted.
 func TestIsTelemetryEnabled_ExplicitOptOut(t *testing.T) {
@@ -147,7 +151,7 @@ func TestIsTelemetryEnabled_ExplicitOptOut(t *testing.T) {
 	}))
 	defer server.Close()
 
-	result := isTelemetryEnabled(context.Background(), &Config{EnableTelemetry: boolPtr(false)}, server.URL, "test-version", "test-ua", &http.Client{Timeout: 5 * time.Second})
+	result := isTelemetryEnabled(context.Background(), &Config{EnableTelemetry: boolPtr(false)}, featureflags.Request{Host: server.URL, DriverVersion: "test-version", UserAgent: "test-ua", HTTPClient: &http.Client{Timeout: 5 * time.Second}})
 
 	if result {
 		t.Error("Expected telemetry to be disabled when client sets enableTelemetry=false, got enabled")
@@ -157,7 +161,7 @@ func TestIsTelemetryEnabled_ExplicitOptOut(t *testing.T) {
 // TestIsTelemetryEnabled_ExplicitOptIn: client sets enableTelemetry=true →
 // enabled without any server call (unreachable host proves no network call is made).
 func TestIsTelemetryEnabled_ExplicitOptIn(t *testing.T) {
-	result := isTelemetryEnabled(context.Background(), &Config{EnableTelemetry: boolPtr(true)}, "http://unreachable-host", "test-version", "test-ua", &http.Client{Timeout: 5 * time.Second})
+	result := isTelemetryEnabled(context.Background(), &Config{EnableTelemetry: boolPtr(true)}, featureflags.Request{Host: "http://unreachable-host", DriverVersion: "test-version", UserAgent: "test-ua", HTTPClient: &http.Client{Timeout: 5 * time.Second}})
 
 	if !result {
 		t.Error("Expected telemetry to be enabled when client sets enableTelemetry=true, got disabled")
@@ -172,11 +176,11 @@ func TestIsTelemetryEnabled_ServerEnabled(t *testing.T) {
 	}))
 	defer server.Close()
 
-	flagCache := getFeatureFlagCache()
-	flagCache.getOrCreateContext(server.URL)
-	defer flagCache.releaseContext(server.URL)
+	flagCache := featureflags.GetCache()
+	flagCache.Acquire(server.URL)
+	defer flagCache.Release(server.URL)
 
-	result := isTelemetryEnabled(context.Background(), &Config{}, server.URL, "test-version", "test-ua", &http.Client{Timeout: 5 * time.Second})
+	result := isTelemetryEnabled(context.Background(), &Config{}, featureflags.Request{Host: server.URL, DriverVersion: "test-version", UserAgent: "test-ua", HTTPClient: &http.Client{Timeout: 5 * time.Second}})
 
 	if !result {
 		t.Error("Expected telemetry to be enabled when server flag is true and EnableTelemetry is nil, got disabled")
@@ -191,11 +195,11 @@ func TestIsTelemetryEnabled_ServerDisabled(t *testing.T) {
 	}))
 	defer server.Close()
 
-	flagCache := getFeatureFlagCache()
-	flagCache.getOrCreateContext(server.URL)
-	defer flagCache.releaseContext(server.URL)
+	flagCache := featureflags.GetCache()
+	flagCache.Acquire(server.URL)
+	defer flagCache.Release(server.URL)
 
-	result := isTelemetryEnabled(context.Background(), &Config{}, server.URL, "test-version", "test-ua", &http.Client{Timeout: 5 * time.Second})
+	result := isTelemetryEnabled(context.Background(), &Config{}, featureflags.Request{Host: server.URL, DriverVersion: "test-version", UserAgent: "test-ua", HTTPClient: &http.Client{Timeout: 5 * time.Second}})
 
 	if result {
 		t.Error("Expected telemetry to be disabled when server flag is false and EnableTelemetry is nil, got enabled")
@@ -209,11 +213,11 @@ func TestIsTelemetryEnabled_ServerError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	flagCache := getFeatureFlagCache()
-	flagCache.getOrCreateContext(server.URL)
-	defer flagCache.releaseContext(server.URL)
+	flagCache := featureflags.GetCache()
+	flagCache.Acquire(server.URL)
+	defer flagCache.Release(server.URL)
 
-	result := isTelemetryEnabled(context.Background(), &Config{}, server.URL, "test-version", "test-ua", &http.Client{Timeout: 5 * time.Second})
+	result := isTelemetryEnabled(context.Background(), &Config{}, featureflags.Request{Host: server.URL, DriverVersion: "test-version", UserAgent: "test-ua", HTTPClient: &http.Client{Timeout: 5 * time.Second}})
 
 	if result {
 		t.Error("Expected telemetry to be disabled when server errors and EnableTelemetry is nil, got enabled")
@@ -222,11 +226,11 @@ func TestIsTelemetryEnabled_ServerError(t *testing.T) {
 
 // TestIsTelemetryEnabled_ServerUnreachable: no DSN override, server unreachable → disabled.
 func TestIsTelemetryEnabled_ServerUnreachable(t *testing.T) {
-	flagCache := getFeatureFlagCache()
-	flagCache.getOrCreateContext("http://localhost:9999")
-	defer flagCache.releaseContext("http://localhost:9999")
+	flagCache := featureflags.GetCache()
+	flagCache.Acquire("http://localhost:9999")
+	defer flagCache.Release("http://localhost:9999")
 
-	result := isTelemetryEnabled(context.Background(), &Config{}, "http://localhost:9999", "test-version", "test-ua", &http.Client{Timeout: 1 * time.Second})
+	result := isTelemetryEnabled(context.Background(), &Config{}, featureflags.Request{Host: "http://localhost:9999", DriverVersion: "test-version", UserAgent: "test-ua", HTTPClient: &http.Client{Timeout: 1 * time.Second}})
 
 	if result {
 		t.Error("Expected telemetry to be disabled when server is unreachable and EnableTelemetry is nil, got enabled")

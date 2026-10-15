@@ -668,8 +668,8 @@ func TestBuildKernelConfig(t *testing.T) {
 		if kc.Telemetry == nil {
 			t.Fatal("Telemetry not forwarded")
 		}
-		if kc.Telemetry.Enabled {
-			t.Error("Telemetry.Enabled = true, want false when enableTelemetry is unset")
+		if kc.Telemetry.Enabled != nil {
+			t.Errorf("Telemetry.Enabled = %v, want nil when enableTelemetry is unset", *kc.Telemetry.Enabled)
 		}
 		if kc.Telemetry.BatchSize != 0 {
 			t.Errorf("Telemetry.BatchSize = %d, want 0 when telemetry_batch_size is unset", kc.Telemetry.BatchSize)
@@ -685,8 +685,8 @@ func TestBuildKernelConfig(t *testing.T) {
 		if kc.Telemetry == nil {
 			t.Fatal("Telemetry not forwarded")
 		}
-		if kc.Telemetry.Enabled {
-			t.Error("Telemetry.Enabled = true, want false from explicit enableTelemetry=false")
+		if kc.Telemetry.Enabled == nil || *kc.Telemetry.Enabled {
+			t.Errorf("Telemetry.Enabled = %v, want explicit false", kc.Telemetry.Enabled)
 		}
 		if kc.Telemetry.BatchSize != 17 {
 			t.Errorf("Telemetry.BatchSize = %d, want 17", kc.Telemetry.BatchSize)
@@ -697,8 +697,8 @@ func TestBuildKernelConfig(t *testing.T) {
 
 		c.EnableTelemetry = config.NewConfigValue(true)
 		kc = buildKernelConfig(c, kernel.Auth{Mode: kernel.AuthPAT, Token: "dapi-x"})
-		if !kc.Telemetry.Enabled {
-			t.Error("Telemetry.Enabled = false, want true from explicit enableTelemetry=true")
+		if kc.Telemetry.Enabled == nil || !*kc.Telemetry.Enabled {
+			t.Errorf("Telemetry.Enabled = %v, want explicit true", kc.Telemetry.Enabled)
 		}
 	})
 

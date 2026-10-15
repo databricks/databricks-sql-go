@@ -20,6 +20,7 @@ import (
 	"github.com/databricks/databricks-sql-go/internal/config"
 	"github.com/databricks/databricks-sql-go/internal/debuglog"
 	dbsqlerrint "github.com/databricks/databricks-sql-go/internal/errors"
+	"github.com/databricks/databricks-sql-go/internal/featureflags"
 	"github.com/databricks/databricks-sql-go/internal/retry"
 	"github.com/databricks/databricks-sql-go/internal/rows"
 	"github.com/databricks/databricks-sql-go/logger"
@@ -27,10 +28,11 @@ import (
 )
 
 type conn struct {
-	id        string
-	cfg       *config.Config
-	backend   backend.Backend
-	telemetry *telemetry.Interceptor // Optional telemetry interceptor
+	id           string
+	cfg          *config.Config
+	backend      backend.Backend
+	featureFlags *featureflags.Request
+	telemetry    *telemetry.Interceptor // Optional telemetry interceptor
 }
 
 // tagStatementClosed returns a telemetry-only copy of a close-RPC error tagged
@@ -76,6 +78,10 @@ func (c *conn) Close() error {
 		c.telemetry.RecordOperation(ctx, c.id, "", telemetry.OperationTypeDeleteSession, time.Since(closeStart).Milliseconds(), telErr)
 		_ = c.telemetry.Close(ctx)
 		telemetry.ReleaseForConnection(c.cfg.Host)
+	}
+	if c.featureFlags != nil {
+		featureflags.GetCache().Release(c.featureFlags.Host, c.featureFlags.WorkspaceID)
+		c.featureFlags = nil
 	}
 
 	if err != nil {
