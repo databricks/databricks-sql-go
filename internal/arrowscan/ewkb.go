@@ -106,7 +106,7 @@ func (r *wkbRewriter) rewriteGeometry(includeSRID bool, srid int32) (uint32, err
 			}
 		}
 	default:
-		panic("decodeISOWKBType accepted an unsupported base type")
+		return 0, fmt.Errorf("malformed WKB: unsupported geometry type %d", baseType)
 	}
 	if err != nil {
 		return 0, err
@@ -114,7 +114,7 @@ func (r *wkbRewriter) rewriteGeometry(includeSRID bool, srid int32) (uint32, err
 	return baseType, nil
 }
 
-func decodeISOWKBType(rawType uint32) (baseType uint32, dimensions int, flags uint32, err error) {
+func decodeISOWKBType(rawType uint32) (baseType uint32, dimensions uint32, flags uint32, err error) {
 	if rawType&(ewkbZFlag|ewkbMFlag|ewkbSRIDFlag|ewkbBBoxFlag) != 0 {
 		return 0, 0, 0, fmt.Errorf("malformed WKB: expected ISO/OGC type code, got EWKB flags in %#x", rawType)
 	}
@@ -159,7 +159,7 @@ func (r *wkbRewriter) copyUint32(order binary.ByteOrder) (uint32, error) {
 	return value, nil
 }
 
-func (r *wkbRewriter) copyCoordinateSequence(order binary.ByteOrder, dimensions int) error {
+func (r *wkbRewriter) copyCoordinateSequence(order binary.ByteOrder, dimensions uint32) error {
 	points, err := r.copyUint32(order)
 	if err != nil {
 		return err
@@ -168,12 +168,12 @@ func (r *wkbRewriter) copyCoordinateSequence(order binary.ByteOrder, dimensions 
 }
 
 func (r *wkbRewriter) copyBytes(count uint64) error {
-	remaining := len(r.input) - r.offset
-	if count > uint64(remaining) {
+	remaining := r.input[r.offset:]
+	if count > uint64(len(remaining)) {
 		return fmt.Errorf("malformed WKB: payload is truncated")
 	}
-	end := r.offset + int(count)
-	r.output = append(r.output, r.input[r.offset:end]...)
-	r.offset = end
+	payload := remaining[:count]
+	r.output = append(r.output, payload...)
+	r.offset += len(payload)
 	return nil
 }

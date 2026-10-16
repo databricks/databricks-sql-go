@@ -74,10 +74,29 @@ func TestWKBToEWKBRejectsMalformedPayloads(t *testing.T) {
 		{},
 		{2, 1, 0, 0, 0},
 		{1, 1, 0, 0, 0},
+		{1, 0, 0, 0, 0},
+		{1, 8, 0, 0, 0},
+		{1, 2, 0, 0, 0, 0xff, 0xff, 0xff, 0xff},
 		append(pointWKB(binary.LittleEndian, 1, 2), 0),
 	} {
 		if _, err := wkbToEWKB(input, 0); err == nil {
 			t.Fatalf("wkbToEWKB(%x) succeeded, want error", input)
+		}
+	}
+}
+
+func TestWKBRewriterCopyBytesChecksBounds(t *testing.T) {
+	for _, count := range []uint64{0, 2, 3, 4, ^uint64(0)} {
+		r := wkbRewriter{input: []byte{0, 1, 2, 3}, offset: 1}
+		err := r.copyBytes(count)
+		if count > 3 {
+			if err == nil || r.offset != 1 || len(r.output) != 0 {
+				t.Fatalf("copyBytes(%d) = %v, offset=%d, output=%x", count, err, r.offset, r.output)
+			}
+			continue
+		}
+		if err != nil || !bytes.Equal(r.output, r.input[1:1+count]) || r.offset != 1+len(r.output) {
+			t.Fatalf("copyBytes(%d) = %v, offset=%d, output=%x", count, err, r.offset, r.output)
 		}
 	}
 }
