@@ -36,8 +36,10 @@ import (
 // date, timestamp, and top-level decimal (as an exact fixed-point string,
 // matching the Thrift path — a float64 would lose precision beyond ~17 digits).
 // Nested types (List/Map/Struct, and VARIANT which
-// arrives nested) render to a JSON string byte-identical to the Thrift path;
-// GEOMETRY arrives as a WKB/WKT string and is handled by the string arm. INTERVAL
+// arrives nested) render to a JSON string byte-identical to the Thrift path.
+// Top-level binary GEOMETRY / GEOGRAPHY is selected explicitly through
+// ScanOptions and combines its SRID and WKB children into EWKB []byte; string
+// mode is handled by the regular string arm. INTERVAL
 // day-time/year-month arrive as native arrow duration/month-interval and format to
 // the same string the Thrift path receives pre-formatted from the server. NULLs
 // map to nil. A genuinely unhandled type returns an error rather than a silently
@@ -106,19 +108,38 @@ func (c *StructKeyCache) keyPrefixes(st *arrow.StructType) []string {
 // StructKeyCache) so struct field-name keys are escaped once per result set
 // rather than once per row. Pass nil for the un-memoized one-shot behavior.
 func ScanCellCached(col arrow.Array, row int, loc *time.Location, keys *StructKeyCache) (driver.Value, error) {
-	return scanCell(col, row, loc, keys, false)
+	return scanCell(col, row, loc, keys, ScanOptions{})
 }
 
 // ScanCellCachedDecimalFloat is ScanCellCached that, when decimalAsFloat is true,
 // scans a TOP-LEVEL Decimal128 to a lossy float64 instead of the exact string
 // (nested decimals still render exactly). Opt in via WithKernelDecimalAsFloat.
 func ScanCellCachedDecimalFloat(col arrow.Array, row int, loc *time.Location, keys *StructKeyCache, decimalAsFloat bool) (driver.Value, error) {
-	return scanCell(col, row, loc, keys, decimalAsFloat)
+	return scanCell(col, row, loc, keys, ScanOptions{DecimalAsFloat: decimalAsFloat})
 }
 
-func scanCell(col arrow.Array, row int, loc *time.Location, keys *StructKeyCache, decimalAsFloat bool) (driver.Value, error) {
+// ScanOptions controls top-level result adaptations that cannot be inferred from
+// an Arrow array alone. Logical GEOMETRY / GEOGRAPHY identity lives on the
+// enclosing schema Field, so kernelRows sets GeospatialBinary only for a field
+// carrying that metadata and a physical struct value.
+type ScanOptions struct {
+	DecimalAsFloat   bool
+	GeospatialBinary bool
+}
+
+// ScanCellCachedWithOptions is the full scanner entry point used by the kernel
+// rows implementation. Callers that do not need result-specific adaptations
+// should continue to use ScanCellCached.
+func ScanCellCachedWithOptions(col arrow.Array, row int, loc *time.Location, keys *StructKeyCache, options ScanOptions) (driver.Value, error) {
+	return scanCell(col, row, loc, keys, options)
+}
+
+func scanCell(col arrow.Array, row int, loc *time.Location, keys *StructKeyCache, options ScanOptions) (driver.Value, error) {
 	if col.IsNull(row) {
 		return nil, nil
+	}
+	if options.GeospatialBinary {
+		return scanGeospatialEWKB(col, row)
 	}
 	switch c := col.(type) {
 	case *array.Null:
@@ -195,7 +216,7 @@ func scanCell(col arrow.Array, row int, loc *time.Location, keys *StructKeyCache
 		return inLocation(timestampToTime(int64(c.Value(row)), dt.Unit), loc), nil
 	case *array.Decimal128:
 		dt := col.DataType().(*arrow.Decimal128Type)
-		if decimalAsFloat {
+		if options.DecimalAsFloat {
 			// Lossy fast path: float64, no per-cell string. Opt-in only.
 			return c.Value(row).ToFloat64(dt.Scale), nil
 		}
@@ -226,6 +247,41 @@ func scanCell(col arrow.Array, row int, loc *time.Location, keys *StructKeyCache
 	default:
 		return nil, fmt.Errorf("scanning arrow type %s is not supported", col.DataType())
 	}
+}
+
+// scanGeospatialEWKB validates Reyden's canonical top-level
+// struct<srid:int32,wkb:binary> value and embeds the sibling SRID into EWKB.
+// database/sql cannot return the two-child Arrow struct as a driver.Value, and
+// returning bare OGC WKB would lose the per-row SRID for GEOMETRY(ANY).
+func scanGeospatialEWKB(col arrow.Array, row int) (driver.Value, error) {
+	values, ok := col.(*array.Struct)
+	if !ok {
+		return nil, fmt.Errorf("binary geospatial column has arrow type %s, want struct<srid:int32,wkb:binary>", col.DataType())
+	}
+	fields := values.DataType().(*arrow.StructType).Fields()
+	if len(fields) != 2 || fields[0].Name != "srid" || fields[1].Name != "wkb" ||
+		fields[0].Type.ID() != arrow.INT32 || fields[1].Type.ID() != arrow.BINARY {
+		return nil, fmt.Errorf("binary geospatial column has arrow type %s, want struct<srid:int32,wkb:binary>", col.DataType())
+	}
+	srids, ok := values.Field(0).(*array.Int32)
+	if !ok {
+		return nil, fmt.Errorf("binary geospatial srid child has arrow type %s, want int32", values.Field(0).DataType())
+	}
+	wkbs, ok := values.Field(1).(*array.Binary)
+	if !ok {
+		return nil, fmt.Errorf("binary geospatial wkb child has arrow type %s, want binary", values.Field(1).DataType())
+	}
+	if srids.IsNull(row) {
+		return nil, fmt.Errorf("binary geospatial value at row %d has a null srid child", row)
+	}
+	if wkbs.IsNull(row) {
+		return nil, fmt.Errorf("binary geospatial value at row %d has a null wkb child", row)
+	}
+	ewkb, err := wkbToEWKB(wkbs.Value(row), srids.Value(row))
+	if err != nil {
+		return nil, fmt.Errorf("binary geospatial value at row %d: %w", row, err)
+	}
+	return ewkb, nil
 }
 
 // formatDayTimeInterval renders an arrow duration (in the given time unit) as the

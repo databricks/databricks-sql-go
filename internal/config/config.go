@@ -137,6 +137,12 @@ type KernelExperimentalConfig struct {
 	// false TokenCacheEnabled calls the setter with enabled=false so the kernel does
 	// NOT persist to disk by default.
 	TokenCacheEnabled bool
+
+	// EnableGeoSpatialSupport selects the kernel's client-side GEOMETRY /
+	// GEOGRAPHY result representation. True requests the canonical
+	// struct<srid,wkb> Arrow value; false requests WKT / EWKT strings. A pointer
+	// preserves the default-enabled value versus explicitly false.
+	EnableGeoSpatialSupport *bool
 }
 
 // DeepCopy returns a deep copy of the experimental config, or nil for a nil
@@ -157,6 +163,10 @@ func (k *KernelExperimentalConfig) DeepCopy() *KernelExperimentalConfig {
 		MaxChunksInMemory:       k.MaxChunksInMemory,
 		DecimalAsFloat:          k.DecimalAsFloat,
 		TokenCacheEnabled:       k.TokenCacheEnabled,
+	}
+	if k.EnableGeoSpatialSupport != nil {
+		enabled := *k.EnableGeoSpatialSupport
+		cp.EnableGeoSpatialSupport = &enabled
 	}
 	if k.MaxConnections != nil {
 		max := *k.MaxConnections
@@ -302,6 +312,10 @@ type UserConfig struct {
 	// unambiguous. False by default; when true, enables on-disk token-cache persistence
 	// for U2M OAuth. DSN: tokenCache=true.
 	TokenCacheEnabledDSN bool
+	// EnableGeoSpatialSupportDSN is a DSN-only carrier for
+	// enableGeoSpatialSupport=true|false. Nil means omitted (the default is
+	// true); the connector copies a present value into KernelExperimental.
+	EnableGeoSpatialSupportDSN *bool
 }
 
 // DeepCopy returns a true deep copy of UserConfig
@@ -323,7 +337,7 @@ func (ucfg UserConfig) DeepCopy() UserConfig {
 
 	}
 
-	return UserConfig{
+	result := UserConfig{
 		Protocol:                 ucfg.Protocol,
 		Host:                     ucfg.Host,
 		Port:                     ucfg.Port,
@@ -352,6 +366,11 @@ func (ucfg UserConfig) DeepCopy() UserConfig {
 		WarehouseID:              ucfg.WarehouseID,
 		TokenCacheEnabledDSN:     ucfg.TokenCacheEnabledDSN,
 	}
+	if ucfg.EnableGeoSpatialSupportDSN != nil {
+		enabled := *ucfg.EnableGeoSpatialSupportDSN
+		result.EnableGeoSpatialSupportDSN = &enabled
+	}
+	return result
 }
 
 var defaultMaxRows = 100000
@@ -515,6 +534,12 @@ func ParseDSN(dsn string) (UserConfig, error) {
 			return UserConfig{}, err
 		}
 		ucfg.TokenCacheEnabledDSN = tokenCache
+	}
+	if enableGeoSpatialSupport, ok, err := params.extractAsBool("enableGeoSpatialSupport"); ok {
+		if err != nil {
+			return UserConfig{}, err
+		}
+		ucfg.EnableGeoSpatialSupportDSN = &enableGeoSpatialSupport
 	}
 
 	// Telemetry parameters

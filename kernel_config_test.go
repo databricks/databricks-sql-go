@@ -467,9 +467,10 @@ var kernelConfigFieldDisposition = map[string]string{
 	"EnableTelemetry":    "forwarded",
 	"TelemetryBatchSize": "forwarded",
 	// Forwarded to the kernel's telemetry scheduler on the kernel path.
-	"TelemetryFlushInterval":   "forwarded",
-	"UseArrowNativeDecimalDSN": "inert", // DSN carrier; kernel renders decimals exactly regardless
-	"TokenCacheEnabledDSN":     "inert", // DSN carrier; forwarded to KernelExperimental.TokenCacheEnabled
+	"TelemetryFlushInterval":     "forwarded",
+	"UseArrowNativeDecimalDSN":   "inert", // DSN carrier; kernel renders decimals exactly regardless
+	"TokenCacheEnabledDSN":       "inert", // DSN carrier; forwarded to KernelExperimental.TokenCacheEnabled
+	"EnableGeoSpatialSupportDSN": "inert", // DSN carrier; forwarded to KernelExperimental.EnableGeoSpatialSupport
 
 	// Fields promoted from the embedded CloudFetchConfig. The kernel does
 	// CloudFetch internally (below the C ABI), so none is forwarded — but each is
@@ -555,6 +556,26 @@ func TestBuildKernelConfig(t *testing.T) {
 		kc := buildKernelConfig(c, kernel.Auth{Mode: kernel.AuthPAT, Token: "dapi-x"})
 		if kc.MaxConnections != 37 {
 			t.Errorf("MaxConnections = %d, want 37", kc.MaxConnections)
+		}
+	})
+
+	t.Run("geospatial support defaults true and preserves explicit values", func(t *testing.T) {
+		c := baseKernelConfig()
+		kc := buildKernelConfig(c, kernel.Auth{Mode: kernel.AuthPAT, Token: "dapi-x"})
+		if !kc.EnableGeoSpatialSupport {
+			t.Fatal("omitted EnableGeoSpatialSupport = false, want default true")
+		}
+
+		WithEnableGeoSpatialSupport(false)(c)
+		kc = buildKernelConfig(c, kernel.Auth{Mode: kernel.AuthPAT, Token: "dapi-x"})
+		if kc.EnableGeoSpatialSupport {
+			t.Fatal("explicit EnableGeoSpatialSupport=false was not preserved")
+		}
+
+		WithEnableGeoSpatialSupport(true)(c)
+		kc = buildKernelConfig(c, kernel.Auth{Mode: kernel.AuthPAT, Token: "dapi-x"})
+		if !kc.EnableGeoSpatialSupport {
+			t.Fatal("explicit EnableGeoSpatialSupport=true was not preserved")
 		}
 	})
 
