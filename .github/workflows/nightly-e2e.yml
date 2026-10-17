@@ -147,7 +147,7 @@ jobs:
       # Keep in lockstep with rust-toolchain.toml's channel (it governs the archive
       # under a fixed KERNEL_REV; a floating `stable` here would drift it).
       - name: Set up Rust Toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1.16.1
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
         with:
           toolchain: 1.96.1
 
