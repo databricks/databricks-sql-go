@@ -439,7 +439,7 @@ func (k *KernelBackend) applyMaxConnections(cfg *C.KernelSessionConfig) error {
 }
 
 // applyEnableGeoSpatialSupport selects the kernel's client-side representation
-// for GEOMETRY / GEOGRAPHY results. The connector supplies the default-enabled
+// for GEOMETRY / GEOGRAPHY results. The connector supplies the default-disabled
 // value explicitly, and an explicit false crosses the ABI unchanged.
 func (k *KernelBackend) applyEnableGeoSpatialSupport(cfg *C.KernelSessionConfig) error {
 	if err := call(func() C.KernelStatusCode {
