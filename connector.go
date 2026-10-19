@@ -676,10 +676,11 @@ func WithKernelDecimalAsFloat(asFloat bool) ConnOption {
 }
 
 // WithEnableGeoSpatialSupport selects how the kernel path exposes top-level
-// GEOMETRY and GEOGRAPHY result values. True (the default) returns EWKB bytes
+// GEOMETRY and GEOGRAPHY result values. True returns EWKB bytes
 // ([]byte), including the per-row SRID, and reports the logical GEOMETRY /
-// GEOGRAPHY type through database/sql metadata. False returns WKT / EWKT strings and reports STRING, matching the
-// existing string-mode driver contract. The per-row SRID remains present in the
+// GEOGRAPHY type through database/sql metadata. False (the default) returns
+// WKT / EWKT strings and reports STRING, matching the existing string-mode
+// driver contract. The per-row SRID remains present in the
 // Arrow struct returned by the driver's GetArrowBatches API in enabled mode;
 // that raw Arrow value retains Databricks' separate SRID and OGC WKB children.
 //

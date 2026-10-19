@@ -34,7 +34,7 @@ func TestKernelE2EGeospatialRepresentations(t *testing.T) {
 		native bool
 		extra  []ConnOption
 	}{
-		{"default", true, nil},
+		{"default", false, nil},
 		{"enabled", true, []ConnOption{WithEnableGeoSpatialSupport(true)}},
 		{"disabled", false, []ConnOption{WithEnableGeoSpatialSupport(false)}},
 	} {
