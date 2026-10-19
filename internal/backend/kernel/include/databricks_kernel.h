@@ -348,9 +348,9 @@ KernelStatusCode kernel_session_config_set_session_conf(KernelSessionConfig* con
  * representation. `enabled = true` requests Arrow
  * `struct<srid: int32, wkb: binary>` values; `false` requests WKT / EWKT in
  * Arrow UTF-8 values. Omitting this setter uses the enabled kernel default.
- * Binary mode requires the native Reyden Arrow path; legacy text-only results
- * cannot be reconstructed as WKB. This client-side setting is never sent to
- * SEA. A raw `EnableGeoSpatialSupport` entry set through
+ * The kernel normalizes both standard-warehouse text and Reyden native Arrow
+ * results locally; this setting is never sent to SEA. A raw
+ * `EnableGeoSpatialSupport` entry set through
  * kernel_session_config_set_session_conf remains server-bound and is forwarded
  * unchanged. */
 KernelStatusCode kernel_session_config_set_enable_geospatial_support(
@@ -360,6 +360,11 @@ KernelStatusCode kernel_session_config_set_enable_geospatial_support(
  * (order preserved); `name` and `value` are both required. */
 KernelStatusCode kernel_session_config_set_custom_header(KernelSessionConfig* config,
                                                          const char* name, const char* value);
+
+/* Configure whether authenticated SEA responses may use HTTP compression.
+ * Disabled by default. */
+KernelStatusCode kernel_session_config_set_sea_response_compression_enabled(
+    KernelSessionConfig* config, bool enabled);
 
 /* Configure the total timeout for one HTTP request, from connection start
  * through response-body completion. A separate 30s connection timeout also
@@ -740,8 +745,8 @@ KernelStatusCode kernel_statement_set_query_tags(kernel_statement_t* stmt,
                                                  const char* query_tags);
 
 /*
- * Wait-for-result execution with the existing 600-second polling ceiling and
- * no caller-supplied deadline. On success, release `*out` with
+ * Wait-for-result execution without an overall client polling deadline.
+ * On success, release `*out` with
  * `kernel_executed_statement_close`.
  */
 KernelStatusCode kernel_statement_execute(kernel_statement_t* stmt,
@@ -770,6 +775,21 @@ KernelStatusCode kernel_statement_execute_with_timeout_ms(
 /* Submit-and-return. On success, *out owns an async executed handle. */
 KernelStatusCode kernel_statement_submit(kernel_statement_t* stmt,
                                          kernel_executed_async_statement_t** out);
+
+/* Submit-and-return with a client-side execution deadline in milliseconds.
+ * Zero selects unlimited execution; values above
+ * DATABRICKS_KERNEL_MAX_CLIENT_QUERY_TIMEOUT_MS return InvalidArgument. The
+ * deadline starts on entry and is retained by the returned async handle across
+ * status polls. If it expires before a terminal status is observed, status
+ * returns Timeout with SQLSTATE HYT00 and the kernel schedules best-effort
+ * cancel/close cleanup. One exception: if the deadline fires DURING the initial
+ * submit round-trip (before the server returns a statement id), no id is known
+ * yet, so no cancel/close can be scheduled; a statement the server may have
+ * created is left for session-close to reclaim. This window is small because
+ * submit uses wait_timeout=0s. Result fetching is outside this deadline. */
+KernelStatusCode kernel_statement_submit_with_timeout_ms(
+    kernel_statement_t* stmt, uint64_t timeout_ms,
+    kernel_executed_async_statement_t** out);
 
 /*
  * Free the statement lifecycle owner. Does NOT free executed-handle
@@ -949,6 +969,12 @@ KernelStatusCode kernel_result_stream_get_schema(kernel_result_stream_t* stream,
 KernelStatusCode kernel_result_stream_next_batch(kernel_result_stream_t* stream,
                                                  struct ArrowArray* out_array,
                                                  struct ArrowSchema* out_schema);
+/* Fetch one batch without waiting. Success with ready=false means provider
+ * work is still pending and leaves the Arrow outputs untouched. Success with
+ * ready=true transfers a batch, or an empty array at end-of-stream. */
+KernelStatusCode kernel_result_stream_try_next_batch(
+    kernel_result_stream_t* stream, bool* ready, struct ArrowArray* out_array,
+    struct ArrowSchema* out_schema);
 KernelStatusCode kernel_result_stream_close(kernel_result_stream_t* stream);
 
 /* ─── Result-stream cancellation (detached canceller) ─────────────────
