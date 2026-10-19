@@ -176,9 +176,9 @@ func buildKernelConfig(cfg *config.Config, kauth kernel.Auth) kernel.Config {
 		// this binding's system identity for its own runtime.
 		Telemetry:                 kernelTelemetryConfig(cfg),
 		DriverSystemConfiguration: kernelDriverSystemConfiguration(cfg),
-		// Match the public contract and the kernel default. An explicit false
-		// below selects WKT / EWKT instead.
-		EnableGeoSpatialSupport: true,
+		// Preserve string results by default, including automatic kernel recovery.
+		// An explicit true below opts into native geospatial values.
+		EnableGeoSpatialSupport: false,
 	}
 	if cfg.ClientQueryTimeout != nil {
 		timeout := *cfg.ClientQueryTimeout

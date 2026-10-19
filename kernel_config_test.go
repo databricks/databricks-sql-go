@@ -559,11 +559,11 @@ func TestBuildKernelConfig(t *testing.T) {
 		}
 	})
 
-	t.Run("geospatial support defaults true and preserves explicit values", func(t *testing.T) {
+	t.Run("geospatial support defaults false and preserves explicit values", func(t *testing.T) {
 		c := baseKernelConfig()
 		kc := buildKernelConfig(c, kernel.Auth{Mode: kernel.AuthPAT, Token: "dapi-x"})
-		if !kc.EnableGeoSpatialSupport {
-			t.Fatal("omitted EnableGeoSpatialSupport = false, want default true")
+		if kc.EnableGeoSpatialSupport {
+			t.Fatal("omitted EnableGeoSpatialSupport = true, want default false")
 		}
 
 		WithEnableGeoSpatialSupport(false)(c)

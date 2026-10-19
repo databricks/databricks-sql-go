@@ -141,7 +141,7 @@ type KernelExperimentalConfig struct {
 	// EnableGeoSpatialSupport selects the kernel's client-side GEOMETRY /
 	// GEOGRAPHY result representation. True requests the canonical
 	// struct<srid,wkb> Arrow value; false requests WKT / EWKT strings. A pointer
-	// preserves the default-enabled value versus explicitly false.
+	// distinguishes the omitted value (default false) from an explicit setting.
 	EnableGeoSpatialSupport *bool
 }
 
@@ -314,7 +314,7 @@ type UserConfig struct {
 	TokenCacheEnabledDSN bool
 	// EnableGeoSpatialSupportDSN is a DSN-only carrier for
 	// enableGeoSpatialSupport=true|false. Nil means omitted (the default is
-	// true); the connector copies a present value into KernelExperimental.
+	// false); the connector copies a present value into KernelExperimental.
 	EnableGeoSpatialSupportDSN *bool
 }
 

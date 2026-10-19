@@ -102,7 +102,7 @@ type Config struct {
 	// EnableGeoSpatialSupport selects the local GEOMETRY / GEOGRAPHY result
 	// representation. True requests the canonical struct<srid,wkb> Arrow
 	// representation; false requests WKT / EWKT strings. The connector always
-	// sets this field and defaults it to true.
+	// sets this field and defaults it to false.
 	EnableGeoSpatialSupport bool
 
 	// TokenCacheEnabled controls the kernel's on-disk OAuth U2M token-cache persistence
