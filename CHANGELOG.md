@@ -1,9 +1,11 @@
 # Release History
 
-## Unreleased
-- Add opt-in kernel-backed GEOMETRY / GEOGRAPHY results, selected with `WithEnableGeoSpatialSupport` or the `enableGeoSpatialSupport` DSN parameter (default `false`). Enabled mode returns EWKB with its per-row SRID and logical geo column metadata from `database/sql`; disabled mode returns WKT / EWKT reported as `STRING`. Arrow batch access retains the canonical `struct<srid,wkb>` value with separate OGC WKB in enabled mode.
-- **Behavior change:** `m2m.NewAuthenticatorWithScopes` now requests exactly the given scopes instead of always appending `all-apis`, so service principals with scoped OAuth secrets (e.g. `sql` only) can authenticate (databricks/databricks-sql-go#476). Empty scopes and `m2m.NewAuthenticator` still request `all-apis`; callers that relied on it being appended should pass no scopes, or add `all-apis` to their list if they need both. The SEA/kernel backend now forwards custom M2M scopes instead of rejecting them.
-- Let the kernel telemetry feature flag decide enablement when `enableTelemetry` is unset; explicit `true` and `false` continue to override it.
+## v1.17.0 (2026-10-20)
+- Upgrade the SQL kernel bindings to v1.2.0.
+- Add opt-in GEOMETRY / GEOGRAPHY support on the kernel backend with `WithEnableGeoSpatialSupport` or `enableGeoSpatialSupport=true`. Enabled mode returns EWKB bytes with per-row SRIDs and geo column metadata; the default remains WKT / EWKT strings. Arrow batches retain the `{srid,wkb}` struct in enabled mode.
+- **Behavior change:** `m2m.NewAuthenticatorWithScopes` now requests exactly the supplied scopes, and the kernel backend supports custom M2M scopes. Empty scopes still default to `all-apis`; callers that relied on it being appended must include it explicitly.
+- Share feature flag caching across backends, honor the server TTL, and keep concurrent readers responsive during refresh.
+- Let the server feature flag control kernel telemetry when `enableTelemetry` is unset; explicit settings continue to override it.
 
 ## v1.16.0 (2026-09-24)
 - Upgrade the kernel bindings to v1.1.0; the kernel dependency is now stable.
