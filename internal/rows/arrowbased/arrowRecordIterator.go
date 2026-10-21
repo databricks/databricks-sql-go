@@ -112,14 +112,18 @@ func (ri *arrowRecordIterator) checkFinished() {
 	noLocalData := (ri.currentBatch == nil || !ri.currentBatch.HasNext()) &&
 		(ri.batchIterator == nil || !ri.batchIterator.HasNext())
 
-	noMorePages := ri.resultPageIterator == nil || !ri.resultPageIterator.HasNext()
+	// resultPageIterator.HasNext() issues a real FetchResults round-trip, so it
+	// is evaluated lazily — only once all local data is drained — to avoid
+	// eagerly prefetching the next page while the current one is still in use.
+	noMoreData := noLocalData &&
+		(ri.resultPageIterator == nil || !ri.resultPageIterator.HasNext())
 
-	finished := ri.isFinished || (noLocalData && noMorePages)
+	finished := ri.isFinished || noMoreData
 
 	// If the result page iterator reported no more pages because a page fetch
 	// failed (rather than because the result set was fully consumed), hold on
 	// to that error so Next() can surface it instead of io.EOF. See #507.
-	if noLocalData && noMorePages && ri.resultPageIterator != nil && ri.err == nil && !ri.errReported {
+	if noMoreData && ri.resultPageIterator != nil && ri.err == nil && !ri.errReported {
 		ri.err = ri.resultPageIterator.Err()
 	}
 
