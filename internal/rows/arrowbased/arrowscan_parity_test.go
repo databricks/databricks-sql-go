@@ -385,6 +385,16 @@ func TestArrowbasedKernelTopLevelScalarParity(t *testing.T) {
 			b.Append(arrow.Date32FromTime(time.Date(2026, 7, 9, 0, 0, 0, 0, time.UTC)))
 			return b.NewArray()
 		}},
+		{"time32_millis", func() arrow.Array {
+			b := array.NewTime32Builder(pool, &arrow.Time32Type{Unit: arrow.Millisecond})
+			b.Append(arrow.Time32((13*3600+1*60+1)*1000 + 500)) // 13:01:01.500
+			return b.NewArray()
+		}},
+		{"time64_micros", func() arrow.Array {
+			b := array.NewTime64Builder(pool, &arrow.Time64Type{Unit: arrow.Microsecond})
+			b.Append(arrow.Time64((13*3600 + 1*60 + 1) * 1_000_000)) // 13:01:01
+			return b.NewArray()
+		}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

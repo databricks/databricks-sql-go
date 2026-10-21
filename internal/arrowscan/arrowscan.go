@@ -214,6 +214,17 @@ func scanCell(col arrow.Array, row int, loc *time.Location, keys *StructKeyCache
 		// round-trips. The Thrift default path never hits this — it receives TIMESTAMP
 		// as a preformatted server string — so this divergence is kernel-only.
 		return inLocation(timestampToTime(int64(c.Value(row)), dt.Unit), loc), nil
+	case *array.Time32:
+		// SQL TIME (time-of-day, no calendar date, no timezone). Match the Thrift
+		// path's timeValueContainer: render as a wall-clock time.Time anchored on
+		// the Unix epoch in UTC and do NOT apply loc — a zoneless TIME must not be
+		// shifted by cfg.Location (that would move the hour and could roll the
+		// anchor date off the epoch).
+		dt := col.DataType().(*arrow.Time32Type)
+		return timeOfDayToTime(int64(c.Value(row)), dt.Unit), nil
+	case *array.Time64:
+		dt := col.DataType().(*arrow.Time64Type)
+		return timeOfDayToTime(int64(c.Value(row)), dt.Unit), nil
 	case *array.Decimal128:
 		dt := col.DataType().(*arrow.Decimal128Type)
 		if options.DecimalAsFloat {
@@ -378,6 +389,27 @@ func timestampToTime(v int64, unit arrow.TimeUnit) time.Time {
 	default: // arrow.Nanosecond
 		return time.Unix(0, v).UTC()
 	}
+}
+
+// timeOfDayToTime renders an arrow time32/time64 value (units since midnight) as
+// a wall-clock time.Time anchored on the Unix epoch date in UTC, matching the
+// Thrift path's timeValueContainer. The value is zoneless, so it is intentionally
+// left in UTC (no loc applied). The multiply cannot overflow: a valid TIME is
+// bounded by 24h, so even in nanoseconds units*nsPerUnit stays well within int64.
+func timeOfDayToTime(unitsSinceMidnight int64, unit arrow.TimeUnit) time.Time {
+	var nsPerUnit int64
+	switch unit {
+	case arrow.Second:
+		nsPerUnit = int64(time.Second)
+	case arrow.Millisecond:
+		nsPerUnit = int64(time.Millisecond)
+	case arrow.Microsecond:
+		nsPerUnit = int64(time.Microsecond)
+	default: // arrow.Nanosecond
+		nsPerUnit = 1
+	}
+	return time.Date(1970, time.January, 1, 0, 0, 0, 0, time.UTC).
+		Add(time.Duration(unitsSinceMidnight * nsPerUnit))
 }
 
 // inLocation renders t in loc, matching the Thrift path's .In(location); a nil
