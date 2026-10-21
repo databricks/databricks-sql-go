@@ -169,6 +169,23 @@ func TestArrowbasedKernelRenderParity(t *testing.T) {
 			b.FieldBuilder(0).(*array.TimestampBuilder).Append(arrow.Timestamp(ts.UnixMicro()))
 			return b.NewArray()
 		}},
+		// Nested SQL TIME leaf: both backends must emit the zoneless time-of-day
+		// string ("09:15:30"), NOT a quoted time.Time .String() that would leak
+		// the 1970-01-01 epoch anchor date. time32 is seconds-unit here.
+		{"nested_time32", func() arrow.Array {
+			dt := arrow.StructOf(arrow.Field{Name: "t", Type: arrow.FixedWidthTypes.Time32s})
+			b := array.NewStructBuilder(pool, dt)
+			b.Append(true)
+			b.FieldBuilder(0).(*array.Time32Builder).Append(arrow.Time32(9*3600 + 15*60 + 30))
+			return b.NewArray()
+		}},
+		{"nested_time64", func() arrow.Array {
+			dt := arrow.StructOf(arrow.Field{Name: "t", Type: arrow.FixedWidthTypes.Time64us})
+			b := array.NewStructBuilder(pool, dt)
+			b.Append(true)
+			b.FieldBuilder(0).(*array.Time64Builder).Append(arrow.Time64((9*3600+15*60+30)*1_000_000 + 123_456))
+			return b.NewArray()
+		}},
 		// VARIANT and GEOMETRY arrive over Arrow as plain STRING columns (verified
 		// live: a top-level VARIANT is the JSON *string* "{\"a\":1}", GEOMETRY is the
 		// WKT string "POINT(1 2)"). Nested inside a container they are string leaves,

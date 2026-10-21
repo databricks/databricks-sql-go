@@ -412,6 +412,15 @@ func timeOfDayToTime(unitsSinceMidnight int64, unit arrow.TimeUnit) time.Time {
 		Add(time.Duration(unitsSinceMidnight * nsPerUnit))
 }
 
+// formatTimeOfDay renders an arrow time32/time64 value as the zoneless
+// time-of-day string the Thrift path emits for a nested TIME
+// (timeValueContainer.ValueString: "15:04:05.999999999"). Top-level TIME returns
+// a time.Time (see the scanCell Time32/Time64 arms); nested TIME must instead be
+// a bare string so the JSON leaf does not leak the epoch anchor date.
+func formatTimeOfDay(unitsSinceMidnight int64, unit arrow.TimeUnit) string {
+	return timeOfDayToTime(unitsSinceMidnight, unit).Format("15:04:05.999999999")
+}
+
 // inLocation renders t in loc, matching the Thrift path's .In(location); a nil
 // loc leaves the value in UTC (arrow's ToTime default).
 func inLocation(t time.Time, loc *time.Location) time.Time {
@@ -476,6 +485,14 @@ func writeJSON(b *strings.Builder, col arrow.Array, row int, loc *time.Location,
 		// "3.140000104904175". The Thrift nested path marshals the native float32,
 		// so widening here would break byte-parity for ARRAY/MAP/STRUCT<…FLOAT…>.
 		return writeScalarJSON(b, c.Value(row))
+	case *array.Time32:
+		// Nested SQL TIME: emit the zoneless time-of-day string, matching the
+		// Thrift path's timeValueContainer.ValueString (marshalScalar json.Marshals
+		// it). Falling through to writeScalarJSON would quote t.String() and leak
+		// the 1970-01-01 epoch anchor date, diverging from Thrift.
+		return writeScalarJSON(b, formatTimeOfDay(int64(c.Value(row)), col.DataType().(*arrow.Time32Type).Unit))
+	case *array.Time64:
+		return writeScalarJSON(b, formatTimeOfDay(int64(c.Value(row)), col.DataType().(*arrow.Time64Type).Unit))
 	default:
 		v, err := scalarForJSON(col, row, loc)
 		if err != nil {
