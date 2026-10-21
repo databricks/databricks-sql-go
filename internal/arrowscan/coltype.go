@@ -78,6 +78,14 @@ func ColumnTypeInfoFor(dt arrow.DataType) ColumnTypeInfo {
 	case arrow.DATE32, arrow.DATE64:
 		return ColumnTypeInfo{DatabaseTypeName: "DATE", ScanType: scanTypeDateTime}
 	case arrow.TIMESTAMP:
+		// TIMESTAMP and TIMESTAMP_NTZ both arrive as Arrow timestamp[us] and are
+		// distinguishable only by the schema's TimeZone field: a zoned TIMESTAMP
+		// carries a zone, a zone-less TIMESTAMP_NTZ carries an empty TimeZone. The
+		// database/sql type name must reflect that distinction so a wall clock is
+		// not mistaken for an instant (databricks/databricks-sql-go#506).
+		if ts, ok := dt.(*arrow.TimestampType); ok && ts.TimeZone == "" {
+			return ColumnTypeInfo{DatabaseTypeName: "TIMESTAMP_NTZ", ScanType: scanTypeDateTime}
+		}
 		return ColumnTypeInfo{DatabaseTypeName: "TIMESTAMP", ScanType: scanTypeDateTime}
 	case arrow.DECIMAL128:
 		// Match Thrift's sql.RawBytes scan type even though the kernel renders the

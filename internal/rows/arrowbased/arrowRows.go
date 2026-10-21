@@ -153,6 +153,27 @@ func NewArrowRowScanner(resultSetMetadata *cli_service.TGetResultSetMetadataResp
 	return rs, nil
 }
 
+// DatabaseTypeNameOverride implements rowscanner.DatabaseTypeNameOverrider. Over
+// Thrift, a zoned TIMESTAMP and a zone-less TIMESTAMP_NTZ share the same
+// primitive type id (TIMESTAMP_TYPE), so GetDBTypeName reports "TIMESTAMP" for
+// both. The distinction survives only in the Arrow schema's
+// TimestampType.TimeZone: a zone-less column is TIMESTAMP_NTZ
+// (databricks/databricks-sql-go#506). Non-timestamp columns and zoned
+// timestamps fall through to the Thrift-derived name.
+func (ars *arrowRowScanner) DatabaseTypeNameOverride(index int) (string, bool) {
+	if ars == nil || ars.arrowSchema == nil {
+		return "", false
+	}
+	fields := ars.arrowSchema.Fields()
+	if index < 0 || index >= len(fields) {
+		return "", false
+	}
+	if ts, ok := fields[index].Type.(*arrow.TimestampType); ok && ts.TimeZone == "" {
+		return "TIMESTAMP_NTZ", true
+	}
+	return "", false
+}
+
 // Close is called when the Rows instance is closed.
 func (ars *arrowRowScanner) Close() {
 	if ars.rowValues != nil {
@@ -649,7 +670,10 @@ func (vcm *arrowValueContainerMaker) makeColumnValueContainer(t arrow.DataType, 
 		return &dateValueContainer{location: location}, nil
 
 	case *arrow.TimestampType:
-		return &timestampValueContainer{location: location, toTimestampFn: toTimestampFn}, nil
+		// A zone-less TIMESTAMP_NTZ (empty TimeZone) carries a wall clock that
+		// must not be shifted into the session location (#506); a zoned
+		// TIMESTAMP is an instant rendered .In(location) as before.
+		return &timestampValueContainer{location: location, toTimestampFn: toTimestampFn, wallClock: t.TimeZone == ""}, nil
 
 	case *arrow.BinaryType:
 		return &columnValuesTyped[*array.Binary, []byte]{}, nil

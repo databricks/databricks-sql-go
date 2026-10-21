@@ -213,7 +213,17 @@ func scanCell(col arrow.Array, row int, loc *time.Location, keys *StructKeyCache
 		// UnixMilli/Unix split into (sec, nsec) internally, so the full 0001–9999 range
 		// round-trips. The Thrift default path never hits this — it receives TIMESTAMP
 		// as a preformatted server string — so this divergence is kernel-only.
-		return inLocation(timestampToTime(int64(c.Value(row)), dt.Unit), loc), nil
+		//
+		// A zone-less TIMESTAMP_NTZ (empty TimeZone) is a wall clock with no zone,
+		// so it must NOT be shifted into the session location the way a zoned
+		// TIMESTAMP instant is: applying .In(loc) would corrupt the wall-clock
+		// fields the server sent (databricks/databricks-sql-go#506). Only a zoned
+		// TIMESTAMP is rendered in loc.
+		ts := timestampToTime(int64(c.Value(row)), dt.Unit)
+		if dt.TimeZone == "" {
+			return ts, nil
+		}
+		return inLocation(ts, loc), nil
 	case *array.Decimal128:
 		dt := col.DataType().(*arrow.Decimal128Type)
 		if options.DecimalAsFloat {

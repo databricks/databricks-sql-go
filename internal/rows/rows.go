@@ -364,6 +364,15 @@ func (r *rows) ColumnTypeDatabaseTypeName(index int) string {
 		return ""
 	}
 
+	// The Thrift primitive type id cannot tell a zoned TIMESTAMP from a
+	// zone-less TIMESTAMP_NTZ; that distinction lives in the Arrow schema, which
+	// the arrow row scanner can expose via DatabaseTypeNameOverrider (#506).
+	if o, ok := r.RowScanner.(rowscanner.DatabaseTypeNameOverrider); ok && o != nil {
+		if name, ok := o.DatabaseTypeNameOverride(index); ok {
+			return name
+		}
+	}
+
 	dbtype := rowscanner.GetDBTypeName(column)
 
 	return dbtype
