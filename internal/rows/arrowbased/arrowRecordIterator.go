@@ -38,6 +38,14 @@ type arrowRecordIterator struct {
 	isFinished         bool
 	arrowSchemaBytes   []byte
 	arrowSchema        *arrow.Schema
+	// err holds a page-fetch error detected while advancing the result page
+	// iterator. It must be surfaced through Next() rather than being masked as
+	// a normal end-of-results (io.EOF). See issue #507.
+	err error
+	// errReported is set once the page-fetch error has been surfaced through
+	// Next() so that checkFinished does not re-capture it from the result page
+	// iterator (whose Err() keeps returning the stored error).
+	errReported bool
 }
 
 var _ rows.ArrowBatchIterator = (*arrowRecordIterator)(nil)
@@ -47,6 +55,17 @@ func (ri *arrowRecordIterator) Next() (arrow.Record, error) {
 	if !ri.HasNext() {
 		// returning EOF indicates that there are no more records to iterate
 		return nil, io.EOF
+	}
+
+	// If advancing the result page failed, surface that error rather than
+	// masking a failed page fetch as a normal end-of-results. See #507. The
+	// error is reported once and then the iterator is finished.
+	if ri.err != nil {
+		err := ri.err
+		ri.err = nil
+		ri.errReported = true
+		ri.Close()
+		return nil, err
 	}
 
 	// make sure we have the current batch
@@ -66,7 +85,9 @@ func (ri *arrowRecordIterator) Next() (arrow.Record, error) {
 // Indicate whether there are any more records available
 func (ri *arrowRecordIterator) HasNext() bool {
 	ri.checkFinished()
-	return !ri.isFinished
+	// A pending page-fetch error still needs to be reported via Next(), so the
+	// iterator is not considered exhausted until that error is consumed.
+	return !ri.isFinished || ri.err != nil
 }
 
 // Free any resources associated with this iterator
@@ -88,10 +109,19 @@ func (ri *arrowRecordIterator) Close() {
 }
 
 func (ri *arrowRecordIterator) checkFinished() {
-	finished := ri.isFinished ||
-		((ri.currentBatch == nil || !ri.currentBatch.HasNext()) &&
-			(ri.batchIterator == nil || !ri.batchIterator.HasNext()) &&
-			(ri.resultPageIterator == nil || !ri.resultPageIterator.HasNext()))
+	noLocalData := (ri.currentBatch == nil || !ri.currentBatch.HasNext()) &&
+		(ri.batchIterator == nil || !ri.batchIterator.HasNext())
+
+	noMorePages := ri.resultPageIterator == nil || !ri.resultPageIterator.HasNext()
+
+	finished := ri.isFinished || (noLocalData && noMorePages)
+
+	// If the result page iterator reported no more pages because a page fetch
+	// failed (rather than because the result set was fully consumed), hold on
+	// to that error so Next() can surface it instead of io.EOF. See #507.
+	if noLocalData && noMorePages && ri.resultPageIterator != nil && ri.err == nil && !ri.errReported {
+		ri.err = ri.resultPageIterator.Err()
+	}
 
 	if finished {
 		// Reached end of result set so Close
