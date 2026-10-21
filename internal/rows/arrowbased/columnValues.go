@@ -495,7 +495,6 @@ func timeUnitToNanos(unit arrow.TimeUnit) int64 {
 type timeValueContainer struct {
 	timeArray arrow.Array
 	nsPerUnit int64
-	location  *time.Location
 }
 
 var _ columnValues = (*timeValueContainer)(nil)
@@ -512,8 +511,12 @@ func (tvc *timeValueContainer) Value(i int) (any, error) {
 	}
 
 	ns := unitsSinceMidnight * tvc.nsPerUnit
+	// A SQL TIME is a zoneless wall-clock time-of-day, so we keep the value in
+	// UTC and do NOT apply cfg.Location: converting into a non-UTC location
+	// would shift the hour/minute (and could roll the anchor date off the
+	// epoch), which is wrong for a value that carries no timezone.
 	val := time.Date(1970, time.January, 1, 0, 0, 0, 0, time.UTC).
-		Add(time.Duration(ns)).In(tvc.location)
+		Add(time.Duration(ns))
 	return val, nil
 }
 

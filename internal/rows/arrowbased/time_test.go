@@ -46,10 +46,16 @@ func buildTime32Array(t *testing.T, unit arrow.TimeUnit, v arrow.Time32) arrow.A
 func TestTime64ValueContainer(t *testing.T) {
 	vcm := &arrowValueContainerMaker{}
 
+	// nonUTC is a fixed positive-offset location used to prove that a zoneless
+	// SQL TIME is never shifted by cfg.Location (a positive offset would also
+	// roll the epoch anchor date backwards if the value were converted).
+	nonUTC := time.FixedZone("UTC+5", 5*3600)
+
 	cases := []struct {
 		name   string
 		unit   arrow.TimeUnit
 		raw    arrow.Time64
+		loc    *time.Location
 		wantNs int
 	}{
 		{
@@ -57,6 +63,7 @@ func TestTime64ValueContainer(t *testing.T) {
 			unit: arrow.Nanosecond,
 			// 09:15:00.123456 -> (9*3600+15*60)*1e9 + 123456000 ns since midnight
 			raw:    arrow.Time64((9*3600+15*60)*int64(time.Second) + 123456000),
+			loc:    time.UTC,
 			wantNs: 123456000,
 		},
 		{
@@ -64,6 +71,16 @@ func TestTime64ValueContainer(t *testing.T) {
 			unit: arrow.Microsecond,
 			// 09:15:00.123456 -> (9*3600+15*60)*1e6 + 123456 us since midnight
 			raw:    arrow.Time64((9*3600+15*60)*int64(time.Second/time.Microsecond) + 123456),
+			loc:    time.UTC,
+			wantNs: 123456000,
+		},
+		{
+			// A non-UTC cfg.Location must NOT shift a zoneless TIME: the hour
+			// stays 09 and the value stays on the UTC epoch date.
+			name:   "nanosecond non-UTC location",
+			unit:   arrow.Nanosecond,
+			raw:    arrow.Time64((9*3600+15*60)*int64(time.Second) + 123456000),
+			loc:    nonUTC,
 			wantNs: 123456000,
 		},
 	}
@@ -71,7 +88,7 @@ func TestTime64ValueContainer(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			dt := &arrow.Time64Type{Unit: tc.unit}
-			holder, err := vcm.makeColumnValueContainer(dt, time.UTC, nil, nil)
+			holder, err := vcm.makeColumnValueContainer(dt, tc.loc, nil, nil)
 			require.NoError(t, err)
 
 			data := buildTime64Array(t, tc.unit, tc.raw)
@@ -99,30 +116,43 @@ func TestTime64ValueContainer(t *testing.T) {
 func TestTime32ValueContainer(t *testing.T) {
 	vcm := &arrowValueContainerMaker{}
 
+	nonUTC := time.FixedZone("UTC+5", 5*3600)
+
 	cases := []struct {
 		name   string
 		unit   arrow.TimeUnit
 		raw    arrow.Time32
+		loc    *time.Location
 		wantNs int
 	}{
 		{
 			name:   "second",
 			unit:   arrow.Second,
 			raw:    arrow.Time32(9*3600 + 15*60),
+			loc:    time.UTC,
 			wantNs: 0,
 		},
 		{
 			name:   "millisecond",
 			unit:   arrow.Millisecond,
 			raw:    arrow.Time32((9*3600+15*60)*1000 + 123),
+			loc:    time.UTC,
 			wantNs: 123000000,
+		},
+		{
+			// A non-UTC cfg.Location must NOT shift a zoneless TIME.
+			name:   "second non-UTC location",
+			unit:   arrow.Second,
+			raw:    arrow.Time32(9*3600 + 15*60),
+			loc:    nonUTC,
+			wantNs: 0,
 		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			dt := &arrow.Time32Type{Unit: tc.unit}
-			holder, err := vcm.makeColumnValueContainer(dt, time.UTC, nil, nil)
+			holder, err := vcm.makeColumnValueContainer(dt, tc.loc, nil, nil)
 			require.NoError(t, err)
 
 			data := buildTime32Array(t, tc.unit, tc.raw)
