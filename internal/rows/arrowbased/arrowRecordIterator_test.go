@@ -193,6 +193,49 @@ func TestArrowRecordIterator(t *testing.T) {
 	})
 }
 
+func TestArrowRecordIteratorSwallowsPageError(t *testing.T) {
+	logger := dbsqllog.WithContext("connectionId", "correlationId", "")
+
+	executeStatementResp := cli_service.TExecuteStatementResp{}
+	loadTestData2(t, "directResultsMultipleFetch/ExecuteStatement.json", &executeStatementResp)
+	fetchResp1 := cli_service.TFetchResultsResp{}
+	loadTestData2(t, "directResultsMultipleFetch/FetchResults1.json", &fetchResp1)
+
+	calls := 0
+	failing := &client.TestClient{
+		FnFetchResults: func(ctx context.Context, req *cli_service.TFetchResultsReq) (*cli_service.TFetchResultsResp, error) {
+			calls++
+			if calls == 1 {
+				return &fetchResp1, nil
+			}
+			return nil, fmt.Errorf("FetchResults: connection reset")
+		},
+	}
+
+	ctx := driverctx.NewContextWithConnId(context.Background(), "connectionId")
+	ctx = driverctx.NewContextWithCorrelationId(ctx, "correlationId")
+	rpi := rowscanner.NewResultPageIterator(ctx, rowscanner.NewDelimiter(0, 7311), 5000, nil, false, failing, logger)
+	cfg := *config.WithDefaults()
+	bi, err := NewLocalBatchIterator(ctx, executeStatementResp.DirectResults.ResultSet.Results.ArrowBatches, 0, executeStatementResp.DirectResults.ResultSetMetadata.ArrowSchema, &cfg)
+	assert.Nil(t, err)
+	it := NewArrowRecordIterator(ctx, rpi, bi, executeStatementResp.DirectResults.ResultSetMetadata.ArrowSchema, cfg)
+	defer it.Close()
+
+	var lastErr error
+	rows := int64(0)
+	for it.HasNext() {
+		rec, err := it.Next()
+		if err != nil {
+			lastErr = err
+			break
+		}
+		rows += rec.NumRows()
+		rec.Release()
+	}
+	t.Logf("fetch calls=%d rows=%d lastErr=%v", calls, rows, lastErr)
+	assert.ErrorContains(t, lastErr, "connection reset")
+}
+
 func TestArrowRecordIteratorSchema(t *testing.T) {
 	// Test with arrowSchemaBytes available
 	t.Run("schema with initial schema bytes", func(t *testing.T) {
