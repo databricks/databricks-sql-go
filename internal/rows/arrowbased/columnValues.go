@@ -520,6 +520,23 @@ func (tvc *timeValueContainer) Value(i int) (any, error) {
 	return val, nil
 }
 
+// ValueString renders the TIME as a zoneless time-of-day string (HH:MM:SS
+// with optional fractional seconds). It is used when a TIME appears nested
+// inside a complex type (STRUCT/LIST/MAP): the default time.Time marshaling
+// emits t.String(), which would leak the spurious 1970-01-01 epoch anchor
+// date for a value that carries no calendar date. See marshalScalar.
+func (tvc *timeValueContainer) ValueString(i int) string {
+	v, err := tvc.Value(i)
+	if err != nil {
+		return ""
+	}
+	t, ok := v.(time.Time)
+	if !ok {
+		return ""
+	}
+	return t.Format("15:04:05.999999999")
+}
+
 func (tvc *timeValueContainer) IsNull(i int) bool {
 	return tvc.timeArray.IsNull(i)
 }
@@ -665,6 +682,13 @@ func marshal(val any) ([]byte, error) {
 func marshalScalar(holder columnValues, i int, val any) ([]byte, error) {
 	if d, ok := holder.(*decimal128Container); ok {
 		return []byte(d.ValueString(i)), nil
+	}
+	// A SQL TIME is a zoneless time-of-day. Rendering it via the generic
+	// time.Time path would emit t.String() with the 1970-01-01 epoch anchor
+	// date (e.g. "1970-01-01 09:15:00 +0000 UTC"), leaking a spurious date for
+	// a value that carries none. Emit just the time-of-day as a JSON string.
+	if t, ok := holder.(*timeValueContainer); ok {
+		return json.Marshal(t.ValueString(i))
 	}
 	return marshal(val)
 }
