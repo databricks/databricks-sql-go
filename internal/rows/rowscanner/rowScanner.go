@@ -35,6 +35,19 @@ type RowScanner interface {
 	GetArrowIPCStreams(ctx context.Context, cfg config.Config, rpi ResultPageIterator) (dbsqlrows.ArrowIPCStreamIterator, error)
 }
 
+// DatabaseTypeNameOverrider is an optional interface a RowScanner may implement
+// to refine the database type name reported for a column beyond what the Thrift
+// TColumnDesc carries. It exists for TIMESTAMP_NTZ: the Thrift primitive type id
+// is TIMESTAMP_TYPE for both zoned TIMESTAMP and zone-less TIMESTAMP_NTZ, so the
+// distinction survives only in the Arrow schema's TimestampType.TimeZone field,
+// which only the arrow row scanner can see (databricks/databricks-sql-go#506).
+type DatabaseTypeNameOverrider interface {
+	// DatabaseTypeNameOverride returns the refined type name for the column at
+	// index and ok=true when it overrides the Thrift-derived name; ok=false
+	// means the caller should fall back to GetDBTypeName.
+	DatabaseTypeNameOverride(index int) (name string, ok bool)
+}
+
 // Expected formats for TIMESTAMP and DATE types when represented by a string value
 var DateTimeFormats map[string]string = map[string]string{
 	"TIMESTAMP": "2006-01-02 15:04:05.999999999",

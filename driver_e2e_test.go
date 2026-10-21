@@ -709,3 +709,85 @@ func TestE2ECloudFetchExactRowCount(t *testing.T) {
 
 	require.Equal(t, int64(wantRows), rowCount, "CloudFetch must surface exactly the requested rows, with no Arrow padding")
 }
+
+// TestE2ETimestampNTZTypeName asserts that a zoned TIMESTAMP and a TIMESTAMP_NTZ
+// in the same result set report distinct database type names. The Databricks
+// TIMESTAMP_NTZ type is a wall-clock value with no zone; it must be reported as
+// "TIMESTAMP_NTZ", distinct from the zoned "TIMESTAMP" instant type.
+// See https://github.com/databricks/databricks-sql-go/issues/506 and
+// https://docs.databricks.com/aws/en/sql/language-manual/data-types/timestamp-ntz-type.
+func TestE2ETimestampNTZTypeName(t *testing.T) {
+	host, httpPath, token := pecoTestingCreds(t)
+
+	connector, err := NewConnector(
+		WithServerHostname(host),
+		WithPort(443),
+		WithHTTPPath(httpPath),
+		WithAccessToken(token),
+	)
+	require.NoError(t, err)
+
+	db := sql.OpenDB(connector)
+	defer db.Close() //nolint:errcheck
+
+	rows, err := db.QueryContext(context.Background(),
+		"SELECT TIMESTAMP '2024-06-15 09:15:00.123456' AS zoned, "+
+			"TIMESTAMP_NTZ '2024-06-15 09:15:00.123456' AS ntz")
+	require.NoError(t, err)
+	defer rows.Close() //nolint:errcheck
+
+	cts, err := rows.ColumnTypes()
+	require.NoError(t, err)
+	require.Len(t, cts, 2)
+
+	assert.Equal(t, "TIMESTAMP", cts[0].DatabaseTypeName(), "zoned column should report TIMESTAMP")
+	assert.Equal(t, "TIMESTAMP_NTZ", cts[1].DatabaseTypeName(), "zone-less column should report TIMESTAMP_NTZ")
+}
+
+// TestE2ETimestampNTZPreservesWallClock asserts that at a non-UTC session
+// timezone a TIMESTAMP_NTZ value keeps the exact wall clock it was given, with
+// no location shift, while a zoned TIMESTAMP remains the correct instant.
+// TIMESTAMP_NTZ carries no zone, so applying a session-tz conversion to it is a
+// bug. See https://github.com/databricks/databricks-sql-go/issues/506.
+func TestE2ETimestampNTZPreservesWallClock(t *testing.T) {
+	host, httpPath, token := pecoTestingCreds(t)
+
+	connector, err := NewConnector(
+		WithServerHostname(host),
+		WithPort(443),
+		WithHTTPPath(httpPath),
+		WithAccessToken(token),
+		WithSessionParams(map[string]string{"timezone": "America/New_York"}),
+	)
+	require.NoError(t, err)
+
+	db := sql.OpenDB(connector)
+	defer db.Close() //nolint:errcheck
+
+	rows, err := db.QueryContext(context.Background(),
+		"SELECT TIMESTAMP '2024-06-15 09:15:00.123456' AS zoned, "+
+			"TIMESTAMP_NTZ '2024-06-15 09:15:00.123456' AS ntz")
+	require.NoError(t, err)
+	defer rows.Close() //nolint:errcheck
+
+	require.True(t, rows.Next(), "expected one row")
+	var zoned, ntz time.Time
+	require.NoError(t, rows.Scan(&zoned, &ntz))
+
+	// The NTZ value must preserve the wall clock it was given, with no shift
+	// from the session timezone. We compare the wall-clock fields directly so
+	// the assertion is independent of whatever *time.Location the driver tags
+	// the zone-less value with.
+	assert.Equal(t, 2024, ntz.Year())
+	assert.Equal(t, time.June, ntz.Month())
+	assert.Equal(t, 15, ntz.Day())
+	assert.Equal(t, 9, ntz.Hour(), "TIMESTAMP_NTZ wall-clock hour must not be shifted by the session timezone")
+	assert.Equal(t, 15, ntz.Minute())
+	assert.Equal(t, 0, ntz.Second())
+	assert.Equal(t, 123456000, ntz.Nanosecond())
+
+	// The zoned TIMESTAMP is an instant: the literal is interpreted in the
+	// session timezone (America/New_York), so its UTC instant is 13:15:00.123456Z.
+	assert.Equal(t, time.Date(2024, time.June, 15, 13, 15, 0, 123456000, time.UTC), zoned.UTC(),
+		"zoned TIMESTAMP must remain the correct instant")
+}
