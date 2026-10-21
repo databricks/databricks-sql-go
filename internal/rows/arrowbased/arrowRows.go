@@ -651,6 +651,12 @@ func (vcm *arrowValueContainerMaker) makeColumnValueContainer(t arrow.DataType, 
 	case *arrow.TimestampType:
 		return &timestampValueContainer{location: location, toTimestampFn: toTimestampFn}, nil
 
+	case *arrow.Time32Type:
+		return &timeValueContainer{location: location, nsPerUnit: timeUnitToNanos(t.Unit)}, nil
+
+	case *arrow.Time64Type:
+		return &timeValueContainer{location: location, nsPerUnit: timeUnitToNanos(t.Unit)}, nil
+
 	case *arrow.BinaryType:
 		return &columnValuesTyped[*array.Binary, []byte]{}, nil
 

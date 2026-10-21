@@ -473,6 +473,72 @@ func (dvc *dateValueContainer) SetValueArray(colData arrow.ArrayData) error {
 	return nil
 }
 
+// timeUnitToNanos converts an Arrow time unit to its length in nanoseconds.
+func timeUnitToNanos(unit arrow.TimeUnit) int64 {
+	switch unit {
+	case arrow.Second:
+		return int64(time.Second)
+	case arrow.Millisecond:
+		return int64(time.Millisecond)
+	case arrow.Microsecond:
+		return int64(time.Microsecond)
+	default: // arrow.Nanosecond
+		return 1
+	}
+}
+
+// timeValueContainer scans an Arrow time32/time64 column (a SQL TIME value,
+// i.e. a time-of-day with no calendar date and no timezone). The Arrow value
+// counts time units since midnight; we render it as a wall-clock time.Time
+// anchored on the Unix epoch date in UTC so Hour/Minute/Second/Nanosecond read
+// back correctly without introducing a spurious date or location shift.
+type timeValueContainer struct {
+	timeArray arrow.Array
+	nsPerUnit int64
+	location  *time.Location
+}
+
+var _ columnValues = (*timeValueContainer)(nil)
+
+func (tvc *timeValueContainer) Value(i int) (any, error) {
+	var unitsSinceMidnight int64
+	switch a := tvc.timeArray.(type) {
+	case *array.Time32:
+		unitsSinceMidnight = int64(a.Value(i))
+	case *array.Time64:
+		unitsSinceMidnight = int64(a.Value(i))
+	default:
+		return nil, errors.New(errArrowRowsUnhandledArrowType(tvc.timeArray.DataType().String()))
+	}
+
+	ns := unitsSinceMidnight * tvc.nsPerUnit
+	val := time.Date(1970, time.January, 1, 0, 0, 0, 0, time.UTC).
+		Add(time.Duration(ns)).In(tvc.location)
+	return val, nil
+}
+
+func (tvc *timeValueContainer) IsNull(i int) bool {
+	return tvc.timeArray.IsNull(i)
+}
+
+func (tvc *timeValueContainer) Release() {
+	if tvc.timeArray != nil {
+		tvc.timeArray.Release()
+	}
+}
+
+func (tvc *timeValueContainer) SetValueArray(colData arrow.ArrayData) error {
+	switch colData.DataType().(type) {
+	case *arrow.Time32Type:
+		tvc.timeArray = array.NewTime32Data(colData)
+	case *arrow.Time64Type:
+		tvc.timeArray = array.NewTime64Data(colData)
+	default:
+		return errors.New(errArrowRowsUnhandledArrowType(colData.DataType().String()))
+	}
+	return nil
+}
+
 type timestampValueContainer struct {
 	timeArray     *array.Timestamp
 	location      *time.Location
