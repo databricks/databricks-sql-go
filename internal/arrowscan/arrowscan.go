@@ -211,8 +211,7 @@ func scanCell(col arrow.Array, row int, loc *time.Location, keys *StructKeyCache
 		// which overflows for TIMESTAMPs outside ~1678–2262 and silently wraps a valid
 		// instant to a wrong one (e.g. TIMESTAMP '0001-01-01' → 1754). time.UnixMicro/
 		// UnixMilli/Unix split into (sec, nsec) internally, so the full 0001–9999 range
-		// round-trips. The Thrift default path never hits this — it receives TIMESTAMP
-		// as a preformatted server string — so this divergence is kernel-only.
+		// round-trips. The Thrift renderer still uses Arrow's ToTime conversion.
 		//
 		// A zone-less TIMESTAMP_NTZ (empty TimeZone) is a wall clock with no zone,
 		// so it must NOT be shifted into the session location the way a zoned

@@ -1,7 +1,8 @@
 # Release History
 
 ## Unreleased
-- **Behavior change:** TIMESTAMP_NTZ values are no longer shifted into the session time zone (databricks/databricks-sql-go#506). A zone-less TIMESTAMP_NTZ is now returned as the exact wall clock stored, with `Location()` == `time.UTC`, on both backends (including the default `UseArrowNativeTimestamp=true` Arrow path). Previously both the instant and the location changed with the session time zone; callers that compensated for the old shift (e.g. by calling `.UTC()` or re-interpreting the value in the session location) must drop that workaround. Zoned TIMESTAMP values are unchanged and still render in the session time zone.
+
+- **Behavior change:** Native Arrow TIMESTAMP_NTZ results now preserve their wall-clock fields and report `TIMESTAMP_NTZ` on both backends. Returned `time.Time` values use UTC instead of the session location; their represented instant and `.UTC()` value are unchanged (databricks/databricks-sql-go#506).
 
 ## v1.17.0 (2026-10-20)
 - Upgrade the SQL kernel bindings to v1.2.0.

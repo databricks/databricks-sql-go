@@ -1,6 +1,7 @@
 package rows
 
 import (
+	"bytes"
 	"context"
 	"database/sql/driver"
 	"encoding/json"
@@ -13,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/apache/arrow/go/v12/arrow"
+	"github.com/apache/arrow/go/v12/arrow/ipc"
 	"github.com/databricks/databricks-sql-go/driverctx"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/client"
@@ -21,6 +24,7 @@ import (
 	dbsqlrows "github.com/databricks/databricks-sql-go/rows"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestRowsNextRowInPage(t *testing.T) {
@@ -757,6 +761,50 @@ func TestColumnTypeDatabaseTypeNameOverride(t *testing.T) {
 	// Without an overrider (or with no row scanner yet) the Thrift name is used.
 	rowSet.RowScanner = nil
 	assert.Equal(t, "TIMESTAMP", rowSet.ColumnTypeDatabaseTypeName(1))
+}
+
+func TestColumnTypeDatabaseTypeNameArrowTimestamps(t *testing.T) {
+	arrowSchema := arrow.NewSchema([]arrow.Field{
+		{Name: "zoned", Type: &arrow.TimestampType{Unit: arrow.Microsecond, TimeZone: "UTC"}},
+		{Name: "ntz", Type: &arrow.TimestampType{Unit: arrow.Microsecond}},
+		{Name: "number", Type: arrow.PrimitiveTypes.Int64},
+	}, nil)
+	var schemaBytes bytes.Buffer
+	writer := ipc.NewWriter(&schemaBytes, ipc.WithSchema(arrowSchema))
+	require.NoError(t, writer.Close())
+
+	schema := &cli_service.TTableSchema{}
+	for i, typeID := range []cli_service.TTypeId{
+		cli_service.TTypeId_TIMESTAMP_TYPE,
+		cli_service.TTypeId_TIMESTAMP_TYPE,
+		cli_service.TTypeId_BIGINT_TYPE,
+	} {
+		schema.Columns = append(schema.Columns, &cli_service.TColumnDesc{
+			ColumnName: arrowSchema.Field(i).Name,
+			TypeDesc: &cli_service.TTypeDesc{Types: []*cli_service.TTypeEntry{{
+				PrimitiveEntry: &cli_service.TPrimitiveTypeEntry{Type: typeID},
+			}}},
+		})
+	}
+	rowSet := &rows{
+		client: &client.TestClient{},
+		config: config.WithDefaults(),
+		ctx:    context.Background(),
+		schema: schema,
+		resultSetMetadata: &cli_service.TGetResultSetMetadataResp{
+			Schema: schema, ArrowSchema: schemaBytes.Bytes(),
+		},
+	}
+	require.NoError(t, rowSet.makeRowScanner(&cli_service.TFetchResultsResp{
+		Results: &cli_service.TRowSet{ArrowBatches: []*cli_service.TSparkArrowBatch{}},
+	}))
+	defer rowSet.RowScanner.Close()
+
+	for i, want := range []string{"TIMESTAMP", "TIMESTAMP_NTZ", "BIGINT"} {
+		assert.Equal(t, want, rowSet.ColumnTypeDatabaseTypeName(i), "column %d", i)
+	}
+	assert.Empty(t, rowSet.ColumnTypeDatabaseTypeName(-1))
+	assert.Empty(t, rowSet.ColumnTypeDatabaseTypeName(3))
 }
 
 func TestRowsCloseOptimization(t *testing.T) {
