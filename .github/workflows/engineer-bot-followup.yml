@@ -78,8 +78,10 @@ jobs:
       labels: linux-ubuntu-latest
     timeout-minutes: 30
     concurrency:
-      group: engineer-bot-followup-pr-${{ github.event.pull_request.number }}
+      # Serialize branch updates with engineer-bot-mention.yml.
+      group: engineer-bot-comment-pr-${{ github.event.pull_request.number }}
       cancel-in-progress: false
+      queue: max
     steps:
       # Checkout FIRST (remote action) so the local `./` composites resolve. Check
       # out the PR head BRANCH (not the merge ref) so fixups push back to it.
@@ -152,7 +154,8 @@ jobs:
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_URL: ${{ github.event.pull_request.html_url }}
           TRIGGER_COMMENT_ID: ${{ github.event.comment.id }}
-          MODEL_ENDPOINT: https://${{ secrets.DATABRICKS_HOST }}/serving-endpoints/databricks-claude-opus-4-8/invocations
+          ENGINEER_BOT_MODEL_OVERRIDE: databricks-claude-opus-5-5
+          MODEL_ENDPOINT: https://${{ secrets.DATABRICKS_HOST }}/serving-endpoints/databricks-claude-opus-5-5/invocations
           DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
           RUNNER_TEMP: ${{ runner.temp }}
           # The agent's working tree AND the .bot/ lookup root. run.py resolves the
