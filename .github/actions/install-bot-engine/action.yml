@@ -133,7 +133,9 @@ runs:
           NPM_ARGS=(--userconfig "$JFROG_NPMRC_FILE")
         fi
         python -m pip install "${PIP_ARGS[@]}" --upgrade pip
-        # Pin both CLIs: the SDK prefers its bundled binary over the npm install.
+        # REF mode resolves the published engine's deps unpinned + installs the
+        # SDK/CLI by version (a consumer can't see the engine's hash-locked
+        # requirements). SDK_VERSION/CLI_VERSION track the engine at ENGINE_REF.
         pip install "${PIP_ARGS[@]}" "databricks-bot-engine @ git+https://github.com/${ENGINE_REPO}@${ENGINE_REF}"
         pip install "${PIP_ARGS[@]}" "claude-agent-sdk==${SDK_VERSION}"
         npm install "${NPM_ARGS[@]}" -g "@anthropic-ai/claude-code@${CLI_VERSION}"
