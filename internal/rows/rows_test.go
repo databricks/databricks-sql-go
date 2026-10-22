@@ -814,6 +814,50 @@ func TestColumnTypeDatabaseTypeNameWithoutNativeArrowSchema(t *testing.T) {
 	}
 }
 
+func TestColumnTypeDatabaseTypeNameNonArrowResults(t *testing.T) {
+	schemaBytes, err := os.ReadFile("testdata/timestamp_ntz_arrow_schema.arrow")
+	require.NoError(t, err)
+	schema := &cli_service.TTableSchema{}
+	for _, typeID := range []cli_service.TTypeId{
+		cli_service.TTypeId_TIMESTAMP_TYPE,
+		cli_service.TTypeId_TIMESTAMP_TYPE,
+		cli_service.TTypeId_BIGINT_TYPE,
+	} {
+		schema.Columns = append(schema.Columns, &cli_service.TColumnDesc{
+			TypeDesc: &cli_service.TTypeDesc{Types: []*cli_service.TTypeEntry{{
+				PrimitiveEntry: &cli_service.TPrimitiveTypeEntry{Type: typeID},
+			}}},
+		})
+	}
+	columnFormat := cli_service.TSparkRowSetType_COLUMN_BASED_SET
+	noArrowConfig := config.WithDefaults()
+	noArrowConfig.UseArrowBatches = false
+
+	for name, tc := range map[string]struct {
+		cfg      *config.Config
+		metadata *cli_service.TGetResultSetMetadataResp
+	}{
+		"column based result format": {
+			cfg:      config.WithDefaults(),
+			metadata: &cli_service.TGetResultSetMetadataResp{Schema: schema, ArrowSchema: schemaBytes, ResultFormat: &columnFormat},
+		},
+		"arrow batches disabled": {
+			cfg:      noArrowConfig,
+			metadata: &cli_service.TGetResultSetMetadataResp{Schema: schema, ArrowSchema: schemaBytes},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			rowSet := &rows{
+				client: &client.TestClient{}, schema: schema, config: tc.cfg,
+				resultSetMetadata: tc.metadata,
+			}
+			for i, want := range []string{"TIMESTAMP", "TIMESTAMP", "BIGINT"} {
+				assert.Equal(t, want, rowSet.ColumnTypeDatabaseTypeName(i), "column %d", i)
+			}
+		})
+	}
+}
+
 func TestRowsCloseOptimization(t *testing.T) {
 	var closeCount int
 	client := &client.TestClient{
