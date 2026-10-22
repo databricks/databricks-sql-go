@@ -108,14 +108,26 @@ func (c *StructKeyCache) keyPrefixes(st *arrow.StructType) []string {
 // StructKeyCache) so struct field-name keys are escaped once per result set
 // rather than once per row. Pass nil for the un-memoized one-shot behavior.
 func ScanCellCached(col arrow.Array, row int, loc *time.Location, keys *StructKeyCache) (driver.Value, error) {
-	return scanCell(col, row, loc, keys, ScanOptions{})
+	return scanCell(col, row, fieldlessLocation(col, loc), keys, ScanOptions{})
+}
+
+// fieldlessLocation applies IsTimestampNTZField's zone-less fallback for the
+// entry points that receive only an array, not its schema Field: a top-level
+// timestamp with an empty TimeZone is treated as TIMESTAMP_NTZ and scanned in
+// UTC. Callers that know the Field (the kernel rows via
+// ScanCellCachedWithOptions) decide NTZ from its metadata and pass loc directly.
+func fieldlessLocation(col arrow.Array, loc *time.Location) *time.Location {
+	if IsTimestampNTZField(arrow.Field{Type: col.DataType()}) {
+		return time.UTC
+	}
+	return loc
 }
 
 // ScanCellCachedDecimalFloat is ScanCellCached that, when decimalAsFloat is true,
 // scans a TOP-LEVEL Decimal128 to a lossy float64 instead of the exact string
 // (nested decimals still render exactly). Opt in via WithKernelDecimalAsFloat.
 func ScanCellCachedDecimalFloat(col arrow.Array, row int, loc *time.Location, keys *StructKeyCache, decimalAsFloat bool) (driver.Value, error) {
-	return scanCell(col, row, loc, keys, ScanOptions{DecimalAsFloat: decimalAsFloat})
+	return scanCell(col, row, fieldlessLocation(col, loc), keys, ScanOptions{DecimalAsFloat: decimalAsFloat})
 }
 
 // ScanOptions controls top-level result adaptations that cannot be inferred from
@@ -129,7 +141,9 @@ type ScanOptions struct {
 
 // ScanCellCachedWithOptions is the full scanner entry point used by the kernel
 // rows implementation. Callers that do not need result-specific adaptations
-// should continue to use ScanCellCached.
+// should continue to use ScanCellCached. Unlike the field-less entry points, loc
+// is authoritative here: the caller decides TIMESTAMP_NTZ from the schema Field
+// (IsTimestampNTZField) and passes time.UTC for an NTZ column.
 func ScanCellCachedWithOptions(col arrow.Array, row int, loc *time.Location, keys *StructKeyCache, options ScanOptions) (driver.Value, error) {
 	return scanCell(col, row, loc, keys, options)
 }
@@ -213,19 +227,16 @@ func scanCell(col arrow.Array, row int, loc *time.Location, keys *StructKeyCache
 		// UnixMilli/Unix split into (sec, nsec) internally, so the full 0001–9999 range
 		// round-trips. The Thrift renderer still uses Arrow's ToTime conversion.
 		//
-		// A zone-less TIMESTAMP_NTZ (empty TimeZone) is a wall clock with no zone,
-		// so it must NOT be shifted into the session location the way a zoned
-		// TIMESTAMP instant is: applying .In(loc) would corrupt the wall-clock
-		// fields the server sent (databricks/databricks-sql-go#506). Only a zoned
-		// TIMESTAMP is rendered in loc. ScanCell sees only the data type, so this
-		// uses IsTimestampNTZField's TimeZone fallback; metadata-labeled NTZ
-		// columns and children reach here with loc already set to UTC (the
-		// kernel's top-level ntz flag and childLocation).
-		ts := timestampToTime(int64(c.Value(row)), dt.Unit)
-		if IsTimestampNTZField(arrow.Field{Type: dt}) {
-			return ts, nil
-		}
-		return inLocation(ts, loc), nil
+		// A TIMESTAMP_NTZ is a wall clock with no zone, so it must NOT be shifted
+		// into the session location the way a zoned TIMESTAMP instant is
+		// (databricks/databricks-sql-go#506). That decision needs the enclosing
+		// Field's metadata (IsTimestampNTZField), which this arm cannot see, so the
+		// caller's loc is authoritative: NTZ fields arrive with loc = UTC (the
+		// kernel's top-level ntz flag, childLocation for nested children, and
+		// fieldlessLocation for the field-less ScanCell entry points). A UTC value
+		// rendered in UTC is a no-op, so the NTZ wall clock is preserved, while a
+		// zone-less field the metadata labels TIMESTAMP is still rendered in loc.
+		return inLocation(timestampToTime(int64(c.Value(row)), dt.Unit), loc), nil
 	case *array.Decimal128:
 		dt := col.DataType().(*arrow.Decimal128Type)
 		if options.DecimalAsFloat {
@@ -597,5 +608,7 @@ func scalarForJSON(col arrow.Array, row int, loc *time.Location) (any, error) {
 	if col.IsNull(row) {
 		return nil, nil
 	}
-	return ScanCell(col, row, loc)
+	// scanCell, not ScanCell: keyLoc already came from childLocation on the key
+	// Field, so the field-less zone-less fallback must not override it.
+	return scanCell(col, row, loc, nil, ScanOptions{})
 }

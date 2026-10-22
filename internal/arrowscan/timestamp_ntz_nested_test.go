@@ -62,6 +62,27 @@ func TestScanCellNestedKernelNTZKeepsWallClock(t *testing.T) {
 		}
 	})
 
+	// A zone-less child the metadata labels TIMESTAMP is a TIMESTAMP (reported as
+	// such by ColumnTypeInfoForField), so it must be rendered in loc, not left
+	// in UTC by a data-type-only zone-less fallback at the leaf.
+	t.Run("zone-less child tagged TIMESTAMP shifts", func(t *testing.T) {
+		tsMeta := arrow.NewMetadata([]string{databricksTypeNameMetadataKey}, []string{"TIMESTAMP"})
+		zoneless := &arrow.TimestampType{Unit: arrow.Microsecond}
+		b := array.NewStructBuilder(pool, arrow.StructOf(arrow.Field{Name: "z", Type: zoneless, Nullable: true, Metadata: tsMeta}))
+		defer b.Release()
+		b.Append(true)
+		b.FieldBuilder(0).(*array.TimestampBuilder).Append(arrow.Timestamp(wall.UnixMicro()))
+		arr := b.NewArray()
+		defer arr.Release()
+		v, err := ScanCellCached(arr, 0, loc, NewStructKeyCache())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := `{"z":` + zonedStr + `}`; v != want {
+			t.Errorf("got %v, want %v", v, want)
+		}
+	})
+
 	t.Run("list without NTZ metadata still shifts", func(t *testing.T) {
 		b := array.NewListBuilder(pool, tsUTC)
 		defer b.Release()
