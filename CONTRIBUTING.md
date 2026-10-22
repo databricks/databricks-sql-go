@@ -76,13 +76,4 @@ If you set your `user.name` and `user.email` git configs, you can sign your comm
 4. Review guidelines such as
    [How to write the perfect pull request][github-perfect-pr], thanks!
 
-## Request bot assistance
-
-Maintainers with write access can post a new top-level comment starting with
-`@bot ` on an open PR whose branch is in this repository. No label is required.
-For example: `@bot Please review this PR for bugs. Do not modify files.`
-The bot replies in the PR conversation and pushes any requested code changes to
-the PR branch. Inline comments and edits to existing comments do not trigger it.
-Wait for the current request to finish before posting another.
-
 [github-perfect-pr]: https://blog.github.com/2015-01-21-how-to-write-the-perfect-pull-request/
