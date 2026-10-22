@@ -37,7 +37,11 @@ jobs:
           COMMENTER: ${{ github.event.comment.user.login }}
         run: |
           set -euo pipefail
-          permission=$(gh api "repos/$REPO/collaborators/$COMMENTER/permission" --jq '.permission')
+          if ! permission=$(gh api "repos/$REPO/collaborators/$COMMENTER/permission" --jq '.permission' 2>/dev/null); then
+            echo "allowed=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Skipping @bot request: could not verify commenter write access."
+            exit 0
+          fi
           case "$permission" in
             write|maintain|admin) echo "allowed=true" >> "$GITHUB_OUTPUT" ;;
             *)
