@@ -380,9 +380,16 @@ func (r *rows) ColumnTypeDatabaseTypeName(index int) string {
 
 // Thrift shares TIMESTAMP_TYPE between TIMESTAMP and TIMESTAMP_NTZ. Cache the
 // distinction from server metadata so it survives result-page scanner changes.
-// The override is only applied when the result set is Arrow-decoded: columnar
-// (TColumn) results keep legacy session-location timestamp parsing, so they
-// keep the legacy TIMESTAMP type name too and the name matches the values.
+// The override is only applied when the result set metadata indicates Arrow
+// decoding: columnar (TColumn) results keep legacy session-location timestamp
+// parsing, so they keep the legacy TIMESTAMP type name too.
+//
+// The decision is made from result set metadata alone (it is cached before the
+// first page arrives), not from the format of each fetched page. A result set
+// with an ArrowSchema, Arrow batches enabled, and ResultFormat unset is treated
+// as Arrow. If a server sent such metadata but then returned TColumn pages, the
+// column would still report TIMESTAMP_NTZ while its values went through the
+// legacy column scanner.
 func (r *rows) cacheDatabaseTypeNameOverrides() {
 	if r.databaseTypeNameOverrides != nil {
 		return
