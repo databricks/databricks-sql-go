@@ -290,9 +290,9 @@ pool and connection lifecycle. The Go wrapper telemetry interceptor is skipped o
 kernel path so it does not duplicate kernel-owned telemetry for the same connection and
 statements; `enableTelemetry`, `telemetry_batch_size`, and
 `telemetry_flush_interval` are forwarded to kernel-owned telemetry config. Result types render byte-for-byte identical to the
-Thrift backend: scalars, DECIMAL (exact string), TIMESTAMP (an instant shifted
-into the session time zone) and TIMESTAMP_NTZ (a zone-less wall clock kept
-as-is), INTERVAL, nested Array/Map/Struct and VARIANT (as JSON),
+Thrift backend: scalars, DECIMAL (exact string), TIMESTAMP (rendered in the
+session time zone) and TIMESTAMP_NTZ (wall-clock fields preserved in a time.Time
+with a UTC location), INTERVAL, nested Array/Map/Struct and VARIANT (as JSON),
 and GEOMETRY / GEOGRAPHY (WKT). The server query id is surfaced on the success path, so a
 QueryIdCallback (see below) fires with the real id and EXECUTE_STATEMENT telemetry
 carries it.

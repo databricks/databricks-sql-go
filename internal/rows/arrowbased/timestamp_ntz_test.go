@@ -40,6 +40,12 @@ func TestThriftTimestampNTZPreservesWallClock(t *testing.T) {
 			got.Hour() != 9 || got.Minute() != 15 || got.Second() != 0 || got.Nanosecond() != 123456000 {
 			t.Errorf("NTZ wall clock not preserved: got %v, want wall 2024-06-15 09:15:00.123456", got)
 		}
+		if got.Location() != time.UTC {
+			t.Errorf("NTZ location = %q, want UTC", got.Location())
+		}
+		if !got.Equal(wall) {
+			t.Errorf("NTZ instant changed: got %v, want %v", got.UTC(), wall)
+		}
 	})
 
 	t.Run("zoned keeps instant via location", func(t *testing.T) {

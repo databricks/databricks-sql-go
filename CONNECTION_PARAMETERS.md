@@ -159,8 +159,8 @@ ignored with a warning and still stripped from the SEA wire.
 
 Apart from the geospatial representation selected above, results render **byte-for-byte
 identically** on both backends (scalars,
-DECIMAL as exact string, TIMESTAMP as an instant shifted into the session time zone,
-TIMESTAMP_NTZ as a zone-less wall clock kept as-is (`Location()` == `time.UTC`),
+DECIMAL as exact string, TIMESTAMP rendered in the session time zone,
+TIMESTAMP_NTZ with wall-clock fields preserved in a `time.Time` with a UTC location,
 INTERVAL, nested ARRAY / MAP / STRUCT and VARIANT as JSON, and BINARY as
 `sql.RawBytes`). The default `enableGeoSpatialSupport=false` on the kernel path
 matches the Thrift path's WKT / EWKT geospatial values.
