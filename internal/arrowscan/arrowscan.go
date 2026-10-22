@@ -625,5 +625,15 @@ func scalarForJSON(col arrow.Array, row int, loc *time.Location) (any, error) {
 	if col.IsNull(row) {
 		return nil, nil
 	}
+	// A TIME map key must render as the zoneless time-of-day string, same as a
+	// nested TIME value in writeJSON (and the Thrift path's {"09:15:00":…} key).
+	// ScanCell returns a 1970-01-01-anchored time.Time for TIME, which
+	// writeJSONKey would quote via .String() and leak the epoch date.
+	switch c := col.(type) {
+	case *array.Time32:
+		return formatTimeOfDay(int64(c.Value(row)), c.DataType().(*arrow.Time32Type).Unit), nil
+	case *array.Time64:
+		return formatTimeOfDay(int64(c.Value(row)), c.DataType().(*arrow.Time64Type).Unit), nil
+	}
 	return ScanCell(col, row, loc)
 }

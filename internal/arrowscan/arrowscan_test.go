@@ -480,6 +480,48 @@ func TestScanCellNested(t *testing.T) {
 		}
 	})
 
+	// TIME map keys must render as the zoneless time-of-day string the Thrift
+	// path emits ({"09:15:00":1}), not the epoch-anchored time.Time.String().
+	t.Run("map time32 key", func(t *testing.T) {
+		b := array.NewMapBuilder(pool, &arrow.Time32Type{Unit: arrow.Second}, arrow.PrimitiveTypes.Int64, false)
+		defer b.Release()
+		kb := b.KeyBuilder().(*array.Time32Builder)
+		ib := b.ItemBuilder().(*array.Int64Builder)
+		b.Append(true)
+		kb.Append(arrow.Time32(9*3600 + 15*60))
+		ib.Append(1)
+		arr := b.NewArray()
+		defer arr.Release()
+		v, err := ScanCell(arr, 0, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if v.(string) != `{"09:15:00":1}` {
+			t.Errorf("got %q, want {\"09:15:00\":1}", v)
+		}
+	})
+
+	t.Run("map time64 key", func(t *testing.T) {
+		b := array.NewMapBuilder(pool, &arrow.Time64Type{Unit: arrow.Microsecond}, arrow.PrimitiveTypes.Int64, false)
+		defer b.Release()
+		kb := b.KeyBuilder().(*array.Time64Builder)
+		ib := b.ItemBuilder().(*array.Int64Builder)
+		b.Append(true)
+		kb.Append(arrow.Time64((9*3600 + 15*60) * 1_000_000))
+		ib.Append(1)
+		kb.Append(arrow.Time64((9*3600+15*60)*1_000_000 + 500_000))
+		ib.Append(2)
+		arr := b.NewArray()
+		defer arr.Release()
+		v, err := ScanCell(arr, 0, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if v.(string) != `{"09:15:00":1,"09:15:00.5":2}` {
+			t.Errorf("got %q, want {\"09:15:00\":1,\"09:15:00.5\":2}", v)
+		}
+	})
+
 	t.Run("nested_decimal_exact", func(t *testing.T) {
 		// A decimal inside a struct must render as an exact JSON number, not a
 		// lossy float64 (19.99, not 19.990000000000002) — matching Thrift's

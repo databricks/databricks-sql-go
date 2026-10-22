@@ -112,6 +112,27 @@ func TestArrowbasedKernelRenderParity(t *testing.T) {
 			b.ItemBuilder().(*array.Int64Builder).Append(9)
 			return b.NewArray()
 		}},
+		// TIME map keys: Thrift emits the zoneless time-of-day key
+		// ({"09:15:00":1}); the kernel map-key path must not fall back to the
+		// epoch-anchored time.Time.String() ("1970-01-01 09:15:00 +0000 UTC").
+		{"map_time32_key", func() arrow.Array {
+			b := array.NewMapBuilder(pool, arrow.FixedWidthTypes.Time32s, arrow.PrimitiveTypes.Int64, false)
+			b.Append(true)
+			b.KeyBuilder().(*array.Time32Builder).Append(arrow.Time32(9*3600 + 15*60))
+			b.ItemBuilder().(*array.Int64Builder).Append(1)
+			return b.NewArray()
+		}},
+		{"map_time64_key", func() arrow.Array {
+			b := array.NewMapBuilder(pool, arrow.FixedWidthTypes.Time64us, arrow.PrimitiveTypes.Int64, false)
+			b.Append(true)
+			kb := b.KeyBuilder().(*array.Time64Builder)
+			ib := b.ItemBuilder().(*array.Int64Builder)
+			kb.Append(arrow.Time64((9*3600 + 15*60) * 1_000_000))
+			ib.Append(1)
+			kb.Append(arrow.Time64((9*3600+15*60+30)*1_000_000 + 123_456))
+			ib.Append(2)
+			return b.NewArray()
+		}},
 		{"nested_float32", func() arrow.Array {
 			dt := arrow.StructOf(arrow.Field{Name: "f", Type: arrow.PrimitiveTypes.Float32})
 			b := array.NewStructBuilder(pool, dt)
