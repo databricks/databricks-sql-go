@@ -27,7 +27,6 @@ jobs:
     outputs:
       eligible: ${{ steps.pr.outputs.eligible }}
       head_ref: ${{ steps.pr.outputs.head_ref }}
-      base_sha: ${{ steps.pr.outputs.base_sha }}
     steps:
       # Check permissions before requesting the environment's App/model secrets.
       - name: Verify commenter has write access
@@ -65,7 +64,6 @@ jobs:
           {
             echo "eligible=true"
             echo "head_ref=$(jq -r '.head.ref' <<< "$pr")"
-            echo "base_sha=$(jq -r '.base.sha' <<< "$pr")"
           } >> "$GITHUB_OUTPUT"
 
   mention:
@@ -152,9 +150,12 @@ jobs:
 
       - name: Prepare PR diff reference
         env:
-          BASE_SHA: ${{ needs.authorize.outputs.base_sha }}
+          GH_TOKEN: ${{ steps.prelude.outputs.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.issue.number }}
         run: |
           set -euo pipefail
+          BASE_SHA=$(gh api "repos/$REPO/pulls/$PR_NUMBER" --jq '.base.sha')
           git -C pr fetch --no-tags origin "$BASE_SHA"
           git -C pr diff --no-ext-diff --no-textconv --no-color "$BASE_SHA...HEAD" -- > "$RUNNER_TEMP/mention-pr.diff"
           python - <<'PY'

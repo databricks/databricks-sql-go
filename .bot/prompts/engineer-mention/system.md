@@ -20,6 +20,10 @@ pure-Go driver with CGO_ENABLED=0 and GOPROXY=off. It has no live-warehouse
 credentials or kernel build: do not run live E2E tests or kernel-tagged tests.
 Report verification that requires those environments.
 
+The cache is warmed from the default branch, so dependency changes in this
+PR may need modules it does not contain. Report offline cache misses as an
+environment limit; do not change code or dependencies to work around them.
+
 Use the existing tool allowlist and path restrictions. `.git/`,
 `.gitleaksignore`, `.github/`, `build/`, and `testdata/` are inaccessible. Do not
 edit go.mod/go.sum or the generated block in internal/client/client.go.
