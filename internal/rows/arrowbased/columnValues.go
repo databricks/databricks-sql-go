@@ -473,6 +473,92 @@ func (dvc *dateValueContainer) SetValueArray(colData arrow.ArrayData) error {
 	return nil
 }
 
+// timeUnitToNanos converts an Arrow time unit to its length in nanoseconds.
+func timeUnitToNanos(unit arrow.TimeUnit) int64 {
+	switch unit {
+	case arrow.Second:
+		return int64(time.Second)
+	case arrow.Millisecond:
+		return int64(time.Millisecond)
+	case arrow.Microsecond:
+		return int64(time.Microsecond)
+	default: // arrow.Nanosecond
+		return 1
+	}
+}
+
+// timeValueContainer scans an Arrow time32/time64 column (a SQL TIME value,
+// i.e. a time-of-day with no calendar date and no timezone). The Arrow value
+// counts time units since midnight; we render it as a wall-clock time.Time
+// anchored on the Unix epoch date in UTC so Hour/Minute/Second/Nanosecond read
+// back correctly without introducing a spurious date or location shift.
+type timeValueContainer struct {
+	timeArray arrow.Array
+	nsPerUnit int64
+}
+
+var _ columnValues = (*timeValueContainer)(nil)
+
+func (tvc *timeValueContainer) Value(i int) (any, error) {
+	var unitsSinceMidnight int64
+	switch a := tvc.timeArray.(type) {
+	case *array.Time32:
+		unitsSinceMidnight = int64(a.Value(i))
+	case *array.Time64:
+		unitsSinceMidnight = int64(a.Value(i))
+	default:
+		return nil, errors.New(errArrowRowsUnhandledArrowType(tvc.timeArray.DataType().String()))
+	}
+
+	ns := unitsSinceMidnight * tvc.nsPerUnit
+	// A SQL TIME is a zoneless wall-clock time-of-day, so we keep the value in
+	// UTC and do NOT apply cfg.Location: converting into a non-UTC location
+	// would shift the hour/minute (and could roll the anchor date off the
+	// epoch), which is wrong for a value that carries no timezone.
+	val := time.Date(1970, time.January, 1, 0, 0, 0, 0, time.UTC).
+		Add(time.Duration(ns))
+	return val, nil
+}
+
+// ValueString renders the TIME as a zoneless time-of-day string (HH:MM:SS
+// with optional fractional seconds). It is used when a TIME appears nested
+// inside a complex type (STRUCT/LIST/MAP): the default time.Time marshaling
+// emits t.String(), which would leak the spurious 1970-01-01 epoch anchor
+// date for a value that carries no calendar date. See marshalScalar.
+func (tvc *timeValueContainer) ValueString(i int) string {
+	v, err := tvc.Value(i)
+	if err != nil {
+		return ""
+	}
+	t, ok := v.(time.Time)
+	if !ok {
+		return ""
+	}
+	return t.Format("15:04:05.999999999")
+}
+
+func (tvc *timeValueContainer) IsNull(i int) bool {
+	return tvc.timeArray.IsNull(i)
+}
+
+func (tvc *timeValueContainer) Release() {
+	if tvc.timeArray != nil {
+		tvc.timeArray.Release()
+	}
+}
+
+func (tvc *timeValueContainer) SetValueArray(colData arrow.ArrayData) error {
+	switch colData.DataType().(type) {
+	case *arrow.Time32Type:
+		tvc.timeArray = array.NewTime32Data(colData)
+	case *arrow.Time64Type:
+		tvc.timeArray = array.NewTime64Data(colData)
+	default:
+		return errors.New(errArrowRowsUnhandledArrowType(colData.DataType().String()))
+	}
+	return nil
+}
+
 type timestampValueContainer struct {
 	timeArray     *array.Timestamp
 	location      *time.Location
@@ -596,6 +682,13 @@ func marshal(val any) ([]byte, error) {
 func marshalScalar(holder columnValues, i int, val any) ([]byte, error) {
 	if d, ok := holder.(*decimal128Container); ok {
 		return []byte(d.ValueString(i)), nil
+	}
+	// A SQL TIME is a zoneless time-of-day. Rendering it via the generic
+	// time.Time path would emit t.String() with the 1970-01-01 epoch anchor
+	// date (e.g. "1970-01-01 09:15:00 +0000 UTC"), leaking a spurious date for
+	// a value that carries none. Emit just the time-of-day as a JSON string.
+	if t, ok := holder.(*timeValueContainer); ok {
+		return json.Marshal(t.ValueString(i))
 	}
 	return marshal(val)
 }

@@ -104,11 +104,12 @@ func TestScanCellScalars(t *testing.T) {
 
 	t.Run("unsupported_type_errors", func(t *testing.T) {
 		// An unhandled arrow type must error, not return a silently wrong value.
-		// Duration/MonthInterval are now handled (see TestScanCellInterval); use a
-		// type with no scan arm.
-		b := array.NewTime32Builder(pool, &arrow.Time32Type{Unit: arrow.Second})
+		// Duration/MonthInterval are now handled (see TestScanCellInterval) and
+		// Time32/Time64 are now handled (see TestScanCellTimeOfDay); use a type with
+		// no scan arm.
+		b := array.NewMonthDayNanoIntervalBuilder(pool)
 		defer b.Release()
-		b.Append(1000)
+		b.Append(arrow.MonthDayNanoInterval{Months: 1, Days: 2, Nanoseconds: 3})
 		arr := b.NewArray()
 		defer arr.Release()
 		if _, err := ScanCell(arr, 0, nil); err == nil {
@@ -223,6 +224,83 @@ func TestScanCellInterval(t *testing.T) {
 			}
 		})
 	}
+}
+
+// SQL TIME (arrow time32/time64) arrives as units-since-midnight and must render
+// to the same epoch-anchored UTC wall-clock time.Time the Thrift path produces
+// (timeValueContainer). It is zoneless, so loc must NOT shift the value.
+func TestScanCellTimeOfDay(t *testing.T) {
+	pool := memory.NewGoAllocator()
+	// 13:01:01.5 as the wall-clock time-of-day both paths must return.
+	want := time.Date(1970, time.January, 1, 13, 1, 1, 500_000_000, time.UTC)
+
+	t.Run("time32_seconds", func(t *testing.T) {
+		b := array.NewTime32Builder(pool, &arrow.Time32Type{Unit: arrow.Second})
+		defer b.Release()
+		b.Append(arrow.Time32(13*3600 + 1*60 + 1)) // 13:01:01
+		arr := b.NewArray()
+		defer arr.Release()
+		v, err := ScanCell(arr, 0, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := v.(time.Time)
+		wantSec := time.Date(1970, time.January, 1, 13, 1, 1, 0, time.UTC)
+		if !got.Equal(wantSec) {
+			t.Errorf("got %v, want %v", got, wantSec)
+		}
+	})
+
+	t.Run("time32_millis", func(t *testing.T) {
+		b := array.NewTime32Builder(pool, &arrow.Time32Type{Unit: arrow.Millisecond})
+		defer b.Release()
+		b.Append(arrow.Time32((13*3600+1*60+1)*1000 + 500)) // 13:01:01.500
+		arr := b.NewArray()
+		defer arr.Release()
+		v, err := ScanCell(arr, 0, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := v.(time.Time); !got.Equal(want) {
+			t.Errorf("got %v, want %v", got, want)
+		}
+	})
+
+	t.Run("time64_micros", func(t *testing.T) {
+		b := array.NewTime64Builder(pool, &arrow.Time64Type{Unit: arrow.Microsecond})
+		defer b.Release()
+		b.Append(arrow.Time64((13*3600+1*60+1)*1_000_000 + 500_000)) // 13:01:01.500000
+		arr := b.NewArray()
+		defer arr.Release()
+		v, err := ScanCell(arr, 0, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := v.(time.Time); !got.Equal(want) {
+			t.Errorf("got %v, want %v", got, want)
+		}
+	})
+
+	t.Run("time64_nanos_zoneless_ignores_loc", func(t *testing.T) {
+		loc, err := time.LoadLocation("America/New_York")
+		if err != nil {
+			t.Skipf("tz database unavailable: %v", err)
+		}
+		b := array.NewTime64Builder(pool, &arrow.Time64Type{Unit: arrow.Nanosecond})
+		defer b.Release()
+		b.Append(arrow.Time64((13*3600+1*60+1)*int64(time.Second) + 500_000_000))
+		arr := b.NewArray()
+		defer arr.Release()
+		// A zoneless TIME must not be shifted by loc: same wall-clock, still UTC.
+		v, err := ScanCell(arr, 0, loc)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := v.(time.Time)
+		if !got.Equal(want) || got.Location() != time.UTC {
+			t.Errorf("got %v (%v), want %v (UTC)", got, got.Location(), want)
+		}
+	})
 }
 
 // ScanCell renders DATE / TIMESTAMP in the requested location, matching the
@@ -399,6 +477,48 @@ func TestScanCellNested(t *testing.T) {
 		}
 		if v.(string) != `{"k":9}` {
 			t.Errorf("got %q, want {\"k\":9}", v)
+		}
+	})
+
+	// TIME map keys must render as the zoneless time-of-day string the Thrift
+	// path emits ({"09:15:00":1}), not the epoch-anchored time.Time.String().
+	t.Run("map time32 key", func(t *testing.T) {
+		b := array.NewMapBuilder(pool, &arrow.Time32Type{Unit: arrow.Second}, arrow.PrimitiveTypes.Int64, false)
+		defer b.Release()
+		kb := b.KeyBuilder().(*array.Time32Builder)
+		ib := b.ItemBuilder().(*array.Int64Builder)
+		b.Append(true)
+		kb.Append(arrow.Time32(9*3600 + 15*60))
+		ib.Append(1)
+		arr := b.NewArray()
+		defer arr.Release()
+		v, err := ScanCell(arr, 0, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if v.(string) != `{"09:15:00":1}` {
+			t.Errorf("got %q, want {\"09:15:00\":1}", v)
+		}
+	})
+
+	t.Run("map time64 key", func(t *testing.T) {
+		b := array.NewMapBuilder(pool, &arrow.Time64Type{Unit: arrow.Microsecond}, arrow.PrimitiveTypes.Int64, false)
+		defer b.Release()
+		kb := b.KeyBuilder().(*array.Time64Builder)
+		ib := b.ItemBuilder().(*array.Int64Builder)
+		b.Append(true)
+		kb.Append(arrow.Time64((9*3600 + 15*60) * 1_000_000))
+		ib.Append(1)
+		kb.Append(arrow.Time64((9*3600+15*60)*1_000_000 + 500_000))
+		ib.Append(2)
+		arr := b.NewArray()
+		defer arr.Release()
+		v, err := ScanCell(arr, 0, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if v.(string) != `{"09:15:00":1,"09:15:00.5":2}` {
+			t.Errorf("got %q, want {\"09:15:00\":1,\"09:15:00.5\":2}", v)
 		}
 	})
 
