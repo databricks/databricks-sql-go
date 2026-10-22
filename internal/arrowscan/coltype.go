@@ -151,11 +151,8 @@ func IsBinaryGeospatialField(field arrow.Field) bool {
 // ColumnTypeInfoForField preserves logical timestamp and geospatial types that
 // the kernel's physical Arrow representation alone cannot distinguish.
 func ColumnTypeInfoForField(field arrow.Field) ColumnTypeInfo {
-	if field.Type.ID() == arrow.TIMESTAMP {
-		name, _ := field.Metadata.GetValue(databricksTypeNameMetadataKey)
-		if strings.EqualFold(strings.TrimSpace(name), "TIMESTAMP_NTZ") {
-			return ColumnTypeInfo{DatabaseTypeName: "TIMESTAMP_NTZ", ScanType: scanTypeDateTime}
-		}
+	if isLogicalNTZField(field) {
+		return ColumnTypeInfo{DatabaseTypeName: "TIMESTAMP_NTZ", ScanType: scanTypeDateTime}
 	}
 	name, geospatial := LogicalGeospatialType(field)
 	if !geospatial {
@@ -170,6 +167,28 @@ func ColumnTypeInfoForField(field arrow.Field) ColumnTypeInfo {
 	info := ColumnTypeInfoFor(field.Type)
 	info.DatabaseTypeName = name
 	return info
+}
+
+// isLogicalNTZField reports whether field is an Arrow timestamp the kernel has
+// labeled TIMESTAMP_NTZ via field metadata. The kernel may give such a field a
+// physical TimeZone (e.g. "UTC"), so the metadata is the authoritative signal.
+func isLogicalNTZField(field arrow.Field) bool {
+	if field.Type == nil || field.Type.ID() != arrow.TIMESTAMP {
+		return false
+	}
+	name, _ := field.Metadata.GetValue(databricksTypeNameMetadataKey)
+	return strings.EqualFold(strings.TrimSpace(name), "TIMESTAMP_NTZ")
+}
+
+// childLocation returns the location to render a nested child field's values
+// in: a metadata-labeled TIMESTAMP_NTZ child is a wall clock and must not be
+// shifted into the session location, so it renders in UTC (the stored wall
+// clock); every other child inherits loc.
+func childLocation(field arrow.Field, loc *time.Location) *time.Location {
+	if isLogicalNTZField(field) {
+		return time.UTC
+	}
+	return loc
 }
 
 // varLen builds a ColumnTypeInfo for a variable-length type, reporting the

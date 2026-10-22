@@ -426,16 +426,19 @@ func writeJSON(b *strings.Builder, col arrow.Array, row int, loc *time.Location,
 		// re-slices preserving data.offset) must index offsets[row+data.offset].
 		// ValueOffsets does that; this mirrors the Thrift path's ValueOffsets use.
 		s, e := c.ValueOffsets(row)
-		return writeListJSON(b, c.ListValues(), int(s), int(e), loc, keys)
+		elemLoc := childLocation(c.DataType().(*arrow.ListType).ElemField(), loc)
+		return writeListJSON(b, c.ListValues(), int(s), int(e), elemLoc, keys)
 	case *array.LargeList:
 		// arrow-go's LargeList.ValueOffsets (unlike List's) does NOT add data.offset,
 		// so add it by hand to stay offset-correct.
 		off := c.Data().Offset()
-		return writeListJSON(b, c.ListValues(), int(c.Offsets()[row+off]), int(c.Offsets()[row+off+1]), loc, keys)
+		elemLoc := childLocation(c.DataType().(*arrow.LargeListType).ElemField(), loc)
+		return writeListJSON(b, c.ListValues(), int(c.Offsets()[row+off]), int(c.Offsets()[row+off+1]), elemLoc, keys)
 	case *array.FixedSizeList:
-		n := int(c.DataType().(*arrow.FixedSizeListType).Len())
+		fdt := c.DataType().(*arrow.FixedSizeListType)
+		n := int(fdt.Len())
 		base := (row + c.Data().Offset()) * n
-		return writeListJSON(b, c.ListValues(), base, base+n, loc, keys)
+		return writeListJSON(b, c.ListValues(), base, base+n, childLocation(fdt.ElemField(), loc), keys)
 	case *array.Map:
 		return writeMapJSON(b, c, row, loc, keys)
 	case *array.Struct:
@@ -490,19 +493,22 @@ func writeMapJSON(b *strings.Builder, m *array.Map, row int, loc *time.Location,
 	start, end := int(s), int(e)
 	mapKeys := m.Keys()
 	items := m.Items()
+	mdt := m.DataType().(*arrow.MapType)
+	keyLoc := childLocation(mdt.KeyField(), loc)
+	itemLoc := childLocation(mdt.ItemField(), loc)
 	b.WriteByte('{')
 	for i := start; i < end; i++ {
 		if i > start {
 			b.WriteByte(',')
 		}
 		// JSON object keys must be strings; stringify the key value.
-		kv, err := scalarForJSON(mapKeys, i, loc)
+		kv, err := scalarForJSON(mapKeys, i, keyLoc)
 		if err != nil {
 			return err
 		}
 		writeJSONKey(b, kv)
 		b.WriteByte(':')
-		if err := writeJSON(b, items, i, loc, keys); err != nil {
+		if err := writeJSON(b, items, i, itemLoc, keys); err != nil {
 			return err
 		}
 	}
@@ -514,14 +520,17 @@ func writeStructJSON(b *strings.Builder, s *array.Struct, row int, loc *time.Loc
 	// Field-name keys are constant across rows; keys.keyPrefixes memoizes them per
 	// result set so this per-row/per-cell path doesn't re-marshal them (a nil cache
 	// recomputes inline — correct, just not memoized).
-	prefixes := keys.keyPrefixes(s.DataType().(*arrow.StructType))
+	st := s.DataType().(*arrow.StructType)
+	prefixes := keys.keyPrefixes(st)
 	b.WriteByte('{')
 	for f := 0; f < s.NumField(); f++ {
 		if f > 0 {
 			b.WriteByte(',')
 		}
 		b.WriteString(prefixes[f]) // pre-escaped `"name":`
-		if err := writeJSON(b, s.Field(f), row, loc, keys); err != nil {
+		// A kernel-labeled TIMESTAMP_NTZ child may carry a physical TimeZone; keep
+		// its wall clock unshifted, like the top-level NTZ column.
+		if err := writeJSON(b, s.Field(f), row, childLocation(st.Field(f), loc), keys); err != nil {
 			return err
 		}
 	}

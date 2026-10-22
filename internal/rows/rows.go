@@ -380,6 +380,9 @@ func (r *rows) ColumnTypeDatabaseTypeName(index int) string {
 
 // Thrift shares TIMESTAMP_TYPE between TIMESTAMP and TIMESTAMP_NTZ. Cache the
 // distinction from server metadata so it survives result-page scanner changes.
+// The override is only applied when the result set is Arrow-decoded: columnar
+// (TColumn) results keep legacy session-location timestamp parsing, so they
+// keep the legacy TIMESTAMP type name too and the name matches the values.
 func (r *rows) cacheDatabaseTypeNameOverrides() {
 	if r.databaseTypeNameOverrides != nil {
 		return
@@ -387,6 +390,16 @@ func (r *rows) cacheDatabaseTypeNameOverrides() {
 	r.databaseTypeNameOverrides = make(map[int]string)
 	if r.resultSetMetadata == nil || len(r.resultSetMetadata.ArrowSchema) == 0 {
 		return
+	}
+	if r.config != nil && !r.config.UseArrowBatches {
+		return
+	}
+	if r.resultSetMetadata.IsSetResultFormat() {
+		switch r.resultSetMetadata.GetResultFormat() {
+		case cli_service.TSparkRowSetType_ARROW_BASED_SET, cli_service.TSparkRowSetType_URL_BASED_SET:
+		default:
+			return
+		}
 	}
 
 	reader, err := ipc.NewReader(bytes.NewReader(r.resultSetMetadata.ArrowSchema))
