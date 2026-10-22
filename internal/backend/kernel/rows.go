@@ -66,6 +66,7 @@ type kernelRows struct {
 	cols       []string
 	colTypes   []arrowscan.ColumnTypeInfo // per-column type metadata (PECOBLR-3692)
 	geoBinary  []bool                     // top-level logical geo structs become EWKB for database/sql
+	ntz        []bool                     // top-level TIMESTAMP_NTZ columns scan in UTC, not the session location
 	schema     *arrow.Schema              // result-set schema, for GetArrowBatches().Schema()
 	cur        arrow.Record               // current batch (nil until first Next)
 	rowInCur   int                        // next row index within cur
@@ -120,10 +121,15 @@ func newKernelRows(ctx context.Context, op *kernelOp, stream *C.kernel_result_st
 	// (ScanCellCached) via the shared arrowscan.ColumnTypeInfoFor mapper.
 	r.colTypes = make([]arrowscan.ColumnTypeInfo, len(fields))
 	r.geoBinary = make([]bool, len(fields))
+	r.ntz = make([]bool, len(fields))
 	for i, f := range fields {
 		r.cols[i] = f.Name
 		r.colTypes[i] = arrowscan.ColumnTypeInfoForField(f)
 		r.geoBinary[i] = arrowscan.IsBinaryGeospatialField(f)
+		// The kernel may tag NTZ with UTC in Arrow while preserving its logical
+		// type; decide once here (from the same mapper as ColumnTypeDatabaseTypeName)
+		// rather than per cell in next().
+		r.ntz[i] = r.colTypes[i].DatabaseTypeName == "TIMESTAMP_NTZ"
 	}
 	// Construction succeeded — now arm the close telemetry callback so a normal
 	// Close() (after row iteration) records CLOSE_STATEMENT.
@@ -236,8 +242,7 @@ func (r *kernelRows) next(dest []driver.Value) error {
 	rec := r.cur
 	for c := 0; c < len(dest); c++ {
 		location := r.op.location
-		// The kernel may tag NTZ with UTC in Arrow while preserving its logical type.
-		if r.colTypes[c].DatabaseTypeName == "TIMESTAMP_NTZ" {
+		if r.ntz[c] {
 			location = time.UTC
 		}
 		v, err := arrowscan.ScanCellCachedWithOptions(rec.Column(c), r.rowInCur, location, r.keyCache, arrowscan.ScanOptions{
