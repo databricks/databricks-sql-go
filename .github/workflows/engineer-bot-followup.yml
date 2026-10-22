@@ -78,7 +78,8 @@ jobs:
       labels: linux-ubuntu-latest
     timeout-minutes: 30
     concurrency:
-      group: engineer-bot-followup-pr-${{ github.event.pull_request.number }}
+      # Serialize branch updates with engineer-bot-mention.yml.
+      group: engineer-bot-comment-pr-${{ github.event.pull_request.number }}
       cancel-in-progress: false
     steps:
       # Checkout FIRST (remote action) so the local `./` composites resolve. Check

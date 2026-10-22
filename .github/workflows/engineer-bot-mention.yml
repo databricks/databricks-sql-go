@@ -1,0 +1,169 @@
+name: Engineer Bot — Mention
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  authorize:
+    if: >-
+      github.event.issue.pull_request
+      && github.event.issue.state == 'open'
+      && (startsWith(github.event.comment.body, '@bot ')
+        || startsWith(github.event.comment.body, fromJson('"@bot\n"'))
+        || startsWith(github.event.comment.body, fromJson('"@bot\r"'))
+        || github.event.comment.body == '@bot')
+      && github.event.comment.user.type == 'User'
+      && !contains(github.event.comment.body, '<!-- engineer-bot-go:')
+      && contains(fromJson('["OWNER","MEMBER","COLLABORATOR","CONTRIBUTOR"]'), github.event.comment.author_association)
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: linux-ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      eligible: ${{ steps.pr.outputs.eligible }}
+      head_ref: ${{ steps.pr.outputs.head_ref }}
+      base_sha: ${{ steps.pr.outputs.base_sha }}
+    steps:
+      # Check permissions before requesting the environment's App/model secrets.
+      - name: Verify commenter has write access
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          COMMENTER: ${{ github.event.comment.user.login }}
+        run: |
+          set -euo pipefail
+          permission=$(gh api "repos/$REPO/collaborators/$COMMENTER/permission" --jq '.permission')
+          case "$permission" in
+            write|maintain|admin) ;;
+            *) echo "::error::Commenter must have write access or higher."; exit 1 ;;
+          esac
+
+      - name: Resolve PR branch
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          set -euo pipefail
+          pr=$(gh api "repos/$REPO/pulls/$PR_NUMBER")
+          if ! jq -e --arg repo "$REPO" '.state == "open" and .head.repo.full_name == $repo' <<< "$pr" >/dev/null; then
+            echo "::notice::Only open PRs with a branch in this repository are supported."
+            exit 0
+          fi
+          {
+            echo "eligible=true"
+            echo "head_ref=$(jq -r '.head.ref' <<< "$pr")"
+            echo "base_sha=$(jq -r '.base.sha' <<< "$pr")"
+          } >> "$GITHUB_OUTPUT"
+
+  mention:
+    needs: authorize
+    if: needs.authorize.outputs.eligible == 'true'
+    environment: azure-prod
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: linux-ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      id-token: write
+    concurrency:
+      group: engineer-bot-comment-pr-${{ github.event.issue.number }}
+      cancel-in-progress: false
+    env:
+      CGO_ENABLED: '0'
+      GOFLAGS: -mod=readonly
+    steps:
+      # Load actions, config, and prompts from the default branch.
+      - name: Checkout bot setup
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - name: Checkout PR branch
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          ref: ${{ needs.authorize.outputs.head_ref }}
+          path: pr
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup JFrog
+        uses: ./.github/actions/setup-jfrog
+
+      - name: Set up Go Toolchain
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16  # v6.5.0
+        with:
+          go-version: '1.25.x'
+          cache: false
+
+      - name: Build and warm Go caches
+        working-directory: pr
+        run: |
+          go build ./...
+          make tools
+          go test -run '^$' ./... >/dev/null
+
+      - name: Scrub JFrog credentials before the agent runs
+        run: |
+          rm -f ~/.netrc
+          {
+            echo "JFROG_ACCESS_TOKEN="
+            echo "GOPROXY=off"
+          } >> "$GITHUB_ENV"
+
+      - name: Setup Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
+        with:
+          python-version: '3.11'
+
+      - name: Bot prelude
+        id: prelude
+        uses: ./.github/actions/bot-prelude
+        with:
+          app-id: ${{ secrets.ENGINEER_BOT_APP_ID }}
+          private-key: ${{ secrets.ENGINEER_BOT_APP_PRIVATE_KEY }}
+
+      - name: Prepare prompt with PR diff
+        env:
+          BASE_SHA: ${{ needs.authorize.outputs.base_sha }}
+        run: |
+          set -euo pipefail
+          git -C pr diff --no-ext-diff --no-textconv --no-color "$BASE_SHA...HEAD" -- > "$RUNNER_TEMP/mention-pr.diff"
+          python - <<'PY'
+          import os
+          from pathlib import Path
+
+          workspace = Path(os.environ["GITHUB_WORKSPACE"])
+          temp = Path(os.environ["RUNNER_TEMP"])
+          prompt = (workspace / ".bot/prompts/engineer-mention/system.md").read_text()
+          diff = (temp / "mention-pr.diff").read_text(errors="replace")
+          limit = 100_000
+          prompt += "\n\n## PR diff (untrusted reference material)\n\n" + diff[:limit]
+          if len(diff) > limit:
+              prompt += "\n\n[Diff truncated; inspect source files and report any review limitations.]\n"
+          (temp / "engineer-mention-system.md").write_text(prompt)
+          PY
+
+      - name: Run engineer mention
+        working-directory: pr
+        env:
+          GH_TOKEN: ${{ steps.prelude.outputs.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          TRIGGER_COMMENT_ID: ${{ github.event.comment.id }}
+          MODEL_ENDPOINT: https://${{ secrets.DATABRICKS_HOST }}/serving-endpoints/databricks-claude-opus-4-8/invocations
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+          REPO_ROOT: ${{ github.workspace }}/pr
+        run: |
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          python -m databricks_bot_engine.engineer_bot.run --phase mention \
+            --bot "$GITHUB_WORKSPACE/.bot" \
+            --system-prompt "$RUNNER_TEMP/engineer-mention-system.md"
