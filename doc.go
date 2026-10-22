@@ -297,6 +297,11 @@ and GEOMETRY / GEOGRAPHY (WKT). The server query id is surfaced on the success p
 QueryIdCallback (see below) fires with the real id and EXECUTE_STATEMENT telemetry
 carries it.
 
+On Thrift, TIMESTAMP_NTZ handling requires native timestamps in the server-supplied
+Arrow schema. Without that schema, NTZ still reports TIMESTAMP and uses
+session-location handling. String timestamps (internal UseArrowNativeTimestamp=false)
+and non-Arrow values also retain legacy session-location parsing.
+
 On the read path, context cancellation is honored at result-batch boundaries, not
 mid-fetch: an in-flight CloudFetch batch runs to completion before the cancel takes
 effect.

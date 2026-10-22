@@ -35,17 +35,6 @@ type RowScanner interface {
 	GetArrowIPCStreams(ctx context.Context, cfg config.Config, rpi ResultPageIterator) (dbsqlrows.ArrowIPCStreamIterator, error)
 }
 
-// DatabaseTypeNameOverrider refines Thrift column type names using the Arrow
-// schema, which distinguishes TIMESTAMP_NTZ from TIMESTAMP. String timestamps
-// and non-Arrow results lack this distinction and retain the legacy TIMESTAMP
-// name and session-location parsing.
-type DatabaseTypeNameOverrider interface {
-	// DatabaseTypeNameOverride returns the refined type name for the column at
-	// index and ok=true when it overrides the Thrift-derived name; ok=false
-	// means the caller should fall back to GetDBTypeName.
-	DatabaseTypeNameOverride(index int) (name string, ok bool)
-}
-
 // Expected formats for TIMESTAMP and DATE types when represented by a string value
 var DateTimeFormats map[string]string = map[string]string{
 	"TIMESTAMP": "2006-01-02 15:04:05.999999999",

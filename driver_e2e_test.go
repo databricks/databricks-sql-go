@@ -785,6 +785,7 @@ func TestE2ETimestampNTZPreservesWallClock(t *testing.T) {
 	assert.Equal(t, 15, ntz.Minute())
 	assert.Equal(t, 0, ntz.Second())
 	assert.Equal(t, 123456000, ntz.Nanosecond())
+	assert.Same(t, time.UTC, ntz.Location())
 
 	// The zoned TIMESTAMP is an instant: the literal is interpreted in the
 	// session timezone (America/New_York), so its UTC instant is 13:15:00.123456Z.

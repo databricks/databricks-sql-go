@@ -31,3 +31,26 @@ func TestColumnTypeInfoForTimestampNTZ(t *testing.T) {
 		}
 	})
 }
+
+func TestColumnTypeInfoForFieldTimestampNTZ(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		typeName string
+		dataType arrow.DataType
+		want     string
+	}{
+		{"kernel NTZ with UTC zone", "TIMESTAMP_NTZ", arrow.FixedWidthTypes.Timestamp_us, "TIMESTAMP_NTZ"},
+		{"zoned timestamp", "TIMESTAMP", arrow.FixedWidthTypes.Timestamp_us, "TIMESTAMP"},
+		{"no logical metadata", "", arrow.FixedWidthTypes.Timestamp_us, "TIMESTAMP"},
+		{"string representation", "TIMESTAMP_NTZ", arrow.BinaryTypes.String, "STRING"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			field := arrow.Field{Type: tc.dataType, Metadata: arrow.MetadataFrom(map[string]string{
+				databricksTypeNameMetadataKey: tc.typeName,
+			})}
+			if got := ColumnTypeInfoForField(field).DatabaseTypeName; got != tc.want {
+				t.Errorf("DatabaseTypeName = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

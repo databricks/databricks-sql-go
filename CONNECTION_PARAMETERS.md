@@ -165,6 +165,11 @@ INTERVAL, nested ARRAY / MAP / STRUCT and VARIANT as JSON, and BINARY as
 `sql.RawBytes`). The default `enableGeoSpatialSupport=false` on the kernel path
 matches the Thrift path's WKT / EWKT geospatial values.
 
+On Thrift, TIMESTAMP_NTZ handling requires native timestamp fields in the
+server-supplied Arrow schema. Without that schema, NTZ still reports `TIMESTAMP`
+and uses session-location handling. String timestamps (`UseArrowNativeTimestamp=false`,
+an internal setting) and non-Arrow values also retain legacy session-location parsing.
+
 ## Cloud Fetch
 
 | DSN parameter | Connector option | Thrift | Kernel | Default | Notes |

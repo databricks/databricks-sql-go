@@ -1,6 +1,7 @@
 package rows
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"database/sql/driver"
@@ -9,6 +10,8 @@ import (
 	"reflect"
 	"time"
 
+	"github.com/apache/arrow/go/v12/arrow"
+	"github.com/apache/arrow/go/v12/arrow/ipc"
 	"github.com/databricks/databricks-sql-go/driverctx"
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
@@ -43,8 +46,9 @@ type rows struct {
 	location *time.Location
 
 	// Metadata for result set
-	resultSetMetadata *cli_service.TGetResultSetMetadataResp
-	schema            *cli_service.TTableSchema
+	resultSetMetadata         *cli_service.TGetResultSetMetadataResp
+	schema                    *cli_service.TTableSchema
+	databaseTypeNameOverrides map[int]string
 
 	config *config.Config
 
@@ -364,18 +368,37 @@ func (r *rows) ColumnTypeDatabaseTypeName(index int) string {
 		return ""
 	}
 
-	// The Thrift primitive type id cannot tell a zoned TIMESTAMP from a
-	// zone-less TIMESTAMP_NTZ; that distinction lives in the Arrow schema, which
-	// the arrow row scanner can expose via DatabaseTypeNameOverrider (#506).
-	if o, ok := r.RowScanner.(rowscanner.DatabaseTypeNameOverrider); ok && o != nil {
-		if name, ok := o.DatabaseTypeNameOverride(index); ok {
-			return name
-		}
+	r.cacheDatabaseTypeNameOverrides()
+	if name, ok := r.databaseTypeNameOverrides[index]; ok {
+		return name
 	}
 
 	dbtype := rowscanner.GetDBTypeName(column)
 
 	return dbtype
+}
+
+// Thrift shares TIMESTAMP_TYPE between TIMESTAMP and TIMESTAMP_NTZ. Cache the
+// distinction from server metadata so it survives result-page scanner changes.
+func (r *rows) cacheDatabaseTypeNameOverrides() {
+	if r.databaseTypeNameOverrides != nil {
+		return
+	}
+	r.databaseTypeNameOverrides = make(map[int]string)
+	if r.resultSetMetadata == nil || len(r.resultSetMetadata.ArrowSchema) == 0 {
+		return
+	}
+
+	reader, err := ipc.NewReader(bytes.NewReader(r.resultSetMetadata.ArrowSchema))
+	if err != nil {
+		return
+	}
+	defer reader.Release()
+	for i, field := range reader.Schema().Fields() {
+		if ts, ok := field.Type.(*arrow.TimestampType); ok && ts.TimeZone == "" {
+			r.databaseTypeNameOverrides[i] = "TIMESTAMP_NTZ"
+		}
+	}
 }
 
 // ColumnTypeNullable returns a flag indicating whether the column is nullable
