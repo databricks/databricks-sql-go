@@ -140,21 +140,36 @@ func TestKernelE2ETimestampNTZ(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	var ltz time.Time
-	if err := db.QueryRowContext(ctx,
-		"SELECT CAST('2026-07-09 12:00:00' AS TIMESTAMP)").Scan(&ltz); err != nil {
-		t.Fatalf("TIMESTAMP query: %v", err)
+	result, err := db.QueryContext(ctx,
+		"SELECT TIMESTAMP '2026-07-09 12:00:00' AS zoned, TIMESTAMP_NTZ '2026-07-09 12:00:00' AS ntz")
+	if err != nil {
+		t.Fatalf("metadata query: %v", err)
+	}
+	defer result.Close() //nolint:errcheck
+	columnTypes, err := result.ColumnTypes()
+	if err != nil {
+		t.Fatalf("ColumnTypes: %v", err)
+	}
+	if len(columnTypes) != 2 {
+		t.Fatalf("column count = %d, want 2", len(columnTypes))
+	}
+	for i, want := range []string{"TIMESTAMP", "TIMESTAMP_NTZ"} {
+		if got := columnTypes[i].DatabaseTypeName(); got != want {
+			t.Errorf("column %d type = %q, want %q", i, got, want)
+		}
+	}
+	if !result.Next() {
+		t.Fatalf("expected a timestamp row: %v", result.Err())
+	}
+	var ltz, ntz time.Time
+	if err := result.Scan(&ltz, &ntz); err != nil {
+		t.Fatalf("Scan: %v", err)
 	}
 	// A zoned TIMESTAMP literal is the wall-clock in the session tz.
 	if want := time.Date(2026, 7, 9, 12, 0, 0, 0, loc); !ltz.Equal(want) {
 		t.Errorf("TIMESTAMP = %s, want %s", ltz, want)
 	}
 
-	var ntz time.Time
-	if err := db.QueryRowContext(ctx,
-		"SELECT CAST('2026-07-09 12:00:00' AS TIMESTAMP_NTZ)").Scan(&ntz); err != nil {
-		t.Fatalf("TIMESTAMP_NTZ query: %v", err)
-	}
 	if want := "2026-07-09 12:00:00"; ntz.Format(time.DateTime) != want {
 		t.Errorf("TIMESTAMP_NTZ wall clock = %s, want %s", ntz.Format(time.DateTime), want)
 	}

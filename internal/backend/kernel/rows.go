@@ -235,7 +235,12 @@ func (r *kernelRows) next(dest []driver.Value) error {
 	}
 	rec := r.cur
 	for c := 0; c < len(dest); c++ {
-		v, err := arrowscan.ScanCellCachedWithOptions(rec.Column(c), r.rowInCur, r.op.location, r.keyCache, arrowscan.ScanOptions{
+		location := r.op.location
+		// The kernel may tag NTZ with UTC in Arrow while preserving its logical type.
+		if r.colTypes[c].DatabaseTypeName == "TIMESTAMP_NTZ" {
+			location = time.UTC
+		}
+		v, err := arrowscan.ScanCellCachedWithOptions(rec.Column(c), r.rowInCur, location, r.keyCache, arrowscan.ScanOptions{
 			DecimalAsFloat:   r.op.decimalAsFloat,
 			GeospatialBinary: r.geoBinary[c],
 		})

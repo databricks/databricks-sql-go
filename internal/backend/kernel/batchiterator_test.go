@@ -3,15 +3,24 @@
 package kernel
 
 import (
+	"bytes"
 	"context"
+	"database/sql/driver"
 	"errors"
 	"io"
+	"os"
 	"testing"
+	"time"
 
 	"github.com/apache/arrow/go/v12/arrow"
+	"github.com/apache/arrow/go/v12/arrow/array"
+	"github.com/apache/arrow/go/v12/arrow/ipc"
+	"github.com/apache/arrow/go/v12/arrow/memory"
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
+	"github.com/databricks/databricks-sql-go/internal/arrowscan"
 	dbsqlrows "github.com/databricks/databricks-sql-go/internal/rows"
 	dbrows "github.com/databricks/databricks-sql-go/rows"
+	"github.com/stretchr/testify/require"
 )
 
 // TestGetArrowIPCStreamsRejected pins the discoverable sentinel so callers can
@@ -111,3 +120,38 @@ func TestBatchIteratorFetchErrorTerminates(t *testing.T) {
 
 // compile-time guard: kernelBatchIterator must satisfy the public iterator surface.
 var _ dbrows.ArrowBatchIterator = (*kernelBatchIterator)(nil)
+
+func TestRowsTimestampNTZWithServerSchema(t *testing.T) {
+	data, err := os.ReadFile("../../arrowscan/testdata/timestamp_ntz_kernel_schema.arrow")
+	require.NoError(t, err)
+	reader, err := ipc.NewReader(bytes.NewReader(data))
+	require.NoError(t, err)
+	defer reader.Release()
+	schema := reader.Schema()
+	require.Len(t, schema.Fields(), 2)
+
+	location, err := time.LoadLocation("America/New_York")
+	require.NoError(t, err)
+	wall := time.Date(2024, time.June, 15, 9, 15, 0, 123456000, time.UTC)
+	builder := array.NewRecordBuilder(memory.NewGoAllocator(), schema)
+	defer builder.Release()
+	builder.Field(0).(*array.TimestampBuilder).Append(arrow.Timestamp(wall.Add(4 * time.Hour).UnixMicro()))
+	builder.Field(1).(*array.TimestampBuilder).Append(arrow.Timestamp(wall.UnixMicro()))
+	record := builder.NewRecord()
+	defer record.Release()
+	rowSet := &kernelRows{
+		op: &kernelOp{location: location}, cur: record,
+		cols: []string{"zoned", "ntz"}, geoBinary: make([]bool, 2),
+		colTypes: []arrowscan.ColumnTypeInfo{
+			arrowscan.ColumnTypeInfoForField(schema.Field(0)),
+			arrowscan.ColumnTypeInfoForField(schema.Field(1)),
+		},
+	}
+	require.Equal(t, "TIMESTAMP", rowSet.ColumnTypeDatabaseTypeName(0))
+	require.Equal(t, "TIMESTAMP_NTZ", rowSet.ColumnTypeDatabaseTypeName(1))
+	values := make([]driver.Value, 2)
+	require.NoError(t, rowSet.Next(values))
+	require.Equal(t, wall.Add(4*time.Hour).In(location), values[0])
+	require.Equal(t, wall, values[1])
+	require.Same(t, time.UTC, values[1].(time.Time).Location())
+}

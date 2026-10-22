@@ -148,11 +148,15 @@ func IsBinaryGeospatialField(field arrow.Field) bool {
 	return geospatial && field.Type.ID() == arrow.STRUCT
 }
 
-// ColumnTypeInfoForField reports logical GEOMETRY / GEOGRAPHY metadata for the
-// native struct representation. String mode follows the existing driver
-// contract and reports STRING, matching its UTF-8 physical representation.
-// Other fields retain the Arrow-only mapping.
+// ColumnTypeInfoForField preserves logical timestamp and geospatial types that
+// the kernel's physical Arrow representation alone cannot distinguish.
 func ColumnTypeInfoForField(field arrow.Field) ColumnTypeInfo {
+	if field.Type.ID() == arrow.TIMESTAMP {
+		name, _ := field.Metadata.GetValue(databricksTypeNameMetadataKey)
+		if strings.EqualFold(strings.TrimSpace(name), "TIMESTAMP_NTZ") {
+			return ColumnTypeInfo{DatabaseTypeName: "TIMESTAMP_NTZ", ScanType: scanTypeDateTime}
+		}
+	}
 	name, geospatial := LogicalGeospatialType(field)
 	if !geospatial {
 		return ColumnTypeInfoFor(field.Type)
