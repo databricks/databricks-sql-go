@@ -2398,3 +2398,57 @@ func TestDecimalInComplexTypes(t *testing.T) {
 		assert.Equal(t, `{"col2":null}`, v)
 	})
 }
+
+// TestDerivedSchemaTimestampKeepsSessionLocation pins that when the server sends
+// no ArrowSchema, the schema derived from the Thrift TTableSchema types
+// TIMESTAMP_TYPE as a *zoned* Arrow timestamp. The zone survives the
+// serialize/deserialize round-trip that also feeds GetArrowBatches. Values from
+// that column are therefore still rendered in the session location rather than
+// treated as a zone-less TIMESTAMP_NTZ wall clock (#506): without the server
+// schema, NTZ and TIMESTAMP cannot be told apart, so the zoned behaviour stays.
+func TestDerivedSchemaTimestampKeepsSessionLocation(t *testing.T) {
+	const tsCol = 8 // timestamp column in getAllTypesSchema
+	ctx := context.Background()
+	arrowConfig := config.ArrowConfig{UseArrowNativeTimestamp: true}
+	md := &cli_service.TGetResultSetMetadataResp{Schema: getAllTypesSchema()}
+	require.Nil(t, md.ArrowSchema)
+
+	schemaBytes, derived, dErr := tGetResultSetMetadataRespToArrowSchema(md, arrowConfig, ctx, dbsqllog.Logger)
+	require.Nil(t, dErr)
+
+	// Round-trip the serialized bytes the way a native-schema response is read.
+	_, roundTripped, rErr := tGetResultSetMetadataRespToArrowSchema(
+		&cli_service.TGetResultSetMetadataResp{Schema: md.Schema, ArrowSchema: schemaBytes}, arrowConfig, ctx, dbsqllog.Logger)
+	require.Nil(t, rErr)
+
+	loc, err := time.LoadLocation("America/New_York")
+	require.NoError(t, err)
+	ttsf, err := arrow.FixedWidthTypes.Timestamp_us.(*arrow.TimestampType).GetToTimeFunc()
+	require.NoError(t, err)
+	instant := time.Date(2021, 7, 1, 12, 30, 0, 0, time.UTC)
+
+	for name, s := range map[string]*arrow.Schema{"derived": derived, "round-tripped": roundTripped} {
+		t.Run(name, func(t *testing.T) {
+			tsType, ok := s.Field(tsCol).Type.(*arrow.TimestampType)
+			require.True(t, ok, "expected timestamp type, got %s", s.Field(tsCol).Type)
+			assert.NotEmpty(t, tsType.TimeZone, "derived TIMESTAMP must be zoned, not NTZ")
+
+			bldr := array.NewTimestampBuilder(memory.DefaultAllocator, tsType)
+			defer bldr.Release()
+			bldr.Append(arrow.Timestamp(instant.UnixMicro()))
+			arr := bldr.NewTimestampArray()
+			defer arr.Release()
+
+			c, err := (&arrowValueContainerMaker{}).makeColumnValueContainer(tsType, loc, ttsf, nil)
+			require.NoError(t, err)
+			require.NoError(t, c.SetValueArray(arr.Data()))
+
+			v, err := c.Value(0)
+			require.NoError(t, err)
+			got, ok := v.(time.Time)
+			require.True(t, ok)
+			assert.True(t, instant.Equal(got))
+			assert.Equal(t, loc, got.Location(), "zoned TIMESTAMP must render in the session location")
+		})
+	}
+}
