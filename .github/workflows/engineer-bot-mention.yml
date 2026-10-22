@@ -159,7 +159,8 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
           TRIGGER_COMMENT_ID: ${{ github.event.comment.id }}
-          MODEL_ENDPOINT: https://${{ secrets.DATABRICKS_HOST }}/serving-endpoints/databricks-claude-opus-4-8/invocations
+          ENGINEER_BOT_MODEL_OVERRIDE: databricks-claude-opus-5-5
+          MODEL_ENDPOINT: https://${{ secrets.DATABRICKS_HOST }}/serving-endpoints/databricks-claude-opus-5-5/invocations
           DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
           REPO_ROOT: ${{ github.workspace }}/pr
         run: |
