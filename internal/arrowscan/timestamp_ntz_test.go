@@ -56,6 +56,22 @@ func TestScanCellTimestampNTZPreservesWallClock(t *testing.T) {
 		}
 	})
 
+	// The kernel rows path (ScanCellCachedWithOptions) decides NTZ from the
+	// schema Field and passes loc accordingly, so a zone-less column whose
+	// metadata says TIMESTAMP (r.ntz false → session loc) must render in loc.
+	t.Run("kernel path honors caller loc for zone-less TIMESTAMP", func(t *testing.T) {
+		arr := build("")
+		defer arr.Release()
+		v, err := ScanCellCachedWithOptions(arr, 0, loc, nil, ScanOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := v.(time.Time)
+		if got.Location() != loc || !got.Equal(wall) {
+			t.Errorf("got %v (%s), want instant %v in %s", got, got.Location(), wall, loc)
+		}
+	})
+
 	t.Run("zoned keeps instant via location", func(t *testing.T) {
 		arr := build("UTC")
 		defer arr.Release()
