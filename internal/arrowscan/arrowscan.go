@@ -217,9 +217,12 @@ func scanCell(col arrow.Array, row int, loc *time.Location, keys *StructKeyCache
 		// so it must NOT be shifted into the session location the way a zoned
 		// TIMESTAMP instant is: applying .In(loc) would corrupt the wall-clock
 		// fields the server sent (databricks/databricks-sql-go#506). Only a zoned
-		// TIMESTAMP is rendered in loc.
+		// TIMESTAMP is rendered in loc. ScanCell sees only the data type, so this
+		// uses IsTimestampNTZField's TimeZone fallback; metadata-labeled NTZ
+		// columns and children reach here with loc already set to UTC (the
+		// kernel's top-level ntz flag and childLocation).
 		ts := timestampToTime(int64(c.Value(row)), dt.Unit)
-		if dt.TimeZone == "" {
+		if IsTimestampNTZField(arrow.Field{Type: dt}) {
 			return ts, nil
 		}
 		return inLocation(ts, loc), nil
@@ -528,8 +531,8 @@ func writeStructJSON(b *strings.Builder, s *array.Struct, row int, loc *time.Loc
 			b.WriteByte(',')
 		}
 		b.WriteString(prefixes[f]) // pre-escaped `"name":`
-		// A kernel-labeled TIMESTAMP_NTZ child may carry a physical TimeZone; keep
-		// its wall clock unshifted, like the top-level NTZ column.
+		// A TIMESTAMP_NTZ child (IsTimestampNTZField) may carry a physical
+		// TimeZone; keep its wall clock unshifted, like the top-level NTZ column.
 		if err := writeJSON(b, s.Field(f), row, childLocation(st.Field(f), loc), keys); err != nil {
 			return err
 		}

@@ -10,10 +10,10 @@ import (
 	"reflect"
 	"time"
 
-	"github.com/apache/arrow/go/v12/arrow"
 	"github.com/apache/arrow/go/v12/arrow/ipc"
 	"github.com/databricks/databricks-sql-go/driverctx"
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
+	"github.com/databricks/databricks-sql-go/internal/arrowscan"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	dbsqlclient "github.com/databricks/databricks-sql-go/internal/client"
 	context2 "github.com/databricks/databricks-sql-go/internal/compat/context"
@@ -419,7 +419,9 @@ func (r *rows) cacheDatabaseTypeNameOverrides() {
 	}
 	defer reader.Release()
 	for i, field := range reader.Schema().Fields() {
-		if ts, ok := field.Type.(*arrow.TimestampType); ok && ts.TimeZone == "" {
+		// Same check the Arrow value scanner uses (metadata first, then
+		// TimeZone), so the type name and the value handling stay in sync.
+		if arrowscan.IsTimestampNTZField(field) {
 			r.databaseTypeNameOverrides[i] = "TIMESTAMP_NTZ"
 		}
 	}

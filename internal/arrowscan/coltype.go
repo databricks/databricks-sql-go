@@ -82,11 +82,9 @@ func ColumnTypeInfoFor(dt arrow.DataType) ColumnTypeInfo {
 		// distinguishable only by the schema's TimeZone field: a zoned TIMESTAMP
 		// carries a zone, a zone-less TIMESTAMP_NTZ carries an empty TimeZone. The
 		// database/sql type name must reflect that distinction so a wall clock is
-		// not mistaken for an instant (databricks/databricks-sql-go#506).
-		if ts, ok := dt.(*arrow.TimestampType); ok && ts.TimeZone == "" {
-			return ColumnTypeInfo{DatabaseTypeName: "TIMESTAMP_NTZ", ScanType: scanTypeDateTime}
-		}
-		return ColumnTypeInfo{DatabaseTypeName: "TIMESTAMP", ScanType: scanTypeDateTime}
+		// not mistaken for an instant (databricks/databricks-sql-go#506). With no
+		// field metadata, IsTimestampNTZField falls back to that TimeZone check.
+		return timestampColumnTypeInfo(arrow.Field{Type: dt})
 	case arrow.DECIMAL128:
 		// Match Thrift's sql.RawBytes scan type even though the kernel renders the
 		// value as an exact string — both convert cleanly to a caller's *string/*[]byte.
@@ -151,8 +149,8 @@ func IsBinaryGeospatialField(field arrow.Field) bool {
 // ColumnTypeInfoForField preserves logical timestamp and geospatial types that
 // the kernel's physical Arrow representation alone cannot distinguish.
 func ColumnTypeInfoForField(field arrow.Field) ColumnTypeInfo {
-	if isLogicalNTZField(field) {
-		return ColumnTypeInfo{DatabaseTypeName: "TIMESTAMP_NTZ", ScanType: scanTypeDateTime}
+	if field.Type != nil && field.Type.ID() == arrow.TIMESTAMP {
+		return timestampColumnTypeInfo(field)
 	}
 	name, geospatial := LogicalGeospatialType(field)
 	if !geospatial {
@@ -169,26 +167,51 @@ func ColumnTypeInfoForField(field arrow.Field) ColumnTypeInfo {
 	return info
 }
 
-// isLogicalNTZField reports whether field is an Arrow timestamp the kernel has
-// labeled TIMESTAMP_NTZ via field metadata. The kernel may give such a field a
-// physical TimeZone (e.g. "UTC"), so the metadata is the authoritative signal.
-func isLogicalNTZField(field arrow.Field) bool {
-	if field.Type == nil || field.Type.ID() != arrow.TIMESTAMP {
+// sparkSQLNameMetadataKey is the Arrow field-metadata key the Thrift server sets
+// on its serialized result schema with the Spark SQL type name (e.g.
+// "TIMESTAMP_NTZ"). The kernel copies it too.
+const sparkSQLNameMetadataKey = "Spark:DataType:SqlName"
+
+// IsTimestampNTZField reports whether field is an Arrow timestamp carrying a
+// TIMESTAMP_NTZ wall clock. Every backend uses this one check, for both the
+// reported type name and value handling, so the two always agree.
+//
+// Explicit logical-type metadata wins: databricks.type_name (kernel) first, then
+// Spark:DataType:SqlName (Thrift server schema; the kernel copies it). Metadata
+// is authoritative because the kernel may give an NTZ field a physical TimeZone
+// such as "UTC". Without either key, a zone-less timestamp (empty TimeZone) is
+// treated as NTZ and a zoned one as TIMESTAMP.
+func IsTimestampNTZField(field arrow.Field) bool {
+	ts, ok := field.Type.(*arrow.TimestampType)
+	if !ok {
 		return false
 	}
-	name, _ := field.Metadata.GetValue(databricksTypeNameMetadataKey)
-	return strings.EqualFold(strings.TrimSpace(name), "TIMESTAMP_NTZ")
+	for _, key := range [...]string{databricksTypeNameMetadataKey, sparkSQLNameMetadataKey} {
+		if name, ok := field.Metadata.GetValue(key); ok && strings.TrimSpace(name) != "" {
+			return strings.EqualFold(strings.TrimSpace(name), "TIMESTAMP_NTZ")
+		}
+	}
+	return ts.TimeZone == ""
 }
 
 // childLocation returns the location to render a nested child field's values
-// in: a metadata-labeled TIMESTAMP_NTZ child is a wall clock and must not be
-// shifted into the session location, so it renders in UTC (the stored wall
-// clock); every other child inherits loc.
+// in: a TIMESTAMP_NTZ child (see IsTimestampNTZField) is a wall clock and must
+// not be shifted into the session location, so it renders in UTC (the stored
+// wall clock); every other child inherits loc.
 func childLocation(field arrow.Field, loc *time.Location) *time.Location {
-	if isLogicalNTZField(field) {
+	if IsTimestampNTZField(field) {
 		return time.UTC
 	}
 	return loc
+}
+
+// timestampColumnTypeInfo reports TIMESTAMP_NTZ or TIMESTAMP for an Arrow
+// timestamp field, using the same IsTimestampNTZField check as value scanning.
+func timestampColumnTypeInfo(field arrow.Field) ColumnTypeInfo {
+	if IsTimestampNTZField(field) {
+		return ColumnTypeInfo{DatabaseTypeName: "TIMESTAMP_NTZ", ScanType: scanTypeDateTime}
+	}
+	return ColumnTypeInfo{DatabaseTypeName: "TIMESTAMP", ScanType: scanTypeDateTime}
 }
 
 // varLen builds a ColumnTypeInfo for a variable-length type, reporting the
