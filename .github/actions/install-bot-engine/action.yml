@@ -30,14 +30,15 @@ inputs:
     description: 'Route pip/npm through the internal JFrog mirror (egress-blocked runners). Requires id-token: write on the job.'
     required: false
     default: 'true'
+  # Opus 5.5 needs CLI >=2.1.280, newer than the pinned engine's defaults.
   sdk-version:
-    description: 'claude-agent-sdk version. Keep in sync with the engine at the pinned SHA.'
+    description: 'claude-agent-sdk version (bundles the CLI used by the bot).'
     required: false
-    default: '0.2.102'
+    default: '0.2.171'
   cli-version:
-    description: '@anthropic-ai/claude-code version. Keep in sync with the engine at the pinned SHA.'
+    description: '@anthropic-ai/claude-code npm CLI version.'
     required: false
-    default: '2.1.61'
+    default: '2.1.307'
 
 runs:
   using: composite
@@ -133,9 +134,7 @@ runs:
           NPM_ARGS=(--userconfig "$JFROG_NPMRC_FILE")
         fi
         python -m pip install "${PIP_ARGS[@]}" --upgrade pip
-        # REF mode resolves the published engine's deps unpinned + installs the
-        # SDK/CLI by version (a consumer can't see the engine's hash-locked
-        # requirements). SDK_VERSION/CLI_VERSION track the engine at ENGINE_REF.
+        # Pin both CLIs: the SDK prefers its bundled binary over the npm install.
         pip install "${PIP_ARGS[@]}" "databricks-bot-engine @ git+https://github.com/${ENGINE_REPO}@${ENGINE_REF}"
         pip install "${PIP_ARGS[@]}" "claude-agent-sdk==${SDK_VERSION}"
         npm install "${NPM_ARGS[@]}" -g "@anthropic-ai/claude-code@${CLI_VERSION}"
