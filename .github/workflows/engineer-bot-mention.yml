@@ -131,7 +131,29 @@ jobs:
             echo "ACTIONS_ID_TOKEN_REQUEST_URL="
           } >> "$GITHUB_ENV"
 
+      - name: Recheck PR eligibility
+        id: pr
+        env:
+          GH_TOKEN: ${{ steps.prelude.outputs.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+          HEAD_REF: ${{ needs.authorize.outputs.head_ref }}
+        run: |
+          set -euo pipefail
+          pr=$(gh api "repos/$REPO/pulls/$PR_NUMBER")
+          if ! jq -e --arg repo "$REPO" --arg ref "$HEAD_REF" \
+            '.state == "open" and .head.repo.full_name == $repo and .head.ref == $ref' <<< "$pr" >/dev/null; then
+            echo "eligible=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Skipping @bot request: PR is closed or its source branch changed."
+            exit 0
+          fi
+          {
+            echo "eligible=true"
+            echo "base_sha=$(jq -r '.base.sha' <<< "$pr")"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Checkout PR branch
+        if: steps.pr.outputs.eligible == 'true'
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
           ref: ${{ needs.authorize.outputs.head_ref }}
@@ -140,6 +162,7 @@ jobs:
           persist-credentials: false
 
       - name: Copy trusted verification tools
+        if: steps.pr.outputs.eligible == 'true'
         run: |
           if [ -L pr/bin ]; then
             echo "::error::PR bin path must not be a symlink."
@@ -149,15 +172,13 @@ jobs:
           cp --remove-destination bin/gotestsum bin/golangci-lint pr/bin/
 
       - name: Prepare PR diff reference
+        if: steps.pr.outputs.eligible == 'true'
         env:
-          GH_TOKEN: ${{ steps.prelude.outputs.token }}
-          REPO: ${{ github.repository }}
-          PR_NUMBER: ${{ github.event.issue.number }}
+          BASE_SHA: ${{ steps.pr.outputs.base_sha }}
         run: |
           set -euo pipefail
           HEAD_SHA=$(git -C pr rev-parse HEAD)
           export HEAD_SHA
-          BASE_SHA=$(gh api "repos/$REPO/pulls/$PR_NUMBER" --jq '.base.sha')
           git -C pr fetch --no-tags origin "$BASE_SHA"
           git -C pr diff --no-ext-diff --no-textconv --no-color "$BASE_SHA...HEAD" -- > "$RUNNER_TEMP/mention-pr.diff"
           python - <<'PY'
@@ -179,6 +200,7 @@ jobs:
           printf '\n/.engineer-mention-pr.diff\n' >> pr/.git/info/exclude
 
       - name: Run engineer mention
+        if: steps.pr.outputs.eligible == 'true'
         working-directory: pr
         env:
           GH_TOKEN: ${{ steps.prelude.outputs.token }}
