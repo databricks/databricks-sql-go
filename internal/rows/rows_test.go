@@ -708,6 +708,57 @@ func TestColumnTypeDatabaseTypeName(t *testing.T) {
 	assert.Equal(t, expectedScanTypes, scanTypes)
 }
 
+// typeNameOverrideScanner is a RowScanner stub that only implements
+// rowscanner.DatabaseTypeNameOverrider; other methods are never called.
+type typeNameOverrideScanner struct {
+	rowscanner.RowScanner
+	overrides map[int]string
+}
+
+func (s *typeNameOverrideScanner) DatabaseTypeNameOverride(index int) (string, bool) {
+	name, ok := s.overrides[index]
+	return name, ok
+}
+
+// TestColumnTypeDatabaseTypeNameOverride checks that ColumnTypeDatabaseTypeName
+// consults a DatabaseTypeNameOverrider row scanner (#506): Thrift reports
+// TIMESTAMP_TYPE for both zoned and zone-less timestamps, so the override is
+// what surfaces TIMESTAMP_NTZ, and columns without an override keep the
+// Thrift-derived name.
+func TestColumnTypeDatabaseTypeNameOverride(t *testing.T) {
+	var getMetadataCount, fetchResultsCount int
+
+	col := func(name string, typ cli_service.TTypeId) *cli_service.TColumnDesc {
+		return &cli_service.TColumnDesc{
+			ColumnName: name,
+			TypeDesc: &cli_service.TTypeDesc{
+				Types: []*cli_service.TTypeEntry{
+					{PrimitiveEntry: &cli_service.TPrimitiveTypeEntry{Type: typ}},
+				},
+			},
+		}
+	}
+
+	rowSet := &rows{
+		client: getRowsTestSimpleClient(&getMetadataCount, &fetchResultsCount),
+		schema: &cli_service.TTableSchema{Columns: []*cli_service.TColumnDesc{
+			col("ts", cli_service.TTypeId_TIMESTAMP_TYPE),
+			col("ts_ntz", cli_service.TTypeId_TIMESTAMP_TYPE),
+			col("i", cli_service.TTypeId_INT_TYPE),
+		}},
+		RowScanner: &typeNameOverrideScanner{overrides: map[int]string{1: "TIMESTAMP_NTZ"}},
+	}
+
+	assert.Equal(t, "TIMESTAMP", rowSet.ColumnTypeDatabaseTypeName(0))
+	assert.Equal(t, "TIMESTAMP_NTZ", rowSet.ColumnTypeDatabaseTypeName(1))
+	assert.Equal(t, "INT", rowSet.ColumnTypeDatabaseTypeName(2))
+	assert.Equal(t, "", rowSet.ColumnTypeDatabaseTypeName(3))
+
+	// Without an overrider (or with no row scanner yet) the Thrift name is used.
+	rowSet.RowScanner = nil
+	assert.Equal(t, "TIMESTAMP", rowSet.ColumnTypeDatabaseTypeName(1))
+}
+
 func TestRowsCloseOptimization(t *testing.T) {
 	var closeCount int
 	client := &client.TestClient{

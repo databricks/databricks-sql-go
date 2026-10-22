@@ -123,14 +123,13 @@ func TestKernelE2ETimeZone(t *testing.T) {
 	}
 }
 
-// TestKernelE2ETimestampNTZ proves TIMESTAMP and TIMESTAMP_NTZ round-trip
-// byte-identically to the Thrift path at a non-UTC session tz. The kernel delivers
-// TIMESTAMP with an Arrow tz and TIMESTAMP_NTZ without one, but — like the Thrift
-// path — the driver ignores that field and renders via .In(loc). So the naive
-// wall-clock of an NTZ literal is treated as a UTC instant and shifted into the
-// session tz (12:00 NTZ in America/New_York → the -04:00 local of 12:00Z = 08:00),
-// exactly as Thrift does. Verified live on both backends; this pins the round-trip
-// so a one-sided "don't shift NTZ" change is caught.
+// TestKernelE2ETimestampNTZ pins how TIMESTAMP and TIMESTAMP_NTZ scan at a
+// non-UTC session tz. The kernel delivers TIMESTAMP with an Arrow tz and
+// TIMESTAMP_NTZ without one, and the driver honors that field: a zoned TIMESTAMP
+// is rendered via .In(loc), while a zone-less TIMESTAMP_NTZ is a wall clock and is
+// NOT shifted into the session tz (databricks/databricks-sql-go#506). So 12:00 NTZ
+// in America/New_York comes back as the 12:00 wall clock, tagged UTC — not the
+// -04:00 local of 12:00Z (08:00) that the old .In(loc) behavior produced.
 func TestKernelE2ETimestampNTZ(t *testing.T) {
 	// Reyden shifts a zoned TIMESTAMP literal like an NTZ (12:00 → 08:00 -0400) where a
 	// normal warehouse keeps the 12:00 wall-clock — an engine timestamp-tz divergence,
@@ -161,13 +160,16 @@ func TestKernelE2ETimestampNTZ(t *testing.T) {
 		"SELECT CAST('2026-07-09 12:00:00' AS TIMESTAMP_NTZ)").Scan(&ntz); err != nil {
 		t.Fatalf("TIMESTAMP_NTZ query: %v", err)
 	}
-	// The NTZ wall-clock is treated as a UTC instant then shifted into the session
-	// tz: 12:00Z == 08:00 in America/New_York (-04:00 in July).
-	if want := time.Date(2026, 7, 9, 8, 0, 0, 0, loc); !ntz.Equal(want) {
-		t.Errorf("TIMESTAMP_NTZ = %s, want %s (UTC instant %s)", ntz, want, ntz.UTC())
+	// The NTZ wall clock is preserved as sent (12:00) and NOT shifted into the
+	// session tz; it carries no zone, so it is tagged UTC.
+	if want := time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC); !ntz.Equal(want) {
+		t.Errorf("TIMESTAMP_NTZ = %s, want %s", ntz, want)
 	}
-	if ntz.Location().String() != tz {
-		t.Errorf("TIMESTAMP_NTZ location = %q, want %q", ntz.Location(), tz)
+	if h, m := ntz.Hour(), ntz.Minute(); h != 12 || m != 0 {
+		t.Errorf("TIMESTAMP_NTZ wall clock = %02d:%02d, want 12:00", h, m)
+	}
+	if ntz.Location() != time.UTC {
+		t.Errorf("TIMESTAMP_NTZ location = %q, want %q", ntz.Location(), time.UTC)
 	}
 }
 
