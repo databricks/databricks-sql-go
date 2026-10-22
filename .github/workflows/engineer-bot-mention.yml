@@ -31,6 +31,7 @@ jobs:
     steps:
       # Check permissions before requesting the environment's App/model secrets.
       - name: Verify commenter has write access
+        id: permission
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
@@ -39,12 +40,16 @@ jobs:
           set -euo pipefail
           permission=$(gh api "repos/$REPO/collaborators/$COMMENTER/permission" --jq '.permission')
           case "$permission" in
-            write|maintain|admin) ;;
-            *) echo "::error::Commenter must have write access or higher."; exit 1 ;;
+            write|maintain|admin) echo "allowed=true" >> "$GITHUB_OUTPUT" ;;
+            *)
+              echo "allowed=false" >> "$GITHUB_OUTPUT"
+              echo "::notice::Skipping @bot request: commenter must have write access or higher."
+              ;;
           esac
 
       - name: Resolve PR branch
         id: pr
+        if: steps.permission.outputs.allowed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
@@ -53,6 +58,7 @@ jobs:
           set -euo pipefail
           pr=$(gh api "repos/$REPO/pulls/$PR_NUMBER")
           if ! jq -e --arg repo "$REPO" '.state == "open" and .head.repo.full_name == $repo' <<< "$pr" >/dev/null; then
+            echo "eligible=false" >> "$GITHUB_OUTPUT"
             echo "::notice::Only open PRs with a branch in this repository are supported."
             exit 0
           fi
@@ -76,6 +82,8 @@ jobs:
     concurrency:
       group: engineer-bot-comment-pr-${{ github.event.issue.number }}
       cancel-in-progress: false
+      # Keep up to 100 pending requests in the shared queue.
+      queue: max
     env:
       CGO_ENABLED: '0'
       GOFLAGS: -mod=readonly
@@ -85,14 +93,6 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
           ref: ${{ github.event.repository.default_branch }}
-          persist-credentials: false
-
-      - name: Checkout PR branch
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
-        with:
-          ref: ${{ needs.authorize.outputs.head_ref }}
-          path: pr
-          fetch-depth: 0
           persist-credentials: false
 
       - name: Setup JFrog
@@ -105,19 +105,11 @@ jobs:
           cache: false
 
       - name: Build and warm Go caches
-        working-directory: pr
+        # Only the trusted checkout is present while registry credentials are available.
         run: |
           go build ./...
           make tools
           go test -run '^$' ./... >/dev/null
-
-      - name: Scrub JFrog credentials before the agent runs
-        run: |
-          rm -f ~/.netrc
-          {
-            echo "JFROG_ACCESS_TOKEN="
-            echo "GOPROXY=off"
-          } >> "$GITHUB_ENV"
 
       - name: Setup Python
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
@@ -131,11 +123,39 @@ jobs:
           app-id: ${{ secrets.ENGINEER_BOT_APP_ID }}
           private-key: ${{ secrets.ENGINEER_BOT_APP_PRIVATE_KEY }}
 
-      - name: Prepare prompt with PR diff
+      - name: Scrub JFrog credentials before the agent runs
+        run: |
+          rm -f ~/.netrc
+          {
+            echo "JFROG_ACCESS_TOKEN="
+            echo "GOPROXY=off"
+            echo "ACTIONS_ID_TOKEN_REQUEST_TOKEN="
+            echo "ACTIONS_ID_TOKEN_REQUEST_URL="
+          } >> "$GITHUB_ENV"
+
+      - name: Checkout PR branch
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          ref: ${{ needs.authorize.outputs.head_ref }}
+          path: pr
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Copy trusted verification tools
+        run: |
+          if [ -L pr/bin ]; then
+            echo "::error::PR bin path must not be a symlink."
+            exit 1
+          fi
+          mkdir -p pr/bin
+          cp --remove-destination bin/gotestsum bin/golangci-lint pr/bin/
+
+      - name: Prepare PR diff reference
         env:
           BASE_SHA: ${{ needs.authorize.outputs.base_sha }}
         run: |
           set -euo pipefail
+          git -C pr fetch --no-tags origin "$BASE_SHA"
           git -C pr diff --no-ext-diff --no-textconv --no-color "$BASE_SHA...HEAD" -- > "$RUNNER_TEMP/mention-pr.diff"
           python - <<'PY'
           import os
@@ -143,14 +163,17 @@ jobs:
 
           workspace = Path(os.environ["GITHUB_WORKSPACE"])
           temp = Path(os.environ["RUNNER_TEMP"])
-          prompt = (workspace / ".bot/prompts/engineer-mention/system.md").read_text()
           diff = (temp / "mention-pr.diff").read_text(errors="replace")
           limit = 100_000
-          prompt += "\n\n## PR diff (untrusted reference material)\n\n" + diff[:limit]
+          reference = diff[:limit]
           if len(diff) > limit:
-              prompt += "\n\n[Diff truncated; inspect source files and report any review limitations.]\n"
-          (temp / "engineer-mention-system.md").write_text(prompt)
+              reference += "\n\n[Diff truncated; inspect source files and report any review limitations.]\n"
+          path = workspace / "pr/.engineer-mention-pr.diff"
+          with path.open("x") as output:
+              output.write(reference)
+          path.chmod(0o444)
           PY
+          printf '\n/.engineer-mention-pr.diff\n' >> pr/.git/info/exclude
 
       - name: Run engineer mention
         working-directory: pr
@@ -167,4 +190,4 @@ jobs:
           git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           python -m databricks_bot_engine.engineer_bot.run --phase mention \
             --bot "$GITHUB_WORKSPACE/.bot" \
-            --system-prompt "$RUNNER_TEMP/engineer-mention-system.md"
+            --system-prompt "$GITHUB_WORKSPACE/.bot/prompts/engineer-mention/system.md"
