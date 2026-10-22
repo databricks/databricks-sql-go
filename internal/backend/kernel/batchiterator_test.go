@@ -141,7 +141,7 @@ func TestRowsTimestampNTZWithServerSchema(t *testing.T) {
 	defer record.Release()
 	rowSet := &kernelRows{
 		op: &kernelOp{location: location}, cur: record,
-		cols: []string{"zoned", "ntz"}, geoBinary: make([]bool, 2),
+		cols: []string{"zoned", "ntz"}, geoBinary: make([]bool, 2), ntz: []bool{false, true},
 		colTypes: []arrowscan.ColumnTypeInfo{
 			arrowscan.ColumnTypeInfoForField(schema.Field(0)),
 			arrowscan.ColumnTypeInfoForField(schema.Field(1)),

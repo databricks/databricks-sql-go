@@ -404,6 +404,10 @@ func (r *rows) cacheDatabaseTypeNameOverrides() {
 
 	reader, err := ipc.NewReader(bytes.NewReader(r.resultSetMetadata.ArrowSchema))
 	if err != nil {
+		// Leave the cache empty (and cached): result set metadata never changes,
+		// so retrying would fail the same way. Columns fall back to the legacy
+		// TIMESTAMP name; the Arrow row scanner surfaces the parse error itself.
+		r.logger().Debug().Err(err).Msg("databricks: failed to parse arrow schema for column type name overrides; falling back to thrift type names")
 		return
 	}
 	defer reader.Release()
