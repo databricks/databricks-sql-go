@@ -12,6 +12,7 @@ import (
 	"github.com/apache/arrow/go/v12/arrow/array"
 	"github.com/apache/arrow/go/v12/arrow/ipc"
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
+	"github.com/databricks/databricks-sql-go/internal/arrowscan"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/config"
 	dbsqlerrint "github.com/databricks/databricks-sql-go/internal/errors"
@@ -592,7 +593,7 @@ func (vcm *arrowValueContainerMaker) makeColumnValuesContainers(ars *arrowRowSca
 	if ars.rowValues == nil {
 		columnValueHolders := make([]columnValues, len(ars.colInfo))
 		for i, field := range ars.arrowSchema.Fields() {
-			holder, err := vcm.makeColumnValueContainer(field.Type, ars.location, ars.toTimestampFn, &ars.colInfo[i])
+			holder, err := vcm.makeFieldValueContainer(field, ars.location, ars.toTimestampFn, &ars.colInfo[i])
 			if err != nil {
 				ars.Error().Msg(err.Error())
 				return err
@@ -607,12 +608,21 @@ func (vcm *arrowValueContainerMaker) makeColumnValuesContainers(ars *arrowRowSca
 	return nil
 }
 
+// makeColumnValueContainer builds a container for a bare Arrow type with no field
+// metadata. See makeFieldValueContainer.
 func (vcm *arrowValueContainerMaker) makeColumnValueContainer(t arrow.DataType, location *time.Location, toTimestampFn timeStampFn, colInfo *colInfo) (columnValues, error) {
+	return vcm.makeFieldValueContainer(arrow.Field{Type: t}, location, toTimestampFn, colInfo)
+}
+
+// makeFieldValueContainer builds a container for an Arrow field. It takes the
+// whole field, not just its type, so field metadata (e.g. the logical
+// TIMESTAMP_NTZ type name) reaches top-level columns and nested children.
+func (vcm *arrowValueContainerMaker) makeFieldValueContainer(field arrow.Field, location *time.Location, toTimestampFn timeStampFn, colInfo *colInfo) (columnValues, error) {
 	if location == nil {
 		location = time.UTC
 	}
 
-	switch t := t.(type) {
+	switch t := field.Type.(type) {
 
 	case *arrow.BooleanType:
 		return &columnValuesTyped[*array.Boolean, bool]{}, nil
@@ -649,10 +659,11 @@ func (vcm *arrowValueContainerMaker) makeColumnValueContainer(t arrow.DataType, 
 		return &dateValueContainer{location: location}, nil
 
 	case *arrow.TimestampType:
-		// A zone-less TIMESTAMP_NTZ (empty TimeZone) carries a wall clock that
-		// must not be shifted into the session location (#506); a zoned
-		// TIMESTAMP is an instant rendered .In(location) as before.
-		return &timestampValueContainer{location: location, toTimestampFn: toTimestampFn, wallClock: t.TimeZone == ""}, nil
+		// A TIMESTAMP_NTZ carries a wall clock that must not be shifted into the
+		// session location (#506); a zoned TIMESTAMP is an instant rendered
+		// .In(location) as before. IsTimestampNTZField is the same check that
+		// produces the TIMESTAMP_NTZ type name: metadata first, then TimeZone.
+		return &timestampValueContainer{location: location, toTimestampFn: toTimestampFn, wallClock: arrowscan.IsTimestampNTZField(field)}, nil
 
 	case *arrow.BinaryType:
 		return &columnValuesTyped[*array.Binary, []byte]{}, nil
@@ -660,7 +671,7 @@ func (vcm *arrowValueContainerMaker) makeColumnValueContainer(t arrow.DataType, 
 	case *arrow.ListType:
 		lvc := &listValueContainer{listArrayType: t}
 		var err error
-		lvc.values, err = vcm.makeColumnValueContainer(t.Elem(), location, toTimestampFn, nil)
+		lvc.values, err = vcm.makeFieldValueContainer(t.ElemField(), location, toTimestampFn, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -673,11 +684,11 @@ func (vcm *arrowValueContainerMaker) makeColumnValueContainer(t arrow.DataType, 
 	case *arrow.MapType:
 		mvc := &mapValueContainer{mapArrayType: t}
 		var err error
-		mvc.values, err = vcm.makeColumnValueContainer(t.ItemType(), location, toTimestampFn, nil)
+		mvc.values, err = vcm.makeFieldValueContainer(t.ItemField(), location, toTimestampFn, nil)
 		if err != nil {
 			return nil, err
 		}
-		mvc.keys, err = vcm.makeColumnValueContainer(t.KeyType(), location, toTimestampFn, nil)
+		mvc.keys, err = vcm.makeFieldValueContainer(t.KeyField(), location, toTimestampFn, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -700,7 +711,7 @@ func (vcm *arrowValueContainerMaker) makeColumnValueContainer(t arrow.DataType, 
 			// string never errors.
 			keyBytes, _ := json.Marshal(f.Name)
 			svc.fieldKeys[i] = string(keyBytes) + ":"
-			c, err := vcm.makeColumnValueContainer(f.Type, location, toTimestampFn, nil)
+			c, err := vcm.makeFieldValueContainer(f, location, toTimestampFn, nil)
 			if err != nil {
 				return nil, err
 			}

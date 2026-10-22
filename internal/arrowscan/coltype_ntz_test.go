@@ -32,6 +32,47 @@ func TestColumnTypeInfoForTimestampNTZ(t *testing.T) {
 	})
 }
 
+// TestIsTimestampNTZField pins the single NTZ check shared by type reporting and
+// value handling on both backends: explicit metadata (databricks.type_name, then
+// Spark:DataType:SqlName) wins over the physical TimeZone, which is only the
+// fallback when no logical type name is present.
+func TestIsTimestampNTZField(t *testing.T) {
+	zoned := arrow.FixedWidthTypes.Timestamp_us // tz=UTC
+	zoneless := &arrow.TimestampType{Unit: arrow.Microsecond}
+	for _, tc := range []struct {
+		name string
+		dt   arrow.DataType
+		meta map[string]string
+		want bool
+	}{
+		{"zone-less, no metadata", zoneless, nil, true},
+		{"zoned, no metadata", zoned, nil, false},
+		{"kernel type_name NTZ on UTC zone", zoned, map[string]string{databricksTypeNameMetadataKey: "TIMESTAMP_NTZ"}, true},
+		{"thrift SqlName NTZ on zone-less", zoneless, map[string]string{sparkSQLNameMetadataKey: "TIMESTAMP_NTZ"}, true},
+		{"SqlName NTZ on UTC zone", zoned, map[string]string{sparkSQLNameMetadataKey: "timestamp_ntz"}, true},
+		{"SqlName TIMESTAMP overrides zone-less fallback", zoneless, map[string]string{sparkSQLNameMetadataKey: "TIMESTAMP"}, false},
+		{"type_name wins over SqlName", zoned, map[string]string{databricksTypeNameMetadataKey: "TIMESTAMP", sparkSQLNameMetadataKey: "TIMESTAMP_NTZ"}, false},
+		{"blank metadata falls back to zone", zoneless, map[string]string{databricksTypeNameMetadataKey: " "}, true},
+		{"non-timestamp labeled NTZ", arrow.BinaryTypes.String, map[string]string{sparkSQLNameMetadataKey: "TIMESTAMP_NTZ"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			field := arrow.Field{Type: tc.dt, Metadata: arrow.MetadataFrom(tc.meta)}
+			if got := IsTimestampNTZField(field); got != tc.want {
+				t.Errorf("IsTimestampNTZField = %v, want %v", got, tc.want)
+			}
+			if tc.dt.ID() == arrow.TIMESTAMP {
+				want := "TIMESTAMP"
+				if tc.want {
+					want = "TIMESTAMP_NTZ"
+				}
+				if got := ColumnTypeInfoForField(field).DatabaseTypeName; got != want {
+					t.Errorf("DatabaseTypeName = %q, want %q", got, want)
+				}
+			}
+		})
+	}
+}
+
 func TestColumnTypeInfoForFieldTimestampNTZ(t *testing.T) {
 	for _, tc := range []struct {
 		name     string

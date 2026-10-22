@@ -2399,6 +2399,56 @@ func TestDecimalInComplexTypes(t *testing.T) {
 	})
 }
 
+// TestFieldValueContainerUsesNTZMetadata pins that the Thrift container maker
+// decides wall-clock handling from arrowscan.IsTimestampNTZField on the whole
+// field, the same check that produces the TIMESTAMP_NTZ type name. Explicit
+// Spark:DataType:SqlName metadata beats the physical TimeZone, at top level and
+// on nested children.
+func TestFieldValueContainerUsesNTZMetadata(t *testing.T) {
+	ntzMeta := arrow.NewMetadata([]string{"Spark:DataType:SqlName"}, []string{"TIMESTAMP_NTZ"})
+	tsMeta := arrow.NewMetadata([]string{"Spark:DataType:SqlName"}, []string{"TIMESTAMP"})
+	zoned := arrow.FixedWidthTypes.Timestamp_us
+	zoneless := &arrow.TimestampType{Unit: arrow.Microsecond}
+	vcm := &arrowValueContainerMaker{}
+
+	wallClock := func(t *testing.T, c columnValues) bool {
+		tvc, ok := c.(*timestampValueContainer)
+		require.True(t, ok, "expected timestampValueContainer, got %T", c)
+		return tvc.wallClock
+	}
+
+	t.Run("top level", func(t *testing.T) {
+		for _, tc := range []struct {
+			name  string
+			field arrow.Field
+			want  bool
+		}{
+			{"SqlName NTZ on UTC zone", arrow.Field{Type: zoned, Metadata: ntzMeta}, true},
+			{"SqlName TIMESTAMP on zone-less", arrow.Field{Type: zoneless, Metadata: tsMeta}, false},
+			{"no metadata, zone-less", arrow.Field{Type: zoneless}, true},
+			{"no metadata, zoned", arrow.Field{Type: zoned}, false},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				c, err := vcm.makeFieldValueContainer(tc.field, time.UTC, nil, nil)
+				require.NoError(t, err)
+				assert.Equal(t, tc.want, wallClock(t, c))
+			})
+		}
+	})
+
+	t.Run("nested children", func(t *testing.T) {
+		st := arrow.StructOf(arrow.Field{Name: "n", Type: zoned, Nullable: true, Metadata: ntzMeta})
+		c, err := vcm.makeFieldValueContainer(arrow.Field{Type: st}, time.UTC, nil, nil)
+		require.NoError(t, err)
+		assert.True(t, wallClock(t, c.(*structValueContainer).fieldValues[0]), "struct child")
+
+		lt := arrow.ListOfField(arrow.Field{Name: "element", Type: zoned, Nullable: true, Metadata: ntzMeta})
+		c, err = vcm.makeFieldValueContainer(arrow.Field{Type: lt}, time.UTC, nil, nil)
+		require.NoError(t, err)
+		assert.True(t, wallClock(t, c.(*listValueContainer).values), "list element")
+	})
+}
+
 // TestDerivedSchemaTimestampKeepsSessionLocation pins that when the server sends
 // no ArrowSchema, the schema derived from the Thrift TTableSchema types
 // TIMESTAMP_TYPE as a *zoned* Arrow timestamp. The zone survives the
