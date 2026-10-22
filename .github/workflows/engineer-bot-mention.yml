@@ -155,6 +155,8 @@ jobs:
           PR_NUMBER: ${{ github.event.issue.number }}
         run: |
           set -euo pipefail
+          HEAD_SHA=$(git -C pr rev-parse HEAD)
+          export HEAD_SHA
           BASE_SHA=$(gh api "repos/$REPO/pulls/$PR_NUMBER" --jq '.base.sha')
           git -C pr fetch --no-tags origin "$BASE_SHA"
           git -C pr diff --no-ext-diff --no-textconv --no-color "$BASE_SHA...HEAD" -- > "$RUNNER_TEMP/mention-pr.diff"
@@ -166,7 +168,7 @@ jobs:
           temp = Path(os.environ["RUNNER_TEMP"])
           diff = (temp / "mention-pr.diff").read_text(errors="replace")
           limit = 100_000
-          reference = diff[:limit]
+          reference = f"Checked-out PR head: {os.environ['HEAD_SHA']}\n\n" + diff[:limit]
           if len(diff) > limit:
               reference += "\n\n[Diff truncated; inspect source files and report any review limitations.]\n"
           path = workspace / "pr/.engineer-mention-pr.diff"
