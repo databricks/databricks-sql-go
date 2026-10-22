@@ -51,3 +51,42 @@ func TestThriftTimestampNTZPreservesWallClock(t *testing.T) {
 		}
 	})
 }
+
+// TestArrowRowScannerDatabaseTypeNameOverride pins the Thrift-path type-name
+// refinement (#506): only a zone-less Arrow timestamp column is reported as
+// TIMESTAMP_NTZ; zoned timestamps, non-timestamp columns, out-of-range indexes
+// and a missing schema all fall through (ok=false) to the Thrift-derived name.
+func TestArrowRowScannerDatabaseTypeNameOverride(t *testing.T) {
+	schema := arrow.NewSchema([]arrow.Field{
+		{Name: "ts", Type: &arrow.TimestampType{Unit: arrow.Microsecond, TimeZone: "UTC"}},
+		{Name: "ts_ntz", Type: &arrow.TimestampType{Unit: arrow.Microsecond}},
+		{Name: "i", Type: arrow.PrimitiveTypes.Int32},
+	}, nil)
+	ars := &arrowRowScanner{arrowSchema: schema}
+
+	cases := []struct {
+		index    int
+		wantName string
+		wantOK   bool
+	}{
+		{0, "", false},
+		{1, "TIMESTAMP_NTZ", true},
+		{2, "", false},
+		{-1, "", false},
+		{3, "", false},
+	}
+	for _, c := range cases {
+		name, ok := ars.DatabaseTypeNameOverride(c.index)
+		if name != c.wantName || ok != c.wantOK {
+			t.Errorf("index %d: got (%q, %v), want (%q, %v)", c.index, name, ok, c.wantName, c.wantOK)
+		}
+	}
+
+	if name, ok := (&arrowRowScanner{}).DatabaseTypeNameOverride(0); name != "" || ok {
+		t.Errorf("nil schema: got (%q, %v), want (\"\", false)", name, ok)
+	}
+	var nilScanner *arrowRowScanner
+	if name, ok := nilScanner.DatabaseTypeNameOverride(0); name != "" || ok {
+		t.Errorf("nil scanner: got (%q, %v), want (\"\", false)", name, ok)
+	}
+}

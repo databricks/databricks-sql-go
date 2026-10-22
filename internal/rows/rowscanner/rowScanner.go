@@ -41,6 +41,12 @@ type RowScanner interface {
 // is TIMESTAMP_TYPE for both zoned TIMESTAMP and zone-less TIMESTAMP_NTZ, so the
 // distinction survives only in the Arrow schema's TimestampType.TimeZone field,
 // which only the arrow row scanner can see (databricks/databricks-sql-go#506).
+//
+// Limitation: the override applies only when the Arrow schema carries a native
+// *arrow.TimestampType. With UseArrowNativeTimestamp=false (timestamps sent as
+// strings) or with the column-based (non-Arrow) row scanner, there is no zone
+// information to inspect, so a TIMESTAMP_NTZ column still reports "TIMESTAMP"
+// and its string value is parsed in the session location.
 type DatabaseTypeNameOverrider interface {
 	// DatabaseTypeNameOverride returns the refined type name for the column at
 	// index and ok=true when it overrides the Thrift-derived name; ok=false

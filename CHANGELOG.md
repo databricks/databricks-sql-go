@@ -1,5 +1,8 @@
 # Release History
 
+## Unreleased
+- **Behavior change:** TIMESTAMP_NTZ values are no longer shifted into the session time zone (databricks/databricks-sql-go#506). A zone-less TIMESTAMP_NTZ is now returned as the exact wall clock stored, with `Location()` == `time.UTC`, on both backends (including the default `UseArrowNativeTimestamp=true` Arrow path). Previously both the instant and the location changed with the session time zone; callers that compensated for the old shift (e.g. by calling `.UTC()` or re-interpreting the value in the session location) must drop that workaround. Zoned TIMESTAMP values are unchanged and still render in the session time zone.
+
 ## v1.17.0 (2026-10-20)
 - Upgrade the SQL kernel bindings to v1.2.0.
 - Add opt-in GEOMETRY / GEOGRAPHY support on the kernel backend with `WithEnableGeoSpatialSupport` or `enableGeoSpatialSupport=true`. Enabled mode returns EWKB bytes with per-row SRIDs and geo column metadata; the default remains WKT / EWKT strings. Arrow batches retain the `{srid,wkb}` struct in enabled mode.
