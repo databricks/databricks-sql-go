@@ -11,7 +11,7 @@ prompt covers the repo-specific facts you need to follow it.
 == THE REPO ==
 
 A Go `database/sql` driver (module `github.com/databricks/databricks-sql-go`, Go
-1.25). Source is the root package `dbsql` (`connection.go`, `connector.go`,
+1.27.3). Source is the root package `dbsql` (`connection.go`, `connector.go`,
 `driver.go`, `statement.go`, `result.go`, `parameters.go`, …) plus subpackages
 `auth/`, `rows/`, `errors/`, `logger/`, `driverctx/`, `telemetry/`, and
 `internal/` (client, Thrift protocol, fetcher, etc.). Public API stability

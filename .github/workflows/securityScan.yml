@@ -56,13 +56,8 @@ jobs:
       - name: Set up Go Toolchain
         uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
-          # Must be >= the go.mod directive (1.25.0). A floating '1.25.x'
-          # resolves to the runner's cached latest 1.25 patch, which always
-          # satisfies the 1.25.0 floor. osv-scanner shells out to
-          # govulncheck, which loads the module with this toolchain; keeping
-          # the directive at the honest 1.25.0 floor (not an inflated patch)
-          # means '1.25.x' never falls below it.
-          go-version: '1.25.x'
+          # Match the minimum patched toolchain declared in go.mod.
+          go-version: '1.27.3'
           cache: false
 
       - name: Install osv-scanner
@@ -151,14 +146,10 @@ jobs:
           #   - Third-party UNKNOWN  -> BLOCKING (fail closed). A scoreless
           #     GHSA-only or MAL-* malware advisory on a dep we ship must not
           #     slip the gate.
-          #   - stdlib UNKNOWN        -> report-only (NON-blocking). These are
-          #     Go stdlib advisories flagged against the go.mod directive
-          #     floor (e.g. `go 1.25.0`); they are delivered to consumers via
-          #     GOTOOLCHAIN patch auto-download and are not a real exposure of
-          #     the module itself. Inflating the directive to the latest patch
-          #     purely to silence them would tighten the customer floor for no
-          #     security gain, so we surface them (visible in the report) but
-          #     do not block. Each finding carries `is_stdlib` for this split.
+          #   - stdlib UNKNOWN -> report-only. Findings use the go.mod floor;
+          #     actual exposure depends on the consumer's build toolchain.
+          #     Consumers must rebuild with patched Go; GOTOOLCHAIN does not
+          #     update an otherwise sufficient toolchain automatically.
           #
           # NOTE ON jq NUMBER PARSING: use `try (x|tonumber) catch null`,
           # NOT `x|tonumber?`. On a non-numeric string, `tonumber?` yields
@@ -196,8 +187,7 @@ jobs:
           TOTAL_FINDINGS=$(echo "$ALL_FINDINGS" | jq 'length')
 
           # Scoreless (UNKNOWN) findings, split by stdlib vs third-party.
-          # stdlib UNKNOWNs are report-only (delivered via GOTOOLCHAIN, not a
-          # real module exposure); third-party UNKNOWNs are blocking.
+          # stdlib UNKNOWNs are report-only; third-party UNKNOWNs are blocking.
           UNKNOWN_COUNT=$(echo "$ALL_FINDINGS" | jq '[.[] | select(.severity == "UNKNOWN")] | length')
           UNKNOWN_STDLIB_COUNT=$(echo "$ALL_FINDINGS" | jq '[.[] | select(.severity == "UNKNOWN" and .is_stdlib)] | length')
 
@@ -239,7 +229,7 @@ jobs:
             echo ""
             echo "- Total findings (any severity): \`$TOTAL_FINDINGS\`"
             echo "- Blocking findings (CVSS >= 7, or unscored non-stdlib; PR-blocking): \`$HIGH_COUNT\`"
-            echo "- Unscored/UNKNOWN findings: \`$UNKNOWN_COUNT\` total (of which \`$UNKNOWN_STDLIB_COUNT\` are stdlib — report-only, delivered via GOTOOLCHAIN)"
+            echo "- Unscored/UNKNOWN findings: \`$UNKNOWN_COUNT\` total (of which \`$UNKNOWN_STDLIB_COUNT\` are stdlib — report-only; rebuild with patched Go)"
             if [ "$TOTAL_FINDINGS" -gt 0 ]; then
               echo ""
               echo "All findings (sorted by severity desc):"

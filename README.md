@@ -97,6 +97,8 @@ parameter, whether it applies to **Both**, **Thrift-only**, or **SEA-only**.
 
 ## Building
 
+Requires Go 1.27.3 or newer.
+
 The two backends differ **at build time**, not just at connect.
 
 ### Thrift (default) — pure Go, no extra step

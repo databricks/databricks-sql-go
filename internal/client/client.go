@@ -603,7 +603,6 @@ func PooledTransport(cfg *config.Config) *http.Transport {
 		DialContext: (&net.Dialer{
 			Timeout:   30 * time.Second,
 			KeepAlive: 30 * time.Second,
-			DualStack: true,
 		}).DialContext,
 		TLSClientConfig:       tlsConfig,
 		ForceAttemptHTTP2:     true,

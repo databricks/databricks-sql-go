@@ -62,7 +62,7 @@ func TestCategoryFromError(t *testing.T) {
 	t.Run("finds the tag through a fmt.Errorf %w wrapper", func(t *testing.T) {
 		inner := NewRequestError(context.TODO(), "inner", errors.New("cause")).
 			WithCategory(CategoryResultSet)
-		wrapped := fmt.Errorf("outer: %w", inner)
+		wrapped := fmt.Errorf("outer: %w", *inner)
 		assert.Equal(t, CategoryResultSet, CategoryFromError(wrapped))
 	})
 
@@ -72,7 +72,7 @@ func TestCategoryFromError(t *testing.T) {
 		joined := stderrors.Join(errors.New("sibling"), inner)
 		assert.Equal(t, CategoryResultSet, CategoryFromError(joined))
 
-		multiWrap := fmt.Errorf("a: %w, b: %w", errors.New("sibling"), inner)
+		multiWrap := fmt.Errorf("a: %w, b: %w", errors.New("sibling"), *inner)
 		assert.Equal(t, CategoryResultSet, CategoryFromError(multiWrap))
 	})
 }
