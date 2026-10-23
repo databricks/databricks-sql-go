@@ -45,9 +45,9 @@ jobs:
   build-and-test:
     name: Test and Build
     strategy:
-      # Match the minimum patched toolchain declared in go.mod.
+      # Test the minimum patched toolchain and the latest 1.27 patch.
       matrix:
-        go-version: ['1.27.3']
+        go-version: ['1.27.3', '1.27.x']
     runs-on:
       group: databricks-protected-runner-group
       labels: linux-ubuntu-latest
@@ -63,6 +63,7 @@ jobs:
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version: ${{ matrix.go-version }}
+          check-latest: true
           cache: false
 
       - name: Cache Go artifacts
