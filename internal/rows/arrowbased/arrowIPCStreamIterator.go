@@ -30,6 +30,14 @@ type arrowIPCStreamIterator struct {
 	resultPageIterator rowscanner.ResultPageIterator
 	isFinished         bool
 	arrowSchemaBytes   []byte
+	// err holds a page-fetch error detected while advancing the result page
+	// iterator. It must be surfaced through Next() rather than being masked as
+	// a normal end-of-results (io.EOF). See issue #507.
+	err error
+	// errReported is set once the page-fetch error has been surfaced through
+	// Next() so that HasNext does not re-capture it from the result page
+	// iterator (whose Err() keeps returning the stored error).
+	errReported bool
 }
 
 var _ rows.ArrowIPCStreamIterator = (*arrowIPCStreamIterator)(nil)
@@ -38,6 +46,17 @@ var _ rows.ArrowIPCStreamIterator = (*arrowIPCStreamIterator)(nil)
 func (ri *arrowIPCStreamIterator) Next() (io.Reader, error) {
 	if !ri.HasNext() {
 		return nil, io.EOF
+	}
+
+	// If advancing the result page failed, surface that error rather than
+	// masking a failed page fetch as a normal end-of-results. See #507. The
+	// error is reported once and then the iterator is finished.
+	if ri.err != nil {
+		err := ri.err
+		ri.err = nil
+		ri.errReported = true
+		ri.Close()
+		return nil, err
 	}
 
 	if ri.ipcStreamIterator != nil && ri.ipcStreamIterator.HasNext() {
@@ -59,6 +78,12 @@ func (ri *arrowIPCStreamIterator) Next() (io.Reader, error) {
 
 // HasNext returns true if there are more streams available
 func (ri *arrowIPCStreamIterator) HasNext() bool {
+	// A pending page-fetch error still needs to be reported via Next(), so the
+	// iterator is not considered exhausted until that error is consumed.
+	if ri.err != nil {
+		return true
+	}
+
 	if ri.isFinished {
 		return false
 	}
@@ -67,7 +92,18 @@ func (ri *arrowIPCStreamIterator) HasNext() bool {
 		return true
 	}
 
-	if ri.resultPageIterator == nil || !ri.resultPageIterator.HasNext() {
+	if ri.resultPageIterator == nil {
+		return false
+	}
+
+	if !ri.resultPageIterator.HasNext() {
+		// Distinguish a failed page fetch from a fully consumed result set.
+		if !ri.errReported {
+			if err := ri.resultPageIterator.Err(); err != nil {
+				ri.err = err
+				return true
+			}
+		}
 		return false
 	}
 
@@ -102,6 +138,11 @@ func (ri *arrowIPCStreamIterator) fetchNextData() error {
 
 	if ri.resultPageIterator == nil || !ri.resultPageIterator.HasNext() {
 		ri.isFinished = true
+		if ri.resultPageIterator != nil {
+			if err := ri.resultPageIterator.Err(); err != nil {
+				return err
+			}
+		}
 		return io.EOF
 	}
 
