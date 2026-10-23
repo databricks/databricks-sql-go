@@ -60,11 +60,7 @@ func (ri *arrowRecordIterator) Next() (arrow.Record, error) {
 	// If advancing the result page failed, surface that error rather than
 	// masking a failed page fetch as a normal end-of-results. See #507. The
 	// error is reported once and then the iterator is finished.
-	if ri.err != nil {
-		err := ri.err
-		ri.err = nil
-		ri.errReported = true
-		ri.Close()
+	if err := ri.takePendingErr(); err != nil {
 		return nil, err
 	}
 
@@ -80,6 +76,19 @@ func (ri *arrowRecordIterator) Next() (arrow.Record, error) {
 	ri.checkFinished()
 
 	return r, err
+}
+
+// takePendingErr returns the pending page-fetch error, if any, and marks it as
+// reported so it is surfaced exactly once; the iterator is then finished.
+func (ri *arrowRecordIterator) takePendingErr() error {
+	if ri.err == nil {
+		return nil
+	}
+	err := ri.err
+	ri.err = nil
+	ri.errReported = true
+	ri.Close()
+	return err
 }
 
 // Indicate whether there are any more records available
@@ -226,6 +235,11 @@ func (ri *arrowRecordIterator) Schema() (*arrow.Schema, error) {
 	// Try to get schema bytes if not already available
 	if ri.arrowSchemaBytes == nil {
 		if ri.HasNext() {
+			// A pending page-fetch error is reported here (once) rather than
+			// via getCurrentBatch, so a later Next() does not repeat it.
+			if err := ri.takePendingErr(); err != nil {
+				return nil, err
+			}
 			if err := ri.getCurrentBatch(); err != nil {
 				return nil, err
 			}

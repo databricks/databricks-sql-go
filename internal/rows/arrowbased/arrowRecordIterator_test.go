@@ -251,6 +251,37 @@ func TestArrowRecordIteratorSwallowsPageError(t *testing.T) {
 	assert.Equal(t, 2, calls)
 }
 
+func TestArrowRecordIteratorSchemaReportsPageErrorOnce(t *testing.T) {
+	logger := dbsqllog.WithContext("connectionId", "correlationId", "")
+
+	calls := 0
+	failing := &client.TestClient{
+		FnFetchResults: func(ctx context.Context, req *cli_service.TFetchResultsReq) (*cli_service.TFetchResultsResp, error) {
+			calls++
+			return nil, fmt.Errorf("FetchResults: connection reset")
+		},
+	}
+
+	ctx := driverctx.NewContextWithConnId(context.Background(), "connectionId")
+	ctx = driverctx.NewContextWithCorrelationId(ctx, "correlationId")
+	rpi := rowscanner.NewResultPageIterator(ctx, rowscanner.NewDelimiter(0, 7311), 5000, nil, false, failing, logger)
+	cfg := *config.WithDefaults()
+	// nil batch iterator and nil schema bytes: Schema() must fetch a page.
+	it := NewArrowRecordIterator(ctx, rpi, nil, nil, cfg)
+	defer it.Close()
+
+	schema, err := it.Schema()
+	assert.Nil(t, schema)
+	assert.ErrorContains(t, err, "connection reset")
+
+	// The error was reported by Schema(); Next() must not report it again.
+	assert.False(t, it.HasNext())
+	rec, nextErr := it.Next()
+	assert.Nil(t, rec)
+	assert.Equal(t, io.EOF, nextErr)
+	assert.Equal(t, 1, calls)
+}
+
 func TestArrowRecordIteratorNoFetchAfterEarlyClose(t *testing.T) {
 	logger := dbsqllog.WithContext("connectionId", "correlationId", "")
 
