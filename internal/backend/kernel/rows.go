@@ -40,6 +40,7 @@ var (
 	_ driver.RowsColumnTypeDatabaseTypeName = (*kernelRows)(nil)
 	_ driver.RowsColumnTypeNullable         = (*kernelRows)(nil)
 	_ driver.RowsColumnTypeLength           = (*kernelRows)(nil)
+	_ driver.RowsColumnTypePrecisionScale   = (*kernelRows)(nil)
 	// Public batch API, matching the Thrift path (rows.rows). GetArrowBatches is
 	// real; GetArrowIPCStreams rejects (kernel C ABI exports C Data, not IPC bytes).
 	_ dbrows.Rows = (*kernelRows)(nil)
@@ -172,6 +173,16 @@ func (r *kernelRows) ColumnTypeLength(index int) (length int64, ok bool) {
 	}
 	ct := r.colTypes[index]
 	return ct.Length, ct.HasLength
+}
+
+// ColumnTypePrecisionScale returns the declared precision and scale for a
+// DECIMAL column, matching the Thrift path.
+func (r *kernelRows) ColumnTypePrecisionScale(index int) (precision, scale int64, ok bool) {
+	if index < 0 || index >= len(r.colTypes) {
+		return 0, 0, false
+	}
+	ct := r.colTypes[index]
+	return ct.Precision, ct.Scale, ct.HasPrecisionScale
 }
 
 // Close releases the current batch, the kernel result stream, and (query-path

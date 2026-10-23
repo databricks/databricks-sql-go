@@ -27,6 +27,10 @@ type ColumnTypeInfo struct {
 	// (math.MaxInt64), matching Thrift; fixed-width types report (0, false).
 	Length    int64
 	HasLength bool
+	// Precision / Scale report a DECIMAL column's declared qualifiers.
+	Precision         int64
+	Scale             int64
+	HasPrecisionScale bool
 }
 
 // Scan types, matching the Thrift path's vars in internal/rows/rows.go so both
@@ -85,7 +89,14 @@ func ColumnTypeInfoFor(dt arrow.DataType) ColumnTypeInfo {
 		// Under WithKernelDecimalAsFloat the value is a float64 instead of a string;
 		// the scan type stays RawBytes, a deliberate Thrift-matching exception to the
 		// scan-type/value lockstep (Thrift does the same under UseArrowNativeDecimal).
-		return ColumnTypeInfo{DatabaseTypeName: "DECIMAL", ScanType: scanTypeRawBytes}
+		decimalType := dt.(*arrow.Decimal128Type)
+		return ColumnTypeInfo{
+			DatabaseTypeName:  "DECIMAL",
+			ScanType:          scanTypeRawBytes,
+			Precision:         int64(decimalType.Precision),
+			Scale:             int64(decimalType.Scale),
+			HasPrecisionScale: true,
+		}
 	case arrow.LIST, arrow.LARGE_LIST, arrow.FIXED_SIZE_LIST:
 		return varLen("ARRAY", scanTypeRawBytes)
 	case arrow.MAP:
