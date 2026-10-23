@@ -775,9 +775,10 @@ func TestE2ETimestampNTZPreservesWallClock(t *testing.T) {
 	require.NoError(t, rows.Scan(&zoned, &ntz))
 
 	// The NTZ value must preserve the wall clock it was given, with no shift
-	// from the session timezone. We compare the wall-clock fields directly so
-	// the assertion is independent of whatever *time.Location the driver tags
-	// the zone-less value with.
+	// from the session timezone. We check the wall-clock fields directly, and
+	// separately pin the location: returning zone-less TIMESTAMP_NTZ values
+	// tagged with time.UTC is part of the documented contract (see CHANGELOG
+	// and README), not an incidental detail, so do not loosen that check.
 	assert.Equal(t, 2024, ntz.Year())
 	assert.Equal(t, time.June, ntz.Month())
 	assert.Equal(t, 15, ntz.Day())
