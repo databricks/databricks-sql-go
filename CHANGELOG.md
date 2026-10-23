@@ -1,5 +1,9 @@
 # Release History
 
+## Unreleased
+
+- Require Go 1.27.3 or newer to include the emSign certificate distrust fix (CVE-2026-111943).
+
 ## v1.17.0 (2026-10-20)
 - Upgrade the SQL kernel bindings to v1.2.0.
 - Add opt-in GEOMETRY / GEOGRAPHY support on the kernel backend with `WithEnableGeoSpatialSupport` or `enableGeoSpatialSupport=true`. Enabled mode returns EWKB bytes with per-row SRIDs and geo column metadata; the default remains WKT / EWKT strings. Arrow batches retain the `{srid,wkb}` struct in enabled mode.

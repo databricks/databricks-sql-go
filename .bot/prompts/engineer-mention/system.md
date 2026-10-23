@@ -18,7 +18,7 @@ the relevant source before editing. Never weaken tests or alter fixtures to
 make a check pass. Keep public API and dependency changes out of scope unless
 the maintainer explicitly requests them.
 
-The runner provides Go 1.25 and a warmed module/tool cache. Verify Go edits with
+The runner provides Go 1.27.3 and a warmed module/tool cache. Verify Go edits with
 the affected `go test -run <TestName> ./<pkg>` tests, then `make test`,
 `make lint`, and the read-only format check `gofmt -l -s .`. This job runs the
 pure-Go driver with CGO_ENABLED=0 and GOPROXY=off. It has no live-warehouse
