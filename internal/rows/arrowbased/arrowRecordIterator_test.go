@@ -234,6 +234,70 @@ func TestArrowRecordIteratorSwallowsPageError(t *testing.T) {
 	}
 	t.Logf("fetch calls=%d rows=%d lastErr=%v", calls, rows, lastErr)
 	assert.ErrorContains(t, lastErr, "connection reset")
+
+	// Every row from the direct results and the first fetched page must be
+	// delivered before the error is surfaced.
+	expectedRows := rowscanner.CountRows(executeStatementResp.DirectResults.ResultSet.Results) +
+		rowscanner.CountRows(fetchResp1.Results)
+	assert.Equal(t, expectedRows, rows)
+	assert.Equal(t, 2, calls)
+
+	// The error is reported exactly once; afterwards the iterator is finished.
+	assert.False(t, it.HasNext())
+	rec, nextErr := it.Next()
+	assert.Nil(t, rec)
+	assert.Equal(t, io.EOF, nextErr)
+	assert.False(t, it.HasNext())
+	assert.Equal(t, 2, calls)
+}
+
+func TestArrowIPCStreamIteratorSurfacesPageError(t *testing.T) {
+	logger := dbsqllog.WithContext("connectionId", "correlationId", "")
+
+	executeStatementResp := cli_service.TExecuteStatementResp{}
+	loadTestData2(t, "directResultsMultipleFetch/ExecuteStatement.json", &executeStatementResp)
+	fetchResp1 := cli_service.TFetchResultsResp{}
+	loadTestData2(t, "directResultsMultipleFetch/FetchResults1.json", &fetchResp1)
+
+	calls := 0
+	failing := &client.TestClient{
+		FnFetchResults: func(ctx context.Context, req *cli_service.TFetchResultsReq) (*cli_service.TFetchResultsResp, error) {
+			calls++
+			if calls == 1 {
+				return &fetchResp1, nil
+			}
+			return nil, fmt.Errorf("FetchResults: connection reset")
+		},
+	}
+
+	ctx := driverctx.NewContextWithConnId(context.Background(), "connectionId")
+	ctx = driverctx.NewContextWithCorrelationId(ctx, "correlationId")
+	rpi := rowscanner.NewResultPageIterator(ctx, rowscanner.NewDelimiter(0, 7311), 5000, nil, false, failing, logger)
+	cfg := *config.WithDefaults()
+	schemaBytes := executeStatementResp.DirectResults.ResultSetMetadata.ArrowSchema
+	ipcIt, err := NewLocalIPCStreamIterator(ctx, executeStatementResp.DirectResults.ResultSet.Results.ArrowBatches, 0, schemaBytes, &cfg)
+	assert.Nil(t, err)
+	it := NewArrowIPCStreamIterator(ctx, rpi, ipcIt, schemaBytes, cfg)
+	defer it.Close()
+
+	var lastErr error
+	streams := 0
+	for it.HasNext() {
+		_, err := it.Next()
+		if err != nil {
+			lastErr = err
+			break
+		}
+		streams++
+	}
+	t.Logf("fetch calls=%d streams=%d lastErr=%v", calls, streams, lastErr)
+	assert.ErrorContains(t, lastErr, "connection reset")
+	assert.Greater(t, streams, 0)
+
+	// The error is reported once; afterwards the iterator is exhausted.
+	assert.False(t, it.HasNext())
+	_, errAfter := it.Next()
+	assert.ErrorIs(t, errAfter, io.EOF)
 }
 
 func TestArrowRecordIteratorSchema(t *testing.T) {
