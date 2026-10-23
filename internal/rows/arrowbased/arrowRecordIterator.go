@@ -99,8 +99,19 @@ func (ri *arrowRecordIterator) HasNext() bool {
 	return !ri.isFinished || ri.err != nil
 }
 
-// Free any resources associated with this iterator
+// Free any resources associated with this iterator. An explicit Close also
+// discards any pending, not-yet-reported page-fetch error so a closed iterator
+// reports HasNext()==false and Next()==io.EOF.
 func (ri *arrowRecordIterator) Close() {
+	ri.err = nil
+	ri.errReported = true
+	ri.release()
+}
+
+// release frees the iterator's resources and marks it finished without
+// touching any pending page-fetch error, so that error can still be surfaced
+// via Next() when the end of the result set is reached internally.
+func (ri *arrowRecordIterator) release() {
 	if !ri.isFinished {
 		ri.isFinished = true
 		if ri.currentBatch != nil {
@@ -144,8 +155,9 @@ func (ri *arrowRecordIterator) checkFinished() {
 	}
 
 	if finished {
-		// Reached end of result set so Close
-		ri.Close()
+		// Reached end of result set so release resources, keeping any
+		// pending page-fetch error for Next() to report.
+		ri.release()
 	}
 }
 
