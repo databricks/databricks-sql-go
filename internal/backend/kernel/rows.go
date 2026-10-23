@@ -66,6 +66,7 @@ type kernelRows struct {
 	cols       []string
 	colTypes   []arrowscan.ColumnTypeInfo // per-column type metadata (PECOBLR-3692)
 	geoBinary  []bool                     // top-level logical geo structs become EWKB for database/sql
+	ntz        []bool                     // top-level TIMESTAMP_NTZ columns scan in UTC, not the session location
 	schema     *arrow.Schema              // result-set schema, for GetArrowBatches().Schema()
 	cur        arrow.Record               // current batch (nil until first Next)
 	rowInCur   int                        // next row index within cur
@@ -120,6 +121,7 @@ func newKernelRows(ctx context.Context, op *kernelOp, stream *C.kernel_result_st
 	// (ScanCellCached) via the shared arrowscan.ColumnTypeInfoFor mapper.
 	r.colTypes = make([]arrowscan.ColumnTypeInfo, len(fields))
 	r.geoBinary = make([]bool, len(fields))
+	r.ntz = timestampNTZColumns(fields)
 	for i, f := range fields {
 		r.cols[i] = f.Name
 		r.colTypes[i] = arrowscan.ColumnTypeInfoForField(f)
@@ -130,6 +132,20 @@ func newKernelRows(ctx context.Context, op *kernelOp, stream *C.kernel_result_st
 	r.callbacks = cb
 	klogCtx(ctx, "newKernelRows: %d columns", len(r.cols))
 	return r, nil
+}
+
+// timestampNTZColumns reports, per top-level field, whether it is a
+// TIMESTAMP_NTZ wall clock that must scan in UTC rather than the session
+// location. The kernel may tag NTZ with a UTC zone in Arrow while preserving its
+// logical type in metadata, so this uses arrowscan.IsTimestampNTZField — the same
+// check ColumnTypeDatabaseTypeName is derived from — decided once per result set
+// rather than per cell in next().
+func timestampNTZColumns(fields []arrow.Field) []bool {
+	ntz := make([]bool, len(fields))
+	for i, f := range fields {
+		ntz[i] = arrowscan.IsTimestampNTZField(f)
+	}
+	return ntz
 }
 
 // Columns returns the result-set column names.
@@ -235,7 +251,11 @@ func (r *kernelRows) next(dest []driver.Value) error {
 	}
 	rec := r.cur
 	for c := 0; c < len(dest); c++ {
-		v, err := arrowscan.ScanCellCachedWithOptions(rec.Column(c), r.rowInCur, r.op.location, r.keyCache, arrowscan.ScanOptions{
+		location := r.op.location
+		if r.ntz[c] {
+			location = time.UTC
+		}
+		v, err := arrowscan.ScanCellCachedWithOptions(rec.Column(c), r.rowInCur, location, r.keyCache, arrowscan.ScanOptions{
 			DecimalAsFloat:   r.op.decimalAsFloat,
 			GeospatialBinary: r.geoBinary[c],
 		})

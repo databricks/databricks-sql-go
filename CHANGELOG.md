@@ -1,5 +1,9 @@
 # Release History
 
+## Unreleased
+
+- **Behavior change:** Native Arrow TIMESTAMP_NTZ results now preserve their wall-clock fields and report `TIMESTAMP_NTZ` on both backends. Returned `time.Time` values use UTC instead of the session location; their represented instant and `.UTC()` value are unchanged (databricks/databricks-sql-go#506). On Thrift, this requires a server-supplied Arrow schema with native timestamps; without it, NTZ still reports `TIMESTAMP` and uses session-location handling. String timestamps (`UseArrowNativeTimestamp=false`, internal) and non-Arrow values also retain legacy parsing.
+
 ## v1.17.0 (2026-10-20)
 - Upgrade the SQL kernel bindings to v1.2.0.
 - Add opt-in GEOMETRY / GEOGRAPHY support on the kernel backend with `WithEnableGeoSpatialSupport` or `enableGeoSpatialSupport=true`. Enabled mode returns EWKB bytes with per-row SRIDs and geo column metadata; the default remains WKT / EWKT strings. Arrow batches retain the `{srid,wkb}` struct in enabled mode.

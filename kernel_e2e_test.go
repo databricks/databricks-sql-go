@@ -123,14 +123,8 @@ func TestKernelE2ETimeZone(t *testing.T) {
 	}
 }
 
-// TestKernelE2ETimestampNTZ proves TIMESTAMP and TIMESTAMP_NTZ round-trip
-// byte-identically to the Thrift path at a non-UTC session tz. The kernel delivers
-// TIMESTAMP with an Arrow tz and TIMESTAMP_NTZ without one, but — like the Thrift
-// path — the driver ignores that field and renders via .In(loc). So the naive
-// wall-clock of an NTZ literal is treated as a UTC instant and shifted into the
-// session tz (12:00 NTZ in America/New_York → the -04:00 local of 12:00Z = 08:00),
-// exactly as Thrift does. Verified live on both backends; this pins the round-trip
-// so a one-sided "don't shift NTZ" change is caught.
+// TestKernelE2ETimestampNTZ checks that TIMESTAMP uses the session location,
+// while TIMESTAMP_NTZ preserves its wall clock with a UTC location.
 func TestKernelE2ETimestampNTZ(t *testing.T) {
 	// Reyden shifts a zoned TIMESTAMP literal like an NTZ (12:00 → 08:00 -0400) where a
 	// normal warehouse keeps the 12:00 wall-clock — an engine timestamp-tz divergence,
@@ -146,28 +140,41 @@ func TestKernelE2ETimestampNTZ(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	var ltz time.Time
-	if err := db.QueryRowContext(ctx,
-		"SELECT CAST('2026-07-09 12:00:00' AS TIMESTAMP)").Scan(&ltz); err != nil {
-		t.Fatalf("TIMESTAMP query: %v", err)
+	result, err := db.QueryContext(ctx,
+		"SELECT TIMESTAMP '2026-07-09 12:00:00' AS zoned, TIMESTAMP_NTZ '2026-07-09 12:00:00' AS ntz")
+	if err != nil {
+		t.Fatalf("metadata query: %v", err)
+	}
+	defer result.Close() //nolint:errcheck
+	columnTypes, err := result.ColumnTypes()
+	if err != nil {
+		t.Fatalf("ColumnTypes: %v", err)
+	}
+	if len(columnTypes) != 2 {
+		t.Fatalf("column count = %d, want 2", len(columnTypes))
+	}
+	for i, want := range []string{"TIMESTAMP", "TIMESTAMP_NTZ"} {
+		if got := columnTypes[i].DatabaseTypeName(); got != want {
+			t.Errorf("column %d type = %q, want %q", i, got, want)
+		}
+	}
+	if !result.Next() {
+		t.Fatalf("expected a timestamp row: %v", result.Err())
+	}
+	var ltz, ntz time.Time
+	if err := result.Scan(&ltz, &ntz); err != nil {
+		t.Fatalf("Scan: %v", err)
 	}
 	// A zoned TIMESTAMP literal is the wall-clock in the session tz.
 	if want := time.Date(2026, 7, 9, 12, 0, 0, 0, loc); !ltz.Equal(want) {
 		t.Errorf("TIMESTAMP = %s, want %s", ltz, want)
 	}
 
-	var ntz time.Time
-	if err := db.QueryRowContext(ctx,
-		"SELECT CAST('2026-07-09 12:00:00' AS TIMESTAMP_NTZ)").Scan(&ntz); err != nil {
-		t.Fatalf("TIMESTAMP_NTZ query: %v", err)
+	if want := "2026-07-09 12:00:00"; ntz.Format(time.DateTime) != want {
+		t.Errorf("TIMESTAMP_NTZ wall clock = %s, want %s", ntz.Format(time.DateTime), want)
 	}
-	// The NTZ wall-clock is treated as a UTC instant then shifted into the session
-	// tz: 12:00Z == 08:00 in America/New_York (-04:00 in July).
-	if want := time.Date(2026, 7, 9, 8, 0, 0, 0, loc); !ntz.Equal(want) {
-		t.Errorf("TIMESTAMP_NTZ = %s, want %s (UTC instant %s)", ntz, want, ntz.UTC())
-	}
-	if ntz.Location().String() != tz {
-		t.Errorf("TIMESTAMP_NTZ location = %q, want %q", ntz.Location(), tz)
+	if ntz.Location() != time.UTC {
+		t.Errorf("TIMESTAMP_NTZ location = %q, want UTC", ntz.Location())
 	}
 }
 
