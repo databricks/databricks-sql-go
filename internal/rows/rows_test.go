@@ -667,6 +667,52 @@ func TestColumnTypeLength(t *testing.T) {
 	}
 }
 
+func TestColumnTypePrecisionScale(t *testing.T) {
+	precision := int32(38)
+	scale := int32(18)
+	missingScalePrecision := int32(10)
+
+	column := func(typeID cli_service.TTypeId, qualifiers map[string]*cli_service.TTypeQualifierValue) *cli_service.TColumnDesc {
+		return &cli_service.TColumnDesc{
+			TypeDesc: &cli_service.TTypeDesc{Types: []*cli_service.TTypeEntry{{
+				PrimitiveEntry: &cli_service.TPrimitiveTypeEntry{
+					Type:           typeID,
+					TypeQualifiers: &cli_service.TTypeQualifiers{Qualifiers: qualifiers},
+				},
+			}}},
+		}
+	}
+
+	rowSet := &rows{
+		client: &client.TestClient{},
+		schema: &cli_service.TTableSchema{Columns: []*cli_service.TColumnDesc{
+			column(cli_service.TTypeId_DECIMAL_TYPE, map[string]*cli_service.TTypeQualifierValue{
+				"precision": {I32Value: &precision},
+				"scale":     {I32Value: &scale},
+			}),
+			column(cli_service.TTypeId_INT_TYPE, map[string]*cli_service.TTypeQualifierValue{
+				"precision": {I32Value: &precision},
+				"scale":     {I32Value: &scale},
+			}),
+			column(cli_service.TTypeId_DECIMAL_TYPE, map[string]*cli_service.TTypeQualifierValue{
+				"precision": {I32Value: &missingScalePrecision},
+			}),
+		}},
+	}
+
+	gotPrecision, gotScale, ok := rowSet.ColumnTypePrecisionScale(0)
+	assert.Equal(t, int64(38), gotPrecision)
+	assert.Equal(t, int64(18), gotScale)
+	assert.True(t, ok)
+
+	for _, index := range []int{-1, 1, 2, 3} {
+		gotPrecision, gotScale, ok = rowSet.ColumnTypePrecisionScale(index)
+		assert.Zero(t, gotPrecision)
+		assert.Zero(t, gotScale)
+		assert.False(t, ok)
+	}
+}
+
 func TestColumnTypeDatabaseTypeName(t *testing.T) {
 	var getMetadataCount, fetchResultsCount int
 
