@@ -16,13 +16,12 @@ name: Security Scan
 #
 #   - workflow_dispatch: behaves like the cron run (full reporting).
 #
-# Scanner: OSV-Scanner v2.3.8 (purl-based via OSV.dev; federates GHSA,
+# Scanner: OSV-Scanner v2.7.0 (purl-based via OSV.dev; federates GHSA,
 # NVD, Go vuln DB, RustSec, PyPA). Reads `go.mod`/`go.sum` natively --
 # no separate SBOM tool needed.
 #
 # Suppressions live in `osv-scanner.toml` as [[IgnoredVulns]] entries
-# (CVE-id global; OSV-Scanner v2.3.8 doesn't support per-package CVE
-# scoping). Each entry has a justification comment.
+# (CVE-id global). Each entry has a justification comment.
 
 on:
   pull_request:
@@ -46,9 +45,8 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      # JFrog OIDC + GOPROXY: skipped on fork PRs (no OIDC token from
-      # GitHub's perspective). Fork PRs still work because OSV-Scanner
-      # reads `go.mod` directly without needing to download modules.
+      # Fork PRs cannot obtain the JFrog OIDC token. Download the scanner
+      # from GitHub Releases so installation does not require GOPROXY.
       - name: Setup JFrog
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         uses: ./.github/actions/setup-jfrog
@@ -63,8 +61,9 @@ jobs:
       - name: Install osv-scanner
         run: |
           set -euo pipefail
-          # Build govulncheck with the same Go version it uses to load packages.
-          GOBIN=/tmp GOTOOLCHAIN=local go install github.com/google/osv-scanner/v2/cmd/osv-scanner@v2.3.8
+          curl -fsSL -o /tmp/osv-scanner \
+            https://github.com/google/osv-scanner/releases/download/v2.7.0/osv-scanner_linux_amd64
+          chmod +x /tmp/osv-scanner
           /tmp/osv-scanner --version
 
       - name: Run OSV-Scanner
