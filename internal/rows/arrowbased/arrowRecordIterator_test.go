@@ -193,6 +193,301 @@ func TestArrowRecordIterator(t *testing.T) {
 	})
 }
 
+func TestArrowRecordIteratorSwallowsPageError(t *testing.T) {
+	logger := dbsqllog.WithContext("connectionId", "correlationId", "")
+
+	executeStatementResp := cli_service.TExecuteStatementResp{}
+	loadTestData2(t, "directResultsMultipleFetch/ExecuteStatement.json", &executeStatementResp)
+	fetchResp1 := cli_service.TFetchResultsResp{}
+	loadTestData2(t, "directResultsMultipleFetch/FetchResults1.json", &fetchResp1)
+
+	calls := 0
+	failing := &client.TestClient{
+		FnFetchResults: func(ctx context.Context, req *cli_service.TFetchResultsReq) (*cli_service.TFetchResultsResp, error) {
+			calls++
+			if calls == 1 {
+				return &fetchResp1, nil
+			}
+			return nil, fmt.Errorf("FetchResults: connection reset")
+		},
+	}
+
+	ctx := driverctx.NewContextWithConnId(context.Background(), "connectionId")
+	ctx = driverctx.NewContextWithCorrelationId(ctx, "correlationId")
+	rpi := rowscanner.NewResultPageIterator(ctx, rowscanner.NewDelimiter(0, 7311), 5000, nil, false, failing, logger)
+	cfg := *config.WithDefaults()
+	bi, err := NewLocalBatchIterator(ctx, executeStatementResp.DirectResults.ResultSet.Results.ArrowBatches, 0, executeStatementResp.DirectResults.ResultSetMetadata.ArrowSchema, &cfg)
+	assert.Nil(t, err)
+	it := NewArrowRecordIterator(ctx, rpi, bi, executeStatementResp.DirectResults.ResultSetMetadata.ArrowSchema, cfg)
+	defer it.Close()
+
+	var lastErr error
+	rows := int64(0)
+	for it.HasNext() {
+		rec, err := it.Next()
+		if err != nil {
+			lastErr = err
+			break
+		}
+		rows += rec.NumRows()
+		rec.Release()
+	}
+	t.Logf("fetch calls=%d rows=%d lastErr=%v", calls, rows, lastErr)
+	assert.ErrorContains(t, lastErr, "connection reset")
+
+	// Every row from the direct results and the first fetched page must be
+	// delivered before the error is surfaced.
+	expectedRows := rowscanner.CountRows(executeStatementResp.DirectResults.ResultSet.Results) +
+		rowscanner.CountRows(fetchResp1.Results)
+	assert.Equal(t, expectedRows, rows)
+	assert.Equal(t, 2, calls)
+
+	// The error is reported exactly once; afterwards the iterator is finished.
+	assert.False(t, it.HasNext())
+	rec, nextErr := it.Next()
+	assert.Nil(t, rec)
+	assert.Equal(t, io.EOF, nextErr)
+	assert.False(t, it.HasNext())
+	assert.Equal(t, 2, calls)
+}
+
+func TestArrowRecordIteratorSchemaReportsPageErrorOnce(t *testing.T) {
+	logger := dbsqllog.WithContext("connectionId", "correlationId", "")
+
+	calls := 0
+	failing := &client.TestClient{
+		FnFetchResults: func(ctx context.Context, req *cli_service.TFetchResultsReq) (*cli_service.TFetchResultsResp, error) {
+			calls++
+			return nil, fmt.Errorf("FetchResults: connection reset")
+		},
+	}
+
+	ctx := driverctx.NewContextWithConnId(context.Background(), "connectionId")
+	ctx = driverctx.NewContextWithCorrelationId(ctx, "correlationId")
+	rpi := rowscanner.NewResultPageIterator(ctx, rowscanner.NewDelimiter(0, 7311), 5000, nil, false, failing, logger)
+	cfg := *config.WithDefaults()
+	// nil batch iterator and nil schema bytes: Schema() must fetch a page.
+	it := NewArrowRecordIterator(ctx, rpi, nil, nil, cfg)
+	defer it.Close()
+
+	schema, err := it.Schema()
+	assert.Nil(t, schema)
+	assert.ErrorContains(t, err, "connection reset")
+
+	// The error was reported by Schema(); Next() must not report it again.
+	assert.False(t, it.HasNext())
+	rec, nextErr := it.Next()
+	assert.Nil(t, rec)
+	assert.Equal(t, io.EOF, nextErr)
+	assert.Equal(t, 1, calls)
+}
+
+func TestArrowRecordIteratorNoFetchAfterEarlyClose(t *testing.T) {
+	logger := dbsqllog.WithContext("connectionId", "correlationId", "")
+
+	executeStatementResp := cli_service.TExecuteStatementResp{}
+	loadTestData2(t, "directResultsMultipleFetch/ExecuteStatement.json", &executeStatementResp)
+
+	fetchCalls := 0
+	closeCalls := 0
+	tc := &client.TestClient{
+		FnFetchResults: func(ctx context.Context, req *cli_service.TFetchResultsReq) (*cli_service.TFetchResultsResp, error) {
+			fetchCalls++
+			return nil, fmt.Errorf("FetchResults: operation closed")
+		},
+		FnCloseOperation: func(ctx context.Context, req *cli_service.TCloseOperationReq) (*cli_service.TCloseOperationResp, error) {
+			closeCalls++
+			return &cli_service.TCloseOperationResp{}, nil
+		},
+	}
+
+	ctx := driverctx.NewContextWithConnId(context.Background(), "connectionId")
+	ctx = driverctx.NewContextWithCorrelationId(ctx, "correlationId")
+	rpi := rowscanner.NewResultPageIterator(ctx, rowscanner.NewDelimiter(0, 7311), 5000, nil, false, tc, logger)
+	cfg := *config.WithDefaults()
+	schemaBytes := executeStatementResp.DirectResults.ResultSetMetadata.ArrowSchema
+	bi, err := NewLocalBatchIterator(ctx, executeStatementResp.DirectResults.ResultSet.Results.ArrowBatches, 0, schemaBytes, &cfg)
+	assert.Nil(t, err)
+	it := NewArrowRecordIterator(ctx, rpi, bi, schemaBytes, cfg)
+
+	// Close before any page beyond the direct results has been read.
+	it.Close()
+	assert.Equal(t, 1, closeCalls)
+
+	// A closed iterator must not issue FetchResults or report a spurious error.
+	assert.False(t, it.HasNext())
+	rec, nextErr := it.Next()
+	assert.Nil(t, rec)
+	assert.Equal(t, io.EOF, nextErr)
+	assert.False(t, it.HasNext())
+	assert.Equal(t, 0, fetchCalls)
+}
+
+func TestArrowRecordIteratorCloseDiscardsPendingPageError(t *testing.T) {
+	logger := dbsqllog.WithContext("connectionId", "correlationId", "")
+
+	calls := 0
+	failing := &client.TestClient{
+		FnFetchResults: func(ctx context.Context, req *cli_service.TFetchResultsReq) (*cli_service.TFetchResultsResp, error) {
+			calls++
+			return nil, fmt.Errorf("FetchResults: connection reset")
+		},
+		FnCloseOperation: func(ctx context.Context, req *cli_service.TCloseOperationReq) (*cli_service.TCloseOperationResp, error) {
+			return &cli_service.TCloseOperationResp{}, nil
+		},
+	}
+
+	ctx := driverctx.NewContextWithConnId(context.Background(), "connectionId")
+	ctx = driverctx.NewContextWithCorrelationId(ctx, "correlationId")
+	rpi := rowscanner.NewResultPageIterator(ctx, rowscanner.NewDelimiter(0, 7311), 5000, nil, false, failing, logger)
+	cfg := *config.WithDefaults()
+	it := NewArrowRecordIterator(ctx, rpi, nil, nil, cfg)
+
+	// HasNext captures the page-fetch error as pending.
+	assert.True(t, it.HasNext())
+	assert.Equal(t, 1, calls)
+
+	// An explicit Close discards the pending error.
+	it.Close()
+	assert.False(t, it.HasNext())
+	rec, nextErr := it.Next()
+	assert.Nil(t, rec)
+	assert.Equal(t, io.EOF, nextErr)
+	assert.False(t, it.HasNext())
+	assert.Equal(t, 1, calls)
+}
+
+func TestArrowIPCStreamIteratorCloseDiscardsPendingPageError(t *testing.T) {
+	logger := dbsqllog.WithContext("connectionId", "correlationId", "")
+
+	calls := 0
+	failing := &client.TestClient{
+		FnFetchResults: func(ctx context.Context, req *cli_service.TFetchResultsReq) (*cli_service.TFetchResultsResp, error) {
+			calls++
+			return nil, fmt.Errorf("FetchResults: connection reset")
+		},
+		FnCloseOperation: func(ctx context.Context, req *cli_service.TCloseOperationReq) (*cli_service.TCloseOperationResp, error) {
+			return &cli_service.TCloseOperationResp{}, nil
+		},
+	}
+
+	ctx := driverctx.NewContextWithConnId(context.Background(), "connectionId")
+	ctx = driverctx.NewContextWithCorrelationId(ctx, "correlationId")
+	rpi := rowscanner.NewResultPageIterator(ctx, rowscanner.NewDelimiter(0, 7311), 5000, nil, false, failing, logger)
+	cfg := *config.WithDefaults()
+	it := NewArrowIPCStreamIterator(ctx, rpi, nil, nil, cfg)
+
+	// HasNext captures the page-fetch error as pending.
+	assert.True(t, it.HasNext())
+	assert.Equal(t, 1, calls)
+
+	// An explicit Close discards the pending error.
+	it.Close()
+	assert.False(t, it.HasNext())
+	r, nextErr := it.Next()
+	assert.Nil(t, r)
+	assert.Equal(t, io.EOF, nextErr)
+	assert.False(t, it.HasNext())
+	assert.Equal(t, 1, calls)
+}
+
+func TestArrowIPCStreamIteratorSurfacesPageError(t *testing.T) {
+	logger := dbsqllog.WithContext("connectionId", "correlationId", "")
+
+	executeStatementResp := cli_service.TExecuteStatementResp{}
+	loadTestData2(t, "directResultsMultipleFetch/ExecuteStatement.json", &executeStatementResp)
+	fetchResp1 := cli_service.TFetchResultsResp{}
+	loadTestData2(t, "directResultsMultipleFetch/FetchResults1.json", &fetchResp1)
+
+	calls := 0
+	failing := &client.TestClient{
+		FnFetchResults: func(ctx context.Context, req *cli_service.TFetchResultsReq) (*cli_service.TFetchResultsResp, error) {
+			calls++
+			if calls == 1 {
+				return &fetchResp1, nil
+			}
+			return nil, fmt.Errorf("FetchResults: connection reset")
+		},
+	}
+
+	ctx := driverctx.NewContextWithConnId(context.Background(), "connectionId")
+	ctx = driverctx.NewContextWithCorrelationId(ctx, "correlationId")
+	rpi := rowscanner.NewResultPageIterator(ctx, rowscanner.NewDelimiter(0, 7311), 5000, nil, false, failing, logger)
+	cfg := *config.WithDefaults()
+	schemaBytes := executeStatementResp.DirectResults.ResultSetMetadata.ArrowSchema
+	ipcIt, err := NewLocalIPCStreamIterator(ctx, executeStatementResp.DirectResults.ResultSet.Results.ArrowBatches, 0, schemaBytes, &cfg)
+	assert.Nil(t, err)
+	it := NewArrowIPCStreamIterator(ctx, rpi, ipcIt, schemaBytes, cfg)
+	defer it.Close()
+
+	var lastErr error
+	streams := 0
+	for it.HasNext() {
+		_, err := it.Next()
+		if err != nil {
+			lastErr = err
+			break
+		}
+		streams++
+	}
+	t.Logf("fetch calls=%d streams=%d lastErr=%v", calls, streams, lastErr)
+	assert.ErrorContains(t, lastErr, "connection reset")
+
+	// Every stream from the direct results and the first fetched page must be
+	// delivered before the error is surfaced (one stream per local arrow batch).
+	expectedStreams := len(executeStatementResp.DirectResults.ResultSet.Results.ArrowBatches) +
+		len(fetchResp1.Results.ArrowBatches)
+	assert.Equal(t, expectedStreams, streams)
+	assert.Equal(t, 2, calls)
+
+	// The error is reported once; afterwards the iterator is exhausted and
+	// does not fetch again.
+	assert.False(t, it.HasNext())
+	r, errAfter := it.Next()
+	assert.Nil(t, r)
+	assert.ErrorIs(t, errAfter, io.EOF)
+	assert.False(t, it.HasNext())
+	assert.Equal(t, 2, calls)
+}
+
+func TestArrowIPCStreamIteratorNoFetchAfterEarlyClose(t *testing.T) {
+	logger := dbsqllog.WithContext("connectionId", "correlationId", "")
+
+	executeStatementResp := cli_service.TExecuteStatementResp{}
+	loadTestData2(t, "directResultsMultipleFetch/ExecuteStatement.json", &executeStatementResp)
+
+	fetchCalls := 0
+	tc := &client.TestClient{
+		FnFetchResults: func(ctx context.Context, req *cli_service.TFetchResultsReq) (*cli_service.TFetchResultsResp, error) {
+			fetchCalls++
+			return nil, fmt.Errorf("FetchResults: operation closed")
+		},
+		FnCloseOperation: func(ctx context.Context, req *cli_service.TCloseOperationReq) (*cli_service.TCloseOperationResp, error) {
+			return &cli_service.TCloseOperationResp{}, nil
+		},
+	}
+
+	ctx := driverctx.NewContextWithConnId(context.Background(), "connectionId")
+	ctx = driverctx.NewContextWithCorrelationId(ctx, "correlationId")
+	rpi := rowscanner.NewResultPageIterator(ctx, rowscanner.NewDelimiter(0, 7311), 5000, nil, false, tc, logger)
+	cfg := *config.WithDefaults()
+	schemaBytes := executeStatementResp.DirectResults.ResultSetMetadata.ArrowSchema
+	ipcIt, err := NewLocalIPCStreamIterator(ctx, executeStatementResp.DirectResults.ResultSet.Results.ArrowBatches, 0, schemaBytes, &cfg)
+	assert.Nil(t, err)
+	it := NewArrowIPCStreamIterator(ctx, rpi, ipcIt, schemaBytes, cfg)
+
+	// Close before any page beyond the direct results has been read.
+	it.Close()
+
+	// A closed iterator must not issue FetchResults or report a spurious error.
+	assert.False(t, it.HasNext())
+	r, nextErr := it.Next()
+	assert.Nil(t, r)
+	assert.Equal(t, io.EOF, nextErr)
+	assert.False(t, it.HasNext())
+	assert.Equal(t, 0, fetchCalls)
+}
+
 func TestArrowRecordIteratorSchema(t *testing.T) {
 	// Test with arrowSchemaBytes available
 	t.Run("schema with initial schema bytes", func(t *testing.T) {

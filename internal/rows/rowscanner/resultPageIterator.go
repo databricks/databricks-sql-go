@@ -23,6 +23,10 @@ func errRowsUnandledFetchDirection(dir string) string {
 type ResultPageIterator interface {
 	Next() (*cli_service.TFetchResultsResp, error)
 	HasNext() bool
+	// Err returns the error, if any, that caused HasNext() to report that there
+	// are no more pages. It returns nil when the iterator finished normally
+	// (i.e. the result set was fully consumed).
+	Err() error
 	Close() error
 	Delimiter
 }
@@ -112,12 +116,26 @@ type resultPageIterator struct {
 
 var _ ResultPageIterator = (*resultPageIterator)(nil)
 
+// Err returns the error, if any, that caused HasNext() to report that there are
+// no more pages. A normal end-of-results (io.EOF) is not considered an error and
+// returns nil, so callers can distinguish a failed page fetch from a fully
+// consumed result set.
+func (rpf *resultPageIterator) Err() error {
+	if rpf == nil || rpf.err == nil || rpf.err == io.EOF {
+		return nil
+	}
+	return rpf.err
+}
+
 // Returns true if there are more pages in the result set.
 func (rpf *resultPageIterator) HasNext() bool {
 	if rpf.isFinished && rpf.nextResultPage == nil {
 		// There are no more pages to load and there isn't an already fetched
-		// page waiting to retrieved by Next()
-		rpf.err = io.EOF
+		// page waiting to retrieved by Next(). Preserve a previously stored
+		// fetch error rather than masking it as a normal end-of-results.
+		if rpf.err == nil {
+			rpf.err = io.EOF
+		}
 		return false
 	}
 
