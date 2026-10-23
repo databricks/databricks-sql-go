@@ -51,11 +51,7 @@ func (ri *arrowIPCStreamIterator) Next() (io.Reader, error) {
 	// If advancing the result page failed, surface that error rather than
 	// masking a failed page fetch as a normal end-of-results. See #507. The
 	// error is reported once and then the iterator is finished.
-	if ri.err != nil {
-		err := ri.err
-		ri.err = nil
-		ri.errReported = true
-		ri.Close()
+	if err := ri.takePendingErr(); err != nil {
 		return nil, err
 	}
 
@@ -74,6 +70,20 @@ func (ri *arrowIPCStreamIterator) Next() (io.Reader, error) {
 	}
 
 	return nil, io.EOF
+}
+
+// takePendingErr returns the pending page-fetch error, if any, and marks it as
+// reported so it is surfaced exactly once; the iterator is then finished.
+// Mirrors arrowRecordIterator.takePendingErr.
+func (ri *arrowIPCStreamIterator) takePendingErr() error {
+	if ri.err == nil {
+		return nil
+	}
+	err := ri.err
+	ri.err = nil
+	ri.errReported = true
+	ri.Close()
+	return err
 }
 
 // HasNext returns true if there are more streams available
@@ -141,12 +151,10 @@ func (ri *arrowIPCStreamIterator) fetchNextData() error {
 	}
 
 	if ri.resultPageIterator == nil || !ri.resultPageIterator.HasNext() {
+		// A page-fetch error (resultPageIterator.Err()) cannot reach here: Next()
+		// always calls HasNext() first, which captures it into ri.err and
+		// Next() surfaces it via takePendingErr() before calling fetchNextData.
 		ri.isFinished = true
-		if ri.resultPageIterator != nil {
-			if err := ri.resultPageIterator.Err(); err != nil {
-				return err
-			}
-		}
 		return io.EOF
 	}
 
