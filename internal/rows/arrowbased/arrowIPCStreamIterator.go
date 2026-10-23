@@ -110,8 +110,12 @@ func (ri *arrowIPCStreamIterator) HasNext() bool {
 	return true
 }
 
-// Close releases resources
+// Close releases resources. It also discards any pending, not-yet-reported
+// page-fetch error so a closed iterator reports HasNext()==false and
+// Next()==io.EOF.
 func (ri *arrowIPCStreamIterator) Close() {
+	ri.err = nil
+	ri.errReported = true
 	if ri.ipcStreamIterator != nil {
 		ri.ipcStreamIterator.Close()
 		ri.ipcStreamIterator = nil

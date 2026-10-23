@@ -323,6 +323,74 @@ func TestArrowRecordIteratorNoFetchAfterEarlyClose(t *testing.T) {
 	assert.Equal(t, 0, fetchCalls)
 }
 
+func TestArrowRecordIteratorCloseDiscardsPendingPageError(t *testing.T) {
+	logger := dbsqllog.WithContext("connectionId", "correlationId", "")
+
+	calls := 0
+	failing := &client.TestClient{
+		FnFetchResults: func(ctx context.Context, req *cli_service.TFetchResultsReq) (*cli_service.TFetchResultsResp, error) {
+			calls++
+			return nil, fmt.Errorf("FetchResults: connection reset")
+		},
+		FnCloseOperation: func(ctx context.Context, req *cli_service.TCloseOperationReq) (*cli_service.TCloseOperationResp, error) {
+			return &cli_service.TCloseOperationResp{}, nil
+		},
+	}
+
+	ctx := driverctx.NewContextWithConnId(context.Background(), "connectionId")
+	ctx = driverctx.NewContextWithCorrelationId(ctx, "correlationId")
+	rpi := rowscanner.NewResultPageIterator(ctx, rowscanner.NewDelimiter(0, 7311), 5000, nil, false, failing, logger)
+	cfg := *config.WithDefaults()
+	it := NewArrowRecordIterator(ctx, rpi, nil, nil, cfg)
+
+	// HasNext captures the page-fetch error as pending.
+	assert.True(t, it.HasNext())
+	assert.Equal(t, 1, calls)
+
+	// An explicit Close discards the pending error.
+	it.Close()
+	assert.False(t, it.HasNext())
+	rec, nextErr := it.Next()
+	assert.Nil(t, rec)
+	assert.Equal(t, io.EOF, nextErr)
+	assert.False(t, it.HasNext())
+	assert.Equal(t, 1, calls)
+}
+
+func TestArrowIPCStreamIteratorCloseDiscardsPendingPageError(t *testing.T) {
+	logger := dbsqllog.WithContext("connectionId", "correlationId", "")
+
+	calls := 0
+	failing := &client.TestClient{
+		FnFetchResults: func(ctx context.Context, req *cli_service.TFetchResultsReq) (*cli_service.TFetchResultsResp, error) {
+			calls++
+			return nil, fmt.Errorf("FetchResults: connection reset")
+		},
+		FnCloseOperation: func(ctx context.Context, req *cli_service.TCloseOperationReq) (*cli_service.TCloseOperationResp, error) {
+			return &cli_service.TCloseOperationResp{}, nil
+		},
+	}
+
+	ctx := driverctx.NewContextWithConnId(context.Background(), "connectionId")
+	ctx = driverctx.NewContextWithCorrelationId(ctx, "correlationId")
+	rpi := rowscanner.NewResultPageIterator(ctx, rowscanner.NewDelimiter(0, 7311), 5000, nil, false, failing, logger)
+	cfg := *config.WithDefaults()
+	it := NewArrowIPCStreamIterator(ctx, rpi, nil, nil, cfg)
+
+	// HasNext captures the page-fetch error as pending.
+	assert.True(t, it.HasNext())
+	assert.Equal(t, 1, calls)
+
+	// An explicit Close discards the pending error.
+	it.Close()
+	assert.False(t, it.HasNext())
+	r, nextErr := it.Next()
+	assert.Nil(t, r)
+	assert.Equal(t, io.EOF, nextErr)
+	assert.False(t, it.HasNext())
+	assert.Equal(t, 1, calls)
+}
+
 func TestArrowIPCStreamIteratorSurfacesPageError(t *testing.T) {
 	logger := dbsqllog.WithContext("connectionId", "correlationId", "")
 
