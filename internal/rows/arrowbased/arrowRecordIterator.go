@@ -109,6 +109,13 @@ func (ri *arrowRecordIterator) Close() {
 }
 
 func (ri *arrowRecordIterator) checkFinished() {
+	// Once finished (including after an explicit Close()), never touch the
+	// result page iterator again: its HasNext() would issue a FetchResults
+	// round-trip against an operation that may already be closed.
+	if ri.isFinished {
+		return
+	}
+
 	noLocalData := (ri.currentBatch == nil || !ri.currentBatch.HasNext()) &&
 		(ri.batchIterator == nil || !ri.batchIterator.HasNext())
 
