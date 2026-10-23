@@ -63,9 +63,8 @@ jobs:
       - name: Install osv-scanner
         run: |
           set -euo pipefail
-          curl -fsSL -o /tmp/osv-scanner \
-            https://github.com/google/osv-scanner/releases/download/v2.3.8/osv-scanner_linux_amd64
-          chmod +x /tmp/osv-scanner
+          # Build govulncheck with the same Go version it uses to load packages.
+          GOBIN=/tmp GOTOOLCHAIN=local go install github.com/google/osv-scanner/v2/cmd/osv-scanner@v2.3.8
           /tmp/osv-scanner --version
 
       - name: Run OSV-Scanner
