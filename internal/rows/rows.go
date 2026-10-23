@@ -8,6 +8,7 @@ import (
 	"io"
 	"math"
 	"reflect"
+	"sync"
 	"time"
 
 	"github.com/apache/arrow/go/v12/arrow/ipc"
@@ -49,6 +50,9 @@ type rows struct {
 	resultSetMetadata         *cli_service.TGetResultSetMetadataResp
 	schema                    *cli_service.TTableSchema
 	databaseTypeNameOverrides map[int]string
+	// databaseTypeNameOverridesOnce guards the lazy, one-time build of
+	// databaseTypeNameOverrides (ColumnTypes may be called concurrently).
+	databaseTypeNameOverridesOnce sync.Once
 
 	config *config.Config
 
@@ -390,22 +394,29 @@ func (r *rows) ColumnTypeDatabaseTypeName(index int) string {
 // as Arrow. If a server sent such metadata but then returned TColumn pages, the
 // column would still report TIMESTAMP_NTZ while its values went through the
 // legacy column scanner.
+//
+// database/sql's Rows.ColumnTypes() only holds a read lock, so this may be
+// reached concurrently. The map is built in a local variable and published
+// exactly once via sync.Once, so readers never observe a partially filled map.
 func (r *rows) cacheDatabaseTypeNameOverrides() {
-	if r.databaseTypeNameOverrides != nil {
-		return
-	}
-	r.databaseTypeNameOverrides = make(map[int]string)
+	r.databaseTypeNameOverridesOnce.Do(func() {
+		r.databaseTypeNameOverrides = r.buildDatabaseTypeNameOverrides()
+	})
+}
+
+func (r *rows) buildDatabaseTypeNameOverrides() map[int]string {
+	overrides := make(map[int]string)
 	if r.resultSetMetadata == nil || len(r.resultSetMetadata.ArrowSchema) == 0 {
-		return
+		return overrides
 	}
 	if r.config != nil && !r.config.UseArrowBatches {
-		return
+		return overrides
 	}
 	if r.resultSetMetadata.IsSetResultFormat() {
 		switch r.resultSetMetadata.GetResultFormat() {
 		case cli_service.TSparkRowSetType_ARROW_BASED_SET, cli_service.TSparkRowSetType_URL_BASED_SET:
 		default:
-			return
+			return overrides
 		}
 	}
 
@@ -415,16 +426,17 @@ func (r *rows) cacheDatabaseTypeNameOverrides() {
 		// so retrying would fail the same way. Columns fall back to the legacy
 		// TIMESTAMP name; the Arrow row scanner surfaces the parse error itself.
 		r.logger().Debug().Err(err).Msg("databricks: failed to parse arrow schema for column type name overrides; falling back to thrift type names")
-		return
+		return overrides
 	}
 	defer reader.Release()
 	for i, field := range reader.Schema().Fields() {
 		// Same check the Arrow value scanner uses (metadata first, then
 		// TimeZone), so the type name and the value handling stay in sync.
 		if arrowscan.IsTimestampNTZField(field) {
-			r.databaseTypeNameOverrides[i] = "TIMESTAMP_NTZ"
+			overrides[i] = "TIMESTAMP_NTZ"
 		}
 	}
+	return overrides
 }
 
 // ColumnTypeNullable returns a flag indicating whether the column is nullable
