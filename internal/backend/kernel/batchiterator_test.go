@@ -141,12 +141,13 @@ func TestRowsTimestampNTZWithServerSchema(t *testing.T) {
 	defer record.Release()
 	rowSet := &kernelRows{
 		op: &kernelOp{location: location}, cur: record,
-		cols: []string{"zoned", "ntz"}, geoBinary: make([]bool, 2), ntz: []bool{false, true},
+		cols: []string{"zoned", "ntz"}, geoBinary: make([]bool, 2), ntz: timestampNTZColumns(schema.Fields()),
 		colTypes: []arrowscan.ColumnTypeInfo{
 			arrowscan.ColumnTypeInfoForField(schema.Field(0)),
 			arrowscan.ColumnTypeInfoForField(schema.Field(1)),
 		},
 	}
+	require.Equal(t, []bool{false, true}, rowSet.ntz)
 	require.Equal(t, "TIMESTAMP", rowSet.ColumnTypeDatabaseTypeName(0))
 	require.Equal(t, "TIMESTAMP_NTZ", rowSet.ColumnTypeDatabaseTypeName(1))
 	values := make([]driver.Value, 2)

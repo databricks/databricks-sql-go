@@ -121,21 +121,31 @@ func newKernelRows(ctx context.Context, op *kernelOp, stream *C.kernel_result_st
 	// (ScanCellCached) via the shared arrowscan.ColumnTypeInfoFor mapper.
 	r.colTypes = make([]arrowscan.ColumnTypeInfo, len(fields))
 	r.geoBinary = make([]bool, len(fields))
-	r.ntz = make([]bool, len(fields))
+	r.ntz = timestampNTZColumns(fields)
 	for i, f := range fields {
 		r.cols[i] = f.Name
 		r.colTypes[i] = arrowscan.ColumnTypeInfoForField(f)
 		r.geoBinary[i] = arrowscan.IsBinaryGeospatialField(f)
-		// The kernel may tag NTZ with UTC in Arrow while preserving its logical
-		// type; decide once here (from the same mapper as ColumnTypeDatabaseTypeName)
-		// rather than per cell in next().
-		r.ntz[i] = r.colTypes[i].DatabaseTypeName == "TIMESTAMP_NTZ"
 	}
 	// Construction succeeded — now arm the close telemetry callback so a normal
 	// Close() (after row iteration) records CLOSE_STATEMENT.
 	r.callbacks = cb
 	klogCtx(ctx, "newKernelRows: %d columns", len(r.cols))
 	return r, nil
+}
+
+// timestampNTZColumns reports, per top-level field, whether it is a
+// TIMESTAMP_NTZ wall clock that must scan in UTC rather than the session
+// location. The kernel may tag NTZ with a UTC zone in Arrow while preserving its
+// logical type in metadata, so this uses arrowscan.IsTimestampNTZField — the same
+// check ColumnTypeDatabaseTypeName is derived from — decided once per result set
+// rather than per cell in next().
+func timestampNTZColumns(fields []arrow.Field) []bool {
+	ntz := make([]bool, len(fields))
+	for i, f := range fields {
+		ntz[i] = arrowscan.IsTimestampNTZField(f)
+	}
+	return ntz
 }
 
 // Columns returns the result-set column names.
