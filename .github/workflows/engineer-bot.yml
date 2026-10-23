@@ -199,7 +199,8 @@ jobs:
         # checkout. --flow only when the ctx step derived one.
         working-directory: ${{ runner.temp }}
         env:
-          MODEL_ENDPOINT: https://${{ secrets.DATABRICKS_HOST }}/serving-endpoints/databricks-claude-opus-4-8/invocations
+          ENGINEER_BOT_MODEL_OVERRIDE: databricks-claude-opus-5-5
+          MODEL_ENDPOINT: https://${{ secrets.DATABRICKS_HOST }}/serving-endpoints/databricks-claude-opus-5-5/invocations
           DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
           # Live-warehouse connection env for the agent's REQUIRED e2e repro
           # (pecoTestingCreds reads these). hostname/http-path are not
