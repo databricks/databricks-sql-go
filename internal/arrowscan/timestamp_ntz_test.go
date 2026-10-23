@@ -85,5 +85,8 @@ func TestScanCellTimestampNTZPreservesWallClock(t *testing.T) {
 		if !got.Equal(wall) {
 			t.Errorf("zoned instant changed: got %v, want %v", got.UTC(), wall)
 		}
+		if got.Location() != loc {
+			t.Errorf("zoned location = %q, want %q", got.Location(), loc)
+		}
 	})
 }
