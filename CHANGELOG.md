@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Upgrade the SQL kernel bindings to v1.3.0.
+
 - Require Go 1.27.3 or newer to include the emSign certificate distrust fix (CVE-2026-111943).
 
 ## v1.17.0 (2026-10-20)
