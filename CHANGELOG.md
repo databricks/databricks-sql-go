@@ -1,10 +1,9 @@
 # Release History
 
-## Unreleased
-
-- Upgrade the SQL kernel bindings to v1.3.0.
-
+## v1.18.0 (2026-10-24)
+- Upgrade the SQL kernel bindings to v1.3.0 to address security findings.
 - Require Go 1.27.3 or newer to include the emSign certificate distrust fix (CVE-2026-111943).
+- Upgrade klauspost/compress to v1.18.7 to address security findings.
 
 ## v1.17.0 (2026-10-20)
 - Upgrade the SQL kernel bindings to v1.2.0.
