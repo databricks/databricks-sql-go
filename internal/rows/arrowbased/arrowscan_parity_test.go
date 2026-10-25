@@ -112,6 +112,27 @@ func TestArrowbasedKernelRenderParity(t *testing.T) {
 			b.ItemBuilder().(*array.Int64Builder).Append(9)
 			return b.NewArray()
 		}},
+		// TIME map keys: Thrift emits the zoneless time-of-day key
+		// ({"09:15:00":1}); the kernel map-key path must not fall back to the
+		// epoch-anchored time.Time.String() ("1970-01-01 09:15:00 +0000 UTC").
+		{"map_time32_key", func() arrow.Array {
+			b := array.NewMapBuilder(pool, arrow.FixedWidthTypes.Time32s, arrow.PrimitiveTypes.Int64, false)
+			b.Append(true)
+			b.KeyBuilder().(*array.Time32Builder).Append(arrow.Time32(9*3600 + 15*60))
+			b.ItemBuilder().(*array.Int64Builder).Append(1)
+			return b.NewArray()
+		}},
+		{"map_time64_key", func() arrow.Array {
+			b := array.NewMapBuilder(pool, arrow.FixedWidthTypes.Time64us, arrow.PrimitiveTypes.Int64, false)
+			b.Append(true)
+			kb := b.KeyBuilder().(*array.Time64Builder)
+			ib := b.ItemBuilder().(*array.Int64Builder)
+			kb.Append(arrow.Time64((9*3600 + 15*60) * 1_000_000))
+			ib.Append(1)
+			kb.Append(arrow.Time64((9*3600+15*60+30)*1_000_000 + 123_456))
+			ib.Append(2)
+			return b.NewArray()
+		}},
 		{"nested_float32", func() arrow.Array {
 			dt := arrow.StructOf(arrow.Field{Name: "f", Type: arrow.PrimitiveTypes.Float32})
 			b := array.NewStructBuilder(pool, dt)
@@ -167,6 +188,23 @@ func TestArrowbasedKernelRenderParity(t *testing.T) {
 			b.Append(true)
 			ts := time.Date(2026, time.July, 9, 12, 34, 56, 0, time.UTC)
 			b.FieldBuilder(0).(*array.TimestampBuilder).Append(arrow.Timestamp(ts.UnixMicro()))
+			return b.NewArray()
+		}},
+		// Nested SQL TIME leaf: both backends must emit the zoneless time-of-day
+		// string ("09:15:30"), NOT a quoted time.Time .String() that would leak
+		// the 1970-01-01 epoch anchor date. time32 is seconds-unit here.
+		{"nested_time32", func() arrow.Array {
+			dt := arrow.StructOf(arrow.Field{Name: "t", Type: arrow.FixedWidthTypes.Time32s})
+			b := array.NewStructBuilder(pool, dt)
+			b.Append(true)
+			b.FieldBuilder(0).(*array.Time32Builder).Append(arrow.Time32(9*3600 + 15*60 + 30))
+			return b.NewArray()
+		}},
+		{"nested_time64", func() arrow.Array {
+			dt := arrow.StructOf(arrow.Field{Name: "t", Type: arrow.FixedWidthTypes.Time64us})
+			b := array.NewStructBuilder(pool, dt)
+			b.Append(true)
+			b.FieldBuilder(0).(*array.Time64Builder).Append(arrow.Time64((9*3600+15*60+30)*1_000_000 + 123_456))
 			return b.NewArray()
 		}},
 		// VARIANT and GEOMETRY arrive over Arrow as plain STRING columns (verified
@@ -383,6 +421,16 @@ func TestArrowbasedKernelTopLevelScalarParity(t *testing.T) {
 		{"date32", func() arrow.Array {
 			b := array.NewDate32Builder(pool)
 			b.Append(arrow.Date32FromTime(time.Date(2026, 7, 9, 0, 0, 0, 0, time.UTC)))
+			return b.NewArray()
+		}},
+		{"time32_millis", func() arrow.Array {
+			b := array.NewTime32Builder(pool, &arrow.Time32Type{Unit: arrow.Millisecond})
+			b.Append(arrow.Time32((13*3600+1*60+1)*1000 + 500)) // 13:01:01.500
+			return b.NewArray()
+		}},
+		{"time64_micros", func() arrow.Array {
+			b := array.NewTime64Builder(pool, &arrow.Time64Type{Unit: arrow.Microsecond})
+			b.Append(arrow.Time64((13*3600 + 1*60 + 1) * 1_000_000)) // 13:01:01
 			return b.NewArray()
 		}},
 	}

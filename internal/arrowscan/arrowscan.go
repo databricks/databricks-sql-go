@@ -214,6 +214,17 @@ func scanCell(col arrow.Array, row int, loc *time.Location, keys *StructKeyCache
 		// round-trips. The Thrift default path never hits this — it receives TIMESTAMP
 		// as a preformatted server string — so this divergence is kernel-only.
 		return inLocation(timestampToTime(int64(c.Value(row)), dt.Unit), loc), nil
+	case *array.Time32:
+		// SQL TIME (time-of-day, no calendar date, no timezone). Match the Thrift
+		// path's timeValueContainer: render as a wall-clock time.Time anchored on
+		// the Unix epoch in UTC and do NOT apply loc — a zoneless TIME must not be
+		// shifted by cfg.Location (that would move the hour and could roll the
+		// anchor date off the epoch).
+		dt := col.DataType().(*arrow.Time32Type)
+		return timeOfDayToTime(int64(c.Value(row)), dt.Unit), nil
+	case *array.Time64:
+		dt := col.DataType().(*arrow.Time64Type)
+		return timeOfDayToTime(int64(c.Value(row)), dt.Unit), nil
 	case *array.Decimal128:
 		dt := col.DataType().(*arrow.Decimal128Type)
 		if options.DecimalAsFloat {
@@ -380,6 +391,36 @@ func timestampToTime(v int64, unit arrow.TimeUnit) time.Time {
 	}
 }
 
+// timeOfDayToTime renders an arrow time32/time64 value (units since midnight) as
+// a wall-clock time.Time anchored on the Unix epoch date in UTC, matching the
+// Thrift path's timeValueContainer. The value is zoneless, so it is intentionally
+// left in UTC (no loc applied). The multiply cannot overflow: a valid TIME is
+// bounded by 24h, so even in nanoseconds units*nsPerUnit stays well within int64.
+func timeOfDayToTime(unitsSinceMidnight int64, unit arrow.TimeUnit) time.Time {
+	var nsPerUnit int64
+	switch unit {
+	case arrow.Second:
+		nsPerUnit = int64(time.Second)
+	case arrow.Millisecond:
+		nsPerUnit = int64(time.Millisecond)
+	case arrow.Microsecond:
+		nsPerUnit = int64(time.Microsecond)
+	default: // arrow.Nanosecond
+		nsPerUnit = 1
+	}
+	return time.Date(1970, time.January, 1, 0, 0, 0, 0, time.UTC).
+		Add(time.Duration(unitsSinceMidnight * nsPerUnit))
+}
+
+// formatTimeOfDay renders an arrow time32/time64 value as the zoneless
+// time-of-day string the Thrift path emits for a nested TIME
+// (timeValueContainer.ValueString: "15:04:05.999999999"). Top-level TIME returns
+// a time.Time (see the scanCell Time32/Time64 arms); nested TIME must instead be
+// a bare string so the JSON leaf does not leak the epoch anchor date.
+func formatTimeOfDay(unitsSinceMidnight int64, unit arrow.TimeUnit) string {
+	return timeOfDayToTime(unitsSinceMidnight, unit).Format("15:04:05.999999999")
+}
+
 // inLocation renders t in loc, matching the Thrift path's .In(location); a nil
 // loc leaves the value in UTC (arrow's ToTime default).
 func inLocation(t time.Time, loc *time.Location) time.Time {
@@ -444,6 +485,14 @@ func writeJSON(b *strings.Builder, col arrow.Array, row int, loc *time.Location,
 		// "3.140000104904175". The Thrift nested path marshals the native float32,
 		// so widening here would break byte-parity for ARRAY/MAP/STRUCT<…FLOAT…>.
 		return writeScalarJSON(b, c.Value(row))
+	case *array.Time32:
+		// Nested SQL TIME: emit the zoneless time-of-day string, matching the
+		// Thrift path's timeValueContainer.ValueString (marshalScalar json.Marshals
+		// it). Falling through to writeScalarJSON would quote t.String() and leak
+		// the 1970-01-01 epoch anchor date, diverging from Thrift.
+		return writeScalarJSON(b, formatTimeOfDay(int64(c.Value(row)), col.DataType().(*arrow.Time32Type).Unit))
+	case *array.Time64:
+		return writeScalarJSON(b, formatTimeOfDay(int64(c.Value(row)), col.DataType().(*arrow.Time64Type).Unit))
 	default:
 		v, err := scalarForJSON(col, row, loc)
 		if err != nil {
@@ -575,6 +624,16 @@ func writeScalarJSON(b *strings.Builder, v any) error {
 func scalarForJSON(col arrow.Array, row int, loc *time.Location) (any, error) {
 	if col.IsNull(row) {
 		return nil, nil
+	}
+	// A TIME map key must render as the zoneless time-of-day string, same as a
+	// nested TIME value in writeJSON (and the Thrift path's {"09:15:00":…} key).
+	// ScanCell returns a 1970-01-01-anchored time.Time for TIME, which
+	// writeJSONKey would quote via .String() and leak the epoch date.
+	switch c := col.(type) {
+	case *array.Time32:
+		return formatTimeOfDay(int64(c.Value(row)), c.DataType().(*arrow.Time32Type).Unit), nil
+	case *array.Time64:
+		return formatTimeOfDay(int64(c.Value(row)), c.DataType().(*arrow.Time64Type).Unit), nil
 	}
 	return ScanCell(col, row, loc)
 }

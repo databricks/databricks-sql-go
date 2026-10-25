@@ -79,6 +79,10 @@ func ColumnTypeInfoFor(dt arrow.DataType) ColumnTypeInfo {
 		return ColumnTypeInfo{DatabaseTypeName: "DATE", ScanType: scanTypeDateTime}
 	case arrow.TIMESTAMP:
 		return ColumnTypeInfo{DatabaseTypeName: "TIMESTAMP", ScanType: scanTypeDateTime}
+	case arrow.TIME32, arrow.TIME64:
+		// SQL TIME: ScanCellCached returns a time.Time (time-of-day on the Unix
+		// epoch date, UTC), so report TIME/time.Time to keep metadata in lockstep.
+		return ColumnTypeInfo{DatabaseTypeName: "TIME", ScanType: scanTypeDateTime}
 	case arrow.DECIMAL128:
 		// Match Thrift's sql.RawBytes scan type even though the kernel renders the
 		// value as an exact string — both convert cleanly to a caller's *string/*[]byte.

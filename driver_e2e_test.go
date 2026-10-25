@@ -709,3 +709,42 @@ func TestE2ECloudFetchExactRowCount(t *testing.T) {
 
 	require.Equal(t, int64(wantRows), rowCount, "CloudFetch must surface exactly the requested rows, with no Arrow padding")
 }
+
+// TestE2ETimeTypeScan is the reproducer for databricks/databricks-sql-go#505:
+// a SQL TIME column arrives over the Thrift Arrow path as a time64[ns] array,
+// which the arrow row scanner had no arm for, so the whole result failed with
+// "arrow row scanner unhandled type time64[ns]" before any row was returned.
+// A TIME must scan as a wall-clock time-of-day (no date, no location) carrying
+// the correct hour/minute/second/fractional component.
+func TestE2ETimeTypeScan(t *testing.T) {
+	host, httpPath, token := pecoTestingCreds(t)
+
+	connector, err := NewConnector(
+		WithServerHostname(host),
+		WithPort(443),
+		WithHTTPPath(httpPath),
+		WithAccessToken(token),
+	)
+	require.NoError(t, err)
+
+	db := sql.OpenDB(connector)
+	defer db.Close() //nolint:errcheck
+
+	ctx := context.Background()
+
+	rows, err := db.QueryContext(ctx, "SELECT TIME '09:15:00.123456'")
+	require.NoError(t, err)
+	defer rows.Close() //nolint:errcheck
+
+	require.True(t, rows.Next(), "expected one row")
+
+	var dest time.Time
+	require.NoError(t, rows.Scan(&dest), "TIME column must scan without the unhandled-type error")
+
+	assert.Equal(t, 9, dest.Hour())
+	assert.Equal(t, 15, dest.Minute())
+	assert.Equal(t, 0, dest.Second())
+	assert.Equal(t, 123456000, dest.Nanosecond())
+
+	require.NoError(t, rows.Err())
+}
