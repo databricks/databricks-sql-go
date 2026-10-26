@@ -33,6 +33,10 @@ type rows struct {
 	// The RowScanner is responsible for handling the different
 	// formats in which the query results can be returned
 	rowscanner.RowScanner
+	// NOTE: embedding promotes ResultPageIterator.Err() onto *rows. That
+	// method reports only the page iterator's last fetch error; it is NOT a
+	// rows-level error accessor. Use iterationErr for the first error seen
+	// during row iteration.
 	rowscanner.ResultPageIterator
 
 	// Handle for the associated database operation.
