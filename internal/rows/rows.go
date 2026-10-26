@@ -33,10 +33,8 @@ type rows struct {
 	// The RowScanner is responsible for handling the different
 	// formats in which the query results can be returned
 	rowscanner.RowScanner
-	// NOTE: embedding promotes ResultPageIterator.Err() onto *rows. That
-	// method reports only the page iterator's last fetch error; it is NOT a
-	// rows-level error accessor. Use iterationErr for the first error seen
-	// during row iteration.
+	// NOTE: ResultPageIterator.Err() is shadowed by (*rows).Err below so the
+	// page iterator's last-fetch error is not promoted onto *rows.
 	rowscanner.ResultPageIterator
 
 	// Handle for the associated database operation.
@@ -89,6 +87,17 @@ type rows struct {
 	chunkCount         int
 	bytesDownloaded    int64
 	iterationErr       error // first error from Next()/fetchResultPage, passed to closeCallback
+}
+
+// Err returns the first error seen during row iteration (from Next() or a
+// result page fetch), or nil. It deliberately shadows the embedded
+// ResultPageIterator.Err(), which reports only the page iterator's last fetch
+// error and would be misleading as a rows-level accessor.
+func (r *rows) Err() error {
+	if r == nil {
+		return nil
+	}
+	return r.iterationErr
 }
 
 var _ driver.Rows = (*rows)(nil)

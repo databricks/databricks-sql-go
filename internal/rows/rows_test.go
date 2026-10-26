@@ -1564,6 +1564,22 @@ func TestFetchResultPage_PropagatesGetNextPageError(t *testing.T) {
 	assert.ErrorContains(t, actualErr, errorMsg)
 }
 
+// (*rows).Err must shadow the embedded ResultPageIterator.Err() and report the
+// rows-level iteration error.
+func TestRowsErr_ShadowsPageIteratorErr(t *testing.T) {
+	var nilRows *rows
+	assert.NoError(t, nilRows.Err())
+
+	sentinel := errors.New("iteration failed")
+	r := &rows{iterationErr: sentinel}
+	errer, ok := interface{}(r).(interface{ Err() error })
+	assert.True(t, ok)
+	assert.Equal(t, sentinel, errer.Err())
+
+	r = &rows{}
+	assert.NoError(t, r.Err())
+}
+
 func TestNewRows_DetachesResultRPCContextFromQueryContextCancellation(t *testing.T) {
 	t.Parallel()
 
