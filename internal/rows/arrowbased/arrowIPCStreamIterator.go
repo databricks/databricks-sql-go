@@ -32,12 +32,10 @@ type arrowIPCStreamIterator struct {
 	arrowSchemaBytes   []byte
 	// err holds a page-fetch error detected while advancing the result page
 	// iterator. It must be surfaced through Next() rather than being masked as
-	// a normal end-of-results (io.EOF). See issue #507.
+	// a normal end-of-results (io.EOF). See issue #507. Once reported (or on
+	// Close) the iterator is finished, so HasNext never re-captures it from the
+	// result page iterator.
 	err error
-	// errReported is set once the page-fetch error has been surfaced through
-	// Next() so that HasNext does not re-capture it from the result page
-	// iterator (whose Err() keeps returning the stored error).
-	errReported bool
 }
 
 var _ rows.ArrowIPCStreamIterator = (*arrowIPCStreamIterator)(nil)
@@ -81,7 +79,6 @@ func (ri *arrowIPCStreamIterator) takePendingErr() error {
 	}
 	err := ri.err
 	ri.err = nil
-	ri.errReported = true
 	ri.Close()
 	return err
 }
@@ -108,11 +105,9 @@ func (ri *arrowIPCStreamIterator) HasNext() bool {
 
 	if !ri.resultPageIterator.HasNext() {
 		// Distinguish a failed page fetch from a fully consumed result set.
-		if !ri.errReported {
-			if err := ri.resultPageIterator.Err(); err != nil {
-				ri.err = err
-				return true
-			}
+		if err := ri.resultPageIterator.Err(); err != nil {
+			ri.err = err
+			return true
 		}
 		return false
 	}
@@ -125,7 +120,6 @@ func (ri *arrowIPCStreamIterator) HasNext() bool {
 // Next()==io.EOF.
 func (ri *arrowIPCStreamIterator) Close() {
 	ri.err = nil
-	ri.errReported = true
 	if ri.ipcStreamIterator != nil {
 		ri.ipcStreamIterator.Close()
 		ri.ipcStreamIterator = nil

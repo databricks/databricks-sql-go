@@ -40,12 +40,10 @@ type arrowRecordIterator struct {
 	arrowSchema        *arrow.Schema
 	// err holds a page-fetch error detected while advancing the result page
 	// iterator. It must be surfaced through Next() rather than being masked as
-	// a normal end-of-results (io.EOF). See issue #507.
+	// a normal end-of-results (io.EOF). See issue #507. Once captured the
+	// iterator is finished, so checkFinished never re-captures it from the
+	// result page iterator.
 	err error
-	// errReported is set once the page-fetch error has been surfaced through
-	// Next() so that checkFinished does not re-capture it from the result page
-	// iterator (whose Err() keeps returning the stored error).
-	errReported bool
 }
 
 var _ rows.ArrowBatchIterator = (*arrowRecordIterator)(nil)
@@ -86,7 +84,6 @@ func (ri *arrowRecordIterator) takePendingErr() error {
 	}
 	err := ri.err
 	ri.err = nil
-	ri.errReported = true
 	ri.Close()
 	return err
 }
@@ -104,7 +101,6 @@ func (ri *arrowRecordIterator) HasNext() bool {
 // reports HasNext()==false and Next()==io.EOF.
 func (ri *arrowRecordIterator) Close() {
 	ri.err = nil
-	ri.errReported = true
 	ri.release()
 }
 
@@ -145,16 +141,14 @@ func (ri *arrowRecordIterator) checkFinished() {
 	noMoreData := noLocalData &&
 		(ri.resultPageIterator == nil || !ri.resultPageIterator.HasNext())
 
-	finished := ri.isFinished || noMoreData
-
 	// If the result page iterator reported no more pages because a page fetch
 	// failed (rather than because the result set was fully consumed), hold on
 	// to that error so Next() can surface it instead of io.EOF. See #507.
-	if noMoreData && ri.resultPageIterator != nil && ri.err == nil && !ri.errReported {
+	if noMoreData && ri.resultPageIterator != nil && ri.err == nil {
 		ri.err = ri.resultPageIterator.Err()
 	}
 
-	if finished {
+	if noMoreData {
 		// Reached end of result set so release resources, keeping any
 		// pending page-fetch error for Next() to report.
 		ri.release()
