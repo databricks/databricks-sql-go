@@ -3,27 +3,85 @@
 package kernel
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
 	"testing"
 
 	"github.com/apache/arrow/go/v12/arrow"
-	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
+	"github.com/apache/arrow/go/v12/arrow/array"
+	"github.com/apache/arrow/go/v12/arrow/ipc"
+	"github.com/apache/arrow/go/v12/arrow/memory"
 	dbsqlrows "github.com/databricks/databricks-sql-go/internal/rows"
 	dbrows "github.com/databricks/databricks-sql-go/rows"
 )
 
-// TestGetArrowIPCStreamsRejected pins the discoverable sentinel so callers can
-// branch on it: the kernel C ABI exports Arrow C Data, not IPC bytes.
-func TestGetArrowIPCStreamsRejected(t *testing.T) {
-	r := &kernelRows{}
-	it, err := r.GetArrowIPCStreams(context.Background())
-	if it != nil {
-		t.Errorf("GetArrowIPCStreams = %v iterator, want nil", it)
+func TestGetArrowIPCStreamsRequiresSchema(t *testing.T) {
+	it, err := (&kernelRows{}).GetArrowIPCStreams(context.Background())
+	if it != nil || err == nil {
+		t.Errorf("GetArrowIPCStreams without schema = (%v, %v), want (nil, error)", it, err)
 	}
-	if !errors.Is(err, dbsqlerr.ErrNotSupportedByKernel) {
-		t.Errorf("GetArrowIPCStreams err = %v, want wrapping ErrNotSupportedByKernel", err)
+}
+
+func TestKernelIPCStreamIterator(t *testing.T) {
+	schema := arrow.NewSchema([]arrow.Field{{Name: "value", Type: arrow.PrimitiveTypes.Int64}}, nil)
+	builder := array.NewInt64Builder(memory.DefaultAllocator)
+	builder.AppendValues([]int64{1, 2}, nil)
+	values := builder.NewArray()
+	builder.Release()
+	record := array.NewRecord(schema, []arrow.Array{values}, 2)
+	values.Release()
+
+	rows := &kernelRows{schema: schema, eof: true}
+	batches := &kernelBatchIterator{r: rows, pending: record}
+	schemaBytes, err := arrowSchemaIPCBytes(schema)
+	if err != nil {
+		t.Fatalf("arrowSchemaIPCBytes: %v", err)
+	}
+	it := &kernelIPCStreamIterator{batches: batches, schemaBytes: schemaBytes}
+
+	if !it.HasNext() {
+		t.Fatal("HasNext before Next = false, want true")
+	}
+	stream, err := it.Next()
+	if err != nil {
+		t.Fatalf("Next: %v", err)
+	}
+	reader, err := ipc.NewReader(stream)
+	if err != nil {
+		t.Fatalf("ipc.NewReader: %v", err)
+	}
+	defer reader.Release()
+	if !reader.Next() {
+		t.Fatalf("IPC reader did not yield a record: %v", reader.Err())
+	}
+	got := reader.Record()
+	if got.NumRows() != 2 || got.NumCols() != 1 {
+		t.Errorf("decoded record shape = %dx%d, want 2x1", got.NumRows(), got.NumCols())
+	}
+	gotValues := got.Column(0).(*array.Int64)
+	if gotValues.Value(0) != 1 || gotValues.Value(1) != 2 {
+		t.Errorf("decoded values = [%d, %d], want [1, 2]", gotValues.Value(0), gotValues.Value(1))
+	}
+	if it.HasNext() {
+		t.Error("HasNext after the only batch = true, want false")
+	}
+	if next, err := it.Next(); next != nil || err != io.EOF {
+		t.Errorf("Next after drain = (%v, %v), want (nil, io.EOF)", next, err)
+	}
+
+	returnedSchema, err := it.SchemaBytes()
+	if err != nil {
+		t.Fatalf("SchemaBytes: %v", err)
+	}
+	if !bytes.Equal(returnedSchema, schemaBytes) {
+		t.Error("SchemaBytes did not return the encoded result schema")
+	}
+	returnedSchema[0] ^= 0xff
+	secondSchema, _ := it.SchemaBytes()
+	if bytes.Equal(returnedSchema, secondSchema) {
+		t.Error("SchemaBytes returned mutable internal storage")
 	}
 }
 

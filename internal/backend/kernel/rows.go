@@ -13,6 +13,7 @@ struct ArrowArray;
 import "C"
 
 import (
+	"bytes"
 	"context"
 	"database/sql/driver"
 	"fmt"
@@ -23,7 +24,7 @@ import (
 
 	"github.com/apache/arrow/go/v12/arrow"
 	"github.com/apache/arrow/go/v12/arrow/cdata"
-	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
+	"github.com/apache/arrow/go/v12/arrow/ipc"
 	"github.com/databricks/databricks-sql-go/internal/arrowscan"
 	context2 "github.com/databricks/databricks-sql-go/internal/compat/context"
 	dbsqlrows "github.com/databricks/databricks-sql-go/internal/rows"
@@ -40,8 +41,7 @@ var (
 	_ driver.RowsColumnTypeDatabaseTypeName = (*kernelRows)(nil)
 	_ driver.RowsColumnTypeNullable         = (*kernelRows)(nil)
 	_ driver.RowsColumnTypeLength           = (*kernelRows)(nil)
-	// Public batch API, matching the Thrift path (rows.rows). GetArrowBatches is
-	// real; GetArrowIPCStreams rejects (kernel C ABI exports C Data, not IPC bytes).
+	// Public batch and IPC APIs, matching the Thrift path (rows.rows).
 	_ dbrows.Rows = (*kernelRows)(nil)
 )
 
@@ -312,12 +312,34 @@ func (r *kernelRows) GetArrowBatches(context.Context) (dbrows.ArrowBatchIterator
 	return &kernelBatchIterator{r: r}, nil
 }
 
-// GetArrowIPCStreams is rejected on the kernel path: the C ABI exports Arrow via
-// the C Data Interface (next_batch), not IPC bytes. Use GetArrowBatches, or the
-// Thrift backend for IPC streams.
+// GetArrowIPCStreams serializes the kernel's post-processed batches to IPC. This
+// provides a version-neutral boundary for consumers such as ADBC that use a
+// different Arrow Go major version.
 func (r *kernelRows) GetArrowIPCStreams(context.Context) (dbrows.ArrowIPCStreamIterator, error) {
-	return nil, fmt.Errorf("databricks: GetArrowIPCStreams is %w (kernel exports Arrow C Data, not IPC bytes); use GetArrowBatches",
-		dbsqlerr.ErrNotSupportedByKernel)
+	batches := &kernelBatchIterator{r: r}
+	schemaBytes, err := arrowSchemaIPCBytes(r.schema)
+	if err != nil {
+		return nil, err
+	}
+	return &kernelIPCStreamIterator{batches: batches, schemaBytes: schemaBytes}, nil
+}
+
+// arrowSchemaIPCBytes matches the Thrift path's SchemaBytes contract: an IPC
+// stream containing the schema message without the end-of-stream marker.
+func arrowSchemaIPCBytes(schema *arrow.Schema) ([]byte, error) {
+	if schema == nil {
+		return nil, fmt.Errorf("kernel: no schema available")
+	}
+	var output bytes.Buffer
+	writer := ipc.NewWriter(&output, ipc.WithSchema(schema))
+	if err := writer.Close(); err != nil {
+		return nil, fmt.Errorf("kernel: encode IPC schema: %w", err)
+	}
+	encoded := output.Bytes()
+	if len(encoded) < 8 {
+		return nil, fmt.Errorf("kernel: encoded IPC schema is truncated")
+	}
+	return append([]byte(nil), encoded[:len(encoded)-8]...), nil
 }
 
 // kernelBatchIterator adapts the kernelRows pull loop to the public
@@ -401,4 +423,44 @@ func (it *kernelBatchIterator) Schema() (*arrow.Schema, error) {
 		return nil, fmt.Errorf("kernel: no schema available")
 	}
 	return it.r.schema, nil
+}
+
+// kernelIPCStreamIterator adapts processed kernel batches to the existing IPC
+// iterator API. Each returned reader owns an independent, complete IPC stream.
+type kernelIPCStreamIterator struct {
+	batches     *kernelBatchIterator
+	schemaBytes []byte
+}
+
+var _ dbrows.ArrowIPCStreamIterator = (*kernelIPCStreamIterator)(nil)
+
+func (it *kernelIPCStreamIterator) Next() (io.Reader, error) {
+	record, err := it.batches.Next()
+	if err != nil {
+		return nil, err
+	}
+	defer record.Release()
+
+	var output bytes.Buffer
+	writer := ipc.NewWriter(&output, ipc.WithSchema(record.Schema()))
+	if err := writer.Write(record); err != nil {
+		_ = writer.Close()
+		return nil, fmt.Errorf("kernel: encode IPC batch: %w", err)
+	}
+	if err := writer.Close(); err != nil {
+		return nil, fmt.Errorf("kernel: finish IPC batch: %w", err)
+	}
+	return bytes.NewReader(output.Bytes()), nil
+}
+
+func (it *kernelIPCStreamIterator) HasNext() bool {
+	return it.batches.HasNext()
+}
+
+func (it *kernelIPCStreamIterator) Close() {
+	it.batches.Close()
+}
+
+func (it *kernelIPCStreamIterator) SchemaBytes() ([]byte, error) {
+	return append([]byte(nil), it.schemaBytes...), nil
 }
