@@ -145,10 +145,16 @@ func (ri *arrowIPCStreamIterator) fetchNextData() error {
 	}
 
 	if ri.resultPageIterator == nil || !ri.resultPageIterator.HasNext() {
-		// A page-fetch error (resultPageIterator.Err()) cannot reach here: Next()
-		// always calls HasNext() first, which captures it into ri.err and
-		// Next() surfaces it via takePendingErr() before calling fetchNextData.
+		// Normally a page-fetch error is captured by HasNext() and surfaced by
+		// Next() via takePendingErr() before we get here. Check it anyway so a
+		// failed fetch can never be masked as io.EOF (#507) if call ordering
+		// changes.
 		ri.isFinished = true
+		if ri.resultPageIterator != nil {
+			if err := ri.resultPageIterator.Err(); err != nil {
+				return err
+			}
+		}
 		return io.EOF
 	}
 
