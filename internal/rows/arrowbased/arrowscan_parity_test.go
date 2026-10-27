@@ -402,18 +402,19 @@ func TestArrowbasedKernelTopLevelScalarParity(t *testing.T) {
 	}
 }
 
-// TestArrowbasedKernelTimestampTZParity pins the TIMESTAMP vs TIMESTAMP_NTZ
-// rendering contract: over Arrow, a TIMESTAMP arrives with TimeZone "UTC" and a
-// TIMESTAMP_NTZ with an empty TimeZone (kernel json.rs:171 — "TIMESTAMP carries a
-// tz on the Arrow side; TIMESTAMP_NTZ does not"). Both backends deliberately IGNORE
-// that tz field: each renders via ToTime + .In(loc), so the LTZ-vs-NTZ difference is
-// carried entirely by the instant value the server sends, NOT by the client
-// inspecting the tz. Verified live on both backends (NY + Kolkata, incl. a DST-gap
-// literal): kernel == Thrift byte-for-byte for both types.
+// TestArrowbasedKernelTimestampTZParity pins the CROSS-BACKEND parity of the
+// TIMESTAMP vs TIMESTAMP_NTZ rendering contract: over Arrow, a TIMESTAMP arrives
+// with TimeZone "UTC" and a TIMESTAMP_NTZ with an empty TimeZone (kernel
+// json.rs:171 — "TIMESTAMP carries a tz on the Arrow side; TIMESTAMP_NTZ does
+// not"). Per the TIMESTAMP_NTZ spec and issue #506, a zone-less column is a wall
+// clock and must NOT be shifted into the session location, while a zoned
+// TIMESTAMP is an instant rendered via ToTime + .In(loc). Both backends now read
+// the tz field and agree on that split, so the kernel and Thrift paths stay
+// byte-for-byte identical for both types.
 //
-// This test locks that in so a future "semantically-correct" change that skips
-// .In(loc) for TimeZone=="" (which would look right in isolation) fails CI — it
-// would make the kernel diverge from the Thrift path, which shifts NTZ too.
+// This test locks the two backends together: a change that alters the NTZ /
+// zoned handling on only one of them (making the kernel diverge from the Thrift
+// path, or vice versa) fails CI.
 func TestArrowbasedKernelTimestampTZParity(t *testing.T) {
 	pool := memory.NewGoAllocator()
 	loc, err := time.LoadLocation("America/New_York")

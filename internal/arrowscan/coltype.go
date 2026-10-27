@@ -78,7 +78,14 @@ func ColumnTypeInfoFor(dt arrow.DataType) ColumnTypeInfo {
 	case arrow.DATE32, arrow.DATE64:
 		return ColumnTypeInfo{DatabaseTypeName: "DATE", ScanType: scanTypeDateTime}
 	case arrow.TIMESTAMP:
-		return ColumnTypeInfo{DatabaseTypeName: "TIMESTAMP", ScanType: scanTypeDateTime}
+		// TIMESTAMP and TIMESTAMP_NTZ both arrive as Arrow timestamp[us]. NTZ is
+		// decided by IsTimestampNTZField: the field's logical-type metadata first
+		// (which may mark a UTC-zoned field as NTZ, as the kernel does), then an
+		// empty TimeZone as the fallback. The database/sql type name must reflect
+		// that distinction so a wall clock is not mistaken for an instant
+		// (databricks/databricks-sql-go#506). Only the DataType is available here,
+		// so with no field metadata this resolves via the empty-TimeZone fallback.
+		return timestampColumnTypeInfo(arrow.Field{Type: dt})
 	case arrow.DECIMAL128:
 		// Match Thrift's sql.RawBytes scan type even though the kernel renders the
 		// value as an exact string — both convert cleanly to a caller's *string/*[]byte.
@@ -140,11 +147,12 @@ func IsBinaryGeospatialField(field arrow.Field) bool {
 	return geospatial && field.Type.ID() == arrow.STRUCT
 }
 
-// ColumnTypeInfoForField reports logical GEOMETRY / GEOGRAPHY metadata for the
-// native struct representation. String mode follows the existing driver
-// contract and reports STRING, matching its UTF-8 physical representation.
-// Other fields retain the Arrow-only mapping.
+// ColumnTypeInfoForField preserves logical timestamp and geospatial types that
+// the kernel's physical Arrow representation alone cannot distinguish.
 func ColumnTypeInfoForField(field arrow.Field) ColumnTypeInfo {
+	if field.Type != nil && field.Type.ID() == arrow.TIMESTAMP {
+		return timestampColumnTypeInfo(field)
+	}
 	name, geospatial := LogicalGeospatialType(field)
 	if !geospatial {
 		return ColumnTypeInfoFor(field.Type)
@@ -158,6 +166,53 @@ func ColumnTypeInfoForField(field arrow.Field) ColumnTypeInfo {
 	info := ColumnTypeInfoFor(field.Type)
 	info.DatabaseTypeName = name
 	return info
+}
+
+// sparkSQLNameMetadataKey is the Arrow field-metadata key the Thrift server sets
+// on its serialized result schema with the Spark SQL type name (e.g.
+// "TIMESTAMP_NTZ"). The kernel copies it too.
+const sparkSQLNameMetadataKey = "Spark:DataType:SqlName"
+
+// IsTimestampNTZField reports whether field is an Arrow timestamp carrying a
+// TIMESTAMP_NTZ wall clock. Every backend uses this one check, for both the
+// reported type name and value handling, so the two always agree.
+//
+// Explicit logical-type metadata wins: databricks.type_name (kernel) first, then
+// Spark:DataType:SqlName (Thrift server schema; the kernel copies it). Metadata
+// is authoritative because the kernel may give an NTZ field a physical TimeZone
+// such as "UTC". Without either key, a zone-less timestamp (empty TimeZone) is
+// treated as NTZ and a zoned one as TIMESTAMP.
+func IsTimestampNTZField(field arrow.Field) bool {
+	ts, ok := field.Type.(*arrow.TimestampType)
+	if !ok {
+		return false
+	}
+	for _, key := range [...]string{databricksTypeNameMetadataKey, sparkSQLNameMetadataKey} {
+		if name, ok := field.Metadata.GetValue(key); ok && strings.TrimSpace(name) != "" {
+			return strings.EqualFold(strings.TrimSpace(name), "TIMESTAMP_NTZ")
+		}
+	}
+	return ts.TimeZone == ""
+}
+
+// childLocation returns the location to render a nested child field's values
+// in: a TIMESTAMP_NTZ child (see IsTimestampNTZField) is a wall clock and must
+// not be shifted into the session location, so it renders in UTC (the stored
+// wall clock); every other child inherits loc.
+func childLocation(field arrow.Field, loc *time.Location) *time.Location {
+	if IsTimestampNTZField(field) {
+		return time.UTC
+	}
+	return loc
+}
+
+// timestampColumnTypeInfo reports TIMESTAMP_NTZ or TIMESTAMP for an Arrow
+// timestamp field, using the same IsTimestampNTZField check as value scanning.
+func timestampColumnTypeInfo(field arrow.Field) ColumnTypeInfo {
+	if IsTimestampNTZField(field) {
+		return ColumnTypeInfo{DatabaseTypeName: "TIMESTAMP_NTZ", ScanType: scanTypeDateTime}
+	}
+	return ColumnTypeInfo{DatabaseTypeName: "TIMESTAMP", ScanType: scanTypeDateTime}
 }
 
 // varLen builds a ColumnTypeInfo for a variable-length type, reporting the

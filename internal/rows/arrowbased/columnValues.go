@@ -477,13 +477,24 @@ type timestampValueContainer struct {
 	timeArray     *array.Timestamp
 	location      *time.Location
 	toTimestampFn func(arrow.Timestamp) time.Time
+	// wallClock is true for a TIMESTAMP_NTZ column, as decided by
+	// arrowscan.IsTimestampNTZField (logical-type metadata first, then an empty
+	// Arrow TimeZone; a UTC-zoned field may still be NTZ by metadata): its
+	// value is a wall clock with no zone and must be returned
+	// with the exact fields the server sent, WITHOUT the session .In(location)
+	// shift that is correct only for a zoned TIMESTAMP instant
+	// (databricks/databricks-sql-go#506).
+	wallClock bool
 }
 
 var _ columnValues = (*timestampValueContainer)(nil)
 
 func (tvc *timestampValueContainer) Value(i int) (any, error) {
 	ats := tvc.timeArray.Value(i)
-	val := tvc.toTimestampFn(ats).In(tvc.location)
+	val := tvc.toTimestampFn(ats)
+	if !tvc.wallClock {
+		val = val.In(tvc.location)
+	}
 
 	return val, nil
 }

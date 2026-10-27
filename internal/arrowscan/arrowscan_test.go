@@ -234,9 +234,12 @@ func TestScanCellTimestampLocation(t *testing.T) {
 		t.Skipf("tz database unavailable: %v", err)
 	}
 
-	// 2026-07-09T12:00:00Z as microseconds since epoch.
+	// 2026-07-09T12:00:00Z as microseconds since epoch. A ZONED timestamp
+	// (non-empty TimeZone) is an instant that renders .In(location); a zone-less
+	// TIMESTAMP_NTZ deliberately does NOT shift (issue #506), so the location
+	// path must be exercised with a zoned type.
 	utcTS := time.Date(2026, time.July, 9, 12, 0, 0, 0, time.UTC)
-	b := array.NewTimestampBuilder(pool, &arrow.TimestampType{Unit: arrow.Microsecond})
+	b := array.NewTimestampBuilder(pool, &arrow.TimestampType{Unit: arrow.Microsecond, TimeZone: "UTC"})
 	defer b.Release()
 	b.Append(arrow.Timestamp(utcTS.UnixMicro()))
 	arr := b.NewArray()
