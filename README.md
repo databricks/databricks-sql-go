@@ -362,11 +362,17 @@ The Thrift and kernel backends both honor the standard `HTTP_PROXY` / `HTTPS_PRO
 ## Data types
 
 Apart from the configurable geospatial representation, results render **byte-for-byte
-identically** on both backends. Scalars, DECIMAL (exact string), TIMESTAMP /
-TIMESTAMP_NTZ (shifted into the session time zone), INTERVAL, and nested ARRAY / MAP /
+identically** on both backends. Scalars, DECIMAL (exact string), TIMESTAMP
+(rendered in the session time zone), TIMESTAMP_NTZ (wall-clock fields preserved
+in a `time.Time` with a UTC location), INTERVAL, and nested ARRAY / MAP /
 STRUCT and VARIANT (as JSON) are supported. BINARY is returned as `sql.RawBytes`.
 Both backends return GEOMETRY / GEOGRAPHY as WKT / EWKT by default.
 Set `enableGeoSpatialSupport=true` on the kernel path to opt into EWKB.
+
+On Thrift, TIMESTAMP_NTZ handling requires native timestamp fields in the
+server-supplied Arrow schema. Without that schema, NTZ still reports `TIMESTAMP`
+and uses session-location handling. String timestamps (`UseArrowNativeTimestamp=false`,
+an internal setting) and non-Arrow values also retain legacy session-location parsing.
 
 Metadata is reached through SQL (`SHOW`, `DESCRIBE`, `information_schema`) on both
 backends — the driver exposes no `GetCatalogs`/`GetSchemas`/`GetTables`/`GetColumns` API

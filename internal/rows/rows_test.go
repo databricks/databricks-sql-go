@@ -1,6 +1,7 @@
 package rows
 
 import (
+	"bytes"
 	"context"
 	"database/sql/driver"
 	"encoding/json"
@@ -13,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/apache/arrow/go/v12/arrow"
+	"github.com/apache/arrow/go/v12/arrow/ipc"
 	"github.com/databricks/databricks-sql-go/driverctx"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/client"
@@ -21,6 +24,7 @@ import (
 	dbsqlrows "github.com/databricks/databricks-sql-go/rows"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestRowsNextRowInPage(t *testing.T) {
@@ -706,6 +710,152 @@ func TestColumnTypeDatabaseTypeName(t *testing.T) {
 	}
 
 	assert.Equal(t, expectedScanTypes, scanTypes)
+}
+
+func TestColumnTypeDatabaseTypeNameArrowTimestamps(t *testing.T) {
+	metadata := &cli_service.TGetResultSetMetadataResp{}
+	schemaBytes, err := os.ReadFile("testdata/timestamp_ntz_arrow_schema.arrow")
+	require.NoError(t, err)
+	metadata.ArrowSchema = schemaBytes
+	require.NotEmpty(t, metadata.ArrowSchema)
+	reader, err := ipc.NewReader(bytes.NewReader(metadata.ArrowSchema))
+	require.NoError(t, err)
+	defer reader.Release()
+	arrowSchema := reader.Schema()
+
+	schema := &cli_service.TTableSchema{}
+	for i, typeID := range []cli_service.TTypeId{
+		cli_service.TTypeId_TIMESTAMP_TYPE,
+		cli_service.TTypeId_TIMESTAMP_TYPE,
+		cli_service.TTypeId_BIGINT_TYPE,
+	} {
+		schema.Columns = append(schema.Columns, &cli_service.TColumnDesc{
+			ColumnName: arrowSchema.Field(i).Name,
+			TypeDesc: &cli_service.TTypeDesc{Types: []*cli_service.TTypeEntry{{
+				PrimitiveEntry: &cli_service.TPrimitiveTypeEntry{Type: typeID},
+			}}},
+		})
+	}
+	metadata.Schema = schema
+	for _, fetchMetadata := range []bool{false, true} {
+		t.Run(fmt.Sprintf("fetchMetadata=%t", fetchMetadata), func(t *testing.T) {
+			getMetadataCount := 0
+			testClient := &client.TestClient{
+				FnGetResultSetMetadata: func(context.Context, *cli_service.TGetResultSetMetadataReq) (*cli_service.TGetResultSetMetadataResp, error) {
+					getMetadataCount++
+					return metadata, nil
+				},
+			}
+			rowSet := &rows{
+				client: testClient,
+				config: config.WithDefaults(),
+				ctx:    context.Background(),
+			}
+			if !fetchMetadata {
+				rowSet.schema = schema
+				rowSet.resultSetMetadata = metadata
+			}
+			rowSet.ResultPageIterator = rowscanner.NewResultPageIterator(
+				rowSet.ctx, rowscanner.NewDelimiter(0, 0), 1, nil, true, testClient, rowSet.logger())
+
+			checkTypes := func() {
+				t.Helper()
+				for i, want := range []string{"TIMESTAMP", "TIMESTAMP_NTZ", "BIGINT"} {
+					assert.Equal(t, want, rowSet.ColumnTypeDatabaseTypeName(i), "column %d", i)
+				}
+				assert.Empty(t, rowSet.ColumnTypeDatabaseTypeName(-1))
+				assert.Empty(t, rowSet.ColumnTypeDatabaseTypeName(3))
+			}
+			require.Nil(t, rowSet.RowScanner)
+			checkTypes() // Before the first Next, including metadata fetched on demand.
+
+			require.NoError(t, rowSet.makeRowScanner(&cli_service.TFetchResultsResp{
+				Results: &cli_service.TRowSet{ArrowBatches: []*cli_service.TSparkArrowBatch{}},
+			}))
+			checkTypes()
+			require.NoError(t, rowSet.makeRowScanner(&cli_service.TFetchResultsResp{
+				Results: &cli_service.TRowSet{Columns: []*cli_service.TColumn{}},
+			}))
+			checkTypes()
+
+			require.ErrorIs(t, rowSet.Next(make([]driver.Value, 3)), io.EOF)
+			require.Nil(t, rowSet.RowScanner)
+			checkTypes() // EOF releases the scanner, but not the result metadata.
+			assert.Equal(t, map[bool]int{false: 0, true: 1}[fetchMetadata], getMetadataCount)
+		})
+	}
+}
+
+func TestColumnTypeDatabaseTypeNameWithoutNativeArrowSchema(t *testing.T) {
+	var stringSchema bytes.Buffer
+	writer := ipc.NewWriter(&stringSchema, ipc.WithSchema(arrow.NewSchema([]arrow.Field{
+		{Name: "ts", Type: arrow.BinaryTypes.String},
+	}, nil)))
+	require.NoError(t, writer.Close())
+
+	for name, schemaBytes := range map[string][]byte{
+		"missing":          nil,
+		"invalid":          []byte("invalid arrow schema"),
+		"string timestamp": stringSchema.Bytes(),
+	} {
+		t.Run(name, func(t *testing.T) {
+			schema := &cli_service.TTableSchema{Columns: []*cli_service.TColumnDesc{{
+				ColumnName: "ts",
+				TypeDesc: &cli_service.TTypeDesc{Types: []*cli_service.TTypeEntry{{
+					PrimitiveEntry: &cli_service.TPrimitiveTypeEntry{Type: cli_service.TTypeId_TIMESTAMP_TYPE},
+				}}},
+			}}}
+			rowSet := &rows{
+				client: &client.TestClient{}, schema: schema,
+				resultSetMetadata: &cli_service.TGetResultSetMetadataResp{Schema: schema, ArrowSchema: schemaBytes},
+			}
+			assert.Equal(t, "TIMESTAMP", rowSet.ColumnTypeDatabaseTypeName(0))
+		})
+	}
+}
+
+func TestColumnTypeDatabaseTypeNameNonArrowResults(t *testing.T) {
+	schemaBytes, err := os.ReadFile("testdata/timestamp_ntz_arrow_schema.arrow")
+	require.NoError(t, err)
+	schema := &cli_service.TTableSchema{}
+	for _, typeID := range []cli_service.TTypeId{
+		cli_service.TTypeId_TIMESTAMP_TYPE,
+		cli_service.TTypeId_TIMESTAMP_TYPE,
+		cli_service.TTypeId_BIGINT_TYPE,
+	} {
+		schema.Columns = append(schema.Columns, &cli_service.TColumnDesc{
+			TypeDesc: &cli_service.TTypeDesc{Types: []*cli_service.TTypeEntry{{
+				PrimitiveEntry: &cli_service.TPrimitiveTypeEntry{Type: typeID},
+			}}},
+		})
+	}
+	columnFormat := cli_service.TSparkRowSetType_COLUMN_BASED_SET
+	noArrowConfig := config.WithDefaults()
+	noArrowConfig.UseArrowBatches = false
+
+	for name, tc := range map[string]struct {
+		cfg      *config.Config
+		metadata *cli_service.TGetResultSetMetadataResp
+	}{
+		"column based result format": {
+			cfg:      config.WithDefaults(),
+			metadata: &cli_service.TGetResultSetMetadataResp{Schema: schema, ArrowSchema: schemaBytes, ResultFormat: &columnFormat},
+		},
+		"arrow batches disabled": {
+			cfg:      noArrowConfig,
+			metadata: &cli_service.TGetResultSetMetadataResp{Schema: schema, ArrowSchema: schemaBytes},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			rowSet := &rows{
+				client: &client.TestClient{}, schema: schema, config: tc.cfg,
+				resultSetMetadata: tc.metadata,
+			}
+			for i, want := range []string{"TIMESTAMP", "TIMESTAMP", "BIGINT"} {
+				assert.Equal(t, want, rowSet.ColumnTypeDatabaseTypeName(i), "column %d", i)
+			}
+		})
+	}
 }
 
 func TestRowsCloseOptimization(t *testing.T) {

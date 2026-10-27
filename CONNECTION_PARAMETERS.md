@@ -159,10 +159,16 @@ ignored with a warning and still stripped from the SEA wire.
 
 Apart from the geospatial representation selected above, results render **byte-for-byte
 identically** on both backends (scalars,
-DECIMAL as exact string, TIMESTAMP / TIMESTAMP_NTZ shifted into the session time zone,
+DECIMAL as exact string, TIMESTAMP rendered in the session time zone,
+TIMESTAMP_NTZ with wall-clock fields preserved in a `time.Time` with a UTC location,
 INTERVAL, nested ARRAY / MAP / STRUCT and VARIANT as JSON, and BINARY as
 `sql.RawBytes`). The default `enableGeoSpatialSupport=false` on the kernel path
 matches the Thrift path's WKT / EWKT geospatial values.
+
+On Thrift, TIMESTAMP_NTZ handling requires native timestamp fields in the
+server-supplied Arrow schema. Without that schema, NTZ still reports `TIMESTAMP`
+and uses session-location handling. String timestamps (`UseArrowNativeTimestamp=false`,
+an internal setting) and non-Arrow values also retain legacy session-location parsing.
 
 ## Cloud Fetch
 
