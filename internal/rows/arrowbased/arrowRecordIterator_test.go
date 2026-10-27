@@ -193,7 +193,7 @@ func TestArrowRecordIterator(t *testing.T) {
 	})
 }
 
-func TestArrowRecordIteratorSwallowsPageError(t *testing.T) {
+func TestArrowRecordIteratorSurfacesPageErrorOnce(t *testing.T) {
 	logger := dbsqllog.WithContext("connectionId", "correlationId", "")
 
 	executeStatementResp := cli_service.TExecuteStatementResp{}
