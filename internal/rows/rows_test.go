@@ -1714,6 +1714,39 @@ func TestFetchResultPage_PropagatesGetNextPageError(t *testing.T) {
 	assert.ErrorContains(t, actualErr, errorMsg)
 }
 
+// Pins the rows-level contract after a failed page fetch: the fetch error is
+// sticky (every later Next() returns the same error rather than a clean io.EOF),
+// the failed fetch is not retried, and the error is what trackIterationErr
+// records for the close callback / telemetry.
+func TestRowsNext_FetchErrorIsStickyNotEOF(t *testing.T) {
+	errorMsg := "connection reset during FetchResults"
+	calls := 0
+	c := &client.TestClient{
+		FnFetchResults: func(ctx context.Context, req *cli_service.TFetchResultsReq) (*cli_service.TFetchResultsResp, error) {
+			calls++
+			return nil, errors.New(errorMsg)
+		},
+	}
+
+	ctx := driverctx.NewContextWithConnId(context.Background(), "connId")
+	ctx = driverctx.NewContextWithCorrelationId(ctx, "corrId")
+
+	cfg := config.WithDefaults()
+	dr, dbErr := NewRows(ctx, nil, c, cfg, nil, nil)
+	assert.Nil(t, dbErr)
+	r, ok := dr.(*rows)
+	assert.True(t, ok)
+
+	for i := 0; i < 3; i++ {
+		err := r.Next(nil)
+		assert.ErrorContains(t, err, errorMsg, "call %d", i)
+		assert.NotEqual(t, io.EOF, err, "call %d", i)
+	}
+
+	assert.Equal(t, 1, calls, "a failed page fetch must not be retried")
+	assert.ErrorContains(t, r.iterationErr, errorMsg)
+}
+
 func TestNewRows_DetachesResultRPCContextFromQueryContextCancellation(t *testing.T) {
 	t.Parallel()
 
