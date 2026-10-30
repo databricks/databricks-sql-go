@@ -524,6 +524,11 @@ func TestCloudFetchConnOptions(t *testing.T) {
 		coni := build(t, WithCloudFetchMinTimeToExpiry(90*time.Second))
 		assert.Equal(t, 90*time.Second, coni.cfg.MinTimeToExpiry)
 	})
+
+	t.Run("WithCloudFetchMinTimeToExpiry clamps negative values to 0", func(t *testing.T) {
+		coni := build(t, WithCloudFetchMinTimeToExpiry(-90*time.Second))
+		assert.Equal(t, time.Duration(0), coni.cfg.MinTimeToExpiry)
+	})
 }
 
 func TestWithQueryTags(t *testing.T) {

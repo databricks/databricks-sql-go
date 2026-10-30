@@ -539,6 +539,10 @@ func WithTransport(t http.RoundTripper) ConnOption {
 // http.Client.Timeout) without replacing the Thrift transport. When set, it
 // takes precedence over the client derived from WithTransport, regardless of
 // option order. Default is http.DefaultClient (no timeout).
+//
+// Thrift backend only: on the kernel backend (WithUseKernel) CloudFetch runs
+// inside the kernel's own HTTP stack, so this client — including its Timeout —
+// is accepted but has no effect.
 func WithCloudFetchHTTPClient(client *http.Client) ConnOption {
 	return func(c *config.Config) {
 		c.HTTPClient = client
@@ -548,9 +552,17 @@ func WithCloudFetchHTTPClient(client *http.Client) ConnOption {
 // WithCloudFetchMinTimeToExpiry sets the safety margin applied to CloudFetch
 // presigned links: a link whose expiry is less than d away is treated as
 // expired. An expired link is terminal for the result set (the query must be
-// re-run); links are not re-fetched. Default is 0.
+// re-run); links are not re-fetched. Default is 0. Negative values are
+// treated as 0.
+//
+// Thrift backend only: on the kernel backend (WithUseKernel) CloudFetch link
+// handling is internal to the kernel, so this option is accepted but has no
+// effect.
 func WithCloudFetchMinTimeToExpiry(d time.Duration) ConnOption {
 	return func(c *config.Config) {
+		if d < 0 {
+			d = 0
+		}
 		c.MinTimeToExpiry = d
 	}
 }
