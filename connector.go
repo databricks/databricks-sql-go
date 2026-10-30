@@ -535,8 +535,20 @@ func WithTransport(t http.RoundTripper) ConnOption {
 }
 
 // WithCloudFetchHTTPClient sets the *http.Client used to download CloudFetch
-// result files from their presigned URLs. Use it to bound downloads (e.g. via
-// http.Client.Timeout) without replacing the Thrift transport. When set, it
+// result files from their presigned URLs. Use it to bound individual download
+// attempts (e.g. via http.Client.Timeout) without replacing the Thrift
+// transport.
+//
+// http.Client.Timeout is a per-attempt limit, not a hard cap per link: a
+// timeout expiry is treated as a transient error and the download is retried
+// up to retryMax times (see WithRetries) with backoff, so the worst-case time
+// per link is roughly (retryMax+1) × Timeout plus backoff waits. Use the
+// query context to impose an overall deadline. Timeout also covers reading
+// the full response body, so size it for downloading an entire result file,
+// not just receiving headers; a value too small for large files fails every
+// attempt and then the query.
+//
+// When set, it
 // takes precedence over the client derived from WithTransport, regardless of
 // option order. Default is http.DefaultClient (no timeout). A nil client is
 // ignored, so it never discards a client derived from WithTransport.
