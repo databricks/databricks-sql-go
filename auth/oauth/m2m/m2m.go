@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/databricks/databricks-sql-go/auth"
 	"github.com/databricks/databricks-sql-go/auth/oauth"
@@ -56,15 +57,18 @@ func (c *authClient) M2MScopes() []string {
 // using the users credentials in the browser. Compatible with SSO.
 func (c *authClient) Authenticate(r *http.Request) error {
 	c.mx.Lock()
-	defer c.mx.Unlock()
-	if c.tokenSource != nil {
-		token, err := c.tokenSource.Token()
+	if ts := c.tokenSource; ts != nil {
+		// The token source (an oauth2.ReuseTokenSource) is safe for concurrent
+		// use, so don't hold c.mx across a potentially slow token exchange.
+		c.mx.Unlock()
+		token, err := ts.Token()
 		if err != nil {
 			return err
 		}
 		token.SetAuthHeader(r)
 		return nil
 	}
+	defer c.mx.Unlock()
 
 	config, err := GetConfig(context.Background(), c.hostName, c.clientID, c.clientSecret, c.scopes)
 	if err != nil {
@@ -87,8 +91,14 @@ func (c *authClient) Authenticate(r *http.Request) error {
 
 }
 
+// tokenExchangeTimeout bounds each client-credentials token request so a hung
+// token endpoint surfaces as an error instead of blocking every request on the
+// connector (endpoint discovery is similarly capped by oauth.hostConfigTimeout).
+var tokenExchangeTimeout = 30 * time.Second
+
 func GetTokenSource(config clientcredentials.Config) oauth2.TokenSource {
-	tokenSource := config.TokenSource(context.Background())
+	ctx := context.WithValue(context.Background(), oauth2.HTTPClient, &http.Client{Timeout: tokenExchangeTimeout})
+	tokenSource := config.TokenSource(ctx)
 	return tokenSource
 }
 

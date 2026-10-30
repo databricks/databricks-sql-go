@@ -534,6 +534,27 @@ func WithTransport(t http.RoundTripper) ConnOption {
 	}
 }
 
+// WithCloudFetchHTTPClient sets the *http.Client used to download CloudFetch
+// result files from their presigned URLs. Use it to bound downloads (e.g. via
+// http.Client.Timeout) without replacing the Thrift transport. When set, it
+// takes precedence over the client derived from WithTransport, regardless of
+// option order. Default is http.DefaultClient (no timeout).
+func WithCloudFetchHTTPClient(client *http.Client) ConnOption {
+	return func(c *config.Config) {
+		c.HTTPClient = client
+	}
+}
+
+// WithCloudFetchMinTimeToExpiry sets the safety margin applied to CloudFetch
+// presigned links: a link whose expiry is less than d away is treated as
+// expired. An expired link is terminal for the result set (the query must be
+// re-run); links are not re-fetched. Default is 0.
+func WithCloudFetchMinTimeToExpiry(d time.Duration) ConnOption {
+	return func(c *config.Config) {
+		c.MinTimeToExpiry = d
+	}
+}
+
 // WithCloudFetch sets up the use of cloud fetch for query execution. Default is true.
 func WithCloudFetch(useCloudFetch bool) ConnOption {
 	return func(c *config.Config) {

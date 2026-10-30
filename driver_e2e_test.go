@@ -7,10 +7,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -708,6 +710,137 @@ func TestE2ECloudFetchExactRowCount(t *testing.T) {
 	}
 
 	require.Equal(t, int64(wantRows), rowCount, "CloudFetch must surface exactly the requested rows, with no Arrow padding")
+}
+
+// cloudFetchE2EQuery returns a query large enough to force a URL-based
+// (CloudFetch) result, as in TestE2ECloudFetchExactRowCount.
+func cloudFetchE2EQuery(rows int) string {
+	return fmt.Sprintf("SELECT id, repeat('x', 64) AS pad FROM range(%d)", rows)
+}
+
+// drainSQLRows reads every row of query through database/sql and returns the
+// row count and the first iteration error (rows.Err or a Scan error).
+func drainSQLRows(t *testing.T, db *sql.DB, query string) (int64, error) {
+	t.Helper()
+	rows, err := db.QueryContext(context.Background(), query)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close() //nolint:errcheck
+
+	var n int64
+	for rows.Next() {
+		var id int64
+		var pad string
+		if scanErr := rows.Scan(&id, &pad); scanErr != nil {
+			return n, scanErr
+		}
+		n++
+	}
+	return n, rows.Err()
+}
+
+// TestE2ECloudFetchMinTimeToExpiryIsHonored covers issue #475 (part 3):
+// CloudFetchConfig.MinTimeToExpiry had no ConnOption, so a caller could not
+// widen the presigned-link safety margin. With a margin longer than any real
+// presigned URL lifetime, every server-issued link must be treated as expired
+// and iteration must fail with ErrLinkExpired; without the option the same
+// query must drain exactly.
+func TestE2ECloudFetchMinTimeToExpiryIsHonored(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping large CloudFetch drain in -short mode")
+	}
+	host, httpPath, token := pecoTestingCreds(t)
+
+	const wantRows = 2000000
+	query := cloudFetchE2EQuery(wantRows)
+
+	open := func(extra ...ConnOption) *sql.DB {
+		opts := append([]ConnOption{
+			WithServerHostname(host),
+			WithPort(443),
+			WithHTTPPath(httpPath),
+			WithAccessToken(token),
+			WithMaxRows(500000),
+			WithCloudFetch(true),
+		}, extra...)
+		connector, err := NewConnector(opts...)
+		require.NoError(t, err)
+		return sql.OpenDB(connector)
+	}
+
+	t.Run("default margin drains exactly", func(t *testing.T) {
+		db := open()
+		defer db.Close() //nolint:errcheck
+		n, err := drainSQLRows(t, db, query)
+		require.NoError(t, err)
+		require.Equal(t, int64(wantRows), n)
+	})
+
+	t.Run("24h margin treats every link as expired", func(t *testing.T) {
+		db := open(WithCloudFetchMinTimeToExpiry(24 * time.Hour))
+		defer db.Close() //nolint:errcheck
+		_, err := drainSQLRows(t, db, query)
+		require.Error(t, err, "a 24h MinTimeToExpiry must reject every server-issued presigned link")
+		assert.ErrorContains(t, err, dbsqlerr.ErrLinkExpired)
+	})
+}
+
+type countingRoundTripper struct {
+	mu    sync.Mutex
+	hosts []string
+	next  http.RoundTripper
+}
+
+func (c *countingRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	c.mu.Lock()
+	c.hosts = append(c.hosts, req.URL.Hostname())
+	c.mu.Unlock()
+	return c.next.RoundTrip(req)
+}
+
+func (c *countingRoundTripper) seen() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.hosts...)
+}
+
+// TestE2ECloudFetchHTTPClientOption covers issue #475 (part 2): CloudFetch
+// downloads must be able to use a caller-supplied *http.Client (so the caller
+// can set http.Client.Timeout) WITHOUT replacing the Thrift transport, which
+// WithTransport does as a side effect.
+func TestE2ECloudFetchHTTPClientOption(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping large CloudFetch drain in -short mode")
+	}
+	host, httpPath, token := pecoTestingCreds(t)
+
+	const wantRows = 2000000
+	rt := &countingRoundTripper{next: http.DefaultTransport}
+	downloadClient := &http.Client{Timeout: 2 * time.Minute, Transport: rt}
+
+	connector, err := NewConnector(
+		WithServerHostname(host),
+		WithPort(443),
+		WithHTTPPath(httpPath),
+		WithAccessToken(token),
+		WithMaxRows(500000),
+		WithCloudFetch(true),
+		WithCloudFetchHTTPClient(downloadClient),
+	)
+	require.NoError(t, err)
+	db := sql.OpenDB(connector)
+	defer db.Close() //nolint:errcheck
+
+	n, err := drainSQLRows(t, db, cloudFetchE2EQuery(wantRows))
+	require.NoError(t, err)
+	require.Equal(t, int64(wantRows), n)
+
+	hosts := rt.seen()
+	require.NotEmpty(t, hosts, "CloudFetch presigned-URL downloads must go through the supplied http.Client")
+	for _, h := range hosts {
+		assert.NotEqual(t, host, h, "the Thrift transport must not be routed through the CloudFetch client")
+	}
 }
 
 // TestE2ETimestampNTZTypeName asserts that a zoned TIMESTAMP and a TIMESTAMP_NTZ
