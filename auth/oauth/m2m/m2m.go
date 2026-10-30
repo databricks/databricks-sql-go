@@ -61,9 +61,10 @@ func (c *authClient) Authenticate(r *http.Request) error {
 		return err
 	}
 
-	// c.mx is not held here: the oauth2.ReuseTokenSource returned by
-	// GetTokenSource is safe for concurrent use, so a slow token exchange does not
-	// serialize every request on the connector behind this authenticator's lock.
+	// c.mx guards only the lazy init above. Token refreshes are still serialized
+	// inside the oauth2.ReuseTokenSource (it holds its own mutex for the whole
+	// exchange), so concurrent callers wait on an in-flight refresh; that wait is
+	// bounded by tokenExchangeTimeout.
 	token, err := ts.Token()
 	if err != nil {
 		if first {
