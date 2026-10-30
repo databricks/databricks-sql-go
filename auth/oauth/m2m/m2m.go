@@ -57,20 +57,17 @@ func (c *authClient) M2MScopes() []string {
 // using the users credentials in the browser. Compatible with SSO.
 func (c *authClient) Authenticate(r *http.Request) error {
 	c.mx.Lock()
-	if ts := c.tokenSource; ts != nil {
-		// The token source (an oauth2.ReuseTokenSource) is safe for concurrent
-		// use, so don't hold c.mx across a potentially slow token exchange.
-		c.mx.Unlock()
-		token, err := ts.Token()
+	defer c.mx.Unlock()
+	if c.tokenSource != nil {
+		token, err := c.tokenSource.Token()
 		if err != nil {
 			return err
 		}
 		token.SetAuthHeader(r)
 		return nil
 	}
-	defer c.mx.Unlock()
 
-	config, err := GetConfig(context.Background(), c.hostName, c.clientID, c.clientSecret, c.scopes)
+	config, err := getConfig(context.Background(), c.hostName, c.clientID, c.clientSecret, c.scopes)
 	if err != nil {
 		return fmt.Errorf("unable to generate clientCredentials.Config: %w", err)
 	}
@@ -101,6 +98,12 @@ func GetTokenSource(config clientcredentials.Config) oauth2.TokenSource {
 	tokenSource := config.TokenSource(ctx)
 	return tokenSource
 }
+
+// getConfig is the endpoint-resolution step Authenticate uses on its first call.
+// It is a variable only so unit tests can point the token URL at a local server:
+// oauth.GetEndpoint requires a Databricks hostname and a publicly trusted TLS
+// certificate, which an httptest server cannot provide.
+var getConfig = GetConfig
 
 func GetConfig(ctx context.Context, issuerURL, clientID, clientSecret string, scopes []string) (clientcredentials.Config, error) {
 	// Get the endpoint based on the host name
