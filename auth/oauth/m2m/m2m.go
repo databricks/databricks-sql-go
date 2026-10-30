@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/databricks/databricks-sql-go/auth"
 	"github.com/databricks/databricks-sql-go/auth/oauth"
@@ -55,42 +56,92 @@ func (c *authClient) M2MScopes() []string {
 // Auth will start the OAuth Authorization Flow to authenticate the cli client
 // using the users credentials in the browser. Compatible with SSO.
 func (c *authClient) Authenticate(r *http.Request) error {
-	c.mx.Lock()
-	defer c.mx.Unlock()
-	if c.tokenSource != nil {
-		token, err := c.tokenSource.Token()
-		if err != nil {
-			return err
-		}
-		token.SetAuthHeader(r)
-		return nil
-	}
-
-	config, err := GetConfig(context.Background(), c.hostName, c.clientID, c.clientSecret, c.scopes)
+	ts, first, err := c.getOrInitTokenSource()
 	if err != nil {
-		return fmt.Errorf("unable to generate clientCredentials.Config: %w", err)
-	}
-
-	c.tokenSource = GetTokenSource(config)
-	token, err := c.tokenSource.Token()
-	if err != nil {
-		logger.Err(err).Msg("failed to get token")
-
 		return err
 	}
-	// Log via the driver's configurable logger (defaults to Warn) rather than the
-	// global zerolog logger, so this line honors SetLogLevel like every other.
-	logger.Debug().Msgf("databricks OAuth token fetched successfully")
+
+	// c.mx guards only the lazy init above. Token refreshes are still serialized
+	// inside the oauth2.ReuseTokenSource (it holds its own mutex for the whole
+	// exchange), so concurrent callers wait on an in-flight refresh. That wait is
+	// bounded by roughly 2 × tokenExchangeTimeout (see tokenExchangeTimeout).
+	token, err := ts.Token()
+	if err != nil {
+		if first {
+			logger.Err(err).Msg("failed to get token")
+		}
+		return err
+	}
+	if first {
+		// Log via the driver's configurable logger (defaults to Warn) rather than the
+		// global zerolog logger, so this line honors SetLogLevel like every other.
+		logger.Debug().Msgf("databricks OAuth token fetched successfully")
+	}
 	token.SetAuthHeader(r)
 
 	return nil
-
 }
 
+// getOrInitTokenSource returns the cached token source, building it on first use.
+// c.mx guards only this lazy initialization; first reports whether this call
+// created the token source.
+func (c *authClient) getOrInitTokenSource() (ts oauth2.TokenSource, first bool, err error) {
+	c.mx.Lock()
+	defer c.mx.Unlock()
+	if c.tokenSource != nil {
+		return c.tokenSource, false, nil
+	}
+
+	config, err := getConfig(context.Background(), c.hostName, c.clientID, c.clientSecret, c.scopes)
+	if err != nil {
+		return nil, false, fmt.Errorf("unable to generate clientCredentials.Config: %w", err)
+	}
+
+	c.tokenSource = GetTokenSource(config)
+	return c.tokenSource, true, nil
+}
+
+// tokenExchangeTimeout bounds each client-credentials token request so a hung
+// token endpoint surfaces as an error instead of blocking every request on the
+// connector (endpoint discovery is similarly capped by oauth.hostConfigTimeout).
+//
+// It is applied as http.Client.Timeout, so it limits each HTTP request, not the
+// whole exchange. GetConfig leaves AuthStyle at AuthStyleAutoDetect, under which
+// x/oauth2 retries a failed header-auth request (a timeout included) with
+// params-auth until one style has succeeded for this token URL. The worst-case
+// duration of a single Token() call against a hung endpoint is therefore about
+// 2 × tokenExchangeTimeout.
+//
+// Known limitations: the value is fixed (it is a package variable only so unit
+// tests can shorten it) and is not exposed as a ConnOption, so callers behind a
+// slow IdP cannot tune it. The exchange uses a copy of *http.DefaultClient (as
+// read when GetTokenSource is called) with only Timeout replaced, so a
+// process-wide proxy/mTLS transport, CheckRedirect or Jar installed on
+// http.DefaultClient still applies, matching the previous http.DefaultClient
+// behaviour; any Timeout set on http.DefaultClient is superseded. Connector
+// transport/TLS/proxy settings (WithTransport, WithSkipTLSHostVerify, …) do not
+// apply, and the request context (r.Context()) cancellation is not propagated to
+// the exchange.
+var tokenExchangeTimeout = 30 * time.Second
+
+// GetTokenSource returns a reusable client-credentials token source. The token
+// exchange uses a shallow copy of *http.DefaultClient (Transport, CheckRedirect
+// and Jar are preserved) taken when GetTokenSource is called, with Timeout
+// overridden by tokenExchangeTimeout. Later changes to http.DefaultClient are
+// not picked up by an already-built token source.
 func GetTokenSource(config clientcredentials.Config) oauth2.TokenSource {
-	tokenSource := config.TokenSource(context.Background())
+	client := *http.DefaultClient
+	client.Timeout = tokenExchangeTimeout
+	ctx := context.WithValue(context.Background(), oauth2.HTTPClient, &client)
+	tokenSource := config.TokenSource(ctx)
 	return tokenSource
 }
+
+// getConfig is the endpoint-resolution step Authenticate uses on its first call.
+// It is a variable only so unit tests can point the token URL at a local server:
+// oauth.GetEndpoint requires a Databricks hostname and a publicly trusted TLS
+// certificate, which an httptest server cannot provide.
+var getConfig = GetConfig
 
 func GetConfig(ctx context.Context, issuerURL, clientID, clientSecret string, scopes []string) (clientcredentials.Config, error) {
 	// Get the endpoint based on the host name
