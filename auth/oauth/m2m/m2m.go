@@ -114,18 +114,25 @@ func (c *authClient) getOrInitTokenSource() (ts oauth2.TokenSource, first bool, 
 //
 // Known limitations: the value is fixed (it is a package variable only so unit
 // tests can shorten it) and is not exposed as a ConnOption, so callers behind a
-// slow IdP cannot tune it. The exchange uses its own http.Client that inherits
-// http.DefaultClient.Transport (as read when GetTokenSource is called), so a
-// process-wide proxy/mTLS transport installed on http.DefaultClient still
-// applies, matching the previous http.DefaultClient behaviour. Connector
+// slow IdP cannot tune it. The exchange uses a copy of *http.DefaultClient (as
+// read when GetTokenSource is called) with only Timeout replaced, so a
+// process-wide proxy/mTLS transport, CheckRedirect or Jar installed on
+// http.DefaultClient still applies, matching the previous http.DefaultClient
+// behaviour; any Timeout set on http.DefaultClient is superseded. Connector
 // transport/TLS/proxy settings (WithTransport, WithSkipTLSHostVerify, …) do not
 // apply, and the request context (r.Context()) cancellation is not propagated to
 // the exchange.
 var tokenExchangeTimeout = 30 * time.Second
 
+// GetTokenSource returns a reusable client-credentials token source. The token
+// exchange uses a shallow copy of *http.DefaultClient (Transport, CheckRedirect
+// and Jar are preserved) taken when GetTokenSource is called, with Timeout
+// overridden by tokenExchangeTimeout. Later changes to http.DefaultClient are
+// not picked up by an already-built token source.
 func GetTokenSource(config clientcredentials.Config) oauth2.TokenSource {
-	client := &http.Client{Transport: http.DefaultClient.Transport, Timeout: tokenExchangeTimeout}
-	ctx := context.WithValue(context.Background(), oauth2.HTTPClient, client)
+	client := *http.DefaultClient
+	client.Timeout = tokenExchangeTimeout
+	ctx := context.WithValue(context.Background(), oauth2.HTTPClient, &client)
 	tokenSource := config.TokenSource(ctx)
 	return tokenSource
 }
