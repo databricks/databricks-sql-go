@@ -56,41 +56,60 @@ func (c *authClient) M2MScopes() []string {
 // Auth will start the OAuth Authorization Flow to authenticate the cli client
 // using the users credentials in the browser. Compatible with SSO.
 func (c *authClient) Authenticate(r *http.Request) error {
+	ts, first, err := c.getOrInitTokenSource()
+	if err != nil {
+		return err
+	}
+
+	// c.mx is not held here: the oauth2.ReuseTokenSource returned by
+	// GetTokenSource is safe for concurrent use, so a slow token exchange does not
+	// serialize every request on the connector behind this authenticator's lock.
+	token, err := ts.Token()
+	if err != nil {
+		if first {
+			logger.Err(err).Msg("failed to get token")
+		}
+		return err
+	}
+	if first {
+		// Log via the driver's configurable logger (defaults to Warn) rather than the
+		// global zerolog logger, so this line honors SetLogLevel like every other.
+		logger.Debug().Msgf("databricks OAuth token fetched successfully")
+	}
+	token.SetAuthHeader(r)
+
+	return nil
+}
+
+// getOrInitTokenSource returns the cached token source, building it on first use.
+// c.mx guards only this lazy initialization; first reports whether this call
+// created the token source.
+func (c *authClient) getOrInitTokenSource() (ts oauth2.TokenSource, first bool, err error) {
 	c.mx.Lock()
 	defer c.mx.Unlock()
 	if c.tokenSource != nil {
-		token, err := c.tokenSource.Token()
-		if err != nil {
-			return err
-		}
-		token.SetAuthHeader(r)
-		return nil
+		return c.tokenSource, false, nil
 	}
 
 	config, err := getConfig(context.Background(), c.hostName, c.clientID, c.clientSecret, c.scopes)
 	if err != nil {
-		return fmt.Errorf("unable to generate clientCredentials.Config: %w", err)
+		return nil, false, fmt.Errorf("unable to generate clientCredentials.Config: %w", err)
 	}
 
 	c.tokenSource = GetTokenSource(config)
-	token, err := c.tokenSource.Token()
-	if err != nil {
-		logger.Err(err).Msg("failed to get token")
-
-		return err
-	}
-	// Log via the driver's configurable logger (defaults to Warn) rather than the
-	// global zerolog logger, so this line honors SetLogLevel like every other.
-	logger.Debug().Msgf("databricks OAuth token fetched successfully")
-	token.SetAuthHeader(r)
-
-	return nil
-
+	return c.tokenSource, true, nil
 }
 
 // tokenExchangeTimeout bounds each client-credentials token request so a hung
 // token endpoint surfaces as an error instead of blocking every request on the
 // connector (endpoint discovery is similarly capped by oauth.hostConfigTimeout).
+//
+// Known limitations: the value is fixed (it is a package variable only so unit
+// tests can shorten it) and is not exposed as a ConnOption, so callers behind a
+// slow IdP cannot tune it. The exchange uses its own http.Client, so connector
+// transport/TLS/proxy settings (WithTransport, WithSkipTLSHostVerify, …) do not
+// apply, matching the previous http.DefaultClient behaviour, and the request
+// context (r.Context()) cancellation is not propagated to the exchange.
 var tokenExchangeTimeout = 30 * time.Second
 
 func GetTokenSource(config clientcredentials.Config) oauth2.TokenSource {

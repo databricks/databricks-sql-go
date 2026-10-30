@@ -54,7 +54,7 @@ func TestM2MTokenExchangeIsBounded(t *testing.T) {
 }
 
 // The first-call branch of Authenticate (no cached token source) resolves the
-// config, builds the token source and fetches a token while holding c.mx. A hung
+// config and builds the token source under c.mx, then fetches a token. A hung
 // token endpoint there must also surface as an error, and must not leave the lock
 // held so later calls on the same connector can proceed.
 func TestM2MFirstAuthenticateIsBounded(t *testing.T) {
