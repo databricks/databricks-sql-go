@@ -520,6 +520,20 @@ func TestCloudFetchConnOptions(t *testing.T) {
 		assert.Equal(t, tr, coni.cfg.Transport)
 	})
 
+	t.Run("nil CloudFetch client is ignored and keeps the WithTransport-derived client", func(t *testing.T) {
+		tr := &http.Transport{MaxIdleConns: 3}
+
+		for _, opts := range [][]ConnOption{
+			{WithTransport(tr), WithCloudFetchHTTPClient(nil)},
+			{WithCloudFetchHTTPClient(nil), WithTransport(tr)},
+		} {
+			coni := build(t, opts...)
+			require.NotNil(t, coni.cfg.HTTPClient)
+			assert.Equal(t, tr, coni.cfg.HTTPClient.Transport)
+			assert.Equal(t, tr, coni.cfg.Transport)
+		}
+	})
+
 	t.Run("WithCloudFetchMinTimeToExpiry sets MinTimeToExpiry", func(t *testing.T) {
 		coni := build(t, WithCloudFetchMinTimeToExpiry(90*time.Second))
 		assert.Equal(t, 90*time.Second, coni.cfg.MinTimeToExpiry)

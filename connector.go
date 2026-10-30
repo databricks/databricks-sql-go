@@ -538,14 +538,17 @@ func WithTransport(t http.RoundTripper) ConnOption {
 // result files from their presigned URLs. Use it to bound downloads (e.g. via
 // http.Client.Timeout) without replacing the Thrift transport. When set, it
 // takes precedence over the client derived from WithTransport, regardless of
-// option order. Default is http.DefaultClient (no timeout).
+// option order. Default is http.DefaultClient (no timeout). A nil client is
+// ignored, so it never discards a client derived from WithTransport.
 //
 // Thrift backend only: on the kernel backend (WithUseKernel) CloudFetch runs
 // inside the kernel's own HTTP stack, so this client — including its Timeout —
 // is accepted but has no effect.
 func WithCloudFetchHTTPClient(client *http.Client) ConnOption {
 	return func(c *config.Config) {
-		c.HTTPClient = client
+		if client != nil {
+			c.HTTPClient = client
+		}
 	}
 }
 
