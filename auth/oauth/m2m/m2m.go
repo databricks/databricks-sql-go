@@ -63,8 +63,8 @@ func (c *authClient) Authenticate(r *http.Request) error {
 
 	// c.mx guards only the lazy init above. Token refreshes are still serialized
 	// inside the oauth2.ReuseTokenSource (it holds its own mutex for the whole
-	// exchange), so concurrent callers wait on an in-flight refresh; that wait is
-	// bounded by tokenExchangeTimeout.
+	// exchange), so concurrent callers wait on an in-flight refresh. That wait is
+	// bounded by roughly 2 × tokenExchangeTimeout (see tokenExchangeTimeout).
 	token, err := ts.Token()
 	if err != nil {
 		if first {
@@ -104,6 +104,13 @@ func (c *authClient) getOrInitTokenSource() (ts oauth2.TokenSource, first bool, 
 // tokenExchangeTimeout bounds each client-credentials token request so a hung
 // token endpoint surfaces as an error instead of blocking every request on the
 // connector (endpoint discovery is similarly capped by oauth.hostConfigTimeout).
+//
+// It is applied as http.Client.Timeout, so it limits each HTTP request, not the
+// whole exchange. GetConfig leaves AuthStyle at AuthStyleAutoDetect, under which
+// x/oauth2 retries a failed header-auth request (a timeout included) with
+// params-auth until one style has succeeded for this token URL. The worst-case
+// duration of a single Token() call against a hung endpoint is therefore about
+// 2 × tokenExchangeTimeout.
 //
 // Known limitations: the value is fixed (it is a package variable only so unit
 // tests can shorten it) and is not exposed as a ConnOption, so callers behind a
