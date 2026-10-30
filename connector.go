@@ -542,8 +542,11 @@ func WithTransport(t http.RoundTripper) ConnOption {
 // http.Client.Timeout is a per-attempt limit, not a hard cap per link: a
 // timeout expiry is treated as a transient error and the download is retried
 // up to retryMax times (see WithRetries) with backoff, so the worst-case time
-// per link is roughly (retryMax+1) × Timeout plus backoff waits. Use the
-// query context to impose an overall deadline. Timeout also covers reading
+// per link is roughly (retryMax+1) × Timeout plus backoff waits. The query
+// context does NOT bound downloads: result fetching is deliberately detached
+// from the QueryContext cancellation/deadline. To impose an overall bound,
+// call Rows.Close() (which aborts in-flight downloads) or cap WithRetries
+// together with Timeout. Timeout also covers reading
 // the full response body, so size it for downloading an entire result file,
 // not just receiving headers; a value too small for large files fails every
 // attempt and then the query.
@@ -568,7 +571,9 @@ func WithCloudFetchHTTPClient(client *http.Client) ConnOption {
 // presigned links: a link whose expiry is less than d away is treated as
 // expired. An expired link is terminal for the result set (the query must be
 // re-run); links are not re-fetched. Default is 0. Negative values are
-// treated as 0.
+// treated as 0. Link expiry times have one-second resolution, so d is
+// truncated to whole seconds: a sub-second value such as 500ms has no
+// effect, and 1.9s behaves as 1s.
 //
 // Thrift backend only: on the kernel backend (WithUseKernel) CloudFetch link
 // handling is internal to the kernel, so this option is accepted but has no
