@@ -836,11 +836,10 @@ func TestE2ECloudFetchHTTPClientOption(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(wantRows), n)
 
-	hosts := rt.seen()
-	require.NotEmpty(t, hosts, "CloudFetch presigned-URL downloads must go through the supplied http.Client")
-	for _, h := range hosts {
-		assert.NotEqual(t, host, h, "the Thrift transport must not be routed through the CloudFetch client")
-	}
+	// The "Thrift transport is not replaced" half of the contract is asserted
+	// by TestCloudFetchConnOptions (cfg.Transport stays nil); here we only
+	// check that downloads actually went through the supplied client.
+	require.NotEmpty(t, rt.seen(), "CloudFetch presigned-URL downloads must go through the supplied http.Client")
 }
 
 // TestE2ETimestampNTZTypeName asserts that a zoned TIMESTAMP and a TIMESTAMP_NTZ
