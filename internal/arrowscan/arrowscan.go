@@ -23,6 +23,7 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -433,6 +434,21 @@ func writeJSON(b *strings.Builder, col arrow.Array, row int, loc *time.Location,
 		return nil
 	}
 	switch c := col.(type) {
+	case *array.Boolean:
+		if c.Value(row) {
+			b.WriteString("true")
+		} else {
+			b.WriteString("false")
+		}
+		return nil
+	case *array.Int8:
+		return writeIntJSON(b, int64(c.Value(row)))
+	case *array.Int16:
+		return writeIntJSON(b, int64(c.Value(row)))
+	case *array.Int32:
+		return writeIntJSON(b, int64(c.Value(row)))
+	case *array.Int64:
+		return writeIntJSON(b, c.Value(row))
 	case *array.List:
 		// Use the offset-aware ValueOffsets, NOT Offsets()[row]: arrow-go's
 		// Offsets() returns the full un-sliced buffer, so a List with a non-zero
@@ -477,6 +493,12 @@ func writeJSON(b *strings.Builder, col arrow.Array, row int, loc *time.Location,
 		}
 		return writeScalarJSON(b, v)
 	}
+}
+
+func writeIntJSON(b *strings.Builder, v int64) error {
+	var scratch [20]byte // Sign and decimal digits of math.MinInt64 fit.
+	b.Write(strconv.AppendInt(scratch[:0], v, 10))
+	return nil
 }
 
 func writeListJSON(b *strings.Builder, values arrow.Array, start, end int, loc *time.Location, keys *StructKeyCache) error {

@@ -1,6 +1,7 @@
 package arrowbased
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -253,6 +254,30 @@ func TestArrowbasedKernelRenderParity(t *testing.T) {
 		name  string
 		build func() arrow.Array
 	}{
+		{"sliced_struct_scalar_leaves", func() arrow.Array {
+			dt := arrow.StructOf(
+				arrow.Field{Name: "flag", Type: arrow.FixedWidthTypes.Boolean, Nullable: true},
+				arrow.Field{Name: "tiny", Type: arrow.PrimitiveTypes.Int8, Nullable: true},
+				arrow.Field{Name: "small", Type: arrow.PrimitiveTypes.Int16, Nullable: true},
+				arrow.Field{Name: "int", Type: arrow.PrimitiveTypes.Int32, Nullable: true},
+				arrow.Field{Name: "big", Type: arrow.PrimitiveTypes.Int64, Nullable: true},
+			)
+			input := `[
+				{"flag":true,"tiny":1,"small":2,"int":3,"big":4},
+				{"flag":true,"tiny":-128,"small":-32768,"int":-2147483648,"big":-9223372036854775808},
+				{"flag":false,"tiny":127,"small":32767,"int":2147483647,"big":9223372036854775807},
+				{"flag":true,"tiny":-1,"small":-1,"int":-1,"big":-1},
+				{"flag":false,"tiny":0,"small":0,"int":0,"big":0},
+				{"flag":null,"tiny":null,"small":null,"int":null,"big":null},
+				null
+			]`
+			full, _, err := array.FromJSON(pool, dt, strings.NewReader(input), array.WithUseNumber())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer full.Release()
+			return array.NewSlice(full, 1, int64(full.Len()))
+		}},
 		{"sliced_list", func() arrow.Array {
 			b := array.NewListBuilder(pool, arrow.PrimitiveTypes.Int64)
 			vb := b.ValueBuilder().(*array.Int64Builder)
