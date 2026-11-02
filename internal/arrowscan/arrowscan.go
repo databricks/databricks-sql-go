@@ -30,6 +30,7 @@ import (
 	"github.com/apache/arrow/go/v12/arrow"
 	"github.com/apache/arrow/go/v12/arrow/array"
 	"github.com/databricks/databricks-sql-go/internal/decimalfmt"
+	"github.com/databricks/databricks-sql-go/internal/jsonfmt"
 )
 
 // ScanCell extracts one cell as a driver.Value. Scalars map to their Go value:
@@ -587,7 +588,7 @@ func writeJSONKey(b *strings.Builder, v any) {
 		b.Write(kb)
 		return
 	}
-	kb, err := json.Marshal(v)
+	kb, err := jsonfmt.Marshal(v)
 	if err != nil {
 		// Unmarshalable key value — fall back to its stringified form, quoted.
 		kb, _ = json.Marshal(fmt.Sprintf("%v", v))
@@ -602,7 +603,8 @@ func writeJSONKey(b *strings.Builder, v any) {
 }
 
 // writeScalarJSON writes a scalar leaf, mirroring the Thrift marshal(): a
-// time.Time becomes a quoted .String(); everything else uses json.Marshal.
+// time.Time becomes a quoted .String(); everything else renders as json.Marshal
+// would.
 func writeScalarJSON(b *strings.Builder, v any) error {
 	if v == nil {
 		b.WriteString("null")
@@ -614,7 +616,8 @@ func writeScalarJSON(b *strings.Builder, v any) error {
 		b.WriteByte('"')
 		return nil
 	}
-	vb, err := json.Marshal(v)
+	var scratch [32]byte
+	vb, err := jsonfmt.Append(scratch[:0], v)
 	if err != nil {
 		return err
 	}

@@ -1,13 +1,13 @@
 package arrowbased
 
 import (
-	"encoding/json"
 	"strings"
 	"time"
 
 	"github.com/apache/arrow/go/v12/arrow"
 	"github.com/apache/arrow/go/v12/arrow/array"
 	"github.com/databricks/databricks-sql-go/internal/decimalfmt"
+	"github.com/databricks/databricks-sql-go/internal/jsonfmt"
 	"github.com/databricks/databricks-sql-go/internal/rows/rowscanner"
 	dbsqllog "github.com/databricks/databricks-sql-go/logger"
 	"github.com/pkg/errors"
@@ -593,8 +593,7 @@ func marshal(val any) ([]byte, error) {
 		s := "\"" + t.String() + "\""
 		return []byte(s), nil
 	}
-	vb, err := json.Marshal(val)
-	return vb, err
+	return jsonfmt.Marshal(val)
 }
 
 // marshalScalar renders a non-complex nested value (a struct field, list
