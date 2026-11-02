@@ -52,7 +52,7 @@ func TestMarshalStringBytes(t *testing.T) {
 // Random bit patterns reach exponent cutoffs, subnormals, and rounding cases a
 // hand-picked list misses.
 func TestMarshalRandomFloats(t *testing.T) {
-	r := rand.New(rand.NewSource(1))
+	r := rand.New(rand.NewSource(1)) //nolint:gosec // G404: deterministic test inputs, not security
 	for i := 0; i < 200000; i++ {
 		assertParity(t, math.Float64frombits(r.Uint64()))
 		assertParity(t, math.Float32frombits(r.Uint32()))

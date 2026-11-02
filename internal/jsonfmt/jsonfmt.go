@@ -65,6 +65,9 @@ func Append(dst []byte, v any) ([]byte, error) {
 	if err != nil {
 		return dst, err
 	}
+	if len(dst) == 0 {
+		return b, nil // skip copying json.Marshal's fresh slice
+	}
 	return append(dst, b...), nil
 }
 
@@ -105,10 +108,21 @@ func appendFloat(dst []byte, f float64, bits int) []byte {
 // quote/backslash is copied verbatim; everything else takes the fallback.
 func needsEscape(s string) bool {
 	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if c < 0x20 || c >= 0x7f || c == '"' || c == '\\' || c == '<' || c == '>' || c == '&' {
+		if !plainASCII[s[i]] {
 			return true
 		}
 	}
 	return false
 }
+
+// plainASCII marks the bytes json.Marshal copies verbatim. A table lookup keeps
+// the scan faster than json.Marshal's own on long strings.
+var plainASCII = func() (t [256]bool) {
+	for c := 0x20; c < 0x7f; c++ {
+		t[c] = true
+	}
+	for _, c := range `"\<>&` {
+		t[c] = false
+	}
+	return t
+}()
