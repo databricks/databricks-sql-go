@@ -12,7 +12,7 @@
 //   - map         → {"k0":v0,"k1":v1,...}   (keys stringified)
 //   - struct      → {"field0":v0,...}
 //   - nested NULL → null
-//   - time.Time   → quoted .String()  (matches the Thrift marshal() special-case)
+//   - time.Time   → quoted .String()  (matches the Thrift marshalScalar special-case)
 //   - nested decimal → exact scale-applied JSON number literal (never a lossy
 //     float64), matching Thrift's marshalScalar → ValueString
 //   - float32     → native float32 (not widened to float64), so JSON renders
@@ -30,6 +30,7 @@ import (
 	"github.com/apache/arrow/go/v12/arrow"
 	"github.com/apache/arrow/go/v12/arrow/array"
 	"github.com/databricks/databricks-sql-go/internal/decimalfmt"
+	"github.com/databricks/databricks-sql-go/internal/jsonfmt"
 )
 
 // ScanCell extracts one cell as a driver.Value. Scalars map to their Go value:
@@ -581,13 +582,14 @@ func writeStructJSON(b *strings.Builder, s *array.Struct, row int, loc *time.Loc
 // not already a JSON string (numbers/bools become "7"/"true" keys).
 func writeJSONKey(b *strings.Builder, v any) {
 	// A time.Time key renders as its quoted .String() (same special-case as
-	// writeScalarJSON / the Thrift marshal()), not RFC3339.
+	// writeScalarJSON / the Thrift marshalScalar), not RFC3339.
 	if t, ok := v.(time.Time); ok {
 		kb, _ := json.Marshal(t.String())
 		b.Write(kb)
 		return
 	}
-	kb, err := json.Marshal(v)
+	var scratch [32]byte
+	kb, err := jsonfmt.Append(scratch[:0], v)
 	if err != nil {
 		// Unmarshalable key value — fall back to its stringified form, quoted.
 		kb, _ = json.Marshal(fmt.Sprintf("%v", v))
@@ -601,8 +603,9 @@ func writeJSONKey(b *strings.Builder, v any) {
 	b.WriteByte('"')
 }
 
-// writeScalarJSON writes a scalar leaf, mirroring the Thrift marshal(): a
-// time.Time becomes a quoted .String(); everything else uses json.Marshal.
+// writeScalarJSON writes a scalar leaf, mirroring the Thrift marshalScalar: a
+// time.Time becomes a quoted .String(); everything else renders as json.Marshal
+// would.
 func writeScalarJSON(b *strings.Builder, v any) error {
 	if v == nil {
 		b.WriteString("null")
@@ -614,7 +617,8 @@ func writeScalarJSON(b *strings.Builder, v any) error {
 		b.WriteByte('"')
 		return nil
 	}
-	vb, err := json.Marshal(v)
+	var scratch [32]byte
+	vb, err := jsonfmt.Append(scratch[:0], v)
 	if err != nil {
 		return err
 	}

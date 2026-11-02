@@ -120,6 +120,33 @@ func TestArrowbasedKernelRenderParity(t *testing.T) {
 			b.FieldBuilder(0).(*array.Float32Builder).Append(0.1)
 			return b.NewArray()
 		}},
+		{"list_double", func() arrow.Array {
+			b := array.NewListBuilder(pool, arrow.PrimitiveTypes.Float64)
+			b.Append(true)
+			b.ValueBuilder().(*array.Float64Builder).AppendValues([]float64{0.1, -2.5, 1e-7, 1e21, 123456789.125, 0.30000000000000004}, nil)
+			return b.NewArray()
+		}},
+		// String leaves and map keys with UTF-8, HTML-escaped characters, U+2028
+		// and invalid UTF-8.
+		{"list_string_utf8_html", func() arrow.Array {
+			b := array.NewListBuilder(pool, arrow.BinaryTypes.String)
+			b.Append(true)
+			b.ValueBuilder().(*array.StringBuilder).AppendValues([]string{
+				"café", "日本語", "😀", "<b>&amp;</b>", "a" + string(rune(0x2028)) + "b", "bad\xffutf8", "del\x7f",
+			}, nil)
+			return b.NewArray()
+		}},
+		{"map_utf8_key", func() arrow.Array {
+			b := array.NewMapBuilder(pool, arrow.BinaryTypes.String, arrow.BinaryTypes.String, false)
+			b.Append(true)
+			kb := b.KeyBuilder().(*array.StringBuilder)
+			ib := b.ItemBuilder().(*array.StringBuilder)
+			kb.Append("clé")
+			ib.Append("naïve")
+			kb.Append("a<b")
+			ib.Append("Größe & Ελληνικά")
+			return b.NewArray()
+		}},
 		{"nested_decimal", func() arrow.Array {
 			dt := arrow.StructOf(arrow.Field{Name: "d", Type: &arrow.Decimal128Type{Precision: 5, Scale: 2}})
 			b := array.NewStructBuilder(pool, dt)
