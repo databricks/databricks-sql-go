@@ -87,6 +87,7 @@ Supported functional options include:
   - WithMaxRows(<max_rows> int): Sets up the max rows fetched per request. Default is 100000. Optional
   - WithSessionParams(<params_map> map[string]string): Sets up session parameters including "timezone" and "ansi_mode". Optional
   - WithTimeout(<timeout> Duration). Adds timeout (in time.Duration) for the server query execution. Default is no timeout. Optional
+  - WithConnectTimeout(<timeout> Duration). Bounds session establishment and retries transient (429/503) OpenSession failures, such as a cold-starting warehouse, until the deadline. Default is a single attempt. Thrift backend only; rejected with WithUseKernel(true). Optional
   - WithClientQueryTimeout(<timeout> Duration). Bounds client-side statement execution on the kernel backend. Omitted preserves the legacy 600s ceiling; zero or the maximum Duration is unlimited. Requires WithUseKernel(true). Optional
   - WithUserAgentEntry(<isv-name+product-name> string). Used to identify partners. Optional
   - WithCloudFetch (bool). Used to enable cloud fetch for the query execution. Default is true. Optional

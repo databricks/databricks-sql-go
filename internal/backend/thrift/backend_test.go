@@ -16,6 +16,7 @@ import (
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/client"
 	"github.com/databricks/databricks-sql-go/internal/config"
+	dbsqlerrint "github.com/databricks/databricks-sql-go/internal/errors"
 	"github.com/databricks/databricks-sql-go/internal/thrift_protocol"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -1303,5 +1304,64 @@ func TestBackend_Execute(t *testing.T) {
 		assert.Equal(t, 1, closeCalls)
 		// ExecutionError must also work off the non-nil op and pull sqlstate from opStatusResp.
 		require.Error(t, op.ExecutionError(context.Background(), err))
+	})
+}
+
+func TestBackend_OpenSession_ConnectTimeout(t *testing.T) {
+	t.Parallel()
+	retryable := func() error { return dbsqlerrint.NewRetryableError(fmt.Errorf("503"), "") }
+
+	newBackend := func(timeout time.Duration, open func(context.Context, *cli_service.TOpenSessionReq) (*cli_service.TOpenSessionResp, error)) *Backend {
+		cfg := config.WithDefaults()
+		cfg.ConnectTimeout = timeout
+		cfg.RetryWaitMin = time.Millisecond
+		cfg.RetryWaitMax = 5 * time.Millisecond
+		return NewForTest(&client.TestClient{FnOpenSession: open}, nil, cfg)
+	}
+
+	t.Run("unset timeout makes a single attempt", func(t *testing.T) {
+		var calls int
+		be := newBackend(0, func(context.Context, *cli_service.TOpenSessionReq) (*cli_service.TOpenSessionResp, error) {
+			calls++
+			return nil, retryable()
+		})
+		assert.Error(t, be.OpenSession(context.Background()))
+		assert.Equal(t, 1, calls)
+	})
+
+	t.Run("retries a transient failure until the session opens", func(t *testing.T) {
+		var calls int
+		be := newBackend(5*time.Second, func(context.Context, *cli_service.TOpenSessionReq) (*cli_service.TOpenSessionResp, error) {
+			calls++
+			if calls < 3 {
+				return nil, retryable()
+			}
+			return getTestSession(), nil
+		})
+		assert.NoError(t, be.OpenSession(context.Background()))
+		assert.Equal(t, 3, calls)
+	})
+
+	t.Run("non-retryable failure fails fast", func(t *testing.T) {
+		var calls int
+		be := newBackend(5*time.Second, func(context.Context, *cli_service.TOpenSessionReq) (*cli_service.TOpenSessionResp, error) {
+			calls++
+			return nil, fmt.Errorf("401 unauthorized")
+		})
+		assert.Error(t, be.OpenSession(context.Background()))
+		assert.Equal(t, 1, calls)
+	})
+
+	t.Run("gives up once the deadline passes", func(t *testing.T) {
+		be := newBackend(50*time.Millisecond, func(context.Context, *cli_service.TOpenSessionReq) (*cli_service.TOpenSessionResp, error) {
+			return nil, retryable()
+		})
+		start := time.Now()
+		err := be.OpenSession(context.Background())
+		require.Error(t, err)
+		assert.Less(t, time.Since(start), 5*time.Second)
+		// The error carries both the last retryable error and the deadline.
+		assert.ErrorIs(t, err, dbsqlerrint.RetryableError)
+		assert.ErrorIs(t, err, context.DeadlineExceeded)
 	})
 }

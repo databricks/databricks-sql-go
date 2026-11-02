@@ -82,7 +82,7 @@ func (b *Backend) OpenSession(ctx context.Context) error {
 	protocolVersion := int64(b.cfg.ThriftProtocolVersion)
 
 	debuglog.Logf(ctx, "thrift.Backend.OpenSession", "sending OpenSession protocolVersion=0x%X catalog=%q schema=%q", protocolVersion, b.cfg.Catalog, b.cfg.Schema)
-	session, err := b.client.OpenSession(ctx, &cli_service.TOpenSessionReq{
+	openReq := &cli_service.TOpenSessionReq{
 		ClientProtocolI64: &protocolVersion,
 		Configuration:     sessionParams,
 		InitialNamespace: &cli_service.TNamespace{
@@ -90,7 +90,16 @@ func (b *Backend) OpenSession(ctx context.Context) error {
 			SchemaName:  schemaName,
 		},
 		CanUseMultipleCatalogs: &b.cfg.CanUseMultipleCatalogs,
-	})
+	}
+
+	// ConnectTimeout unset (<= 0): single attempt, identical to prior behavior.
+	var session *cli_service.TOpenSessionResp
+	var err error
+	if b.cfg.ConnectTimeout <= 0 {
+		session, err = b.client.OpenSession(ctx, openReq)
+	} else {
+		session, err = b.openSessionWithRetry(ctx, openReq)
+	}
 	if err != nil {
 		debuglog.Logf(ctx, "thrift.Backend.OpenSession", "OpenSession failed: %v", err)
 		return dbsqlerrint.NewRequestError(ctx, fmt.Sprintf("error connecting: host=%s port=%d, httpPath=%s", b.cfg.Host, b.cfg.Port, b.cfg.HTTPPath), err)
@@ -101,6 +110,49 @@ func (b *Backend) OpenSession(ctx context.Context) error {
 	}
 	debuglog.Logf(ctx, "thrift.Backend.OpenSession", "session opened id=%s serverProtocol=0x%X", b.sessionID, session.ServerProtocolVersion)
 	return nil
+}
+
+// openSessionWithRetry bounds OpenSession by cfg.ConnectTimeout and retries with
+// exponential backoff while the failure is transient (e.g. a cold-starting
+// warehouse returning HTTP 503), so a slow cold start succeeds instead of
+// failing once the per-request retry budget (RetryMax) is exhausted. These
+// connect retries are independent of the query-level RetryMax. Non-retryable
+// failures (bad token, missing warehouse, ...) fail fast.
+func (b *Backend) openSessionWithRetry(ctx context.Context, req *cli_service.TOpenSessionReq) (*cli_service.TOpenSessionResp, error) {
+	ctx, cancel := context.WithTimeout(ctx, b.cfg.ConnectTimeout)
+	defer cancel()
+
+	wait := b.cfg.RetryWaitMin
+	if wait <= 0 {
+		wait = 1 * time.Second
+	}
+	waitMax := b.cfg.RetryWaitMax
+	if waitMax <= 0 {
+		waitMax = 30 * time.Second
+	}
+
+	log := logger.WithContext("", driverctx.CorrelationIdFromContext(ctx), "")
+	for attempt := 1; ; attempt++ {
+		session, err := b.client.OpenSession(ctx, req)
+		if err == nil {
+			return session, nil
+		}
+		if !errors.Is(err, dbsqlerrint.RetryableError) {
+			return nil, err
+		}
+
+		log.Debug().Err(err).Msgf("connect: attempt %d failed, retrying in %s", attempt, wait)
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("%w; %w", err, ctx.Err())
+		case <-time.After(wait):
+		}
+
+		wait *= 2
+		if wait > waitMax {
+			wait = waitMax
+		}
+	}
 }
 
 // SessionID returns the formatted server session id (conn.id's value), computed
