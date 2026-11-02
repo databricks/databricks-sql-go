@@ -12,6 +12,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"regexp"
 	"time"
 
 	"github.com/databricks/databricks-sql-go/driverctx"
@@ -355,8 +356,23 @@ func (b *Backend) executeStatement(ctx context.Context, req backend.ExecRequest)
 	return resp, err
 }
 
+// maxPollFailures caps consecutive transport-level GetOperationStatus failures
+// (no response at all) that pollOperation retries before giving up.
+const maxPollFailures = 30
+
+var clientErrorStatusRe = regexp.MustCompile(`unexpected HTTP status (401|403|404)\b`)
+
+// isClientError reports whether err is an HTTP 401/403/404, which retrying
+// will not fix.
+func isClientError(err error) bool {
+	return clientErrorStatusRe.MatchString(err.Error())
+}
+
 // pollOperation polls the operation status until it reaches a terminal state,
 // cancelling the operation if the context is done (via the sentinel poll loop).
+// A transport-level GetOperationStatus failure (no response) does not abandon
+// the operation: it is retried up to maxPollFailures consecutive times, but
+// HTTP 401/403/404 fail immediately.
 func (b *Backend) pollOperation(ctx context.Context, opHandle *cli_service.TOperationHandle) (*cli_service.TGetOperationStatusResp, error) {
 	corrId := driverctx.CorrelationIdFromContext(ctx)
 	opID := client.SprintGuid(opHandle.OperationId.GUID)
@@ -364,6 +380,8 @@ func (b *Backend) pollOperation(ctx context.Context, opHandle *cli_service.TOper
 	defer debuglog.Track(ctx, "thrift.Backend.pollOperation", "op=%s", opID)()
 
 	var statusResp *cli_service.TGetOperationStatusResp
+	var lastState *cli_service.TOperationState
+	var pollFailures int
 	ctx = driverctx.NewContextWithConnId(ctx, b.SessionID())
 	newCtx := context2.WithoutCancel(ctx)
 	pollSentinel := sentinel.Sentinel{
@@ -378,7 +396,23 @@ func (b *Backend) pollOperation(ctx context.Context, opHandle *cli_service.TOper
 				OperationHandle: opHandle,
 			})
 
+			if statusResp == nil && err != nil {
+				pollFailures++
+				if pollFailures > maxPollFailures || isClientError(err) {
+					state := "unknown"
+					if lastState != nil {
+						state = lastState.String()
+					}
+					msg := fmt.Sprintf("giving up polling operation %s, last known state %s", opID, state)
+					return nil, statusResp, dbsqlerrint.NewRequestError(ctx, msg, err)
+				}
+				log.Warn().Err(err).Msg("databricks: polling status failed, retrying")
+				return func() bool { return false }, nil, nil
+			}
+
+			pollFailures = 0
 			if statusResp != nil && statusResp.OperationState != nil {
+				lastState = statusResp.OperationState
 				log.Debug().Msgf("databricks: status %s", statusResp.GetOperationState().String())
 			}
 			return func() bool {

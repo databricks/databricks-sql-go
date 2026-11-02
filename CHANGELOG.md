@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Thrift: polling no longer abandons a running operation on a transport-level GetOperationStatus failure; it retries up to 30 consecutive failures and fails fast on HTTP 401/403/404.
 - Upgrade go-oidc to v3.21.0 (go-jose v4.1.6) and x/oauth2 to v0.36.0 to address go-jose/v3 security findings (databricks/databricks-sql-go#526).
 - Reduce kernel-backend JSON rendering allocations for nested Boolean and signed-integer values.
 - **Behavior change:** Native Arrow TIMESTAMP_NTZ results now preserve their wall-clock fields and report `TIMESTAMP_NTZ` on both backends. Returned `time.Time` values use UTC instead of the session location; their represented instant and `.UTC()` value are unchanged (databricks/databricks-sql-go#506). On Thrift, this requires a server-supplied Arrow schema with native timestamps; without it, NTZ still reports `TIMESTAMP` and uses session-location handling. String timestamps (`UseArrowNativeTimestamp=false`, internal) and non-Arrow values also retain legacy parsing.
