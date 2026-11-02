@@ -72,11 +72,6 @@ func Append(dst []byte, v any) ([]byte, error) {
 	return append(dst, b...), nil
 }
 
-// Marshal is Append into a fresh slice, a drop-in for json.Marshal on scalars.
-func Marshal(v any) ([]byte, error) {
-	return Append(nil, v)
-}
-
 func isFinite(f float64) bool {
 	return !math.IsInf(f, 0) && !math.IsNaN(f)
 }

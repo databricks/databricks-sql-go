@@ -9,12 +9,12 @@ import (
 	"unicode/utf8"
 )
 
-// assertParity fails unless Marshal(v) matches json.Marshal(v) byte-for-byte,
-// including whether it errors.
+// assertParity fails unless Append(nil, v) matches json.Marshal(v)
+// byte-for-byte, including any error.
 func assertParity(t *testing.T, v any) {
 	t.Helper()
 	want, wantErr := json.Marshal(v)
-	got, gotErr := Marshal(v)
+	got, gotErr := Append(nil, v)
 	if (wantErr != nil) != (gotErr != nil) || wantErr != nil && gotErr.Error() != wantErr.Error() {
 		t.Fatalf("%#v: error mismatch: got %v, want %v", v, gotErr, wantErr)
 	}
@@ -107,15 +107,29 @@ func TestAppendKeepsPrefix(t *testing.T) {
 	}
 }
 
-func BenchmarkMarshalScalars(b *testing.B) {
+// The parity tests would still pass if the fast path were silently disabled
+// (json.Marshal is the fallback), so pin that these never reach it.
+func TestAppendFastPathDoesNotAllocate(t *testing.T) {
+	buf := make([]byte, 0, 64)
+	for _, v := range []any{int64(-9000), int32(42), uint64(7), 3.14, 0.30000000000000004, 1e-7, float32(0.5), true,
+		"alpha", "café 日本語 😀"} {
+		if n := testing.AllocsPerRun(100, func() { buf, _ = Append(buf[:0], v) }); n != 0 {
+			t.Errorf("Append(%#v) allocated %v times per run, want 0", v, n)
+		}
+	}
+}
+
+// jsonfmt appends into a reused buffer, as both renderers do.
+func BenchmarkAppendScalars(b *testing.B) {
 	// The last three take json.Marshal's fallback.
 	values := []any{int32(42), int64(-9000), 3.14, 0.30000000000000004, float32(0.5), true, "alpha0", "café crème",
 		`a"b`, []byte("abc"), math.NaN()}
 	b.Run("jsonfmt", func(b *testing.B) {
 		b.ReportAllocs()
+		buf := make([]byte, 0, 64)
 		for i := 0; i < b.N; i++ {
 			for _, v := range values {
-				_, _ = Marshal(v)
+				buf, _ = Append(buf[:0], v)
 			}
 		}
 	})

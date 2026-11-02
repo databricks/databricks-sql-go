@@ -4,7 +4,7 @@
 
 - Upgrade go-oidc to v3.21.0 (go-jose v4.1.6) and x/oauth2 to v0.36.0 to address go-jose/v3 security findings (databricks/databricks-sql-go#526).
 - Reduce kernel-backend JSON rendering allocations for nested Boolean and signed-integer values.
-- Render nested ARRAY / MAP / STRUCT scalars without `encoding/json` on both backends, avoiding the per-value overhead of Go 1.27's json/v2-backed `encoding/json`.
+- Render most nested ARRAY / MAP / STRUCT scalars (numbers, booleans, and strings that need no escaping) without `encoding/json` on both backends, avoiding the per-value overhead of Go 1.27's json/v2-backed `encoding/json` (databricks/databricks-sql-go#527).
 - **Behavior change:** Native Arrow TIMESTAMP_NTZ results now preserve their wall-clock fields and report `TIMESTAMP_NTZ` on both backends. Returned `time.Time` values use UTC instead of the session location; their represented instant and `.UTC()` value are unchanged (databricks/databricks-sql-go#506). On Thrift, this requires a server-supplied Arrow schema with native timestamps; without it, NTZ still reports `TIMESTAMP` and uses session-location handling. String timestamps (`UseArrowNativeTimestamp=false`, internal) and non-Arrow values also retain legacy parsing.
 
 ## v1.18.0 (2026-10-24)
