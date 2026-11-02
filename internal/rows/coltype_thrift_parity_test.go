@@ -3,7 +3,7 @@ package rows
 import (
 	"testing"
 
-	"github.com/apache/arrow/go/v12/arrow"
+	"github.com/apache/arrow-go/v18/arrow"
 
 	"github.com/databricks/databricks-sql-go/internal/arrowscan"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"

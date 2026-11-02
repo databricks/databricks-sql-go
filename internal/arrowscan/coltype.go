@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/apache/arrow/go/v12/arrow"
+	"github.com/apache/arrow-go/v18/arrow"
 )
 
 const databricksTypeNameMetadataKey = "databricks.type_name"

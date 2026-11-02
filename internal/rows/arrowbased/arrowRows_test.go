@@ -12,10 +12,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/apache/arrow/go/v12/arrow"
-	"github.com/apache/arrow/go/v12/arrow/array"
-	"github.com/apache/arrow/go/v12/arrow/decimal128"
-	"github.com/apache/arrow/go/v12/arrow/memory"
+	"github.com/apache/arrow-go/v18/arrow"
+	"github.com/apache/arrow-go/v18/arrow/array"
+	"github.com/apache/arrow-go/v18/arrow/decimal128"
+	"github.com/apache/arrow-go/v18/arrow/memory"
 	"github.com/databricks/databricks-sql-go/driverctx"
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
@@ -493,10 +493,10 @@ func TestArrowRowScanner(t *testing.T) {
 		assert.Nil(t, ars.rowValues)
 
 		b1 := &sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(0, 5), arrowRecords: []SparkArrowRecord{
-			&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(0, 2), Record: &fakeRecord{}},
-			&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(2, 3), Record: &fakeRecord{}}}}
-		b2 := &sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(5, 3), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(5, 3), Record: &fakeRecord{}}}}
-		b3 := &sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(8, 7), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(8, 7), Record: &fakeRecord{}}}}
+			&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(0, 2), RecordBatch: &fakeRecord{}},
+			&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(2, 3), RecordBatch: &fakeRecord{}}}}
+		b2 := &sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(5, 3), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(5, 3), RecordBatch: &fakeRecord{}}}}
+		b3 := &sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(8, 7), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(8, 7), RecordBatch: &fakeRecord{}}}}
 
 		fbi := &fakeBatchIterator{
 			batches:   []SparkArrowBatch{b1, b2, b3},
@@ -562,9 +562,9 @@ func TestArrowRowScanner(t *testing.T) {
 
 		fbi := &fakeBatchIterator{
 			batches: []SparkArrowBatch{
-				&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(0, 5), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(0, 5), Record: &fakeRecord{}}}},
-				&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(5, 3), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(5, 3), Record: &fakeRecord{}}}},
-				&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(8, 7), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(8, 7), Record: &fakeRecord{}}}},
+				&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(0, 5), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(0, 5), RecordBatch: &fakeRecord{}}}},
+				&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(5, 3), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(5, 3), RecordBatch: &fakeRecord{}}}},
+				&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(8, 7), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(8, 7), RecordBatch: &fakeRecord{}}}},
 			},
 			index:     -1,
 			callCount: 0,
@@ -600,9 +600,9 @@ func TestArrowRowScanner(t *testing.T) {
 
 		fbi := &fakeBatchIterator{
 			batches: []SparkArrowBatch{
-				&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(0, 5), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(0, 5), Record: &fakeRecord{}}}},
-				&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(5, 3), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(5, 3), Record: &fakeRecord{}}}},
-				&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(8, 7), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(8, 7), Record: &fakeRecord{}}}},
+				&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(0, 5), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(0, 5), RecordBatch: &fakeRecord{}}}},
+				&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(5, 3), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(5, 3), RecordBatch: &fakeRecord{}}}},
+				&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(8, 7), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(8, 7), RecordBatch: &fakeRecord{}}}},
 			},
 			index:     -1,
 			callCount: 0,
@@ -639,9 +639,9 @@ func TestArrowRowScanner(t *testing.T) {
 
 		fbi := &fakeBatchIterator{
 			batches: []SparkArrowBatch{
-				&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(0, 5), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(0, 5), Record: &fakeRecord{}}}},
-				&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(5, 3), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(5, 3), Record: &fakeRecord{}}}},
-				&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(8, 7), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(8, 7), Record: &fakeRecord{}}}},
+				&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(0, 5), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(0, 5), RecordBatch: &fakeRecord{}}}},
+				&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(5, 3), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(5, 3), RecordBatch: &fakeRecord{}}}},
+				&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(8, 7), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(8, 7), RecordBatch: &fakeRecord{}}}},
 			},
 			index:     -1,
 			callCount: 0,
@@ -680,9 +680,9 @@ func TestArrowRowScanner(t *testing.T) {
 
 		fbi := &fakeBatchIterator{
 			batches: []SparkArrowBatch{
-				&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(0, 5), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(0, 5), Record: &fakeRecord{}}}},
-				&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(5, 3), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(5, 3), Record: &fakeRecord{}}}},
-				&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(8, 7), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(8, 7), Record: &fakeRecord{}}}},
+				&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(0, 5), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(0, 5), RecordBatch: &fakeRecord{}}}},
+				&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(5, 3), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(5, 3), RecordBatch: &fakeRecord{}}}},
+				&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(8, 7), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(8, 7), RecordBatch: &fakeRecord{}}}},
 			},
 			index:     -1,
 			callCount: 0,
@@ -716,9 +716,9 @@ func TestArrowRowScanner(t *testing.T) {
 
 		fbi := &fakeBatchIterator{
 			batches: []SparkArrowBatch{
-				&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(0, 5), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(0, 5), Record: &fakeRecord{}}}},
-				&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(5, 3), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(5, 3), Record: &fakeRecord{}}}},
-				&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(8, 7), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(8, 7), Record: &fakeRecord{}}}},
+				&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(0, 5), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(0, 5), RecordBatch: &fakeRecord{}}}},
+				&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(5, 3), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(5, 3), RecordBatch: &fakeRecord{}}}},
+				&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(8, 7), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(8, 7), RecordBatch: &fakeRecord{}}}},
 			},
 			index:     -1,
 			callCount: 0,
@@ -868,9 +868,9 @@ func TestArrowRowScanner(t *testing.T) {
 
 			fbi := &fakeBatchIterator{
 				batches: []SparkArrowBatch{
-					&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(0, 5), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(0, 5), Record: &fakeRecord{}}}},
-					&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(5, 3), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(5, 3), Record: &fakeRecord{}}}},
-					&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(8, 7), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(8, 7), Record: &fakeRecord{}}}},
+					&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(0, 5), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(0, 5), RecordBatch: &fakeRecord{}}}},
+					&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(5, 3), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(5, 3), RecordBatch: &fakeRecord{}}}},
+					&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(8, 7), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(8, 7), RecordBatch: &fakeRecord{}}}},
 				},
 				index:     -1,
 				callCount: 0,
@@ -1715,8 +1715,8 @@ type fakeRecord struct {
 	fnColumns    func() []arrow.Array
 	fnColumn     func(i int) arrow.Array
 	fnColumnName func(i int) string
-	fnNewSlice   func(i, j int64) arrow.Record
-	fnSetColumn  func(int, arrow.Array) (arrow.Record, error)
+	fnNewSlice   func(i, j int64) arrow.RecordBatch
+	fnSetColumn  func(int, arrow.Array) (arrow.RecordBatch, error)
 }
 
 func (fr fakeRecord) Release() {
@@ -1769,7 +1769,7 @@ func (fr fakeRecord) ColumnName(i int) string {
 	return ""
 }
 
-func (fr fakeRecord) NewSlice(i, j int64) arrow.Record {
+func (fr fakeRecord) NewSlice(i, j int64) arrow.RecordBatch {
 	if fr.fnNewSlice != nil {
 		return fr.fnNewSlice(i, j)
 	}
@@ -1778,7 +1778,7 @@ func (fr fakeRecord) NewSlice(i, j int64) arrow.Record {
 
 func (fr fakeRecord) MarshalJSON() ([]byte, error) { return nil, nil }
 
-func (fr fakeRecord) SetColumn(i int, arr arrow.Array) (arrow.Record, error) {
+func (fr fakeRecord) SetColumn(i int, arr arrow.Array) (arrow.RecordBatch, error) {
 	if fr.fnSetColumn != nil {
 		return fr.fnSetColumn(i, arr)
 	}
@@ -2212,7 +2212,7 @@ func TestScanRowNativeDecimal(t *testing.T) {
 
 		ars.batchIterator = &fakeBatchIterator{
 			batches: []SparkArrowBatch{
-				&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(0, 1), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(0, 1), Record: &fakeRecord{}}}},
+				&sparkArrowBatch{Delimiter: rowscanner.NewDelimiter(0, 1), arrowRecords: []SparkArrowRecord{&sparkArrowRecord{Delimiter: rowscanner.NewDelimiter(0, 1), RecordBatch: &fakeRecord{}}}},
 			},
 			index:     -1,
 			callCount: 0,

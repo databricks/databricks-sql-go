@@ -7,7 +7,7 @@ package decimalfmt
 import (
 	"math/big"
 
-	"github.com/apache/arrow/go/v12/arrow/decimal128"
+	"github.com/apache/arrow-go/v18/arrow/decimal128"
 )
 
 // decMaxLen bounds the longest exact string a real Databricks DECIMAL produces,

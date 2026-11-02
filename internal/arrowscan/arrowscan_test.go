@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/apache/arrow/go/v12/arrow"
-	"github.com/apache/arrow/go/v12/arrow/array"
-	"github.com/apache/arrow/go/v12/arrow/decimal128"
-	"github.com/apache/arrow/go/v12/arrow/memory"
+	"github.com/apache/arrow-go/v18/arrow"
+	"github.com/apache/arrow-go/v18/arrow/array"
+	"github.com/apache/arrow-go/v18/arrow/decimal128"
+	"github.com/apache/arrow-go/v18/arrow/memory"
 )
 
 // ScanCell renders the supported scalar types and rejects an unsupported type
@@ -543,10 +543,8 @@ func TestStructKeyCacheReset(t *testing.T) {
 
 // LargeList and FixedSizeList are handled by arrowscan but NOT by the Thrift
 // arrowbased renderer, so the cross-backend parity test can't reach them; their
-// offset arithmetic (hand-rolled, distinct from List's ValueOffsets — arrow-go v12
-// LargeList.ValueOffsets does not add the logical offset, and FixedSizeList has no
-// ValueOffsets at all) is verified here directly, including on a sliced array where
-// a non-zero logical offset would expose an off-by-offset bug.
+// offset arithmetic is verified here directly, including on a sliced array
+// where a non-zero logical offset would expose an off-by-offset bug.
 func TestScanCellLargeAndFixedSizeList(t *testing.T) {
 	pool := memory.NewGoAllocator()
 
