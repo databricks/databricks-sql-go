@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"math"
 	"math/rand"
+	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // assertParity fails unless Marshal(v) matches json.Marshal(v) byte-for-byte,
@@ -13,7 +15,7 @@ func assertParity(t *testing.T, v any) {
 	t.Helper()
 	want, wantErr := json.Marshal(v)
 	got, gotErr := Marshal(v)
-	if (wantErr != nil) != (gotErr != nil) {
+	if (wantErr != nil) != (gotErr != nil) || wantErr != nil && gotErr.Error() != wantErr.Error() {
 		t.Fatalf("%#v: error mismatch: got %v, want %v", v, gotErr, wantErr)
 	}
 	if wantErr == nil && string(got) != string(want) {
@@ -49,6 +51,39 @@ func TestMarshalStringBytes(t *testing.T) {
 	}
 }
 
+// Every rune (surrogates encode as U+FFFD), so the UTF-8 fast path can't drift
+// from json.Marshal.
+func TestMarshalEveryRune(t *testing.T) {
+	for r := rune(0); r <= utf8.MaxRune; r++ {
+		assertParity(t, "x"+string(r))
+	}
+}
+
+// Random mixes of ASCII, multi-byte runes, U+2028/U+2029 and raw invalid bytes.
+func TestMarshalRandomUnicodeStrings(t *testing.T) {
+	r := rand.New(rand.NewSource(3)) //nolint:gosec // G404: deterministic test inputs, not security
+	pieces := []string{"a", "Z", " ", "<", "&", "\"", "\\", "\n", "\x7f"}
+	for _, cp := range []rune{0xe9, 0xdf, 0x65e5, 0x1f600, 0x2028, 0x2029, 0xa0, 0xfeff, 0xffff} {
+		pieces = append(pieces, string(cp))
+	}
+	for i := 0; i < 100000; i++ {
+		var sb strings.Builder
+		for j, n := 0, r.Intn(12); j < n; j++ {
+			switch r.Intn(4) {
+			case 0:
+				var raw [1]byte // possibly invalid UTF-8
+				_, _ = r.Read(raw[:])
+				sb.Write(raw[:])
+			case 1:
+				sb.WriteRune(r.Int31n(utf8.MaxRune + 1))
+			default:
+				sb.WriteString(pieces[r.Intn(len(pieces))])
+			}
+		}
+		assertParity(t, sb.String())
+	}
+}
+
 // Random bit patterns reach exponent cutoffs, subnormals, and rounding cases a
 // hand-picked list misses.
 func TestMarshalRandomFloats(t *testing.T) {
@@ -73,8 +108,11 @@ func TestAppendKeepsPrefix(t *testing.T) {
 }
 
 func BenchmarkMarshalScalars(b *testing.B) {
-	values := []any{int32(42), int64(-9000), 3.14, float32(0.5), true, "alpha0"}
+	// The last three take json.Marshal's fallback.
+	values := []any{int32(42), int64(-9000), 3.14, 0.30000000000000004, float32(0.5), true, "alpha0", "café crème",
+		`a"b`, []byte("abc"), math.NaN()}
 	b.Run("jsonfmt", func(b *testing.B) {
+		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
 			for _, v := range values {
 				_, _ = Marshal(v)
@@ -82,6 +120,7 @@ func BenchmarkMarshalScalars(b *testing.B) {
 		}
 	})
 	b.Run("encoding_json", func(b *testing.B) {
+		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
 			for _, v := range values {
 				_, _ = json.Marshal(v)

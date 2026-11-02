@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"math"
 	"strconv"
+	"unicode/utf8"
 )
 
 // Append appends the JSON encoding of v to dst, exactly as json.Marshal(v)
@@ -103,22 +104,45 @@ func appendFloat(dst []byte, f float64, bits int) []byte {
 	return dst
 }
 
-// needsEscape reports whether json.Marshal would escape any byte of s. Only
-// printable ASCII outside json.Marshal's HTML-escaped set (<, >, &) and the
-// quote/backslash is copied verbatim; everything else takes the fallback.
+// needsEscape reports whether json.Marshal would escape any part of s. It copies
+// ASCII verbatim except control characters, the quote/backslash and the
+// HTML-escaped <, >, &; and valid multi-byte UTF-8 verbatim except U+2028/U+2029.
+// Everything else (including invalid UTF-8) takes the fallback.
 func needsEscape(s string) bool {
 	for i := 0; i < len(s); i++ {
 		if !plainASCII[s[i]] {
-			return true
+			if s[i] < utf8.RuneSelf {
+				return true
+			}
+			return needsEscapeUTF8(s[i:])
 		}
 	}
 	return false
 }
 
-// plainASCII marks the bytes json.Marshal copies verbatim. A table lookup keeps
-// the scan faster than json.Marshal's own on long strings.
+// needsEscapeUTF8 is needsEscape for the rest of s from its first non-ASCII byte.
+func needsEscapeUTF8(s string) bool {
+	for i := 0; i < len(s); {
+		if c := s[i]; c < utf8.RuneSelf {
+			if !plainASCII[c] {
+				return true
+			}
+			i++
+			continue
+		}
+		r, size := utf8.DecodeRuneInString(s[i:])
+		if r == utf8.RuneError && size == 1 || r == 0x2028 || r == 0x2029 {
+			return true
+		}
+		i += size
+	}
+	return false
+}
+
+// plainASCII marks the ASCII bytes json.Marshal copies verbatim. A table lookup
+// keeps the scan faster than json.Marshal's own on long strings.
 var plainASCII = func() (t [256]bool) {
-	for c := 0x20; c < 0x7f; c++ {
+	for c := 0x20; c <= 0x7f; c++ {
 		t[c] = true
 	}
 	for _, c := range `"\<>&` {
