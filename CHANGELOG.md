@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Add `WithConnectTimeout`, which bounds session establishment and retries transient OpenSession failures (such as a cold-starting warehouse returning 503) until the deadline. Default (0) keeps a single attempt. Thrift backend only.
 - Upgrade go-oidc to v3.21.0 (go-jose v4.1.6) and x/oauth2 to v0.36.0 to address go-jose/v3 security findings (databricks/databricks-sql-go#526).
 - Reduce kernel-backend JSON rendering allocations for nested Boolean and signed-integer values.
 - Render most nested ARRAY / MAP / STRUCT scalars (numbers, booleans, and strings that need no escaping) without `encoding/json` on both backends, avoiding the per-value overhead of Go 1.27's json/v2-backed `encoding/json` (databricks/databricks-sql-go#527).

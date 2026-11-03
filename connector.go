@@ -179,6 +179,11 @@ func NewConnector(options ...ConnOption) (driver.Connector, error) {
 			"add WithUseKernel(true) or remove it", dbsqlerr.ErrRequiresKernelBackend)
 	}
 
+	if cfg.ConnectTimeout != 0 && cfg.UseKernel {
+		return nil, fmt.Errorf("databricks: WithConnectTimeout is not supported on the kernel backend: %w; "+
+			"remove WithUseKernel(true) or WithConnectTimeout", dbsqlerr.ErrInvalidKernelConfig)
+	}
+
 	client := client.RetryableClient(cfg)
 
 	return &connector{cfg: cfg, client: client}, nil
@@ -433,6 +438,17 @@ func WithMaxRows(n int) ConnOption {
 func WithTimeout(n time.Duration) ConnOption {
 	return func(c *config.Config) {
 		c.QueryTimeout = n
+	}
+}
+
+// WithConnectTimeout bounds how long establishing a session (OpenSession) may
+// take and keeps retrying an unavailable warehouse until that deadline, so a
+// cold-starting cluster has time to come up. Default (0) is a single attempt
+// with no added bound, preserving the prior behavior. Applies to the Thrift
+// backend only.
+func WithConnectTimeout(n time.Duration) ConnOption {
+	return func(c *config.Config) {
+		c.ConnectTimeout = n
 	}
 }
 
