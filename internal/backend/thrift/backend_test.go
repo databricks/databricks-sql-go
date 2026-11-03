@@ -8,6 +8,7 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
+	"net/http"
 	"testing"
 	"time"
 
@@ -602,6 +603,63 @@ func TestBackend_executeStatement_QueryTags(t *testing.T) {
 
 func TestBackend_pollOperation(t *testing.T) {
 	t.Parallel()
+	pollHandle := func(id byte) *cli_service.TOperationHandle {
+		return &cli_service.TOperationHandle{
+			OperationId: &cli_service.THandleIdentifier{GUID: []byte{1, 2, 3, 4, 2, 23, 4, 2, 3, 1, 3, 4, 4, 223, 34, id}, Secret: []byte("b")},
+		}
+	}
+	pollConfig := func() *config.Config {
+		cfg := config.WithDefaults()
+		cfg.PollInterval = time.Millisecond
+		return cfg
+	}
+
+	t.Run("pollOperation recovers from transport errors within the cap", func(t *testing.T) {
+		var count int
+		testClient := &client.TestClient{FnGetOperationStatus: func(ctx context.Context, req *cli_service.TGetOperationStatusReq) (*cli_service.TGetOperationStatusResp, error) {
+			count++
+			if count <= maxPollFailures {
+				return nil, errors.New("connection reset by peer")
+			}
+			return &cli_service.TGetOperationStatusResp{OperationState: cli_service.TOperationStatePtr(cli_service.TOperationState_FINISHED_STATE)}, nil
+		}}
+		be := NewForTest(testClient, getTestSession(), pollConfig())
+		res, err := be.pollOperation(context.Background(), pollHandle(70))
+		assert.NoError(t, err)
+		assert.Equal(t, cli_service.TOperationState_FINISHED_STATE, res.GetOperationState())
+	})
+
+	t.Run("pollOperation gives up after exceeding the transport error cap", func(t *testing.T) {
+		var count int
+		testClient := &client.TestClient{FnGetOperationStatus: func(ctx context.Context, req *cli_service.TGetOperationStatusReq) (*cli_service.TGetOperationStatusResp, error) {
+			count++
+			return nil, errors.New("connection reset by peer")
+		}}
+		be := NewForTest(testClient, getTestSession(), pollConfig())
+		res, err := be.pollOperation(context.Background(), pollHandle(71))
+		assert.Error(t, err)
+		assert.Nil(t, res)
+		assert.Equal(t, maxPollFailures+1, count)
+	})
+
+	t.Run("pollOperation fails immediately on a client error", func(t *testing.T) {
+		for i, status := range []string{"401", "403", "404"} {
+			t.Run(status, func(t *testing.T) {
+				var count int
+				testClient := &client.TestClient{FnGetOperationStatus: func(ctx context.Context, req *cli_service.TGetOperationStatusReq) (*cli_service.TGetOperationStatusResp, error) {
+					count++
+					// Shaped like the url.Error from the transport (see client.go CheckRetry).
+					return nil, fmt.Errorf("Post \"https://h/sql\": unexpected HTTP status %s %s", status, http.StatusText(map[string]int{"401": 401, "403": 403, "404": 404}[status]))
+				}}
+				be := NewForTest(testClient, getTestSession(), pollConfig())
+				res, err := be.pollOperation(context.Background(), pollHandle(byte(80+i)))
+				assert.Error(t, err)
+				assert.Nil(t, res)
+				assert.Equal(t, 1, count)
+			})
+		}
+	})
+
 	t.Run("pollOperation returns finished state response when query finishes", func(t *testing.T) {
 		var getOperationStatusCount int
 		getOperationStatus := func(ctx context.Context, req *cli_service.TGetOperationStatusReq) (r *cli_service.TGetOperationStatusResp, err error) {
