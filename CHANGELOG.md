@@ -4,6 +4,7 @@
 
 - **Breaking change:** Upgrade Arrow Go from v12 to v18.8.0. Arrow batch API consumers must migrate to `github.com/apache/arrow-go/v18`. The `database/sql` and Arrow IPC iterator APIs are unchanged.
 
+- Upgrade the SQL kernel bindings to v1.4.0.
 - Upgrade go-oidc to v3.21.0 (go-jose v4.1.6) and x/oauth2 to v0.36.0 to address go-jose/v3 security findings (databricks/databricks-sql-go#526).
 - Reduce kernel-backend JSON rendering allocations for nested Boolean and signed-integer values.
 - Render most nested ARRAY / MAP / STRUCT scalars (numbers, booleans, and strings that need no escaping) without `encoding/json` on both backends, avoiding the per-value overhead of Go 1.27's json/v2-backed `encoding/json` (databricks/databricks-sql-go#527).
