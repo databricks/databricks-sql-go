@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/apache/arrow/go/v12/arrow/decimal128"
+	"github.com/apache/arrow-go/v18/arrow/decimal128"
 )
 
 // ExactString applies scale by string placement, preserving digits a float64

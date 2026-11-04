@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/apache/arrow/go/v12/arrow/ipc"
+	"github.com/apache/arrow-go/v18/arrow/ipc"
 	dbsql "github.com/databricks/databricks-sql-go"
 	dbsqlrows "github.com/databricks/databricks-sql-go/rows"
 	"github.com/joho/godotenv"
@@ -97,7 +97,7 @@ func main() {
 
 		// Process records in the stream
 		for ipcReader.Next() {
-			record := ipcReader.Record()
+			record := ipcReader.RecordBatch()
 			recordCount++
 			log.Printf("Stream %d, Record %d: %d rows, %d columns",
 				streamCount, recordCount, record.NumRows(), record.NumCols())
