@@ -483,6 +483,68 @@ func TestNewConnector(t *testing.T) {
 	})
 }
 
+// Issue #475: CloudFetch download client and link-expiry margin must be
+// configurable without displacing the Thrift transport.
+func TestCloudFetchConnOptions(t *testing.T) {
+	base := []ConnOption{
+		WithServerHostname("databricks-host"),
+		WithAccessToken("token"),
+		WithHTTPPath("http-path"),
+	}
+	build := func(t *testing.T, opts ...ConnOption) *connector {
+		con, err := NewConnector(append(append([]ConnOption{}, base...), opts...)...)
+		require.NoError(t, err)
+		coni, ok := con.(*connector)
+		require.True(t, ok)
+		return coni
+	}
+
+	t.Run("WithCloudFetchHTTPClient sets HTTPClient and leaves Transport nil", func(t *testing.T) {
+		c := &http.Client{Timeout: 42 * time.Second}
+		coni := build(t, WithCloudFetchHTTPClient(c))
+		assert.Same(t, c, coni.cfg.HTTPClient)
+		assert.Equal(t, 42*time.Second, coni.cfg.HTTPClient.Timeout)
+		assert.Nil(t, coni.cfg.Transport)
+	})
+
+	t.Run("explicit CloudFetch client wins over WithTransport in either order", func(t *testing.T) {
+		tr := &http.Transport{MaxIdleConns: 3}
+		c := &http.Client{Timeout: 7 * time.Second}
+
+		coni := build(t, WithTransport(tr), WithCloudFetchHTTPClient(c))
+		assert.Same(t, c, coni.cfg.HTTPClient)
+		assert.Equal(t, tr, coni.cfg.Transport)
+
+		coni = build(t, WithCloudFetchHTTPClient(c), WithTransport(tr))
+		assert.Same(t, c, coni.cfg.HTTPClient)
+		assert.Equal(t, tr, coni.cfg.Transport)
+	})
+
+	t.Run("nil CloudFetch client is ignored and keeps the WithTransport-derived client", func(t *testing.T) {
+		tr := &http.Transport{MaxIdleConns: 3}
+
+		for _, opts := range [][]ConnOption{
+			{WithTransport(tr), WithCloudFetchHTTPClient(nil)},
+			{WithCloudFetchHTTPClient(nil), WithTransport(tr)},
+		} {
+			coni := build(t, opts...)
+			require.NotNil(t, coni.cfg.HTTPClient)
+			assert.Equal(t, tr, coni.cfg.HTTPClient.Transport)
+			assert.Equal(t, tr, coni.cfg.Transport)
+		}
+	})
+
+	t.Run("WithCloudFetchMinTimeToExpiry sets MinTimeToExpiry", func(t *testing.T) {
+		coni := build(t, WithCloudFetchMinTimeToExpiry(90*time.Second))
+		assert.Equal(t, 90*time.Second, coni.cfg.MinTimeToExpiry)
+	})
+
+	t.Run("WithCloudFetchMinTimeToExpiry clamps negative values to 0", func(t *testing.T) {
+		coni := build(t, WithCloudFetchMinTimeToExpiry(-90*time.Second))
+		assert.Equal(t, time.Duration(0), coni.cfg.MinTimeToExpiry)
+	})
+}
+
 func TestWithQueryTags(t *testing.T) {
 	t.Run("WithQueryTags serializes map into SessionParams QUERY_TAGS", func(t *testing.T) {
 		con, err := NewConnector(
