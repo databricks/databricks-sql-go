@@ -33,6 +33,7 @@ import (
 // RowsColumnTypeDatabaseTypeName
 // RowsColumnTypeNullable
 // RowsColumnTypeLength
+// RowsColumnTypePrecisionScale
 type rows struct {
 	// The RowScanner is responsible for handling the different
 	// formats in which the query results can be returned
@@ -100,6 +101,7 @@ var _ driver.RowsColumnTypeScanType = (*rows)(nil)
 var _ driver.RowsColumnTypeDatabaseTypeName = (*rows)(nil)
 var _ driver.RowsColumnTypeNullable = (*rows)(nil)
 var _ driver.RowsColumnTypeLength = (*rows)(nil)
+var _ driver.RowsColumnTypePrecisionScale = (*rows)(nil)
 var _ dbsqlrows.Rows = (*rows)(nil)
 
 // TelemetryCallbacks bundles the optional telemetry hooks passed into NewRows.
@@ -452,6 +454,28 @@ func (r *rows) ColumnTypeLength(index int) (length int64, ok bool) {
 		return 0, false
 	}
 	return columnTypeLengthForID(rowscanner.GetDBTypeID(columnInfo))
+}
+
+// ColumnTypePrecisionScale returns the declared precision and scale for a
+// DECIMAL column. Non-decimal columns and incomplete metadata return ok=false.
+func (r *rows) ColumnTypePrecisionScale(index int) (precision, scale int64, ok bool) {
+	columnInfo, err := r.getColumnMetadataByIndex(index)
+	if err != nil || rowscanner.GetDBTypeID(columnInfo) != cli_service.TTypeId_DECIMAL_TYPE {
+		return 0, 0, false
+	}
+
+	qualifiers := rowscanner.GetDBTypeQualifiers(columnInfo)
+	if qualifiers == nil {
+		return 0, 0, false
+	}
+	precisionQualifier := qualifiers.Qualifiers["precision"]
+	scaleQualifier := qualifiers.Qualifiers["scale"]
+	if precisionQualifier == nil || !precisionQualifier.IsSetI32Value() ||
+		scaleQualifier == nil || !scaleQualifier.IsSetI32Value() {
+		return 0, 0, false
+	}
+
+	return int64(precisionQualifier.GetI32Value()), int64(scaleQualifier.GetI32Value()), true
 }
 
 // columnTypeLengthForID is the variable-length classification behind
