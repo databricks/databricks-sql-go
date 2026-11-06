@@ -374,9 +374,13 @@ func (b *Backend) pollOperation(ctx context.Context, opHandle *cli_service.TOper
 			var err error
 			log.Debug().Msg("databricks: polling status")
 			debuglog.Logf(ctx, "thrift.Backend.pollOperation", "GetOperationStatus")
-			statusResp, err = b.client.GetOperationStatus(newCtx, &cli_service.TGetOperationStatusReq{
+			statusResp, err = b.client.GetOperationStatus(ctx, &cli_service.TGetOperationStatusReq{
 				OperationHandle: opHandle,
 			})
+			if err != nil && ctx.Err() != nil {
+				// Let Watch send remote cancellation instead of returning the interrupted poll error.
+				return func() bool { return false }, nil, nil
+			}
 
 			if statusResp != nil && statusResp.OperationState != nil {
 				log.Debug().Msgf("databricks: status %s", statusResp.GetOperationState().String())
