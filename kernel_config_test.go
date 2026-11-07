@@ -467,9 +467,10 @@ var kernelConfigFieldDisposition = map[string]string{
 	"EnableTelemetry":    "forwarded",
 	"TelemetryBatchSize": "forwarded",
 	// Forwarded to the kernel's telemetry scheduler on the kernel path.
-	"TelemetryFlushInterval":   "forwarded",
-	"UseArrowNativeDecimalDSN": "inert", // DSN carrier; kernel renders decimals exactly regardless
-	"TokenCacheEnabledDSN":     "inert", // DSN carrier; forwarded to KernelExperimental.TokenCacheEnabled
+	"TelemetryFlushInterval":     "forwarded",
+	"UseArrowNativeDecimalDSN":   "inert", // DSN carrier; kernel renders decimals exactly regardless
+	"TokenCacheEnabledDSN":       "inert", // DSN carrier; forwarded to KernelExperimental.TokenCacheEnabled
+	"EnableGeoSpatialSupportDSN": "inert", // DSN carrier; forwarded to KernelExperimental.EnableGeoSpatialSupport
 
 	// Fields promoted from the embedded CloudFetchConfig. The kernel does
 	// CloudFetch internally (below the C ABI), so none is forwarded — but each is
@@ -555,6 +556,26 @@ func TestBuildKernelConfig(t *testing.T) {
 		kc := buildKernelConfig(c, kernel.Auth{Mode: kernel.AuthPAT, Token: "dapi-x"})
 		if kc.MaxConnections != 37 {
 			t.Errorf("MaxConnections = %d, want 37", kc.MaxConnections)
+		}
+	})
+
+	t.Run("geospatial support defaults false and preserves explicit values", func(t *testing.T) {
+		c := baseKernelConfig()
+		kc := buildKernelConfig(c, kernel.Auth{Mode: kernel.AuthPAT, Token: "dapi-x"})
+		if kc.EnableGeoSpatialSupport {
+			t.Fatal("omitted EnableGeoSpatialSupport = true, want default false")
+		}
+
+		WithEnableGeoSpatialSupport(false)(c)
+		kc = buildKernelConfig(c, kernel.Auth{Mode: kernel.AuthPAT, Token: "dapi-x"})
+		if kc.EnableGeoSpatialSupport {
+			t.Fatal("explicit EnableGeoSpatialSupport=false was not preserved")
+		}
+
+		WithEnableGeoSpatialSupport(true)(c)
+		kc = buildKernelConfig(c, kernel.Auth{Mode: kernel.AuthPAT, Token: "dapi-x"})
+		if !kc.EnableGeoSpatialSupport {
+			t.Fatal("explicit EnableGeoSpatialSupport=true was not preserved")
 		}
 	})
 
@@ -647,8 +668,8 @@ func TestBuildKernelConfig(t *testing.T) {
 		if kc.Telemetry == nil {
 			t.Fatal("Telemetry not forwarded")
 		}
-		if kc.Telemetry.Enabled {
-			t.Error("Telemetry.Enabled = true, want false when enableTelemetry is unset")
+		if kc.Telemetry.Enabled != nil {
+			t.Errorf("Telemetry.Enabled = %v, want nil when enableTelemetry is unset", *kc.Telemetry.Enabled)
 		}
 		if kc.Telemetry.BatchSize != 0 {
 			t.Errorf("Telemetry.BatchSize = %d, want 0 when telemetry_batch_size is unset", kc.Telemetry.BatchSize)
@@ -664,8 +685,8 @@ func TestBuildKernelConfig(t *testing.T) {
 		if kc.Telemetry == nil {
 			t.Fatal("Telemetry not forwarded")
 		}
-		if kc.Telemetry.Enabled {
-			t.Error("Telemetry.Enabled = true, want false from explicit enableTelemetry=false")
+		if kc.Telemetry.Enabled == nil || *kc.Telemetry.Enabled {
+			t.Errorf("Telemetry.Enabled = %v, want explicit false", kc.Telemetry.Enabled)
 		}
 		if kc.Telemetry.BatchSize != 17 {
 			t.Errorf("Telemetry.BatchSize = %d, want 17", kc.Telemetry.BatchSize)
@@ -676,8 +697,8 @@ func TestBuildKernelConfig(t *testing.T) {
 
 		c.EnableTelemetry = config.NewConfigValue(true)
 		kc = buildKernelConfig(c, kernel.Auth{Mode: kernel.AuthPAT, Token: "dapi-x"})
-		if !kc.Telemetry.Enabled {
-			t.Error("Telemetry.Enabled = false, want true from explicit enableTelemetry=true")
+		if kc.Telemetry.Enabled == nil || !*kc.Telemetry.Enabled {
+			t.Errorf("Telemetry.Enabled = %v, want explicit true", kc.Telemetry.Enabled)
 		}
 	})
 

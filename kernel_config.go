@@ -176,6 +176,9 @@ func buildKernelConfig(cfg *config.Config, kauth kernel.Auth) kernel.Config {
 		// this binding's system identity for its own runtime.
 		Telemetry:                 kernelTelemetryConfig(cfg),
 		DriverSystemConfiguration: kernelDriverSystemConfiguration(cfg),
+		// Preserve string results by default, including automatic kernel recovery.
+		// An explicit true below opts into native geospatial values.
+		EnableGeoSpatialSupport: false,
 	}
 	if cfg.ClientQueryTimeout != nil {
 		timeout := *cfg.ClientQueryTimeout
@@ -209,6 +212,9 @@ func buildKernelConfig(cfg *config.Config, kauth kernel.Auth) kernel.Config {
 		}
 		// Client-side scan choice: lossy float64 decimals instead of exact strings.
 		kc.DecimalAsFloat = ke.DecimalAsFloat
+		if ke.EnableGeoSpatialSupport != nil {
+			kc.EnableGeoSpatialSupport = *ke.EnableGeoSpatialSupport
+		}
 		// U2M token-cache control (WithTokenCache / tokenCache DSN param): forward to kernel.
 		kc.TokenCacheEnabled = ke.TokenCacheEnabled
 	}
@@ -219,9 +225,9 @@ func buildKernelConfig(cfg *config.Config, kauth kernel.Auth) kernel.Config {
 }
 
 func kernelTelemetryConfig(cfg *config.Config) *kernel.TelemetryConfig {
-	enabled := false
+	var enabled *bool
 	if val, isSet := cfg.EnableTelemetry.Get(); isSet {
-		enabled = val
+		enabled = &val
 	}
 	return &kernel.TelemetryConfig{
 		Enabled:       enabled,

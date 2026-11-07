@@ -256,6 +256,22 @@ func TestSetTokenCache(t *testing.T) {
 	}
 }
 
+func TestSetEnableGeoSpatialSupport(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		cfg  Config
+	}{
+		{name: "enabled", cfg: Config{EnableGeoSpatialSupport: true}},
+		{name: "disabled", cfg: Config{EnableGeoSpatialSupport: false}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := trySetEnableGeoSpatialSupport(tc.cfg); err != nil {
+				t.Errorf("applyEnableGeoSpatialSupport(%s) = %v, want nil", tc.name, err)
+			}
+		})
+	}
+}
+
 func TestSetRequestTimeout(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
@@ -290,25 +306,28 @@ func TestSetMaxConnections(t *testing.T) {
 }
 
 func TestSetTelemetry(t *testing.T) {
+	enabled := true
+	disabled := false
 	for _, tc := range []struct {
 		name    string
 		cfg     Config
 		wantErr bool
 	}{
 		{"nil telemetry is no-op", Config{}, false},
-		{"defaults filled for zero tuning fields", Config{Telemetry: &TelemetryConfig{Enabled: true}}, false},
+		{"unspecified enablement preserves feature flag", Config{Telemetry: &TelemetryConfig{}}, false},
+		{"defaults filled for zero tuning fields", Config{Telemetry: &TelemetryConfig{Enabled: &enabled}}, false},
 		{"explicit tuning", Config{Telemetry: &TelemetryConfig{
-			Enabled:           false,
+			Enabled:           &disabled,
 			BatchSize:         17,
 			FlushInterval:     2 * time.Second,
 			MaxRetries:        2,
 			RetryDelay:        25 * time.Millisecond,
 			CloseFlushTimeout: 3 * time.Second,
 		}}, false},
-		{"negative batch size is defaulted", Config{Telemetry: &TelemetryConfig{Enabled: true, BatchSize: -1}}, false},
-		{"negative flush interval is defaulted", Config{Telemetry: &TelemetryConfig{Enabled: true, FlushInterval: -time.Second}}, false},
-		{"negative retry delay is defaulted", Config{Telemetry: &TelemetryConfig{Enabled: true, RetryDelay: -time.Second}}, false},
-		{"negative close timeout is defaulted", Config{Telemetry: &TelemetryConfig{Enabled: true, CloseFlushTimeout: -time.Second}}, false},
+		{"negative batch size is defaulted", Config{Telemetry: &TelemetryConfig{Enabled: &enabled, BatchSize: -1}}, false},
+		{"negative flush interval is defaulted", Config{Telemetry: &TelemetryConfig{Enabled: &enabled, FlushInterval: -time.Second}}, false},
+		{"negative retry delay is defaulted", Config{Telemetry: &TelemetryConfig{Enabled: &enabled, RetryDelay: -time.Second}}, false},
+		{"negative close timeout is defaulted", Config{Telemetry: &TelemetryConfig{Enabled: &enabled, CloseFlushTimeout: -time.Second}}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := trySetTelemetry(tc.cfg)

@@ -1,6 +1,7 @@
 package arrowbased
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -117,6 +118,33 @@ func TestArrowbasedKernelRenderParity(t *testing.T) {
 			b := array.NewStructBuilder(pool, dt)
 			b.Append(true)
 			b.FieldBuilder(0).(*array.Float32Builder).Append(0.1)
+			return b.NewArray()
+		}},
+		{"list_double", func() arrow.Array {
+			b := array.NewListBuilder(pool, arrow.PrimitiveTypes.Float64)
+			b.Append(true)
+			b.ValueBuilder().(*array.Float64Builder).AppendValues([]float64{0.1, -2.5, 1e-7, 1e21, 123456789.125, 0.30000000000000004}, nil)
+			return b.NewArray()
+		}},
+		// String leaves and map keys with UTF-8, HTML-escaped characters, U+2028
+		// and invalid UTF-8.
+		{"list_string_utf8_html", func() arrow.Array {
+			b := array.NewListBuilder(pool, arrow.BinaryTypes.String)
+			b.Append(true)
+			b.ValueBuilder().(*array.StringBuilder).AppendValues([]string{
+				"café", "日本語", "😀", "<b>&amp;</b>", "a" + string(rune(0x2028)) + "b", "bad\xffutf8", "del\x7f",
+			}, nil)
+			return b.NewArray()
+		}},
+		{"map_utf8_key", func() arrow.Array {
+			b := array.NewMapBuilder(pool, arrow.BinaryTypes.String, arrow.BinaryTypes.String, false)
+			b.Append(true)
+			kb := b.KeyBuilder().(*array.StringBuilder)
+			ib := b.ItemBuilder().(*array.StringBuilder)
+			kb.Append("clé")
+			ib.Append("naïve")
+			kb.Append("a<b")
+			ib.Append("Größe & Ελληνικά")
 			return b.NewArray()
 		}},
 		{"nested_decimal", func() arrow.Array {
@@ -253,6 +281,30 @@ func TestArrowbasedKernelRenderParity(t *testing.T) {
 		name  string
 		build func() arrow.Array
 	}{
+		{"sliced_struct_scalar_leaves", func() arrow.Array {
+			dt := arrow.StructOf(
+				arrow.Field{Name: "flag", Type: arrow.FixedWidthTypes.Boolean, Nullable: true},
+				arrow.Field{Name: "tiny", Type: arrow.PrimitiveTypes.Int8, Nullable: true},
+				arrow.Field{Name: "small", Type: arrow.PrimitiveTypes.Int16, Nullable: true},
+				arrow.Field{Name: "int", Type: arrow.PrimitiveTypes.Int32, Nullable: true},
+				arrow.Field{Name: "big", Type: arrow.PrimitiveTypes.Int64, Nullable: true},
+			)
+			input := `[
+				{"flag":true,"tiny":1,"small":2,"int":3,"big":4},
+				{"flag":true,"tiny":-128,"small":-32768,"int":-2147483648,"big":-9223372036854775808},
+				{"flag":false,"tiny":127,"small":32767,"int":2147483647,"big":9223372036854775807},
+				{"flag":true,"tiny":-1,"small":-1,"int":-1,"big":-1},
+				{"flag":false,"tiny":0,"small":0,"int":0,"big":0},
+				{"flag":null,"tiny":null,"small":null,"int":null,"big":null},
+				null
+			]`
+			full, _, err := array.FromJSON(pool, dt, strings.NewReader(input), array.WithUseNumber())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer full.Release()
+			return array.NewSlice(full, 1, int64(full.Len()))
+		}},
 		{"sliced_list", func() arrow.Array {
 			b := array.NewListBuilder(pool, arrow.PrimitiveTypes.Int64)
 			vb := b.ValueBuilder().(*array.Int64Builder)
@@ -402,18 +454,19 @@ func TestArrowbasedKernelTopLevelScalarParity(t *testing.T) {
 	}
 }
 
-// TestArrowbasedKernelTimestampTZParity pins the TIMESTAMP vs TIMESTAMP_NTZ
-// rendering contract: over Arrow, a TIMESTAMP arrives with TimeZone "UTC" and a
-// TIMESTAMP_NTZ with an empty TimeZone (kernel json.rs:171 — "TIMESTAMP carries a
-// tz on the Arrow side; TIMESTAMP_NTZ does not"). Both backends deliberately IGNORE
-// that tz field: each renders via ToTime + .In(loc), so the LTZ-vs-NTZ difference is
-// carried entirely by the instant value the server sends, NOT by the client
-// inspecting the tz. Verified live on both backends (NY + Kolkata, incl. a DST-gap
-// literal): kernel == Thrift byte-for-byte for both types.
+// TestArrowbasedKernelTimestampTZParity pins the CROSS-BACKEND parity of the
+// TIMESTAMP vs TIMESTAMP_NTZ rendering contract: over Arrow, a TIMESTAMP arrives
+// with TimeZone "UTC" and a TIMESTAMP_NTZ with an empty TimeZone (kernel
+// json.rs:171 — "TIMESTAMP carries a tz on the Arrow side; TIMESTAMP_NTZ does
+// not"). Per the TIMESTAMP_NTZ spec and issue #506, a zone-less column is a wall
+// clock and must NOT be shifted into the session location, while a zoned
+// TIMESTAMP is an instant rendered via ToTime + .In(loc). Both backends now read
+// the tz field and agree on that split, so the kernel and Thrift paths stay
+// byte-for-byte identical for both types.
 //
-// This test locks that in so a future "semantically-correct" change that skips
-// .In(loc) for TimeZone=="" (which would look right in isolation) fails CI — it
-// would make the kernel diverge from the Thrift path, which shifts NTZ too.
+// This test locks the two backends together: a change that alters the NTZ /
+// zoned handling on only one of them (making the kernel diverge from the Thrift
+// path, or vice versa) fails CI.
 func TestArrowbasedKernelTimestampTZParity(t *testing.T) {
 	pool := memory.NewGoAllocator()
 	loc, err := time.LoadLocation("America/New_York")

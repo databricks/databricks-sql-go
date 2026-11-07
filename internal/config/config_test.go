@@ -693,6 +693,39 @@ func TestParseConfig(t *testing.T) {
 	}
 }
 
+func TestParseDSNEnableGeoSpatialSupport(t *testing.T) {
+	base := "token:supersecret@example.cloud.databricks.com:443/sql/1.0/endpoints/abc"
+	for _, tc := range []struct {
+		name  string
+		query string
+		want  *bool
+	}{
+		{name: "omitted", query: "", want: nil},
+		{name: "enabled", query: "?enableGeoSpatialSupport=true", want: func() *bool { v := true; return &v }()},
+		{name: "disabled", query: "?enableGeoSpatialSupport=false", want: func() *bool { v := false; return &v }()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := ParseDSN(base + tc.query)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.want == nil {
+				if got.EnableGeoSpatialSupportDSN != nil {
+					t.Errorf("EnableGeoSpatialSupportDSN = %v, want nil", *got.EnableGeoSpatialSupportDSN)
+				}
+				return
+			}
+			if got.EnableGeoSpatialSupportDSN == nil || *got.EnableGeoSpatialSupportDSN != *tc.want {
+				t.Errorf("EnableGeoSpatialSupportDSN = %v, want %v", got.EnableGeoSpatialSupportDSN, *tc.want)
+			}
+		})
+	}
+
+	if _, err := ParseDSN(base + "?enableGeoSpatialSupport=notabool"); err == nil {
+		t.Error("malformed enableGeoSpatialSupport should fail DSN parsing")
+	}
+}
+
 func TestEffectiveSessionParams(t *testing.T) {
 	t.Run("no metric view leaves params unchanged", func(t *testing.T) {
 		c := &Config{UserConfig: UserConfig{SessionParams: map[string]string{"QUERY_TAGS": "a:1"}}}

@@ -12,7 +12,7 @@
 //   - map         → {"k0":v0,"k1":v1,...}   (keys stringified)
 //   - struct      → {"field0":v0,...}
 //   - nested NULL → null
-//   - time.Time   → quoted .String()  (matches the Thrift marshal() special-case)
+//   - time.Time   → quoted .String()  (matches the Thrift marshalScalar special-case)
 //   - nested decimal → exact scale-applied JSON number literal (never a lossy
 //     float64), matching Thrift's marshalScalar → ValueString
 //   - float32     → native float32 (not widened to float64), so JSON renders
@@ -23,12 +23,14 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/apache/arrow/go/v12/arrow"
 	"github.com/apache/arrow/go/v12/arrow/array"
 	"github.com/databricks/databricks-sql-go/internal/decimalfmt"
+	"github.com/databricks/databricks-sql-go/internal/jsonfmt"
 )
 
 // ScanCell extracts one cell as a driver.Value. Scalars map to their Go value:
@@ -36,8 +38,10 @@ import (
 // date, timestamp, and top-level decimal (as an exact fixed-point string,
 // matching the Thrift path — a float64 would lose precision beyond ~17 digits).
 // Nested types (List/Map/Struct, and VARIANT which
-// arrives nested) render to a JSON string byte-identical to the Thrift path;
-// GEOMETRY arrives as a WKB/WKT string and is handled by the string arm. INTERVAL
+// arrives nested) render to a JSON string byte-identical to the Thrift path.
+// Top-level binary GEOMETRY / GEOGRAPHY is selected explicitly through
+// ScanOptions and combines its SRID and WKB children into EWKB []byte; string
+// mode is handled by the regular string arm. INTERVAL
 // day-time/year-month arrive as native arrow duration/month-interval and format to
 // the same string the Thrift path receives pre-formatted from the server. NULLs
 // map to nil. A genuinely unhandled type returns an error rather than a silently
@@ -106,19 +110,52 @@ func (c *StructKeyCache) keyPrefixes(st *arrow.StructType) []string {
 // StructKeyCache) so struct field-name keys are escaped once per result set
 // rather than once per row. Pass nil for the un-memoized one-shot behavior.
 func ScanCellCached(col arrow.Array, row int, loc *time.Location, keys *StructKeyCache) (driver.Value, error) {
-	return scanCell(col, row, loc, keys, false)
+	return scanCell(col, row, fieldlessLocation(col, loc), keys, ScanOptions{})
+}
+
+// fieldlessLocation applies IsTimestampNTZField's zone-less fallback for the
+// entry points that receive only an array, not its schema Field: a top-level
+// timestamp with an empty TimeZone is treated as TIMESTAMP_NTZ and scanned in
+// UTC. Callers that know the Field (the kernel rows via
+// ScanCellCachedWithOptions) decide NTZ from its metadata and pass loc directly.
+func fieldlessLocation(col arrow.Array, loc *time.Location) *time.Location {
+	if IsTimestampNTZField(arrow.Field{Type: col.DataType()}) {
+		return time.UTC
+	}
+	return loc
 }
 
 // ScanCellCachedDecimalFloat is ScanCellCached that, when decimalAsFloat is true,
 // scans a TOP-LEVEL Decimal128 to a lossy float64 instead of the exact string
 // (nested decimals still render exactly). Opt in via WithKernelDecimalAsFloat.
 func ScanCellCachedDecimalFloat(col arrow.Array, row int, loc *time.Location, keys *StructKeyCache, decimalAsFloat bool) (driver.Value, error) {
-	return scanCell(col, row, loc, keys, decimalAsFloat)
+	return scanCell(col, row, fieldlessLocation(col, loc), keys, ScanOptions{DecimalAsFloat: decimalAsFloat})
 }
 
-func scanCell(col arrow.Array, row int, loc *time.Location, keys *StructKeyCache, decimalAsFloat bool) (driver.Value, error) {
+// ScanOptions controls top-level result adaptations that cannot be inferred from
+// an Arrow array alone. Logical GEOMETRY / GEOGRAPHY identity lives on the
+// enclosing schema Field, so kernelRows sets GeospatialBinary only for a field
+// carrying that metadata and a physical struct value.
+type ScanOptions struct {
+	DecimalAsFloat   bool
+	GeospatialBinary bool
+}
+
+// ScanCellCachedWithOptions is the full scanner entry point used by the kernel
+// rows implementation. Callers that do not need result-specific adaptations
+// should continue to use ScanCellCached. Unlike the field-less entry points, loc
+// is authoritative here: the caller decides TIMESTAMP_NTZ from the schema Field
+// (IsTimestampNTZField) and passes time.UTC for an NTZ column.
+func ScanCellCachedWithOptions(col arrow.Array, row int, loc *time.Location, keys *StructKeyCache, options ScanOptions) (driver.Value, error) {
+	return scanCell(col, row, loc, keys, options)
+}
+
+func scanCell(col arrow.Array, row int, loc *time.Location, keys *StructKeyCache, options ScanOptions) (driver.Value, error) {
 	if col.IsNull(row) {
 		return nil, nil
+	}
+	if options.GeospatialBinary {
+		return scanGeospatialEWKB(col, row)
 	}
 	switch c := col.(type) {
 	case *array.Null:
@@ -190,12 +227,21 @@ func scanCell(col arrow.Array, row int, loc *time.Location, keys *StructKeyCache
 		// which overflows for TIMESTAMPs outside ~1678–2262 and silently wraps a valid
 		// instant to a wrong one (e.g. TIMESTAMP '0001-01-01' → 1754). time.UnixMicro/
 		// UnixMilli/Unix split into (sec, nsec) internally, so the full 0001–9999 range
-		// round-trips. The Thrift default path never hits this — it receives TIMESTAMP
-		// as a preformatted server string — so this divergence is kernel-only.
+		// round-trips. The Thrift renderer still uses Arrow's ToTime conversion.
+		//
+		// A TIMESTAMP_NTZ is a wall clock with no zone, so it must NOT be shifted
+		// into the session location the way a zoned TIMESTAMP instant is
+		// (databricks/databricks-sql-go#506). That decision needs the enclosing
+		// Field's metadata (IsTimestampNTZField), which this arm cannot see, so the
+		// caller's loc is authoritative: NTZ fields arrive with loc = UTC (the
+		// kernel's top-level ntz flag, childLocation for nested children, and
+		// fieldlessLocation for the field-less ScanCell entry points). A UTC value
+		// rendered in UTC is a no-op, so the NTZ wall clock is preserved, while a
+		// zone-less field the metadata labels TIMESTAMP is still rendered in loc.
 		return inLocation(timestampToTime(int64(c.Value(row)), dt.Unit), loc), nil
 	case *array.Decimal128:
 		dt := col.DataType().(*arrow.Decimal128Type)
-		if decimalAsFloat {
+		if options.DecimalAsFloat {
 			// Lossy fast path: float64, no per-cell string. Opt-in only.
 			return c.Value(row).ToFloat64(dt.Scale), nil
 		}
@@ -226,6 +272,41 @@ func scanCell(col arrow.Array, row int, loc *time.Location, keys *StructKeyCache
 	default:
 		return nil, fmt.Errorf("scanning arrow type %s is not supported", col.DataType())
 	}
+}
+
+// scanGeospatialEWKB validates Reyden's canonical top-level
+// struct<srid:int32,wkb:binary> value and embeds the sibling SRID into EWKB.
+// database/sql cannot return the two-child Arrow struct as a driver.Value, and
+// returning bare OGC WKB would lose the per-row SRID for GEOMETRY(ANY).
+func scanGeospatialEWKB(col arrow.Array, row int) (driver.Value, error) {
+	values, ok := col.(*array.Struct)
+	if !ok {
+		return nil, fmt.Errorf("binary geospatial column has arrow type %s, want struct<srid:int32,wkb:binary>", col.DataType())
+	}
+	fields := values.DataType().(*arrow.StructType).Fields()
+	if len(fields) != 2 || fields[0].Name != "srid" || fields[1].Name != "wkb" ||
+		fields[0].Type.ID() != arrow.INT32 || fields[1].Type.ID() != arrow.BINARY {
+		return nil, fmt.Errorf("binary geospatial column has arrow type %s, want struct<srid:int32,wkb:binary>", col.DataType())
+	}
+	srids, ok := values.Field(0).(*array.Int32)
+	if !ok {
+		return nil, fmt.Errorf("binary geospatial srid child has arrow type %s, want int32", values.Field(0).DataType())
+	}
+	wkbs, ok := values.Field(1).(*array.Binary)
+	if !ok {
+		return nil, fmt.Errorf("binary geospatial wkb child has arrow type %s, want binary", values.Field(1).DataType())
+	}
+	if srids.IsNull(row) {
+		return nil, fmt.Errorf("binary geospatial value at row %d has a null srid child", row)
+	}
+	if wkbs.IsNull(row) {
+		return nil, fmt.Errorf("binary geospatial value at row %d has a null wkb child", row)
+	}
+	ewkb, err := wkbToEWKB(wkbs.Value(row), srids.Value(row))
+	if err != nil {
+		return nil, fmt.Errorf("binary geospatial value at row %d: %w", row, err)
+	}
+	return ewkb, nil
 }
 
 // formatDayTimeInterval renders an arrow duration (in the given time unit) as the
@@ -354,6 +435,21 @@ func writeJSON(b *strings.Builder, col arrow.Array, row int, loc *time.Location,
 		return nil
 	}
 	switch c := col.(type) {
+	case *array.Boolean:
+		if c.Value(row) {
+			b.WriteString("true")
+		} else {
+			b.WriteString("false")
+		}
+		return nil
+	case *array.Int8:
+		return writeIntJSON(b, int64(c.Value(row)))
+	case *array.Int16:
+		return writeIntJSON(b, int64(c.Value(row)))
+	case *array.Int32:
+		return writeIntJSON(b, int64(c.Value(row)))
+	case *array.Int64:
+		return writeIntJSON(b, c.Value(row))
 	case *array.List:
 		// Use the offset-aware ValueOffsets, NOT Offsets()[row]: arrow-go's
 		// Offsets() returns the full un-sliced buffer, so a List with a non-zero
@@ -361,16 +457,19 @@ func writeJSON(b *strings.Builder, col arrow.Array, row int, loc *time.Location,
 		// re-slices preserving data.offset) must index offsets[row+data.offset].
 		// ValueOffsets does that; this mirrors the Thrift path's ValueOffsets use.
 		s, e := c.ValueOffsets(row)
-		return writeListJSON(b, c.ListValues(), int(s), int(e), loc, keys)
+		elemLoc := childLocation(c.DataType().(*arrow.ListType).ElemField(), loc)
+		return writeListJSON(b, c.ListValues(), int(s), int(e), elemLoc, keys)
 	case *array.LargeList:
 		// arrow-go's LargeList.ValueOffsets (unlike List's) does NOT add data.offset,
 		// so add it by hand to stay offset-correct.
 		off := c.Data().Offset()
-		return writeListJSON(b, c.ListValues(), int(c.Offsets()[row+off]), int(c.Offsets()[row+off+1]), loc, keys)
+		elemLoc := childLocation(c.DataType().(*arrow.LargeListType).ElemField(), loc)
+		return writeListJSON(b, c.ListValues(), int(c.Offsets()[row+off]), int(c.Offsets()[row+off+1]), elemLoc, keys)
 	case *array.FixedSizeList:
-		n := int(c.DataType().(*arrow.FixedSizeListType).Len())
+		fdt := c.DataType().(*arrow.FixedSizeListType)
+		n := int(fdt.Len())
 		base := (row + c.Data().Offset()) * n
-		return writeListJSON(b, c.ListValues(), base, base+n, loc, keys)
+		return writeListJSON(b, c.ListValues(), base, base+n, childLocation(fdt.ElemField(), loc), keys)
 	case *array.Map:
 		return writeMapJSON(b, c, row, loc, keys)
 	case *array.Struct:
@@ -395,6 +494,12 @@ func writeJSON(b *strings.Builder, col arrow.Array, row int, loc *time.Location,
 		}
 		return writeScalarJSON(b, v)
 	}
+}
+
+func writeIntJSON(b *strings.Builder, v int64) error {
+	var scratch [20]byte // Sign and decimal digits of math.MinInt64 fit.
+	b.Write(strconv.AppendInt(scratch[:0], v, 10))
+	return nil
 }
 
 func writeListJSON(b *strings.Builder, values arrow.Array, start, end int, loc *time.Location, keys *StructKeyCache) error {
@@ -425,19 +530,22 @@ func writeMapJSON(b *strings.Builder, m *array.Map, row int, loc *time.Location,
 	start, end := int(s), int(e)
 	mapKeys := m.Keys()
 	items := m.Items()
+	mdt := m.DataType().(*arrow.MapType)
+	keyLoc := childLocation(mdt.KeyField(), loc)
+	itemLoc := childLocation(mdt.ItemField(), loc)
 	b.WriteByte('{')
 	for i := start; i < end; i++ {
 		if i > start {
 			b.WriteByte(',')
 		}
 		// JSON object keys must be strings; stringify the key value.
-		kv, err := scalarForJSON(mapKeys, i, loc)
+		kv, err := scalarForJSON(mapKeys, i, keyLoc)
 		if err != nil {
 			return err
 		}
 		writeJSONKey(b, kv)
 		b.WriteByte(':')
-		if err := writeJSON(b, items, i, loc, keys); err != nil {
+		if err := writeJSON(b, items, i, itemLoc, keys); err != nil {
 			return err
 		}
 	}
@@ -449,14 +557,17 @@ func writeStructJSON(b *strings.Builder, s *array.Struct, row int, loc *time.Loc
 	// Field-name keys are constant across rows; keys.keyPrefixes memoizes them per
 	// result set so this per-row/per-cell path doesn't re-marshal them (a nil cache
 	// recomputes inline — correct, just not memoized).
-	prefixes := keys.keyPrefixes(s.DataType().(*arrow.StructType))
+	st := s.DataType().(*arrow.StructType)
+	prefixes := keys.keyPrefixes(st)
 	b.WriteByte('{')
 	for f := 0; f < s.NumField(); f++ {
 		if f > 0 {
 			b.WriteByte(',')
 		}
 		b.WriteString(prefixes[f]) // pre-escaped `"name":`
-		if err := writeJSON(b, s.Field(f), row, loc, keys); err != nil {
+		// A TIMESTAMP_NTZ child (IsTimestampNTZField) may carry a physical
+		// TimeZone; keep its wall clock unshifted, like the top-level NTZ column.
+		if err := writeJSON(b, s.Field(f), row, childLocation(st.Field(f), loc), keys); err != nil {
 			return err
 		}
 	}
@@ -471,13 +582,14 @@ func writeStructJSON(b *strings.Builder, s *array.Struct, row int, loc *time.Loc
 // not already a JSON string (numbers/bools become "7"/"true" keys).
 func writeJSONKey(b *strings.Builder, v any) {
 	// A time.Time key renders as its quoted .String() (same special-case as
-	// writeScalarJSON / the Thrift marshal()), not RFC3339.
+	// writeScalarJSON / the Thrift marshalScalar), not RFC3339.
 	if t, ok := v.(time.Time); ok {
 		kb, _ := json.Marshal(t.String())
 		b.Write(kb)
 		return
 	}
-	kb, err := json.Marshal(v)
+	var scratch [32]byte
+	kb, err := jsonfmt.Append(scratch[:0], v)
 	if err != nil {
 		// Unmarshalable key value — fall back to its stringified form, quoted.
 		kb, _ = json.Marshal(fmt.Sprintf("%v", v))
@@ -491,8 +603,9 @@ func writeJSONKey(b *strings.Builder, v any) {
 	b.WriteByte('"')
 }
 
-// writeScalarJSON writes a scalar leaf, mirroring the Thrift marshal(): a
-// time.Time becomes a quoted .String(); everything else uses json.Marshal.
+// writeScalarJSON writes a scalar leaf, mirroring the Thrift marshalScalar: a
+// time.Time becomes a quoted .String(); everything else renders as json.Marshal
+// would.
 func writeScalarJSON(b *strings.Builder, v any) error {
 	if v == nil {
 		b.WriteString("null")
@@ -504,7 +617,8 @@ func writeScalarJSON(b *strings.Builder, v any) error {
 		b.WriteByte('"')
 		return nil
 	}
-	vb, err := json.Marshal(v)
+	var scratch [32]byte
+	vb, err := jsonfmt.Append(scratch[:0], v)
 	if err != nil {
 		return err
 	}
@@ -520,5 +634,7 @@ func scalarForJSON(col arrow.Array, row int, loc *time.Location) (any, error) {
 	if col.IsNull(row) {
 		return nil, nil
 	}
-	return ScanCell(col, row, loc)
+	// scanCell, not ScanCell: keyLoc already came from childLocation on the key
+	// Field, so the field-less zone-less fallback must not override it.
+	return scanCell(col, row, loc, nil, ScanOptions{})
 }

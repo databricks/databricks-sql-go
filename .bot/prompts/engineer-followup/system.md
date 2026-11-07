@@ -18,7 +18,7 @@ Your job:
   4. End with a short summary of what changed.
 
 Repo facts you need:
-  - Go 1.25 `database/sql` driver; `go build ./...` has warmed the module cache on
+  - Go 1.27.3 `database/sql` driver; `go build ./...` has warmed the module cache on
     the runner. This follow-up job wires **NO live-warehouse connection env**, so
     only the pure-Go **`make test`** unit suite (CGO_ENABLED=0) runs here — do NOT
     run or add the live e2e tests in `driver_e2e_test.go` (they need warehouse

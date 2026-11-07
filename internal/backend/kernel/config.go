@@ -13,7 +13,7 @@ import (
 
 // Config is the flat connection config for the kernel backend. The connector
 // fills it from the driver's config so the user-facing options are unchanged.
-// Zero-valued fields are simply not applied.
+// Zero-valued fields are simply not applied unless documented otherwise.
 type Config struct {
 	Host        string // workspace hostname, no scheme
 	HTTPPath    string // e.g. /sql/1.0/warehouses/abc123 (carries ?o= org routing)
@@ -98,6 +98,12 @@ type Config struct {
 	// DecimalAsFloat scans top-level DECIMAL columns to a lossy float64 instead of
 	// the exact string (from WithKernelDecimalAsFloat). Kernel still sends Decimal128.
 	DecimalAsFloat bool
+
+	// EnableGeoSpatialSupport selects the local GEOMETRY / GEOGRAPHY result
+	// representation. True requests the canonical struct<srid,wkb> Arrow
+	// representation; false requests WKT / EWKT strings. The connector always
+	// sets this field and defaults it to false.
+	EnableGeoSpatialSupport bool
 
 	// TokenCacheEnabled controls the kernel's on-disk OAuth U2M token-cache persistence
 	// (WithTokenCache / tokenCache DSN param). When false (the default), tokens are held
@@ -191,11 +197,12 @@ func requestTimeoutMilliseconds(timeout time.Duration) int64 {
 }
 
 // TelemetryConfig is the kernel telemetry subset exposed by the Go driver. It
-// mirrors the kernel telemetry C ABI: Enabled follows the user-supplied
-// enableTelemetry value, defaulting to false when unset. Zero-valued tuning fields
-// keep the kernel defaults until applyTelemetry fills them for the setter.
+// mirrors the kernel telemetry C ABI: Enabled is nil when enableTelemetry is
+// unset so the kernel feature flag decides, and non-nil for an explicit client
+// override. Zero-valued tuning fields keep the kernel defaults until
+// applyTelemetry fills them for the setter.
 type TelemetryConfig struct {
-	Enabled           bool
+	Enabled           *bool
 	BatchSize         int
 	FlushInterval     time.Duration
 	MaxRetries        uint32

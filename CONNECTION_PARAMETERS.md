@@ -155,12 +155,20 @@ ignored with a warning and still stripped from the SEA wire.
 |---|---|:---:|:---:|---|---|
 | `useArrowNativeDecimal` | `WithArrowNativeDecimal` | ✅ | ⚠️ | `false` | Thrift: return DECIMAL as native Arrow `decimal128` (lossless string when scanned via `database/sql`). The kernel path already renders DECIMAL as the exact string regardless, so the flag is inert there. |
 | | `WithKernelDecimalAsFloat(b)` | ❌ | ✅ | `false` | Scan top-level DECIMAL as lossy `float64` instead of the exact string. |
+| `enableGeoSpatialSupport` | `WithEnableGeoSpatialSupport(b)` | ❌ | ✅ | `false` | `true`: return top-level GEOMETRY / GEOGRAPHY as EWKB `[]byte` with the per-row SRID embedded and logical geo column metadata; `GetArrowBatches` retains the full `{srid,wkb}` struct with OGC WKB. `false`: return WKT / EWKT strings reported as `STRING`. |
 
-With the default client-result settings, results otherwise render **byte-for-byte
+Apart from the geospatial representation selected above, results render **byte-for-byte
 identically** on both backends (scalars,
-DECIMAL as exact string, TIMESTAMP / TIMESTAMP_NTZ shifted into the session time zone,
-INTERVAL, nested ARRAY / MAP / STRUCT and VARIANT as JSON, GEOMETRY / GEOGRAPHY as WKT,
-BINARY as `sql.RawBytes`).
+DECIMAL as exact string, TIMESTAMP rendered in the session time zone,
+TIMESTAMP_NTZ with wall-clock fields preserved in a `time.Time` with a UTC location,
+INTERVAL, nested ARRAY / MAP / STRUCT and VARIANT as JSON, and BINARY as
+`sql.RawBytes`). The default `enableGeoSpatialSupport=false` on the kernel path
+matches the Thrift path's WKT / EWKT geospatial values.
+
+On Thrift, TIMESTAMP_NTZ handling requires native timestamp fields in the
+server-supplied Arrow schema. Without that schema, NTZ still reports `TIMESTAMP`
+and uses session-location handling. String timestamps (`UseArrowNativeTimestamp=false`,
+an internal setting) and non-Arrow values also retain legacy session-location parsing.
 
 ## Cloud Fetch
 
@@ -214,7 +222,7 @@ kernel config.
 
 | DSN parameter | Thrift | Kernel | Default | Notes |
 |---|:---:|:---:|---|---|
-| `enableTelemetry` | ✅ | ✅ | unset (server flag decides wrapper telemetry; kernel telemetry defaults off) | Force Go wrapper telemetry on/off on the Thrift path, overriding the server feature flag. On the kernel path, forwarded to kernel-owned telemetry; unset forwards disabled. |
+| `enableTelemetry` | ✅ | ✅ | unset (server flag decides) | Force telemetry on/off, overriding the server feature flag. On the kernel path, an unset value remains unspecified so the kernel-owned feature flag decides. |
 | `telemetry_batch_size` | ✅ | ✅ | `200` wrapper default; kernel default when unset | Events per batch. Forwarded to the kernel only when explicitly set. |
 | `telemetry_flush_interval` | ✅ | ✅ | `30s` wrapper default; kernel default when unset | Flush interval. Forwarded to the kernel only when explicitly set. |
 | `telemetry_retry_count` | ⚠️ | ⚠️ | — | **Deprecated and ignored** (retries are owned by the HTTP client + circuit breaker); logs a one-time warning. |
@@ -223,7 +231,7 @@ kernel config.
 These telemetry knobs are **DSN-only** — there are no `WithX` connector options for them.
 An app assembled with `NewConnector(...)` options rather than a DSN cannot tune telemetry:
 wrapper telemetry falls back to the server feature flag (since `enableTelemetry` is
-unset), kernel telemetry defaults off, and `telemetry_batch_size` /
+unset), kernel telemetry follows its server feature flag, and `telemetry_batch_size` /
 `telemetry_flush_interval` use their backend defaults.
 
 The Go wrapper telemetry interceptor is skipped on the kernel path so it does not

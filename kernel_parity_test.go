@@ -103,7 +103,7 @@ func TestKernelE2EInterval(t *testing.T) {
 func TestKernelThriftColumnTypeParity(t *testing.T) {
 	// One column per Databricks type the driver scans, mirroring the mixed-type
 	// query used to capture the ground truth. VARCHAR/CHAR/VARIANT/GEOMETRY all
-	// collapse to STRING on both backends (they arrive as Arrow Utf8), and both
+	// collapse to STRING on both backends in explicit string mode, and both
 	// interval types are server/Go-stringified to STRING — included so the parity
 	// covers those collapses too.
 	const query = "SELECT " +
@@ -120,7 +120,7 @@ func TestKernelThriftColumnTypeParity(t *testing.T) {
 		// arrow.NULL→STRING mapping matches live, not just in the pure-Go tests.
 		"INTERVAL '1' MONTH a_iv_ym, st_point(1,2) a_geom, CAST(NULL AS VOID) a_void"
 
-	kernelDB := kernelTestDB(t)
+	kernelDB := kernelTestDBWith(t, WithEnableGeoSpatialSupport(false))
 	defer kernelDB.Close()
 	thriftDB := thriftTestDB(t)
 	defer thriftDB.Close()

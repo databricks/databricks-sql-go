@@ -2,9 +2,10 @@ package telemetry
 
 import (
 	"context"
-	"net/http"
 	"strconv"
 	"time"
+
+	"github.com/databricks/databricks-sql-go/internal/featureflags"
 )
 
 // Config holds telemetry configuration.
@@ -90,12 +91,13 @@ func ParseTelemetryConfig(params map[string]string) *Config {
 //     (databricks.partnerplatform.clientConfigsFeatureFlags.enableTelemetryForGoDriver).
 //
 // In all other cases — explicit opt-out or server flag absent/unreachable — returns false.
-func isTelemetryEnabled(ctx context.Context, cfg *Config, host string, driverVersion string, userAgent string, httpClient *http.Client) bool {
+func isTelemetryEnabled(ctx context.Context, cfg *Config, request featureflags.Request) bool {
 	if cfg.EnableTelemetry != nil {
 		return *cfg.EnableTelemetry
 	}
 
-	serverEnabled, err := getFeatureFlagCache().isTelemetryEnabled(ctx, host, driverVersion, userAgent, httpClient)
+	serverEnabled, err := featureflags.GetCache().GetBool(ctx, request,
+		"databricks.partnerplatform.clientConfigsFeatureFlags.enableTelemetryForGoDriver")
 	if err != nil {
 		return false
 	}

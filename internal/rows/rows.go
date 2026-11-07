@@ -1,16 +1,20 @@
 package rows
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"database/sql/driver"
 	"io"
 	"math"
 	"reflect"
+	"sync"
 	"time"
 
+	"github.com/apache/arrow/go/v12/arrow/ipc"
 	"github.com/databricks/databricks-sql-go/driverctx"
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
+	"github.com/databricks/databricks-sql-go/internal/arrowscan"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	dbsqlclient "github.com/databricks/databricks-sql-go/internal/client"
 	context2 "github.com/databricks/databricks-sql-go/internal/compat/context"
@@ -43,8 +47,12 @@ type rows struct {
 	location *time.Location
 
 	// Metadata for result set
-	resultSetMetadata *cli_service.TGetResultSetMetadataResp
-	schema            *cli_service.TTableSchema
+	resultSetMetadata         *cli_service.TGetResultSetMetadataResp
+	schema                    *cli_service.TTableSchema
+	databaseTypeNameOverrides map[int]string
+	// databaseTypeNameOverridesOnce guards the lazy, one-time build of
+	// databaseTypeNameOverrides (ColumnTypes may be called concurrently).
+	databaseTypeNameOverridesOnce sync.Once
 
 	config *config.Config
 
@@ -364,9 +372,71 @@ func (r *rows) ColumnTypeDatabaseTypeName(index int) string {
 		return ""
 	}
 
+	r.cacheDatabaseTypeNameOverrides()
+	if name, ok := r.databaseTypeNameOverrides[index]; ok {
+		return name
+	}
+
 	dbtype := rowscanner.GetDBTypeName(column)
 
 	return dbtype
+}
+
+// Thrift shares TIMESTAMP_TYPE between TIMESTAMP and TIMESTAMP_NTZ. Cache the
+// distinction from server metadata so it survives result-page scanner changes.
+// The override is only applied when the result set metadata indicates Arrow
+// decoding: columnar (TColumn) results keep legacy session-location timestamp
+// parsing, so they keep the legacy TIMESTAMP type name too.
+//
+// The decision is made from result set metadata alone (it is cached before the
+// first page arrives), not from the format of each fetched page. A result set
+// with an ArrowSchema, Arrow batches enabled, and ResultFormat unset is treated
+// as Arrow. If a server sent such metadata but then returned TColumn pages, the
+// column would still report TIMESTAMP_NTZ while its values went through the
+// legacy column scanner.
+//
+// database/sql's Rows.ColumnTypes() only holds a read lock, so this may be
+// reached concurrently. The map is built in a local variable and published
+// exactly once via sync.Once, so readers never observe a partially filled map.
+func (r *rows) cacheDatabaseTypeNameOverrides() {
+	r.databaseTypeNameOverridesOnce.Do(func() {
+		r.databaseTypeNameOverrides = r.buildDatabaseTypeNameOverrides()
+	})
+}
+
+func (r *rows) buildDatabaseTypeNameOverrides() map[int]string {
+	overrides := make(map[int]string)
+	if r.resultSetMetadata == nil || len(r.resultSetMetadata.ArrowSchema) == 0 {
+		return overrides
+	}
+	if r.config != nil && !r.config.UseArrowBatches {
+		return overrides
+	}
+	if r.resultSetMetadata.IsSetResultFormat() {
+		switch r.resultSetMetadata.GetResultFormat() {
+		case cli_service.TSparkRowSetType_ARROW_BASED_SET, cli_service.TSparkRowSetType_URL_BASED_SET:
+		default:
+			return overrides
+		}
+	}
+
+	reader, err := ipc.NewReader(bytes.NewReader(r.resultSetMetadata.ArrowSchema))
+	if err != nil {
+		// Leave the cache empty (and cached): result set metadata never changes,
+		// so retrying would fail the same way. Columns fall back to the legacy
+		// TIMESTAMP name; the Arrow row scanner surfaces the parse error itself.
+		r.logger().Debug().Err(err).Msg("databricks: failed to parse arrow schema for column type name overrides; falling back to thrift type names")
+		return overrides
+	}
+	defer reader.Release()
+	for i, field := range reader.Schema().Fields() {
+		// Same check the Arrow value scanner uses (metadata first, then
+		// TimeZone), so the type name and the value handling stay in sync.
+		if arrowscan.IsTimestampNTZField(field) {
+			overrides[i] = "TIMESTAMP_NTZ"
+		}
+	}
+	return overrides
 }
 
 // ColumnTypeNullable returns a flag indicating whether the column is nullable

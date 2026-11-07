@@ -123,14 +123,8 @@ func TestKernelE2ETimeZone(t *testing.T) {
 	}
 }
 
-// TestKernelE2ETimestampNTZ proves TIMESTAMP and TIMESTAMP_NTZ round-trip
-// byte-identically to the Thrift path at a non-UTC session tz. The kernel delivers
-// TIMESTAMP with an Arrow tz and TIMESTAMP_NTZ without one, but — like the Thrift
-// path — the driver ignores that field and renders via .In(loc). So the naive
-// wall-clock of an NTZ literal is treated as a UTC instant and shifted into the
-// session tz (12:00 NTZ in America/New_York → the -04:00 local of 12:00Z = 08:00),
-// exactly as Thrift does. Verified live on both backends; this pins the round-trip
-// so a one-sided "don't shift NTZ" change is caught.
+// TestKernelE2ETimestampNTZ checks that TIMESTAMP uses the session location,
+// while TIMESTAMP_NTZ preserves its wall clock with a UTC location.
 func TestKernelE2ETimestampNTZ(t *testing.T) {
 	// Reyden shifts a zoned TIMESTAMP literal like an NTZ (12:00 → 08:00 -0400) where a
 	// normal warehouse keeps the 12:00 wall-clock — an engine timestamp-tz divergence,
@@ -146,28 +140,41 @@ func TestKernelE2ETimestampNTZ(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	var ltz time.Time
-	if err := db.QueryRowContext(ctx,
-		"SELECT CAST('2026-07-09 12:00:00' AS TIMESTAMP)").Scan(&ltz); err != nil {
-		t.Fatalf("TIMESTAMP query: %v", err)
+	result, err := db.QueryContext(ctx,
+		"SELECT TIMESTAMP '2026-07-09 12:00:00' AS zoned, TIMESTAMP_NTZ '2026-07-09 12:00:00' AS ntz")
+	if err != nil {
+		t.Fatalf("metadata query: %v", err)
+	}
+	defer result.Close() //nolint:errcheck
+	columnTypes, err := result.ColumnTypes()
+	if err != nil {
+		t.Fatalf("ColumnTypes: %v", err)
+	}
+	if len(columnTypes) != 2 {
+		t.Fatalf("column count = %d, want 2", len(columnTypes))
+	}
+	for i, want := range []string{"TIMESTAMP", "TIMESTAMP_NTZ"} {
+		if got := columnTypes[i].DatabaseTypeName(); got != want {
+			t.Errorf("column %d type = %q, want %q", i, got, want)
+		}
+	}
+	if !result.Next() {
+		t.Fatalf("expected a timestamp row: %v", result.Err())
+	}
+	var ltz, ntz time.Time
+	if err := result.Scan(&ltz, &ntz); err != nil {
+		t.Fatalf("Scan: %v", err)
 	}
 	// A zoned TIMESTAMP literal is the wall-clock in the session tz.
 	if want := time.Date(2026, 7, 9, 12, 0, 0, 0, loc); !ltz.Equal(want) {
 		t.Errorf("TIMESTAMP = %s, want %s", ltz, want)
 	}
 
-	var ntz time.Time
-	if err := db.QueryRowContext(ctx,
-		"SELECT CAST('2026-07-09 12:00:00' AS TIMESTAMP_NTZ)").Scan(&ntz); err != nil {
-		t.Fatalf("TIMESTAMP_NTZ query: %v", err)
+	if want := "2026-07-09 12:00:00"; ntz.Format(time.DateTime) != want {
+		t.Errorf("TIMESTAMP_NTZ wall clock = %s, want %s", ntz.Format(time.DateTime), want)
 	}
-	// The NTZ wall-clock is treated as a UTC instant then shifted into the session
-	// tz: 12:00Z == 08:00 in America/New_York (-04:00 in July).
-	if want := time.Date(2026, 7, 9, 8, 0, 0, 0, loc); !ntz.Equal(want) {
-		t.Errorf("TIMESTAMP_NTZ = %s, want %s (UTC instant %s)", ntz, want, ntz.UTC())
-	}
-	if ntz.Location().String() != tz {
-		t.Errorf("TIMESTAMP_NTZ location = %q, want %q", ntz.Location(), tz)
+	if ntz.Location() != time.UTC {
+		t.Errorf("TIMESTAMP_NTZ location = %q, want UTC", ntz.Location())
 	}
 }
 
@@ -192,14 +199,10 @@ func TestKernelE2ETLSSkipVerify(t *testing.T) {
 // row. Each case selects a single value and compares the scanned result. NULL is
 // covered as its own case.
 func TestKernelE2EDataTypes(t *testing.T) {
-	db := kernelTestDB(t)
+	// Keep the legacy string expectations explicit; the native default is
+	// exercised separately by TestKernelE2EGeospatialRepresentations.
+	db := kernelTestDBWith(t, WithEnableGeoSpatialSupport(false))
 	defer db.Close()
-
-	// skipOnErrCases lists subtests to skip (rather than fail) when the server
-	// rejects the expression — for a type that may be gated on some warehouses
-	// (GEOGRAPHY is not enabled everywhere). The value comes back identically to
-	// GEOMETRY when it IS enabled, which is what the case documents.
-	skipOnErrCases := map[string]bool{"geography": true}
 
 	cases := []struct {
 		name string
@@ -226,18 +229,13 @@ func TestKernelE2EDataTypes(t *testing.T) {
 		{"timestamp", "CAST('2026-07-09 12:34:56' AS TIMESTAMP)", time.Date(2026, time.July, 9, 12, 34, 56, 0, time.UTC)},
 		{"null", "CAST(NULL AS STRING)", nil},
 		// Nested types render to a JSON string; VARIANT arrives nested,
-		// GEOMETRY/GEOGRAPHY as a WKT/WKB string.
+		// GEOMETRY/GEOGRAPHY as WKT/EWKT in this explicit string-mode suite.
 		{"array", "array(1, 2, 3)", "[1,2,3]"},
 		{"map", "map('k', 9)", `{"k":9}`},
 		{"struct", "named_struct('a', 1, 'b', 'x')", `{"a":1,"b":"x"}`},
 		{"variant", `parse_json('{"a":1,"b":[2,3]}')`, `{"a":1,"b":[2,3]}`},
 		{"geometry", "st_point(1, 2)", "POINT(1 2)"},
-		// GEOGRAPHY is the sibling geospatial type: it comes back as WKT text in a
-		// Utf8 column, so it scans to the same string as GEOMETRY. The ::geography
-		// cast may be gated on some warehouses; the subtest skips (rather than
-		// fails) when the server rejects the expression, so the case documents the
-		// parity without breaking runs on a warehouse without it.
-		{"geography", "cast(st_point(1, 2) as geography)", "POINT(1 2)"},
+		{"geography", "st_geogfromtext('POINT(1 2)')", "SRID=4326;POINT(1 2)"},
 	}
 
 	for _, c := range cases {
@@ -247,17 +245,9 @@ func TestKernelE2EDataTypes(t *testing.T) {
 			if c.name == "variant" {
 				skipOnReyden(t, "VARIANT over inline Arrow is not decodable on the reyden reference engine (reyden-sea gap; dbsql-sea/Thrift read it fine)")
 			}
-			// Geospatial (st_point/GEOMETRY/GEOGRAPHY) is UNSUPPORTED_FEATURE on the reyden
-			// real-time engine — a Lakehouse//RT limitation, not a driver gap.
-			if c.name == "geometry" || c.name == "geography" {
-				skipOnReyden(t, "geospatial (st_point/GEOMETRY/GEOGRAPHY) is unsupported on the reyden real-time engine — UNSUPPORTED_FEATURE, Lakehouse//RT limitation")
-			}
 			var got any
 			err := db.QueryRowContext(context.Background(), "SELECT "+c.expr).Scan(&got)
 			if err != nil {
-				if skipOnErrCases[c.name] {
-					t.Skipf("server rejected %q (type may be gated on this warehouse): %v", c.expr, err)
-				}
 				t.Fatalf("scan %s: %v", c.expr, err)
 			}
 			if !dataTypeEqual(got, c.want) {

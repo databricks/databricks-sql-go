@@ -29,12 +29,19 @@ static inline KernelStatusCode go_kernel_set_max_connections(
 }
 
 static inline KernelStatusCode go_kernel_set_telemetry_config(
-    KernelSessionConfig* config, bool enabled, size_t batch_size,
+    KernelSessionConfig* config, bool has_enabled, bool enabled, size_t batch_size,
     uint64_t flush_interval_ms, uint32_t max_retries, uint64_t retry_delay_ms,
     uint64_t close_flush_timeout_ms) {
-  return kernel_session_config_set_telemetry_config(
-      config, enabled, batch_size, flush_interval_ms, max_retries, retry_delay_ms,
-      close_flush_timeout_ms);
+  KernelTelemetryConfig telemetry_config = {
+      .has_enabled = has_enabled,
+      .enabled = enabled,
+      .batch_size = batch_size,
+      .flush_interval_ms = flush_interval_ms,
+      .max_retries = max_retries,
+      .retry_delay_ms = retry_delay_ms,
+      .close_flush_timeout_ms = close_flush_timeout_ms,
+  };
+  return kernel_session_config_set_telemetry_config_v2(config, &telemetry_config);
 }
 
 static inline KernelStatusCode go_kernel_set_driver_system_configuration(
@@ -47,6 +54,11 @@ static inline KernelStatusCode go_kernel_set_driver_system_configuration(
       config, driver_name, driver_version, runtime_name, runtime_version, runtime_vendor,
       os_name, os_version, os_arch, client_app_name, locale_name, char_set_encoding,
       process_name);
+}
+
+static inline KernelStatusCode go_kernel_set_enable_geospatial_support(
+    KernelSessionConfig* config, bool enabled) {
+  return kernel_session_config_set_enable_geospatial_support(config, enabled);
 }
 */
 import "C"
@@ -251,6 +263,9 @@ func (k *KernelBackend) OpenSession(ctx context.Context) error {
 	if err := k.applyMaxConnections(cfg); err != nil {
 		return err
 	}
+	if err := k.applyEnableGeoSpatialSupport(cfg); err != nil {
+		return err
+	}
 
 	// Retry / backoff policy (WithRetries). See applyRetry.
 	if err := k.applyRetry(cfg); err != nil {
@@ -423,6 +438,18 @@ func (k *KernelBackend) applyMaxConnections(cfg *C.KernelSessionConfig) error {
 	return nil
 }
 
+// applyEnableGeoSpatialSupport selects the kernel's client-side representation
+// for GEOMETRY / GEOGRAPHY results. The connector supplies the default-disabled
+// value explicitly, and an explicit false crosses the ABI unchanged.
+func (k *KernelBackend) applyEnableGeoSpatialSupport(cfg *C.KernelSessionConfig) error {
+	if err := call(func() C.KernelStatusCode {
+		return C.go_kernel_set_enable_geospatial_support(cfg, C.bool(k.cfg.EnableGeoSpatialSupport))
+	}); err != nil {
+		return fmt.Errorf("kernel: set_enable_geospatial_support: %w", toConnError(err))
+	}
+	return nil
+}
+
 // applyRetry forwards the driver's HTTP retry / backoff policy to the session
 // config. A no-op when Config.Retry is nil, so the kernel's own default policy
 // (exponential backoff with jitter, 5 retries, 1s..60s, 900s budget) is preserved
@@ -485,9 +512,14 @@ func (k *KernelBackend) applyTelemetry(cfg *C.KernelSessionConfig) error {
 	if closeFlushTimeout <= 0 {
 		closeFlushTimeout = defaultTelemetryCloseFlushTimeout
 	}
+	hasEnabled := t.Enabled != nil
+	enabled := false
+	if hasEnabled {
+		enabled = *t.Enabled
+	}
 	if err := call(func() C.KernelStatusCode {
 		return C.go_kernel_set_telemetry_config(cfg,
-			C.bool(t.Enabled), C.size_t(batchSize), C.uint64_t(flushInterval.Milliseconds()),
+			C.bool(hasEnabled), C.bool(enabled), C.size_t(batchSize), C.uint64_t(flushInterval.Milliseconds()),
 			C.uint32_t(maxRetries), C.uint64_t(retryDelay.Milliseconds()),
 			C.uint64_t(closeFlushTimeout.Milliseconds()))
 	}); err != nil {
@@ -735,6 +767,18 @@ func trySetMaxConnections(cfg Config) error {
 	defer C.kernel_session_config_free(c)
 	k := &KernelBackend{cfg: cfg}
 	return k.applyMaxConnections(c)
+}
+
+// trySetEnableGeoSpatialSupport exercises the geospatial representation setter
+// without opening a network session. It is used only by tagged kernel tests.
+func trySetEnableGeoSpatialSupport(cfg Config) error {
+	var c *C.KernelSessionConfig
+	if err := call(func() C.KernelStatusCode { return C.kernel_session_config_new(&c) }); err != nil {
+		return fmt.Errorf("config_new: %w", err)
+	}
+	defer C.kernel_session_config_free(c)
+	k := &KernelBackend{cfg: cfg}
+	return k.applyEnableGeoSpatialSupport(c)
 }
 
 // trySetTelemetry exercises the telemetry C setter without opening a network

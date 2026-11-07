@@ -2398,3 +2398,107 @@ func TestDecimalInComplexTypes(t *testing.T) {
 		assert.Equal(t, `{"col2":null}`, v)
 	})
 }
+
+// TestFieldValueContainerUsesNTZMetadata pins that the Thrift container maker
+// decides wall-clock handling from arrowscan.IsTimestampNTZField on the whole
+// field, the same check that produces the TIMESTAMP_NTZ type name. Explicit
+// Spark:DataType:SqlName metadata beats the physical TimeZone, at top level and
+// on nested children.
+func TestFieldValueContainerUsesNTZMetadata(t *testing.T) {
+	ntzMeta := arrow.NewMetadata([]string{"Spark:DataType:SqlName"}, []string{"TIMESTAMP_NTZ"})
+	tsMeta := arrow.NewMetadata([]string{"Spark:DataType:SqlName"}, []string{"TIMESTAMP"})
+	zoned := arrow.FixedWidthTypes.Timestamp_us
+	zoneless := &arrow.TimestampType{Unit: arrow.Microsecond}
+	vcm := &arrowValueContainerMaker{}
+
+	wallClock := func(t *testing.T, c columnValues) bool {
+		tvc, ok := c.(*timestampValueContainer)
+		require.True(t, ok, "expected timestampValueContainer, got %T", c)
+		return tvc.wallClock
+	}
+
+	t.Run("top level", func(t *testing.T) {
+		for _, tc := range []struct {
+			name  string
+			field arrow.Field
+			want  bool
+		}{
+			{"SqlName NTZ on UTC zone", arrow.Field{Type: zoned, Metadata: ntzMeta}, true},
+			{"SqlName TIMESTAMP on zone-less", arrow.Field{Type: zoneless, Metadata: tsMeta}, false},
+			{"no metadata, zone-less", arrow.Field{Type: zoneless}, true},
+			{"no metadata, zoned", arrow.Field{Type: zoned}, false},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				c, err := vcm.makeFieldValueContainer(tc.field, time.UTC, nil, nil)
+				require.NoError(t, err)
+				assert.Equal(t, tc.want, wallClock(t, c))
+			})
+		}
+	})
+
+	t.Run("nested children", func(t *testing.T) {
+		st := arrow.StructOf(arrow.Field{Name: "n", Type: zoned, Nullable: true, Metadata: ntzMeta})
+		c, err := vcm.makeFieldValueContainer(arrow.Field{Type: st}, time.UTC, nil, nil)
+		require.NoError(t, err)
+		assert.True(t, wallClock(t, c.(*structValueContainer).fieldValues[0]), "struct child")
+
+		lt := arrow.ListOfField(arrow.Field{Name: "element", Type: zoned, Nullable: true, Metadata: ntzMeta})
+		c, err = vcm.makeFieldValueContainer(arrow.Field{Type: lt}, time.UTC, nil, nil)
+		require.NoError(t, err)
+		assert.True(t, wallClock(t, c.(*listValueContainer).values), "list element")
+	})
+}
+
+// TestDerivedSchemaTimestampKeepsSessionLocation pins that when the server sends
+// no ArrowSchema, the schema derived from the Thrift TTableSchema types
+// TIMESTAMP_TYPE as a *zoned* Arrow timestamp. The zone survives the
+// serialize/deserialize round-trip that also feeds GetArrowBatches. Values from
+// that column are therefore still rendered in the session location rather than
+// treated as a zone-less TIMESTAMP_NTZ wall clock (#506): without the server
+// schema, NTZ and TIMESTAMP cannot be told apart, so the zoned behaviour stays.
+func TestDerivedSchemaTimestampKeepsSessionLocation(t *testing.T) {
+	const tsCol = 8 // timestamp column in getAllTypesSchema
+	ctx := context.Background()
+	arrowConfig := config.ArrowConfig{UseArrowNativeTimestamp: true}
+	md := &cli_service.TGetResultSetMetadataResp{Schema: getAllTypesSchema()}
+	require.Nil(t, md.ArrowSchema)
+
+	schemaBytes, derived, dErr := tGetResultSetMetadataRespToArrowSchema(md, arrowConfig, ctx, dbsqllog.Logger)
+	require.Nil(t, dErr)
+
+	// Round-trip the serialized bytes the way a native-schema response is read.
+	_, roundTripped, rErr := tGetResultSetMetadataRespToArrowSchema(
+		&cli_service.TGetResultSetMetadataResp{Schema: md.Schema, ArrowSchema: schemaBytes}, arrowConfig, ctx, dbsqllog.Logger)
+	require.Nil(t, rErr)
+
+	loc, err := time.LoadLocation("America/New_York")
+	require.NoError(t, err)
+	ttsf, err := arrow.FixedWidthTypes.Timestamp_us.(*arrow.TimestampType).GetToTimeFunc()
+	require.NoError(t, err)
+	instant := time.Date(2021, 7, 1, 12, 30, 0, 0, time.UTC)
+
+	for name, s := range map[string]*arrow.Schema{"derived": derived, "round-tripped": roundTripped} {
+		t.Run(name, func(t *testing.T) {
+			tsType, ok := s.Field(tsCol).Type.(*arrow.TimestampType)
+			require.True(t, ok, "expected timestamp type, got %s", s.Field(tsCol).Type)
+			assert.NotEmpty(t, tsType.TimeZone, "derived TIMESTAMP must be zoned, not NTZ")
+
+			bldr := array.NewTimestampBuilder(memory.DefaultAllocator, tsType)
+			defer bldr.Release()
+			bldr.Append(arrow.Timestamp(instant.UnixMicro()))
+			arr := bldr.NewTimestampArray()
+			defer arr.Release()
+
+			c, err := (&arrowValueContainerMaker{}).makeColumnValueContainer(tsType, loc, ttsf, nil)
+			require.NoError(t, err)
+			require.NoError(t, c.SetValueArray(arr.Data()))
+
+			v, err := c.Value(0)
+			require.NoError(t, err)
+			got, ok := v.(time.Time)
+			require.True(t, ok)
+			assert.True(t, instant.Equal(got))
+			assert.Equal(t, loc, got.Location(), "zoned TIMESTAMP must render in the session location")
+		})
+	}
+}

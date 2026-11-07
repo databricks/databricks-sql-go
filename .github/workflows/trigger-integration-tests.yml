@@ -9,13 +9,10 @@ name: Trigger Integration Tests
 # preview with the `integration-test` label (replay) or `integration-test-full`
 # (full passthrough), and merge queue runs the real required gate.
 #
-# The suite runs against either driver backend, selected by the label:
-#   - `integration-test` (replay) / `integration-test-full` (passthrough) → Thrift
-#   - `integration-test-kernel` (passthrough)                             → SEA-via-kernel
-# The kernel label adds `go_mode: sea` to the dispatch payload; driver-test then
-# builds the kernel static lib and runs the tagged (databricks_kernel) leg. It uses
-# passthrough (real warehouse) — the sea leg has no committed recordings to replay
-# yet, so there is no sea replay label until those are captured.
+# Replay dispatches (`integration-test` and merge queue) run both Thrift and SEA.
+# Live previews select one backend:
+#   - `integration-test-full` (passthrough)   → Thrift
+#   - `integration-test-kernel` (passthrough) → SEA-via-kernel
 #
 # Required external setup:
 #
@@ -104,8 +101,7 @@ jobs:
   # (github-actions app), which would neither satisfy the app-pinned gate nor work on
   # forks. See skip-checks-reporter.yml.
 
-  # Labeled PR: preview on demand. `integration-test` → replay,
-  # `integration-test-full` → full passthrough.
+  # Labeled PR: replay covers both backends; live previews select one.
   trigger-tests-pr:
     if: |
       github.event_name == 'pull_request' &&
@@ -126,12 +122,8 @@ jobs:
     steps:
       - name: Resolve proxy mode + backend from label
         id: mode
-        # go_mode: integration-test-kernel runs the SEA-via-kernel backend; the others
-        # run Thrift. proxy_mode: integration-test-full and integration-test-kernel hit
-        # the real warehouse (passthrough); plain integration-test serves recordings
-        # (replay). The kernel label is passthrough because the sea leg has no committed
-        # recordings to replay yet. driver-test reads go_mode to decide whether to build
-        # the kernel lib and run the tagged leg.
+        # Replay dispatches cover both backends. go_mode selects the backend for
+        # live previews: integration-test-full uses Thrift; integration-test-kernel uses SEA.
         run: |
           LABEL="${{ github.event.label.name }}"
           case "$LABEL" in
@@ -174,7 +166,8 @@ jobs:
                 go_mode: process.env.GO_MODE,
               },
             });
-            core.info(`Dispatched go-pr-test (${process.env.GO_MODE}/${process.env.PROXY_MODE}) for PR #${pr.number} @ ${pr.head.sha}`);
+            const backends = process.env.PROXY_MODE === 'replay' ? 'thrift+sea' : process.env.GO_MODE;
+            core.info(`Dispatched go-pr-test (${backends}/${process.env.PROXY_MODE}) for PR #${pr.number} @ ${pr.head.sha}`);
 
       - name: Fail check on dispatch error
         if: failure()
@@ -203,14 +196,15 @@ jobs:
           GO_MODE: ${{ steps.mode.outputs.go_mode }}
         with:
           script: |
+            const backends = process.env.PROXY_MODE === 'replay' ? 'thrift+sea' : process.env.GO_MODE;
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
-              body: `Go integration tests triggered (\`${process.env.GO_MODE}\` / \`${process.env.PROXY_MODE}\`). [View workflow runs](https://github.com/databricks/databricks-driver-test/actions).`,
+              body: `Go integration tests triggered (\`${backends}\` / \`${process.env.PROXY_MODE}\`). [View workflow runs](https://github.com/databricks/databricks-driver-test/actions).`,
             });
 
-  # Merge queue: the required gate. Runs replay once before merge.
+  # Merge queue: the required replay gate for both Thrift and SEA.
   merge-queue-go:
     if: github.event_name == 'merge_group'
     runs-on:
@@ -264,14 +258,11 @@ jobs:
                 pr_repo: context.repo.owner + '/' + context.repo.repo,
                 pr_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/pull/${prNumber}`,
                 proxy_mode: 'replay',
-                // The required merge-queue gate runs the Thrift backend only. The
-                // kernel (sea) leg is previewed on demand via the kernel labels but
-                // is not a required gate — it becomes one once the SEA backend ships
-                // in a released driver and its recordings are captured.
+                // Replay dispatches run both backends in driver-test.
                 go_mode: 'thrift',
               },
             });
-            core.info(`Merge-queue dispatch go-pr-test (thrift/replay) for PR #${prNumber} @ ${process.env.HEAD_SHA}`);
+            core.info(`Merge-queue dispatch go-pr-test (thrift+sea/replay) for PR #${prNumber} @ ${process.env.HEAD_SHA}`);
 
       - name: Fail check on dispatch error
         if: failure()

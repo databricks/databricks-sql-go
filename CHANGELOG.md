@@ -3,6 +3,24 @@
 ## Unreleased
 - OAuth M2M token requests and the OIDC discovery lookup now go through the connector's transport (`WithTransport`) and carry the driver User-Agent, including `WithUserAgentEntry`, so they are attributable in `system.access.audit` instead of appearing as `Go-http-client` (databricks/databricks-sql-go#413).
 - **Behavior change:** `m2m.NewAuthenticatorWithScopes` now requests exactly the given scopes instead of always appending `all-apis`, so service principals with scoped OAuth secrets (e.g. `sql` only) can authenticate (databricks/databricks-sql-go#476). Empty scopes and `m2m.NewAuthenticator` still request `all-apis`; callers that relied on it being appended should pass no scopes, or add `all-apis` to their list if they need both. The SEA/kernel backend now forwards custom M2M scopes instead of rejecting them.
+## v1.19.0 (2026-11-04)
+- Upgrade the SQL kernel bindings to v1.4.0.
+- Upgrade go-oidc to v3.21.0 (go-jose v4.1.6) and x/oauth2 to v0.36.0 to address go-jose/v3 security findings (databricks/databricks-sql-go#526).
+- Reduce kernel-backend JSON rendering allocations for nested Boolean and signed-integer values.
+- Render most nested ARRAY / MAP / STRUCT scalars (numbers, booleans, and strings that need no escaping) without `encoding/json` on both backends, avoiding the per-value overhead of Go 1.27's json/v2-backed `encoding/json` (databricks/databricks-sql-go#527).
+- **Behavior change:** Native Arrow TIMESTAMP_NTZ results now preserve their wall-clock fields and report `TIMESTAMP_NTZ` on both backends. Returned `time.Time` values use UTC instead of the session location; their represented instant and `.UTC()` value are unchanged (databricks/databricks-sql-go#506). On Thrift, this requires a server-supplied Arrow schema with native timestamps; without it, NTZ still reports `TIMESTAMP` and uses session-location handling. String timestamps (`UseArrowNativeTimestamp=false`, internal) and non-Arrow values also retain legacy parsing.
+
+## v1.18.0 (2026-10-24)
+- Upgrade the SQL kernel bindings to v1.3.0 to address security findings.
+- Require Go 1.27.3 or newer to include the emSign certificate distrust fix (CVE-2026-111943).
+- Upgrade klauspost/compress to v1.18.7 to address security findings.
+
+## v1.17.0 (2026-10-20)
+- Upgrade the SQL kernel bindings to v1.2.0.
+- Add opt-in GEOMETRY / GEOGRAPHY support on the kernel backend with `WithEnableGeoSpatialSupport` or `enableGeoSpatialSupport=true`. Enabled mode returns EWKB bytes with per-row SRIDs and geo column metadata; the default remains WKT / EWKT strings. Arrow batches retain the `{srid,wkb}` struct in enabled mode.
+- **Behavior change:** `m2m.NewAuthenticatorWithScopes` now requests exactly the supplied scopes, and the kernel backend supports custom M2M scopes. Empty scopes still default to `all-apis`; callers that relied on it being appended must include it explicitly.
+- Share feature flag caching across backends, honor the server TTL, and keep concurrent readers responsive during refresh.
+- Let the server feature flag control kernel telemetry when `enableTelemetry` is unset; explicit settings continue to override it.
 
 ## v1.16.0 (2026-09-24)
 - Upgrade the kernel bindings to v1.1.0; the kernel dependency is now stable.

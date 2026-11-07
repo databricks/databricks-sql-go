@@ -35,7 +35,7 @@ help:  ## Show this help.
 all: gen fmt lint test coverage  ## format and test everything
 
 bin/golangci-lint: go.mod go.sum
-	GOBIN=$(CURDIR)/bin go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
+	GOBIN=$(CURDIR)/bin go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0
 
 bin/gotestsum: go.mod go.sum
 	@mkdir -p bin/
