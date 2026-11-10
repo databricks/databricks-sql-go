@@ -200,9 +200,10 @@ func scanCell(col arrow.Array, row int, loc *time.Location, keys *StructKeyCache
 	case *array.Float64:
 		return c.Value(row), nil
 	case *array.String:
-		return c.Value(row), nil
+		// database/sql strings must survive releasing the Arrow batch.
+		return strings.Clone(c.Value(row)), nil
 	case *array.LargeString:
-		return c.Value(row), nil
+		return strings.Clone(c.Value(row)), nil
 	case *array.Binary:
 		return c.Value(row), nil
 	case *array.Date32:
@@ -633,6 +634,13 @@ func writeScalarJSON(b *strings.Builder, v any) error {
 func scalarForJSON(col arrow.Array, row int, loc *time.Location) (any, error) {
 	if col.IsNull(row) {
 		return nil, nil
+	}
+	// JSON rendering consumes these strings before the Arrow batch is released.
+	switch c := col.(type) {
+	case *array.String:
+		return c.Value(row), nil
+	case *array.LargeString:
+		return c.Value(row), nil
 	}
 	// scanCell, not ScanCell: keyLoc already came from childLocation on the key
 	// Field, so the field-less zone-less fallback must not override it.
