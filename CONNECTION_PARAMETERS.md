@@ -176,6 +176,14 @@ an internal setting) and non-Arrow values also retain legacy session-location pa
 | `maxDownloadThreads` | `WithMaxDownloadThreads` | ✅ | ⚠️ | `10` | Concurrent download goroutines (Thrift). Inert on the kernel path. |
 | | `WithKernelMaxChunksInMemory(n)` | ❌ | ✅ | kernel default (16) | Bounds decompressed Cloud Fetch chunks held in memory — trades large-result throughput for peak memory. |
 
+On the kernel backend, `WithCloudFetch(false)` requests paged inline results using
+`can_cloud_download=false`, as the JDBC driver does. This requires a server that
+supports paged inline result delivery. Unsupported servers return a configuration
+error; the driver does not fall back to storage downloads. The standard disable
+option takes precedence over case-insensitive copies of that session parameter.
+The legacy `cloudfetch_enabled=false` client setting selects INLINE Arrow in kernel
+1.4.0 and cannot provide this complete large-result behavior.
+
 ## TLS
 
 | Connector option | Thrift | Kernel | Notes |

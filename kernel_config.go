@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/databricks/databricks-sql-go/auth/noop"
@@ -31,6 +32,8 @@ import (
 // the kernel path must not send the Azure Entra-direct app id. See
 // resolveKernelAuth's U2M case.
 const u2mKernelClientID = "databricks-sql-connector"
+
+const kernelCloudDownloadConfKey = "can_cloud_download"
 
 func validateClientQueryTimeout(timeout *time.Duration) error {
 	if timeout == nil {
@@ -181,7 +184,13 @@ func buildKernelConfig(cfg *config.Config, kauth kernel.Auth) kernel.Config {
 		EnableGeoSpatialSupport: false,
 	}
 	if !cfg.UseCloudFetch {
-		kc.SessionConf["can_cloud_download"] = "false"
+		// Paged inline delivery avoids the legacy INLINE result-size limit.
+		for key := range kc.SessionConf {
+			if strings.EqualFold(key, kernelCloudDownloadConfKey) {
+				delete(kc.SessionConf, key)
+			}
+		}
+		kc.SessionConf[kernelCloudDownloadConfKey] = "false"
 	}
 	if cfg.ClientQueryTimeout != nil {
 		timeout := *cfg.ClientQueryTimeout

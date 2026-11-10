@@ -702,18 +702,20 @@ func TestBuildKernelConfig(t *testing.T) {
 		}
 	})
 
-	t.Run("CloudFetch disabled preserves caller session parameters", func(t *testing.T) {
-		c := baseKernelConfig()
-		c.UseCloudFetch = false
-		c.SessionParams = map[string]string{"TIMEZONE": "UTC", "can_cloud_download": "true"}
-		kc := buildKernelConfig(c, kernel.Auth{Mode: kernel.AuthPAT, Token: "dapi-x"})
-		if kc.SessionConf["can_cloud_download"] != "false" || kc.SessionConf["TIMEZONE"] != "UTC" {
-			t.Fatalf("unexpected session configuration: %v", kc.SessionConf)
-		}
-		if c.SessionParams["can_cloud_download"] != "true" {
-			t.Fatal("caller session parameters were mutated")
-		}
-	})
+	for _, key := range []string{"can_cloud_download", "CAN_CLOUD_DOWNLOAD", "Can_Cloud_Download"} {
+		t.Run("CloudFetch disabled overrides "+key, func(t *testing.T) {
+			c := baseKernelConfig()
+			c.UseCloudFetch = false
+			c.SessionParams = map[string]string{"TIMEZONE": "UTC", key: "true"}
+			kc := buildKernelConfig(c, kernel.Auth{Mode: kernel.AuthPAT, Token: "dapi-x"})
+			if kc.SessionConf[kernelCloudDownloadConfKey] != "false" || kc.SessionConf["TIMEZONE"] != "UTC" || len(kc.SessionConf) != 2 {
+				t.Fatalf("unexpected session configuration: %v", kc.SessionConf)
+			}
+			if c.SessionParams[key] != "true" {
+				t.Fatal("caller session parameters were mutated")
+			}
+		})
+	}
 
 	t.Run("CloudFetch enabled keeps the server default", func(t *testing.T) {
 		c := baseKernelConfig()
