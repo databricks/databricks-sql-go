@@ -473,9 +473,9 @@ var kernelConfigFieldDisposition = map[string]string{
 	"EnableGeoSpatialSupportDSN": "inert", // DSN carrier; forwarded to KernelExperimental.EnableGeoSpatialSupport
 
 	// Fields promoted from the embedded CloudFetchConfig. The kernel does
-	// CloudFetch internally (below the C ABI), so none is forwarded — but each is
+	// CloudFetch internally (below the C ABI); each option is
 	// classified individually so a new CloudFetch option can't slip the guard.
-	"UseCloudFetch":                "inert",
+	"UseCloudFetch":                "forwarded",
 	"MaxDownloadThreads":           "inert",
 	"MaxFilesInMemory":             "inert",
 	"MinTimeToExpiry":              "inert",
@@ -699,6 +699,27 @@ func TestBuildKernelConfig(t *testing.T) {
 		kc = buildKernelConfig(c, kernel.Auth{Mode: kernel.AuthPAT, Token: "dapi-x"})
 		if kc.Telemetry.Enabled == nil || !*kc.Telemetry.Enabled {
 			t.Errorf("Telemetry.Enabled = %v, want explicit true", kc.Telemetry.Enabled)
+		}
+	})
+
+	t.Run("CloudFetch disabled preserves caller session parameters", func(t *testing.T) {
+		c := baseKernelConfig()
+		c.UseCloudFetch = false
+		c.SessionParams = map[string]string{"TIMEZONE": "UTC", "can_cloud_download": "true"}
+		kc := buildKernelConfig(c, kernel.Auth{Mode: kernel.AuthPAT, Token: "dapi-x"})
+		if kc.SessionConf["can_cloud_download"] != "false" || kc.SessionConf["TIMEZONE"] != "UTC" {
+			t.Fatalf("unexpected session configuration: %v", kc.SessionConf)
+		}
+		if c.SessionParams["can_cloud_download"] != "true" {
+			t.Fatal("caller session parameters were mutated")
+		}
+	})
+
+	t.Run("CloudFetch enabled keeps the server default", func(t *testing.T) {
+		c := baseKernelConfig()
+		kc := buildKernelConfig(c, kernel.Auth{Mode: kernel.AuthPAT, Token: "dapi-x"})
+		if _, present := kc.SessionConf["can_cloud_download"]; present {
+			t.Fatalf("unexpected CloudFetch override: %v", kc.SessionConf)
 		}
 	})
 

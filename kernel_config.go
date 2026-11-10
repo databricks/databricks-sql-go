@@ -180,6 +180,9 @@ func buildKernelConfig(cfg *config.Config, kauth kernel.Auth) kernel.Config {
 		// An explicit true below opts into native geospatial values.
 		EnableGeoSpatialSupport: false,
 	}
+	if !cfg.UseCloudFetch {
+		kc.SessionConf["can_cloud_download"] = "false"
+	}
 	if cfg.ClientQueryTimeout != nil {
 		timeout := *cfg.ClientQueryTimeout
 		kc.ClientQueryTimeout = &timeout
