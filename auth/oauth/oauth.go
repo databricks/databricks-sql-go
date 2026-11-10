@@ -55,11 +55,14 @@ func GetEndpoint(ctx context.Context, hostName string) (oauth2.Endpoint, error) 
 	// For normal workspace hosts this resolves to https://<host>/oidc, identical to
 	// the previous behavior.
 	//
-	// NOTE: this client uses the default transport, matching the existing
-	// oidc.NewProvider discovery below. A connector-supplied transport / TLS config
-	// (WithTransport, WithSkipTLSHostVerify) is not yet threaded into the OAuth
-	// endpoint-resolution path; that is a pre-existing limitation, tracked separately.
+	// The discovery client reuses the transport of an oauth2.HTTPClient supplied on
+	// ctx (the driver sets one carrying its User-Agent and WithTransport) so the
+	// lookup is attributable like the token requests that follow; without it the
+	// default transport is used.
 	client := &http.Client{Timeout: hostConfigTimeout}
+	if hc, ok := ctx.Value(oauth2.HTTPClient).(*http.Client); ok && hc != nil {
+		client.Transport = hc.Transport
+	}
 	issuerURL := resolveOIDCIssuer(ctx, client, hostName)
 	ctx = oidc.ClientContext(ctx, client)
 	ctx = oidc.InsecureIssuerURLContext(ctx, issuerURL)
