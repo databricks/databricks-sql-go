@@ -1,5 +1,8 @@
 # Release History
 
+## Unreleased
+- Honor `WithCloudFetch(false)` / `useCloudFetch=false` on the kernel backend. Complete results use paged inline delivery without storage downloads. Servers without paged inline support return a configuration error at session creation or statement execution; the driver does not fall back to storage downloads.
+
 ## v1.19.0 (2026-11-04)
 - Upgrade the SQL kernel bindings to v1.4.0.
 - Upgrade go-oidc to v3.21.0 (go-jose v4.1.6) and x/oauth2 to v0.36.0 to address go-jose/v3 security findings (databricks/databricks-sql-go#526).

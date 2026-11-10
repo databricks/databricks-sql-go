@@ -127,7 +127,7 @@ Thrift options where available.
 
 | DSN / session-conf key | Dedicated connector option | Thrift | Kernel | Default | Notes |
 |---|---|:---:|:---:|---|---|
-| `cloudfetch_enabled` | *(none; use `WithSessionParams`)* | ⚠️ | ✅ | `true` | Kernel Cloud Fetch toggle; `false` forces inline results. On Thrift use `WithCloudFetch`. |
+| `cloudfetch_enabled` | *(none; use `WithSessionParams`)* | ⚠️ | ✅ | `true` | Kernel Cloud Fetch toggle; `false` forces inline results. Use `WithCloudFetch` on either backend for the standard connection option. |
 | `cloudfetch_link_prefetch_window` | *(none; use `WithSessionParams`)* | ⚠️ | ✅ | `10` | Number of presigned Cloud Fetch links prefetched ahead of the consumer. |
 | `cloudfetch_max_chunks_in_memory` | `WithKernelMaxChunksInMemory` | ⚠️ | ✅ | `16` | Maximum decompressed Cloud Fetch chunks held in memory. Values above 256 are clamped with a warning, not rejected. |
 | `inline_max_chunks_in_memory` | *(none; use `WithSessionParams`)* | ⚠️ | ✅ | `4` | Inline-Arrow prefetch window; `1` disables prefetching. |

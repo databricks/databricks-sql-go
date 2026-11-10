@@ -8,7 +8,12 @@ import (
 	"crypto/sha512"
 	"database/sql"
 	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -20,9 +25,38 @@ func TestE2EKernelCloudFetchDisabledLargeResults(t *testing.T) {
 		t.Skip("skipping large inline result in -short mode")
 	}
 	host, httpPath, token := pecoTestingCreds(t)
+	var workspaceConnections, blockedConnections atomic.Int64
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodConnect || r.Host != net.JoinHostPort(host, "443") {
+			blockedConnections.Add(1)
+			http.Error(w, "Only the SQL workspace is reachable", http.StatusForbidden)
+			return
+		}
+		upstream, err := net.DialTimeout("tcp", r.Host, 10*time.Second)
+		if err != nil {
+			http.Error(w, "Workspace connection failed", http.StatusBadGateway)
+			return
+		}
+		defer upstream.Close() //nolint:errcheck
+		client, buffered, err := w.(http.Hijacker).Hijack()
+		if err != nil {
+			return
+		}
+		defer client.Close() //nolint:errcheck
+		workspaceConnections.Add(1)
+		_, _ = buffered.WriteString("HTTP/1.1 200 Connection Established\r\n\r\n")
+		if err := buffered.Flush(); err != nil {
+			return
+		}
+		go func() { _, _ = io.Copy(upstream, buffered) }()
+		_, _ = io.Copy(client, upstream)
+	}))
+	defer proxy.Close()
 	connector, err := NewConnector(
 		WithServerHostname(host), WithHTTPPath(httpPath), WithAccessToken(token),
 		WithUseKernel(true), WithCloudFetch(false),
+		WithKernelProxy(KernelProxy{URL: proxy.URL}),
+		WithRetries(-1, time.Millisecond, time.Millisecond),
 	)
 	require.NoError(t, err)
 	db := sql.OpenDB(connector)
@@ -46,6 +80,8 @@ func TestE2EKernelCloudFetchDisabledLargeResults(t *testing.T) {
 		count++
 	}
 	require.NoError(t, rows.Err())
+	require.Positive(t, workspaceConnections.Load(), "SQL traffic must use the restricted proxy")
+	require.Zero(t, blockedConnections.Load(), "no non-workspace connections are allowed")
 	require.Equal(t, int64(250000), count)
 	require.Equal(t, 32000000, payloadBytes)
 	require.Equal(t, "a25ada4c6c476b53e97eb6e8a945e9ce4c14cc432c7ad672dc6fb607d660c86a", fmt.Sprintf("%x", digest.Sum(nil)))
