@@ -113,11 +113,9 @@ Notes:
 
 - Boolean-valued keys should use the exact strings `"true"` / `"false"` — the kernel does
   not pre-validate values and forwards them as-is.
-- **`CAN_CLOUD_DOWNLOAD` is not a valid SEA session conf**: it may be accepted at
-  CreateSession and rejected by the first statement with `CONFIG_NOT_AVAILABLE`.
-  To disable Cloud Fetch on the kernel path, set the client-result conf
-  `cloudfetch_enabled=false`; `WithCloudFetch(false)` is a Thrift option and is inert
-  on the kernel path.
+- `WithCloudFetch(false)` requests paged inline delivery on the kernel path by
+  setting `can_cloud_download=false` for the session. The server must support
+  this capability; unsupported servers return a configuration error.
 
 ### Kernel client-result confs
 
@@ -174,7 +172,7 @@ an internal setting) and non-Arrow values also retain legacy session-location pa
 
 | DSN parameter | Connector option | Thrift | Kernel | Default | Notes |
 |---|---|:---:|:---:|---|---|
-| `useCloudFetch` | `WithCloudFetch` | ✅ | ⚠️ | `true` | Enable Cloud Fetch on Thrift. This option is inert on the kernel path; use the `cloudfetch_enabled` client-result conf there. |
+| `useCloudFetch` | `WithCloudFetch` | ✅ | ✅ | `true` | Set false to fetch complete results through the SQL connection without direct cloud-storage access. |
 | `maxDownloadThreads` | `WithMaxDownloadThreads` | ✅ | ⚠️ | `10` | Concurrent download goroutines (Thrift). Inert on the kernel path. |
 | | `WithKernelMaxChunksInMemory(n)` | ❌ | ✅ | kernel default (16) | Bounds decompressed Cloud Fetch chunks held in memory — trades large-result throughput for peak memory. |
 
