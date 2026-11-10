@@ -1,6 +1,8 @@
 # Release History
 
-## Unreleased
+## Unreleased (v2.0.0 prototype)
+
+- **Breaking change:** Upgrade Apache Arrow Go from v12 to v18.8.0 (`github.com/apache/arrow-go/v18`). The public `rows.ArrowBatchIterator` now uses v18 `arrow.RecordBatch` and `*arrow.Schema` types; callers using Arrow batches must migrate their Arrow imports and dependent code. This requires a major driver release (v2.0.0), including a `/v2` driver module path before publication.
 - Honor `WithCloudFetch(false)` / `useCloudFetch=false` on the kernel backend to fetch complete results without cloud-storage downloads. The option overrides conflicting session configuration and remains effective after automatic backend recovery. Servers without paged inline support return a configuration error; the driver does not fall back to storage downloads.
 
 ## v1.19.0 (2026-11-04)

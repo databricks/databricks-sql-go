@@ -14,7 +14,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/apache/arrow/go/v12/arrow/array"
+	"github.com/apache/arrow-go/v18/arrow/array"
 	dbsqlrows "github.com/databricks/databricks-sql-go/rows"
 )
 

@@ -444,9 +444,9 @@ The driver exposes two public interfaces for working with record batches from th
 	}
 
 	type ArrowBatchIterator interface {
-		// Retrieve the next arrow.Record.
+		// Retrieve the next arrow.RecordBatch.
 		// Will return io.EOF if there are no more records
-		Next() (arrow.Record, error)
+		Next() (arrow.RecordBatch, error)
 
 		// Return true if the iterator contains more batches, false otherwise.
 		HasNext() bool

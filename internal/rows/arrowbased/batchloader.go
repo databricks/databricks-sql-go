@@ -16,9 +16,9 @@ import (
 
 	"net/http"
 
-	"github.com/apache/arrow/go/v12/arrow"
-	"github.com/apache/arrow/go/v12/arrow/array"
-	"github.com/apache/arrow/go/v12/arrow/ipc"
+	"github.com/apache/arrow-go/v18/arrow"
+	"github.com/apache/arrow-go/v18/arrow/array"
+	"github.com/apache/arrow-go/v18/arrow/ipc"
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	dbsqlerrint "github.com/databricks/databricks-sql-go/internal/errors"
@@ -542,12 +542,12 @@ func getArrowRecords(r io.Reader, startRowOffset int64) ([]SparkArrowRecord, err
 	startRow := startRowOffset
 	var records []SparkArrowRecord
 	for ipcReader.Next() {
-		r := ipcReader.Record()
+		r := ipcReader.RecordBatch()
 		r.Retain()
 
 		sar := sparkArrowRecord{
-			Delimiter: rowscanner.NewDelimiter(startRow, r.NumRows()),
-			Record:    r,
+			Delimiter:   rowscanner.NewDelimiter(startRow, r.NumRows()),
+			RecordBatch: r,
 		}
 
 		records = append(records, &sar)
@@ -629,11 +629,11 @@ func (bi *batchIterator) Next() (SparkArrowBatch, error) {
 			if !ok {
 				continue
 			}
-			corrected := array.NewRecord(bi.overrideSchema, sar.Columns(), sar.NumRows())
+			corrected := array.NewRecordBatch(bi.overrideSchema, sar.Columns(), sar.NumRows())
 			sar.Release()
 			records[i] = &sparkArrowRecord{
-				Delimiter: sar.Delimiter,
-				Record:    corrected,
+				Delimiter:   sar.Delimiter,
+				RecordBatch: corrected,
 			}
 		}
 	}
@@ -691,8 +691,8 @@ func limitArrowRecords(records []SparkArrowRecord, expectedRows int64) []SparkAr
 		record.Release()
 		if sliced != nil {
 			limited = append(limited, &sparkArrowRecord{
-				Delimiter: rowscanner.NewDelimiter(start, sliced.NumRows()),
-				Record:    sliced,
+				Delimiter:   rowscanner.NewDelimiter(start, sliced.NumRows()),
+				RecordBatch: sliced,
 			})
 		}
 		remaining = 0

@@ -3,7 +3,7 @@ package arrowscan
 import (
 	"testing"
 
-	"github.com/apache/arrow/go/v12/arrow"
+	"github.com/apache/arrow-go/v18/arrow"
 )
 
 // TestColumnTypeInfoForTimestampNTZ pins the TIMESTAMP vs TIMESTAMP_NTZ type-name

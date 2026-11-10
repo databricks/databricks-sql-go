@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/apache/arrow/go/v12/arrow"
-	"github.com/apache/arrow/go/v12/arrow/ipc"
+	"github.com/apache/arrow-go/v18/arrow"
+	"github.com/apache/arrow-go/v18/arrow/ipc"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/config"
 	dbsqlerr "github.com/databricks/databricks-sql-go/internal/errors"
@@ -49,7 +49,7 @@ type arrowRecordIterator struct {
 var _ rows.ArrowBatchIterator = (*arrowRecordIterator)(nil)
 
 // Retrieve the next arrow record
-func (ri *arrowRecordIterator) Next() (arrow.Record, error) {
+func (ri *arrowRecordIterator) Next() (arrow.RecordBatch, error) {
 	if !ri.HasNext() {
 		// returning EOF indicates that there are no more records to iterate
 		return nil, io.EOF
