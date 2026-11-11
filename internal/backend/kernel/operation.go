@@ -95,6 +95,7 @@ func (k *KernelBackend) execute(ctx context.Context, req backend.ExecRequest) (b
 		value.free()
 		if err != nil {
 			C.kernel_statement_close(stmt)
+			k.evictIfSessionFatal(err)
 			return &kernelOp{}, fmt.Errorf("kernel: allowed local paths: %w", toStatementError(err))
 		}
 	}

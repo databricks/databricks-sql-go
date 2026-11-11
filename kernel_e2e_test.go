@@ -8,8 +8,11 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"errors"
+	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -669,5 +672,77 @@ func TestKernelE2EGetArrowBatches(t *testing.T) {
 	}
 	if rowCount != want {
 		t.Errorf("GetArrowBatches row count = %d, want %d", rowCount, want)
+	}
+}
+
+func TestKernelE2EVolumeFileLifecycle(t *testing.T) {
+	catalog := os.Getenv("DATABRICKS_VOLUME_TEST_CATALOG")
+	if catalog == "" {
+		t.Skip("set DATABRICKS_VOLUME_TEST_CATALOG to a writable catalog")
+	}
+	db := kernelTestDB(t)
+	defer db.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	schema := fmt.Sprintf("driver_volume_%d", time.Now().UnixNano())
+	identifier := func(value string) string { return "`" + strings.ReplaceAll(value, "`", "``") + "`" }
+	literal := func(value string) string { return "'" + strings.NewReplacer(`\`, `\\`, `'`, `\'`).Replace(value) + "'" }
+	namespace := identifier(catalog) + "." + identifier(schema)
+	if _, err := db.ExecContext(ctx, "CREATE SCHEMA "+namespace); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if _, err := db.ExecContext(context.Background(), "DROP SCHEMA "+namespace+" CASCADE"); err != nil {
+			t.Error(err)
+		}
+	}()
+	if _, err := db.ExecContext(ctx, "CREATE VOLUME "+namespace+".files"); err != nil {
+		t.Fatal(err)
+	}
+	directory := t.TempDir()
+	source, destination := filepath.Join(directory, "input.bin"), filepath.Join(directory, "output.bin")
+	payload := bytes.Repeat([]byte{0, 255, 1, 128}, 262144)
+	if err := os.WriteFile(source, payload, 0600); err != nil {
+		t.Fatal(err)
+	}
+	remote := "/Volumes/" + catalog + "/" + schema + "/files/input.bin"
+	stagingCtx := driverctx.NewContextWithStagingInfo(ctx, []string{directory})
+	if _, err := db.ExecContext(stagingCtx, "PUT "+literal(source)+" INTO "+literal(remote)+" OVERWRITE"); err != nil {
+		t.Fatal(err)
+	}
+	get := "GET " + literal(remote) + " TO " + literal(destination)
+	rows, err := db.QueryContext(ctx, get)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rows.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(destination); !os.IsNotExist(err) {
+		t.Fatalf("raw instructions changed local destination: %v", err)
+	}
+	if _, err := db.ExecContext(stagingCtx, get); err != nil {
+		t.Fatal(err)
+	}
+	actual, err := os.ReadFile(destination)
+	if err != nil || !bytes.Equal(actual, payload) {
+		t.Fatalf("download differs: %v", err)
+	}
+	denied := filepath.Join(t.TempDir(), "denied.bin")
+	if err := os.WriteFile(denied, payload, 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, local := range []string{denied, filepath.Join(directory, "missing.bin")} {
+		if _, err := db.ExecContext(stagingCtx, "PUT "+literal(local)+" INTO "+literal(remote)+" OVERWRITE"); err == nil {
+			t.Fatalf("PUT accepted unavailable local path %q", local)
+		}
+	}
+	for range 2 {
+		if _, err := db.ExecContext(stagingCtx, "REMOVE "+literal(remote)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.ExecContext(stagingCtx, get); err == nil {
+		t.Fatal("GET succeeded after REMOVE")
 	}
 }
