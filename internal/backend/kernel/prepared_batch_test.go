@@ -85,7 +85,6 @@ func TestPreparedBatchRetainedStrings(t *testing.T) {
 						}
 					}
 					rec.Release()
-					columns = nil
 					if borrowed != "" {
 						require.Equal(t, byte(0xAA), borrowed[0], "release must overwrite the original string storage")
 					}
@@ -145,7 +144,6 @@ func TestPreparedBatchRenderedValuesOwnMemory(t *testing.T) {
 		got[i] = v
 	}
 	rec.Release()
-	columns = nil
 	runtime.GC()
 	wantEWKB := make([]byte, 25)
 	wantEWKB[0] = 1

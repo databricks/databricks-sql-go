@@ -17,12 +17,12 @@ func prepareBatch(rec arrow.Record, location *time.Location, ntz, geoBinary []bo
 	columns := make([]columnAccessor, rec.NumCols())
 	for i, col := range rec.Columns() {
 		loc := location
-		if ntz[i] {
+		if i < len(ntz) && ntz[i] {
 			loc = time.UTC
 		}
 		columns[i] = prepareColumn(col, loc, keys, arrowscan.ScanOptions{
 			DecimalAsFloat:   decimalAsFloat,
-			GeospatialBinary: geoBinary[i],
+			GeospatialBinary: i < len(geoBinary) && geoBinary[i],
 		})
 	}
 	return columns
