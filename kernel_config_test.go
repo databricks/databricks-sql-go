@@ -1,10 +1,14 @@
 package dbsql
 
 import (
+	"bytes"
 	"crypto/tls"
 	"errors"
 	"net/http"
+	"os"
 	"reflect"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -14,7 +18,64 @@ import (
 	"github.com/databricks/databricks-sql-go/internal/backend/kernel"
 	"github.com/databricks/databricks-sql-go/internal/client"
 	"github.com/databricks/databricks-sql-go/internal/config"
+	"github.com/databricks/databricks-sql-go/logger"
 )
+
+func TestBuildKernelConfigCloudFetchOverrideWarning(t *testing.T) {
+	previousLevel := logger.Logger.GetLevel()
+	t.Cleanup(func() {
+		logger.SetLogOutput(os.Stderr)
+		logger.Logger.Logger = logger.Logger.Level(previousLevel)
+		kernelCloudFetchOverrideWarnOnce = sync.Once{}
+	})
+	if err := logger.SetLogLevel("warn"); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		name    string
+		enabled bool
+		params  map[string]string
+		warn    bool
+	}{
+		{name: "no raw configuration"},
+		{name: "matching capability", params: map[string]string{"CAN_CLOUD_DOWNLOAD": "FALSE"}},
+		{name: "conflicting capability", params: map[string]string{"Can_Cloud_Download": "true"}, warn: true},
+		{name: "private value", params: map[string]string{"can_cloud_download": "private-setting-value"}, warn: true},
+		{name: "legacy disabled", params: map[string]string{"CLOUDFETCH_ENABLED": "false"}, warn: true},
+		{name: "legacy enabled", params: map[string]string{"cloudfetch_enabled": "true"}, warn: true},
+		{name: "enabled preserves raw configuration", enabled: true, params: map[string]string{"can_cloud_download": "true", "cloudfetch_enabled": "false"}},
+		{name: "unrelated parameter", params: map[string]string{"TIMEZONE": "UTC"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			kernelCloudFetchOverrideWarnOnce = sync.Once{}
+			var output bytes.Buffer
+			logger.SetLogOutput(&output)
+			cfg := baseKernelConfig()
+			cfg.UseCloudFetch = tc.enabled
+			cfg.SessionParams = tc.params
+			buildKernelConfig(cfg, kernel.Auth{})
+			first := output.String()
+			wantWarnings := 0
+			if tc.warn {
+				wantWarnings = 1
+			}
+			if got := strings.Count(first, `"level":"warn"`); got != wantWarnings {
+				t.Fatalf("warning count = %d, want %d: %s", got, wantWarnings, first)
+			}
+			if tc.warn && (!strings.Contains(first, "can_cloud_download") || !strings.Contains(first, "cloudfetch_enabled")) {
+				t.Fatalf("warning does not name both overridden settings: %s", first)
+			}
+			if strings.Contains(first, "private-setting-value") {
+				t.Fatal("warning exposes a raw parameter value")
+			}
+			buildKernelConfig(cfg, kernel.Auth{})
+			if output.String() != first {
+				t.Fatal("warning repeated for a second configuration")
+			}
+		})
+	}
+}
 
 // nonPATAuth stands in for any non-PAT, non-OAuth authenticator (token-provider /
 // external / static) — the kernel backend must reject it. It implements neither
