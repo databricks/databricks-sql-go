@@ -725,6 +725,30 @@ func TestBuildKernelConfig(t *testing.T) {
 		}
 	})
 
+	for _, key := range []string{"cloudfetch_enabled", "CLOUDFETCH_ENABLED"} {
+		t.Run("CloudFetch disabled overrides legacy "+key, func(t *testing.T) {
+			c := baseKernelConfig()
+			c.UseCloudFetch = false
+			c.SessionParams = map[string]string{key: "false", "TIMEZONE": "UTC"}
+			kc := buildKernelConfig(c, kernel.Auth{Mode: kernel.AuthPAT, Token: "dapi-x"})
+			if kc.SessionConf[kernelCloudDownloadConfKey] != "false" || kc.SessionConf["TIMEZONE"] != "UTC" || len(kc.SessionConf) != 2 {
+				t.Fatalf("unexpected session configuration: %v", kc.SessionConf)
+			}
+			if c.SessionParams[key] != "false" {
+				t.Fatal("caller session parameters were mutated")
+			}
+		})
+	}
+
+	t.Run("CloudFetch enabled preserves explicit session parameters", func(t *testing.T) {
+		c := baseKernelConfig()
+		c.SessionParams = map[string]string{"CAN_CLOUD_DOWNLOAD": "false", "cloudfetch_enabled": "false", "TIMEZONE": "UTC"}
+		kc := buildKernelConfig(c, kernel.Auth{Mode: kernel.AuthPAT, Token: "dapi-x"})
+		if !reflect.DeepEqual(kc.SessionConf, c.SessionParams) {
+			t.Fatalf("session parameters changed: %v", kc.SessionConf)
+		}
+	})
+
 	t.Run("MaxChunksInMemory injected into kernel SessionConf", func(t *testing.T) {
 		c := baseKernelConfig()
 		c.KernelExperimental = &config.KernelExperimentalConfig{MaxChunksInMemory: 4}

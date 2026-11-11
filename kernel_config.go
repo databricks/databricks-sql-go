@@ -186,7 +186,7 @@ func buildKernelConfig(cfg *config.Config, kauth kernel.Auth) kernel.Config {
 	if !cfg.UseCloudFetch {
 		// Paged inline delivery avoids the legacy INLINE result-size limit.
 		for key := range kc.SessionConf {
-			if strings.EqualFold(key, kernelCloudDownloadConfKey) {
+			if strings.EqualFold(key, kernelCloudDownloadConfKey) || strings.EqualFold(key, "cloudfetch_enabled") {
 				delete(kc.SessionConf, key)
 			}
 		}

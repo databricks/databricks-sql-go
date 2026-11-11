@@ -114,7 +114,9 @@ Notes:
 - Boolean-valued keys should use the exact strings `"true"` / `"false"` — the kernel does
   not pre-validate values and forwards them as-is.
 - `WithCloudFetch(false)` requests paged inline delivery on the kernel path by
-  setting `can_cloud_download=false` for the session. The server must support
+  setting `can_cloud_download=false` for the session. It takes precedence over
+  case-insensitive `can_cloud_download` and `cloudfetch_enabled` session parameters.
+  The server must support
   this capability; unsupported servers return a configuration error.
 
 ### Kernel client-result confs
