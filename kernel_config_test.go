@@ -719,6 +719,7 @@ func TestBuildKernelConfig(t *testing.T) {
 
 	t.Run("CloudFetch enabled keeps the server default", func(t *testing.T) {
 		c := baseKernelConfig()
+		c.UseCloudFetch = true
 		kc := buildKernelConfig(c, kernel.Auth{Mode: kernel.AuthPAT, Token: "dapi-x"})
 		if _, present := kc.SessionConf["can_cloud_download"]; present {
 			t.Fatalf("unexpected CloudFetch override: %v", kc.SessionConf)
@@ -742,6 +743,7 @@ func TestBuildKernelConfig(t *testing.T) {
 
 	t.Run("CloudFetch enabled preserves explicit session parameters", func(t *testing.T) {
 		c := baseKernelConfig()
+		c.UseCloudFetch = true
 		c.SessionParams = map[string]string{"CAN_CLOUD_DOWNLOAD": "false", "cloudfetch_enabled": "false", "TIMEZONE": "UTC"}
 		kc := buildKernelConfig(c, kernel.Auth{Mode: kernel.AuthPAT, Token: "dapi-x"})
 		if !reflect.DeepEqual(kc.SessionConf, c.SessionParams) {

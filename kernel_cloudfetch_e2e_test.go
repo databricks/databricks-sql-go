@@ -38,7 +38,12 @@ func TestE2EKernelCloudFetchDisabledLargeResults(t *testing.T) {
 			return
 		}
 		defer upstream.Close() //nolint:errcheck
-		client, buffered, err := w.(http.Hijacker).Hijack()
+		hijacker, ok := w.(http.Hijacker)
+		if !ok {
+			http.Error(w, "Proxy tunneling is unavailable", http.StatusInternalServerError)
+			return
+		}
+		client, buffered, err := hijacker.Hijack()
 		if err != nil {
 			return
 		}
