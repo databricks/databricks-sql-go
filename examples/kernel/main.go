@@ -87,5 +87,4 @@ func main() {
 		log.Fatalf("query: %v", err)
 	}
 	fmt.Printf("server version: %s\n", version)
-
 }

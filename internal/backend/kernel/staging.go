@@ -6,8 +6,8 @@ import "strings"
 // Staging detection is pure Go (string inspection of the SQL), so keeping it
 // untagged lets its test run under CGO_ENABLED=0.
 
-// Missing staging context must fail for volume commands even when REMOVE
-// does not need a local file path.
+// isStagingStatement detects PUT, GET, or REMOVE after leading SQL comments,
+// ignoring keyword case.
 func isStagingStatement(sql string) bool {
 	s := stripLeadingSQLComments(sql)
 	for _, kw := range []string{"PUT", "GET", "REMOVE"} {

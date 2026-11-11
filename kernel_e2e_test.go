@@ -732,9 +732,12 @@ func TestKernelE2EVolumeFileLifecycle(t *testing.T) {
 	if err := os.WriteFile(denied, payload, 0600); err != nil {
 		t.Fatal(err)
 	}
-	for _, local := range []string{denied, filepath.Join(directory, "missing.bin")} {
-		if _, err := db.ExecContext(stagingCtx, "PUT "+literal(local)+" INTO "+literal(remote)+" OVERWRITE"); err == nil {
-			t.Fatalf("PUT accepted unavailable local path %q", local)
+	for _, test := range []struct{ local, message string }{
+		{denied, "restricted"},
+		{filepath.Join(directory, "missing.bin"), "File transfer failed"},
+	} {
+		if _, err := db.ExecContext(stagingCtx, "PUT "+literal(test.local)+" INTO "+literal(remote)+" OVERWRITE"); err == nil || !strings.Contains(err.Error(), test.message) {
+			t.Fatalf("PUT %q: expected %q, got %v", test.local, test.message, err)
 		}
 	}
 	for range 2 {
