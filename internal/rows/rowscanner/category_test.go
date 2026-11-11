@@ -54,7 +54,7 @@ func TestResultPageIteratorErrNilOnNormalFinish(t *testing.T) {
 		},
 	}
 
-	rpf := NewResultPageIterator(context.Background(), NewDelimiter(0, 0), 100, nil, false, c,
+	rpf := NewResultPageIterator(context.Background(), NewDelimiter(0, 0), 100, nil, false, false, c,
 		dbsqllog.WithContext("connId", "correlationId", ""))
 
 	assert.True(t, rpf.HasNext())
@@ -81,7 +81,7 @@ func TestResultPageIteratorPreservesFetchError(t *testing.T) {
 		},
 	}
 
-	rpf := NewResultPageIterator(context.Background(), NewDelimiter(0, 0), 100, nil, false, c,
+	rpf := NewResultPageIterator(context.Background(), NewDelimiter(0, 0), 100, nil, false, false, c,
 		dbsqllog.WithContext("connId", "correlationId", ""))
 
 	assert.False(t, rpf.HasNext())

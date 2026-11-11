@@ -42,7 +42,7 @@ func TestArrowRecordIterator(t *testing.T) {
 			rowscanner.NewDelimiter(0, 7311),
 			5000,
 			nil,
-			false,
+			false, false,
 			simpleClient,
 			logger,
 		)
@@ -140,7 +140,7 @@ func TestArrowRecordIterator(t *testing.T) {
 			rowscanner.NewDelimiter(0, 0),
 			5000,
 			nil,
-			false,
+			false, false,
 			simpleClient,
 			logger,
 		)
@@ -214,7 +214,7 @@ func TestArrowRecordIteratorSurfacesPageErrorOnce(t *testing.T) {
 
 	ctx := driverctx.NewContextWithConnId(context.Background(), "connectionId")
 	ctx = driverctx.NewContextWithCorrelationId(ctx, "correlationId")
-	rpi := rowscanner.NewResultPageIterator(ctx, rowscanner.NewDelimiter(0, 7311), 5000, nil, false, failing, logger)
+	rpi := rowscanner.NewResultPageIterator(ctx, rowscanner.NewDelimiter(0, 7311), 5000, nil, false, false, failing, logger)
 	cfg := *config.WithDefaults()
 	bi, err := NewLocalBatchIterator(ctx, executeStatementResp.DirectResults.ResultSet.Results.ArrowBatches, 0, executeStatementResp.DirectResults.ResultSetMetadata.ArrowSchema, &cfg)
 	assert.Nil(t, err)
@@ -264,7 +264,7 @@ func TestArrowRecordIteratorSchemaReportsPageErrorOnce(t *testing.T) {
 
 	ctx := driverctx.NewContextWithConnId(context.Background(), "connectionId")
 	ctx = driverctx.NewContextWithCorrelationId(ctx, "correlationId")
-	rpi := rowscanner.NewResultPageIterator(ctx, rowscanner.NewDelimiter(0, 7311), 5000, nil, false, failing, logger)
+	rpi := rowscanner.NewResultPageIterator(ctx, rowscanner.NewDelimiter(0, 7311), 5000, nil, false, false, failing, logger)
 	cfg := *config.WithDefaults()
 	// nil batch iterator and nil schema bytes: Schema() must fetch a page.
 	it := NewArrowRecordIterator(ctx, rpi, nil, nil, cfg)
@@ -303,7 +303,7 @@ func TestArrowRecordIteratorNoFetchAfterEarlyClose(t *testing.T) {
 
 	ctx := driverctx.NewContextWithConnId(context.Background(), "connectionId")
 	ctx = driverctx.NewContextWithCorrelationId(ctx, "correlationId")
-	rpi := rowscanner.NewResultPageIterator(ctx, rowscanner.NewDelimiter(0, 7311), 5000, nil, false, tc, logger)
+	rpi := rowscanner.NewResultPageIterator(ctx, rowscanner.NewDelimiter(0, 7311), 5000, nil, false, false, tc, logger)
 	cfg := *config.WithDefaults()
 	schemaBytes := executeStatementResp.DirectResults.ResultSetMetadata.ArrowSchema
 	bi, err := NewLocalBatchIterator(ctx, executeStatementResp.DirectResults.ResultSet.Results.ArrowBatches, 0, schemaBytes, &cfg)
@@ -339,7 +339,7 @@ func TestArrowRecordIteratorCloseDiscardsPendingPageError(t *testing.T) {
 
 	ctx := driverctx.NewContextWithConnId(context.Background(), "connectionId")
 	ctx = driverctx.NewContextWithCorrelationId(ctx, "correlationId")
-	rpi := rowscanner.NewResultPageIterator(ctx, rowscanner.NewDelimiter(0, 7311), 5000, nil, false, failing, logger)
+	rpi := rowscanner.NewResultPageIterator(ctx, rowscanner.NewDelimiter(0, 7311), 5000, nil, false, false, failing, logger)
 	cfg := *config.WithDefaults()
 	it := NewArrowRecordIterator(ctx, rpi, nil, nil, cfg)
 
@@ -373,7 +373,7 @@ func TestArrowIPCStreamIteratorCloseDiscardsPendingPageError(t *testing.T) {
 
 	ctx := driverctx.NewContextWithConnId(context.Background(), "connectionId")
 	ctx = driverctx.NewContextWithCorrelationId(ctx, "correlationId")
-	rpi := rowscanner.NewResultPageIterator(ctx, rowscanner.NewDelimiter(0, 7311), 5000, nil, false, failing, logger)
+	rpi := rowscanner.NewResultPageIterator(ctx, rowscanner.NewDelimiter(0, 7311), 5000, nil, false, false, failing, logger)
 	cfg := *config.WithDefaults()
 	it := NewArrowIPCStreamIterator(ctx, rpi, nil, nil, cfg)
 
@@ -412,7 +412,7 @@ func TestArrowIPCStreamIteratorSurfacesPageError(t *testing.T) {
 
 	ctx := driverctx.NewContextWithConnId(context.Background(), "connectionId")
 	ctx = driverctx.NewContextWithCorrelationId(ctx, "correlationId")
-	rpi := rowscanner.NewResultPageIterator(ctx, rowscanner.NewDelimiter(0, 7311), 5000, nil, false, failing, logger)
+	rpi := rowscanner.NewResultPageIterator(ctx, rowscanner.NewDelimiter(0, 7311), 5000, nil, false, false, failing, logger)
 	cfg := *config.WithDefaults()
 	schemaBytes := executeStatementResp.DirectResults.ResultSetMetadata.ArrowSchema
 	ipcIt, err := NewLocalIPCStreamIterator(ctx, executeStatementResp.DirectResults.ResultSet.Results.ArrowBatches, 0, schemaBytes, &cfg)
@@ -469,7 +469,7 @@ func TestArrowIPCStreamIteratorNoFetchAfterEarlyClose(t *testing.T) {
 
 	ctx := driverctx.NewContextWithConnId(context.Background(), "connectionId")
 	ctx = driverctx.NewContextWithCorrelationId(ctx, "correlationId")
-	rpi := rowscanner.NewResultPageIterator(ctx, rowscanner.NewDelimiter(0, 7311), 5000, nil, false, tc, logger)
+	rpi := rowscanner.NewResultPageIterator(ctx, rowscanner.NewDelimiter(0, 7311), 5000, nil, false, false, tc, logger)
 	cfg := *config.WithDefaults()
 	schemaBytes := executeStatementResp.DirectResults.ResultSetMetadata.ArrowSchema
 	ipcIt, err := NewLocalIPCStreamIterator(ctx, executeStatementResp.DirectResults.ResultSet.Results.ArrowBatches, 0, schemaBytes, &cfg)
@@ -509,7 +509,7 @@ func TestArrowRecordIteratorSchema(t *testing.T) {
 			rowscanner.NewDelimiter(0, 0),
 			5000,
 			nil,
-			false,
+			false, false,
 			simpleClient,
 			logger,
 		)
@@ -563,7 +563,7 @@ func TestArrowRecordIteratorSchema(t *testing.T) {
 			rowscanner.NewDelimiter(0, 0),
 			5000,
 			nil,
-			false,
+			false, false,
 			simpleClient,
 			logger,
 		)
@@ -605,7 +605,7 @@ func TestArrowRecordIteratorSchema(t *testing.T) {
 			rowscanner.NewDelimiter(0, 0),
 			5000,
 			nil,
-			false,
+			false, false,
 			failingClient,
 			logger,
 		)

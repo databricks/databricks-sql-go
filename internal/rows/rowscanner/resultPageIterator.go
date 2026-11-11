@@ -58,17 +58,16 @@ func NewResultPageIterator(
 	delimiter Delimiter,
 	maxPageSize int64,
 	opHandle *cli_service.TOperationHandle,
+	isFinished bool,
 	closedOnServer bool,
 	client cli_service.TCLIService,
 	logger *dbsqllog.DBSQLLogger,
 ) ResultPageIterator {
 
-	// delimiter and hasMoreRows are used to set up the point in the paginated
-	// result set that this iterator starts from.
 	return &resultPageIterator{
 		ctx:            ctx,
 		Delimiter:      delimiter,
-		isFinished:     closedOnServer,
+		isFinished:     isFinished || closedOnServer,
 		maxPageSize:    maxPageSize,
 		opHandle:       opHandle,
 		closedOnServer: closedOnServer,
@@ -162,7 +161,6 @@ func (rpf *resultPageIterator) HasNext() bool {
 	if rpf.nextResultPage == nil {
 		nrp, err := rpf.getNextPage()
 		if err != nil {
-			rpf.Close() //nolint:errcheck,gosec // G104: close in error path
 			rpf.isFinished = true
 			rpf.err = err
 			return false
@@ -170,9 +168,6 @@ func (rpf *resultPageIterator) HasNext() bool {
 
 		rpf.err = nil
 		rpf.nextResultPage = nrp
-		if !nrp.GetHasMoreRows() {
-			rpf.Close() //nolint:errcheck,gosec // G104: close in error path
-		}
 	}
 
 	return rpf.nextResultPage != nil

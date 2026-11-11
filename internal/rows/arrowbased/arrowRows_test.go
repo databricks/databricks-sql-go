@@ -1545,7 +1545,7 @@ func TestArrowRowScanner(t *testing.T) {
 			rowscanner.NewDelimiter(0, 7311),
 			5000,
 			nil,
-			false,
+			false, false,
 			client,
 			logger)
 

@@ -76,6 +76,8 @@ type rows struct {
 	// resultsCancel aborts in-flight result RPCs/downloads when Close() is
 	// called, so the detached ctx never leaves an operation uncancellable.
 	resultsCancel context.CancelFunc
+	closeOnce     sync.Once
+	closeErr      error
 
 	// Telemetry tracking
 	// telemetryUpdate is called after each chunk is fetched with:
@@ -268,14 +270,16 @@ func NewRows(
 		d = rowscanner.NewDelimiter(0, 0)
 	}
 
-	// If the entire query result set fits in direct results the server closes
-	// the operations.
+	// CloudFetch may deliver all links without closing the server operation.
 	closedOnServer := directResults != nil && directResults.CloseOperation != nil
+	isFinished := closedOnServer || (directResults != nil && directResults.ResultSet != nil &&
+		directResults.ResultSet.HasMoreRows != nil && !*directResults.ResultSet.HasMoreRows)
 	r.ResultPageIterator = rowscanner.NewResultPageIterator(
 		resultsCtx,
 		d,
 		pageSize,
 		opHandle,
+		isFinished,
 		closedOnServer,
 		client,
 		r.logger(),
@@ -314,7 +318,13 @@ func (r *rows) Close() error {
 	if r == nil {
 		return nil
 	}
+	r.closeOnce.Do(func() {
+		r.closeErr = r.close()
+	})
+	return r.closeErr
+}
 
+func (r *rows) close() error {
 	// Release the detached results context after the close RPC runs, aborting
 	// any in-flight FetchResults/CloudFetch downloads still referencing it.
 	if r.resultsCancel != nil {
