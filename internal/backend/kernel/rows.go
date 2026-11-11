@@ -153,6 +153,10 @@ type kernelRows struct {
 	chunkCount int                        // cumulative batches fetched, for OnChunkFetched
 	closed     bool
 	eof        bool
+	// hasDupNames records, once per result set, whether the schema had duplicate
+	// top-level column names needing the import rename (issue #517), so
+	// nextBatch can skip the per-column cgo scan in the common unique case.
+	hasDupNames bool
 	// iterationErr is the first non-EOF error seen during Next(), reported to the
 	// OnClose telemetry callback so a failed statement is recorded (matching the
 	// Thrift path's rows.iterationErr). io.EOF is normal termination, not an error.
@@ -201,6 +205,7 @@ func newKernelRows(ctx context.Context, op *kernelOp, stream *C.kernel_result_st
 	if origNames != nil {
 		// Expose the server's (duplicate) names on Columns()/GetArrowBatches.
 		sch = restoreSchemaNames(sch, origNames)
+		r.hasDupNames = true
 	}
 	r.schema = sch
 	fields := sch.Fields()
@@ -428,7 +433,14 @@ func (r *kernelRows) nextBatch() error {
 	// Zero-copy import. The kernel exports self-contained batches (Rust to_ffi
 	// moves the Arc-owned buffers in), so the arrow.Record safely outlives the
 	// stream; we still Release each batch explicitly as we advance.
-	origNames, err := prepareSchemaForImport(&csch)
+	// The result schema is fixed for the stream, so the duplicate-name check is
+	// decided once in newKernelRows; skip the per-column cgo walk here unless the
+	// result had duplicates (or the batch's column count unexpectedly differs).
+	var origNames []string
+	var err error
+	if r.hasDupNames || int(csch.n_children) != len(r.cols) {
+		origNames, err = prepareSchemaForImport(&csch)
+	}
 	if err != nil {
 		// The importer never took ownership; release the producer's structs.
 		C.dbsql_release_array(&carr)
