@@ -75,6 +75,20 @@ static int dbsql_rename_children(struct ArrowSchema* s, char** tmp_names) {
 static struct ArrowSchema* dbsql_schema_child(struct ArrowSchema* s, int64_t i) {
   return s->children[i];
 }
+
+// Release producer-owned C Data structs on error paths that never reach the
+// cdata importer (which would otherwise take ownership and release them).
+static void dbsql_release_schema(struct ArrowSchema* s) {
+  if (s != NULL && s->release != NULL) {
+    s->release(s);
+  }
+}
+
+static void dbsql_release_array(struct ArrowArray* a) {
+  if (a != NULL && a->release != NULL) {
+    a->release(a);
+  }
+}
 */
 import "C"
 
@@ -174,6 +188,8 @@ func newKernelRows(ctx context.Context, op *kernelOp, stream *C.kernel_result_st
 	}
 	origNames, err := prepareSchemaForImport(&csch)
 	if err != nil {
+		// The importer never took ownership; release the producer's schema.
+		C.dbsql_release_schema(&csch)
 		r.Close()
 		return nil, err
 	}
@@ -245,10 +261,9 @@ func prepareSchemaForImport(csch *C.struct_ArrowSchema) ([]string, error) {
 	if !changed {
 		return nil, nil
 	}
+	// cgo's C.malloc aborts the process on allocation failure rather than
+	// returning NULL, so no nil check is needed here.
 	tmp := (**C.char)(C.malloc(C.size_t(n) * C.size_t(unsafe.Sizeof((*C.char)(nil)))))
-	if tmp == nil {
-		return nil, fmt.Errorf("kernel: rename duplicate columns: out of memory")
-	}
 	tmpNames := unsafe.Slice(tmp, n)
 	for i := range uniq {
 		tmpNames[i] = nil
@@ -415,6 +430,9 @@ func (r *kernelRows) nextBatch() error {
 	// stream; we still Release each batch explicitly as we advance.
 	origNames, err := prepareSchemaForImport(&csch)
 	if err != nil {
+		// The importer never took ownership; release the producer's structs.
+		C.dbsql_release_array(&carr)
+		C.dbsql_release_schema(&csch)
 		return err
 	}
 	rec, err := cdata.ImportCRecordBatch(

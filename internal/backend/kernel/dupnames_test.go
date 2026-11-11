@@ -38,8 +38,13 @@ func TestDuplicateColumnNamesStructOfImport(t *testing.T) {
 	}
 
 	// Library-level repro: the pinned arrow-go v12 rejects duplicate names.
+	// This is an intentional tripwire: if it fires after an arrow-go bump, the
+	// library now accepts duplicate child names, so the uniqueFieldNames
+	// workaround should be removed (along with this test) — do not loosen it.
 	if msg := structOfPanic(fields); !strings.Contains(msg, `duplicate field with name "a"`) {
-		t.Fatalf("expected arrow.StructOf to panic on duplicate names, got %q", msg)
+		t.Fatalf("tripwire: arrow.StructOf no longer panics on duplicate field names (got %q); "+
+			"arrow-go now accepts duplicates, so remove the uniqueFieldNames dupnames workaround "+
+			"and this test instead of loosening the assertion", msg)
 	}
 
 	// With the import-safe names, the same call must not panic.
