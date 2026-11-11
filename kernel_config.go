@@ -189,7 +189,9 @@ func buildKernelConfig(cfg *config.Config, kauth kernel.Auth) kernel.Config {
 		// Paged inline delivery avoids the legacy INLINE result-size limit.
 		for key, value := range kc.SessionConf {
 			if strings.EqualFold(key, kernelCloudDownloadConfKey) || strings.EqualFold(key, kernelCloudFetchEnabledConfKey) {
-				if strings.EqualFold(key, kernelCloudFetchEnabledConfKey) || !strings.EqualFold(value, "false") {
+				if strings.EqualFold(key, kernelCloudFetchEnabledConfKey) {
+					logger.Warn().Msgf("WithCloudFetch(false) replaces legacy INLINE session parameter %q with paged inline delivery", key)
+				} else if !strings.EqualFold(value, "false") {
 					logger.Warn().Msgf("WithCloudFetch(false) overrides session parameter %q", key)
 				}
 				delete(kc.SessionConf, key)
