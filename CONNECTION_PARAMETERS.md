@@ -186,10 +186,7 @@ supports paged inline result delivery. Unsupported servers return a configuratio
 error; the driver does not fall back to storage downloads. The standard disable
 option takes precedence over case-insensitive copies of that session parameter.
 The raw `cloudfetch_enabled=false` setting has the same result-delivery behavior
-with the pinned kernel. Released kernel 1.4.0 uses an older inline path and does
-not provide this complete large-result behavior. Connector publication requires
-a coordinated native release containing
-[databricks-sql-kernel#436](https://github.com/databricks/databricks-sql-kernel/pull/436).
+with the native kernel required by this connector.
 
 ## TLS
 

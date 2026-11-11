@@ -307,7 +307,7 @@ func (k *KernelBackend) OpenSession(ctx context.Context) error {
 		key.free()
 		value.free()
 		if errSet != nil {
-			return fmt.Errorf("kernel: set CloudFetch option: %w", toConnError(errSet))
+			return fmt.Errorf("kernel: set_client_conf[cloudfetch_enabled]: %w", toConnError(errSet))
 		}
 	}
 
