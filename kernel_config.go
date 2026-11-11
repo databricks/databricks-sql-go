@@ -194,7 +194,7 @@ func buildKernelConfig(cfg *config.Config, kauth kernel.Auth) kernel.Config {
 			if strings.EqualFold(key, kernelCloudDownloadConfKey) || strings.EqualFold(key, kernelCloudFetchEnabledConfKey) {
 				if strings.EqualFold(key, kernelCloudFetchEnabledConfKey) || !strings.EqualFold(value, "false") {
 					kernelCloudFetchOverrideWarnOnce.Do(func() {
-						logger.Warn().Msg("WithCloudFetch(false) overrides raw CloudFetch session parameters to request complete inline results")
+						logger.Warn().Msg("WithCloudFetch(false) overrides raw can_cloud_download and cloudfetch_enabled session parameters for complete inline results")
 					})
 				}
 				delete(kc.SessionConf, key)
