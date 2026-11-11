@@ -73,6 +73,7 @@ import (
 
 	"github.com/databricks/databricks-sql-go/driverctx"
 	"github.com/databricks/databricks-sql-go/internal/backend"
+	dbsqlerrint "github.com/databricks/databricks-sql-go/internal/errors"
 )
 
 // kernelSessionSeq is a process-wide monotonic counter for kernel session ids.
@@ -891,7 +892,7 @@ func (k *KernelBackend) SessionID() string { return k.sessionID }
 // bindParams).
 func (k *KernelBackend) Execute(ctx context.Context, req backend.ExecRequest) (backend.Operation, error) {
 	if req.TransferFiles && isStagingStatement(req.Query) && len(driverctx.StagingPathsFromContext(ctx)) == 0 {
-		return &kernelOp{}, fmt.Errorf("databricks: staging ctx must be provided")
+		return &kernelOp{}, dbsqlerrint.NewDriverError(ctx, "staging ctx must be provided.", nil)
 	}
 	return k.execute(ctx, req)
 }

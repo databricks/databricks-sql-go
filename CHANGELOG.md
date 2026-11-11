@@ -1,5 +1,8 @@
 # Release History
 
+## Unreleased
+- Support SQL PUT, GET, and REMOVE through kernel-backed `ExecContext` with a staging context. `QueryContext` continues to return transfer instructions.
+
 ## v1.19.0 (2026-11-04)
 - Upgrade the SQL kernel bindings to v1.4.0.
 - Upgrade go-oidc to v3.21.0 (go-jose v4.1.6) and x/oauth2 to v0.36.0 to address go-jose/v3 security findings (databricks/databricks-sql-go#526).

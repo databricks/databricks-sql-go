@@ -532,15 +532,21 @@ func TestExecuteHandleLessOpContract(t *testing.T) {
 }
 
 func TestExecuteRequiresStagingContext(t *testing.T) {
-	k := &KernelBackend{}
-	op, err := k.Execute(context.Background(), backend.ExecRequest{
-		Query: "PUT '/tmp/f' INTO '/Volumes/main/s/v/f'", TransferFiles: true,
-	})
-	if err == nil || !strings.Contains(err.Error(), "staging ctx must be provided") {
-		t.Fatalf("expected missing staging context error, got %v", err)
-	}
-	if op == nil {
-		t.Fatal("expected non-nil operation")
+	for _, query := range []string{"PUT '/tmp/f' INTO '/Volumes/main/s/v/f'", "REMOVE '/Volumes/main/s/v/f'", "/* upload */ PUT '/tmp/f' INTO '/Volumes/main/s/v/f'"} {
+		t.Run(query, func(t *testing.T) {
+			k := &KernelBackend{}
+			op, err := k.Execute(context.Background(), backend.ExecRequest{Query: query, TransferFiles: true})
+			if err == nil || !strings.Contains(err.Error(), "staging ctx must be provided") {
+				t.Fatalf("expected missing staging context error, got %v", err)
+			}
+			if op == nil {
+				t.Fatal("expected non-nil operation")
+			}
+			closed, closeErr := op.Close(context.Background())
+			if closed || closeErr != nil {
+				t.Fatalf("Close = %v, %v", closed, closeErr)
+			}
+		})
 	}
 }
 

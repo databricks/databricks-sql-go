@@ -18,6 +18,9 @@
 //	DATABRICKS_ACCESSTOKEN  personal access token
 //	DATABRICKS_HTTPPATH     warehouse http path (or set DATABRICKS_WAREHOUSEID)
 //	DATABRICKS_WAREHOUSEID  bare warehouse id (kernel routes by this when set)
+//
+// Optional upload: VOLUME_UPLOAD_SOURCE is a local file and
+// VOLUME_UPLOAD_DESTINATION is its /Volumes/catalog/schema/volume/file destination.
 package main
 
 import (
@@ -27,9 +30,11 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"time"
 
 	dbsql "github.com/databricks/databricks-sql-go"
+	"github.com/databricks/databricks-sql-go/driverctx"
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 	"github.com/joho/godotenv"
 )
@@ -88,13 +93,11 @@ func main() {
 	}
 	fmt.Printf("server version: %s\n", version)
 
-	// Options the kernel can't honor are rejected with an error wrapping
-	// ErrNotSupportedByKernel, never silently ignored. Staging (PUT/GET/REMOVE on a
-	// Unity Catalog volume) is one such feature, rejected at execute.
-	_, err = db.ExecContext(ctx, "PUT '/tmp/local.csv' INTO '/Volumes/main/default/vol/f.csv' OVERWRITE")
-	if errors.Is(err, dbsqlerr.ErrNotSupportedByKernel) {
-		fmt.Println("staging is not supported on the kernel backend (use Thrift for staging)")
-	} else if err != nil {
-		fmt.Printf("staging: %v\n", err)
+	if source, destination := os.Getenv("VOLUME_UPLOAD_SOURCE"), os.Getenv("VOLUME_UPLOAD_DESTINATION"); source != "" && destination != "" {
+		stagingCtx := driverctx.NewContextWithStagingInfo(ctx, []string{source})
+		quote := func(value string) string { return "'" + strings.ReplaceAll(value, "'", "''") + "'" }
+		if _, err := db.ExecContext(stagingCtx, "PUT "+quote(source)+" INTO "+quote(destination)+" OVERWRITE"); err != nil {
+			log.Fatalf("upload: %v", err)
+		}
 	}
 }
