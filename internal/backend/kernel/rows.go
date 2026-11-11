@@ -9,6 +9,86 @@ package kernel
 // addresses; arrow-go's cdata package reinterprets these via unsafe.Pointer.
 struct ArrowSchema;
 struct ArrowArray;
+
+// Duplicate top-level column names: arrow-go v12's cdata importer builds the
+// top-level struct with arrow.StructOf, which panics on duplicate child names
+// (issue #517). dbsql_rename_children temporarily points the top-level
+// children's names at unique, malloc'd strings and wraps the producer's release
+// callback so the ORIGINAL name pointers are put back (and ours freed) before
+// the producer's release runs — the producer frees its own name strings.
+typedef struct {
+  void (*orig_release)(struct ArrowSchema*);
+  void* orig_private;
+  int64_t n;
+  const char** orig_names;
+  char** tmp_names;
+} dbsql_rename_priv;
+
+static void dbsql_renamed_release(struct ArrowSchema* s) {
+  dbsql_rename_priv* p = (dbsql_rename_priv*)s->private_data;
+  for (int64_t i = 0; i < p->n; i++) {
+    if (p->tmp_names[i] != NULL) {
+      s->children[i]->name = p->orig_names[i];
+      free(p->tmp_names[i]);
+    }
+  }
+  free(p->orig_names);
+  free(p->tmp_names);
+  s->private_data = p->orig_private;
+  s->release = p->orig_release;
+  free(p);
+  if (s->release != NULL) {
+    s->release(s);
+  }
+}
+
+// Takes ownership of tmp_names (n_children entries; NULL = keep the name) and
+// each non-NULL entry. Returns 0 on success; on failure frees tmp_names and
+// leaves the schema untouched.
+static int dbsql_rename_children(struct ArrowSchema* s, char** tmp_names) {
+  int64_t n = s->n_children;
+  dbsql_rename_priv* p = (dbsql_rename_priv*)malloc(sizeof(dbsql_rename_priv));
+  const char** orig = (const char**)malloc(sizeof(char*) * (size_t)(n > 0 ? n : 1));
+  if (p == NULL || orig == NULL) {
+    free(p);
+    free(orig);
+    for (int64_t i = 0; i < n; i++) free(tmp_names[i]);
+    free(tmp_names);
+    return -1;
+  }
+  for (int64_t i = 0; i < n; i++) {
+    orig[i] = s->children[i]->name;
+    if (tmp_names[i] != NULL) {
+      s->children[i]->name = tmp_names[i];
+    }
+  }
+  p->orig_release = s->release;
+  p->orig_private = s->private_data;
+  p->n = n;
+  p->orig_names = orig;
+  p->tmp_names = tmp_names;
+  s->private_data = p;
+  s->release = dbsql_renamed_release;
+  return 0;
+}
+
+static struct ArrowSchema* dbsql_schema_child(struct ArrowSchema* s, int64_t i) {
+  return s->children[i];
+}
+
+// Release producer-owned C Data structs on error paths that never reach the
+// cdata importer (which would otherwise take ownership and release them).
+static void dbsql_release_schema(struct ArrowSchema* s) {
+  if (s != NULL && s->release != NULL) {
+    s->release(s);
+  }
+}
+
+static void dbsql_release_array(struct ArrowArray* a) {
+  if (a != NULL && a->release != NULL) {
+    a->release(a);
+  }
+}
 */
 import "C"
 
@@ -73,6 +153,10 @@ type kernelRows struct {
 	chunkCount int                        // cumulative batches fetched, for OnChunkFetched
 	closed     bool
 	eof        bool
+	// hasDupNames records, once per result set, whether the schema had duplicate
+	// top-level column names needing the import rename (issue #517), so
+	// nextBatch can skip the per-column cgo scan in the common unique case.
+	hasDupNames bool
 	// iterationErr is the first non-EOF error seen during Next(), reported to the
 	// OnClose telemetry callback so a failed statement is recorded (matching the
 	// Thrift path's rows.iterationErr). io.EOF is normal termination, not an error.
@@ -106,10 +190,26 @@ func newKernelRows(ctx context.Context, op *kernelOp, stream *C.kernel_result_st
 		r.Close()
 		return nil, fmt.Errorf("kernel: get_schema: %w", toStatementError(err))
 	}
+	origNames, err := prepareSchemaForImport(&csch)
+	if err != nil {
+		// The importer never took ownership; release the producer's schema.
+		C.dbsql_release_schema(&csch)
+		r.Close()
+		return nil, err
+	}
 	sch, err := cdata.ImportCArrowSchema((*cdata.CArrowSchema)(unsafe.Pointer(&csch)))
 	if err != nil {
 		r.Close()
 		return nil, fmt.Errorf("kernel: import schema: %w", err)
+	}
+	if origNames != nil {
+		// Expose the server's (duplicate) names on Columns()/GetArrowBatches.
+		sch, err = restoreSchemaNames(sch, origNames)
+		if err != nil {
+			r.Close()
+			return nil, err
+		}
+		r.hasDupNames = true
 	}
 	r.schema = sch
 	fields := sch.Fields()
@@ -146,6 +246,44 @@ func timestampNTZColumns(fields []arrow.Field) []bool {
 		ntz[i] = arrowscan.IsTimestampNTZField(f)
 	}
 	return ntz
+}
+
+// prepareSchemaForImport makes csch's top-level child names unique so arrow-go
+// v12's cdata import (arrow.StructOf) doesn't panic on duplicate column names
+// (issue #517). The rename is undone by a wrapped release callback before the
+// producer's release runs. It returns the original names when a rename
+// happened (callers restore them via restoreSchemaNames/restoreRecordNames),
+// or nil when the names were already unique.
+func prepareSchemaForImport(csch *C.struct_ArrowSchema) ([]string, error) {
+	if csch.release == nil || csch.n_children <= 0 {
+		return nil, nil
+	}
+	n := int(csch.n_children)
+	orig := make([]string, n)
+	for i := 0; i < n; i++ {
+		child := C.dbsql_schema_child(csch, C.int64_t(i))
+		if child != nil && child.name != nil {
+			orig[i] = C.GoString(child.name)
+		}
+	}
+	uniq, changed := uniqueFieldNames(orig)
+	if !changed {
+		return nil, nil
+	}
+	// cgo's C.malloc aborts the process on allocation failure rather than
+	// returning NULL, so no nil check is needed here.
+	tmp := (**C.char)(C.malloc(C.size_t(n) * C.size_t(unsafe.Sizeof((*C.char)(nil)))))
+	tmpNames := unsafe.Slice(tmp, n)
+	for i := range uniq {
+		tmpNames[i] = nil
+		if uniq[i] != orig[i] {
+			tmpNames[i] = C.CString(uniq[i])
+		}
+	}
+	if C.dbsql_rename_children(csch, tmp) != 0 {
+		return nil, fmt.Errorf("kernel: rename duplicate columns: out of memory")
+	}
+	return orig, nil
 }
 
 // Columns returns the result-set column names.
@@ -299,11 +437,33 @@ func (r *kernelRows) nextBatch() error {
 	// Zero-copy import. The kernel exports self-contained batches (Rust to_ffi
 	// moves the Arc-owned buffers in), so the arrow.Record safely outlives the
 	// stream; we still Release each batch explicitly as we advance.
+	// The result schema is fixed for the stream, so the duplicate-name check is
+	// decided once in newKernelRows; skip the per-column cgo walk here unless the
+	// result had duplicates (or the batch's column count unexpectedly differs).
+	var origNames []string
+	var err error
+	if r.hasDupNames || int(csch.n_children) != len(r.cols) {
+		origNames, err = prepareSchemaForImport(&csch)
+	}
+	if err != nil {
+		// The importer never took ownership; release the producer's structs.
+		C.dbsql_release_array(&carr)
+		C.dbsql_release_schema(&csch)
+		return err
+	}
 	rec, err := cdata.ImportCRecordBatch(
 		(*cdata.CArrowArray)(unsafe.Pointer(&carr)),
 		(*cdata.CArrowSchema)(unsafe.Pointer(&csch)))
 	if err != nil {
 		return fmt.Errorf("kernel: import batch: %w", err)
+	}
+	if origNames != nil {
+		restored, rerr := restoreRecordNames(rec, origNames)
+		rec.Release()
+		if rerr != nil {
+			return rerr
+		}
+		rec = restored
 	}
 	r.cur = rec
 	r.rowInCur = 0

@@ -54,6 +54,11 @@ credentials are absent:
   mode this policy exists to prevent. If the behavior SHOULD be observable
   end-to-end but you cannot reproduce it, report `blocked` — do **not** substitute
   a unit test to paper over an unreproduced e2e bug.
+  There is a SECOND carve-out: **SEA-only bugs in the Go glue or a Go
+  dependency** (see KERNEL-PATH TRIAGE). The SEA e2e can't run in this job, so a
+  unit test that reproduces the exact failing library call is the accepted red
+  test. Anchor the expected value in what other drivers do on the same case
+  (e.g. ODBC/Python-on-kernel passing it).
 
 **A silent SKIP is not a reproduction.** e2e tests call `pecoTestingCreds(t)`,
 which `t.Skip`s if the warehouse env is missing. The connection env (including a
@@ -70,7 +75,54 @@ SEA/kernel backend (build tag `databricks_kernel`, CGO + a native Rust lib).
 **This job builds ONLY the pure-Go path (`CGO_ENABLED=0`, no tag)** — the kernel
 lib isn't built here. Reproduce on the **Thrift path** (`driver_e2e_test.go`); do
 NOT write a repro in a `//go:build … databricks_kernel` file (it won't compile
-here). If the bug is genuinely kernel-only, report `blocked` and say so.
+here). Don't stop at "kernel-only" yet. First work through the KERNEL-PATH
+TRIAGE below.
+
+== KERNEL-PATH TRIAGE (do this before reporting a SEA bug as `blocked`) ==
+
+"Fails only on SEA" does **not** mean "a bug in the Rust kernel". The SEA path
+has three layers, and this repo owns two of them:
+  (a) the native kernel lib (private `databricks-sql-kernel` repo, NOT here);
+  (b) the Go cgo glue in `internal/backend/kernel/*.go`, which is ours;
+  (c) the Go libraries that glue calls. The big one is **arrow-go**: check the
+      pinned version in `go.mod` (e.g. `cdata.ImportCArrowSchema`,
+      `cdata.ImportCRecordBatch`, `arrow.StructOf`).
+
+1. **Check the other drivers first.** If the issue or a linked
+   `databricks-driver-test` coverage PR shows that other kernel-based drivers
+   (ODBC, Python-on-kernel) PASS the same case, the kernel is returning correct
+   data. The bug is then in layer (b) or (c), so it is a Go-driver bug and you
+   must root-cause it here.
+2. **Read the panic or error text and trace it to its source.** Grep for it in
+   this repo first. If it isn't there, it comes from a dependency. Your file
+   tools can't read the module cache, so confirm which library function raises
+   it with a small `go test` that calls that API directly (the panic stack trace
+   names the function and the file:line in the module). For example, `arrow: duplicate field with name` comes
+   from `arrow.StructOf` in arrow-go v12, which `cdata.Import*` calls internally.
+   Name the exact library function and version in `root_cause`.
+3. **Reproduce without CGO when you can.** Many layer-(c) bugs reproduce with a
+   pure-Go unit test that calls the same library API with the same input (e.g.
+   `arrow.StructOf` with two fields named `a` panics, no cgo needed). That is a
+   valid red test for a layer-(b)/(c) bug. In your reason, state that the SEA
+   e2e can't run here and that the unit test reproduces the exact failing
+   library call.
+4. **Put the fix logic in an UNTAGGED file.** `internal/backend/kernel/` already
+   follows this pattern (`querytags_nul.go`, `sqltext.go`, `namespace.go` have no
+   build tag and have unit tests). Put the pure-Go part of the fix there (e.g. a
+   helper that renames duplicate field names before handing a schema to arrow-go,
+   while the original names are kept for `Columns()`), unit-test it, and keep the
+   change to the tagged `rows.go` to a thin call into that helper. Say plainly
+   that the tagged call site wasn't compiled here and needs a kernel-build CI run
+   or maintainer verification.
+5. **If the right fix is a dependency bump** (e.g. arrow-go v12 → `apache/arrow-go/v18`,
+   where newer versions dropped the restriction), you can't do it here (`go.mod`
+   is off-limits and GOPROXY is off). Report `blocked` with the precise root
+   cause, the version that fixes it (point to the changed library code), and the
+   minimal in-repo workaround from step 4 as the alternative.
+
+Report the bug as kernel-only (layer a) **only** when the failure starts in data
+the native lib returns (wrong values or a malformed schema coming out of
+`kernel_*` calls), and other kernel-based drivers fail the same way.
 
 == GROUND TRUTH — where "correct" comes from ==
 

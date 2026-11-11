@@ -710,6 +710,135 @@ func TestE2ECloudFetchExactRowCount(t *testing.T) {
 	require.Equal(t, int64(wantRows), rowCount, "CloudFetch must surface exactly the requested rows, with no Arrow padding")
 }
 
+// TestE2EDuplicateColumnNamesSurviveResultFetch (RESULTFETCH-020, issue #517):
+// a result set with two identically named columns is valid SQL and must survive
+// every fetch surface — row-oriented Next/Scan and the native Arrow accessor —
+// with both columns and their names intact. Expected values come from the
+// shared conformance spec cited in the issue.
+func TestE2EDuplicateColumnNamesSurviveResultFetch(t *testing.T) {
+	host, httpPath, token := pecoTestingCreds(t)
+
+	connector, err := NewConnector(
+		WithServerHostname(host),
+		WithPort(443),
+		WithHTTPPath(httpPath),
+		WithAccessToken(token),
+	)
+	require.NoError(t, err)
+
+	db := sql.OpenDB(connector)
+	defer db.Close() //nolint:errcheck
+
+	t.Run("single row explicit aliases", func(t *testing.T) {
+		rows, err := db.QueryContext(context.Background(), "SELECT 1 AS a, 2 AS a")
+		require.NoError(t, err)
+		defer rows.Close() //nolint:errcheck
+
+		cols, err := rows.Columns()
+		require.NoError(t, err)
+		require.Equal(t, []string{"a", "a"}, cols)
+
+		var n int
+		var a0, a1 int32
+		for rows.Next() {
+			require.NoError(t, rows.Scan(&a0, &a1))
+			n++
+		}
+		require.NoError(t, rows.Err())
+		require.Equal(t, 1, n)
+		assert.Equal(t, int32(1), a0)
+		assert.Equal(t, int32(2), a1)
+	})
+
+	t.Run("single row arrow batches", func(t *testing.T) {
+		conn, err := db.Conn(context.Background())
+		require.NoError(t, err)
+		defer conn.Close() //nolint:errcheck
+
+		var driverRows driver.Rows
+		err = conn.Raw(func(d any) error {
+			var queryErr error
+			driverRows, queryErr = d.(driver.QueryerContext).QueryContext(context.Background(), "SELECT 1 AS a, 2 AS a", nil)
+			return queryErr
+		})
+		require.NoError(t, err)
+		defer driverRows.Close() //nolint:errcheck
+
+		batches, err := driverRows.(dbsqlrows.Rows).GetArrowBatches(context.Background())
+		require.NoError(t, err)
+		defer batches.Close()
+
+		sch, err := batches.Schema()
+		require.NoError(t, err)
+		require.Len(t, sch.Fields(), 2)
+		assert.Equal(t, "a", sch.Field(0).Name)
+		assert.Equal(t, "a", sch.Field(1).Name)
+
+		var rowCount int64
+		for {
+			record, nextErr := batches.Next()
+			if nextErr == io.EOF {
+				break
+			}
+			require.NoError(t, nextErr)
+			require.Equal(t, int64(2), record.NumCols())
+			assert.Equal(t, "a", record.ColumnName(0))
+			assert.Equal(t, "a", record.ColumnName(1))
+			rowCount += record.NumRows()
+			record.Release()
+		}
+		require.Equal(t, int64(1), rowCount)
+	})
+
+	t.Run("multi chunk", func(t *testing.T) {
+		rows, err := db.QueryContext(context.Background(),
+			"SELECT id AS a, id + 1000000 AS a FROM range(200000) ORDER BY id")
+		require.NoError(t, err)
+		defer rows.Close() //nolint:errcheck
+
+		cols, err := rows.Columns()
+		require.NoError(t, err)
+		require.Equal(t, []string{"a", "a"}, cols)
+
+		var n int
+		var first0, first1 int64
+		for rows.Next() {
+			var a0, a1 int64
+			require.NoError(t, rows.Scan(&a0, &a1))
+			if n == 0 {
+				first0, first1 = a0, a1
+			}
+			n++
+		}
+		require.NoError(t, rows.Err())
+		require.Equal(t, 200000, n)
+		assert.Equal(t, int64(0), first0)
+		assert.Equal(t, int64(1000000), first1)
+	})
+
+	t.Run("join select star", func(t *testing.T) {
+		rows, err := db.QueryContext(context.Background(),
+			"SELECT * FROM (SELECT 1 AS id) l JOIN (SELECT 1 AS id) r ON l.id = r.id")
+		require.NoError(t, err)
+		defer rows.Close() //nolint:errcheck
+
+		cols, err := rows.Columns()
+		require.NoError(t, err)
+		require.Equal(t, []string{"id", "id"}, cols)
+
+		var n int
+		var i0, i1 int32
+		for rows.Next() {
+			require.NoError(t, rows.Scan(&i0, &i1))
+			n++
+		}
+		require.NoError(t, rows.Err())
+		require.Equal(t, 1, n)
+		assert.Equal(t, int32(1), i0)
+		assert.Equal(t, int32(1), i1)
+	})
+}
+
 // TestE2ETimestampNTZTypeName asserts that a zoned TIMESTAMP and a TIMESTAMP_NTZ
 // in the same result set report distinct database type names. The Databricks
 // TIMESTAMP_NTZ type is a wall-clock value with no zone; it must be reported as
