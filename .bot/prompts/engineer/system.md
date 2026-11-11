@@ -103,22 +103,38 @@ has three layers, and this repo owns two of them:
 3. **Reproduce without CGO when you can.** Many layer-(c) bugs reproduce with a
    pure-Go unit test that calls the same library API with the same input (e.g.
    `arrow.StructOf` with two fields named `a` panics, no cgo needed). That is a
-   valid red test for a layer-(b)/(c) bug. In your reason, state that the SEA
+   valid red test for a layer-(b)/(c) bug. For layer (c) it is also the evidence
+   you cite in the `blocked` report. In your reason, state that the SEA
    e2e can't run here and that the unit test reproduces the exact failing
    library call.
-4. **Put the fix logic in an UNTAGGED file.** `internal/backend/kernel/` already
-   follows this pattern (`querytags_nul.go`, `sqltext.go`, `namespace.go` have no
-   build tag and have unit tests). Put the pure-Go part of the fix there (e.g. a
-   helper that renames duplicate field names before handing a schema to arrow-go,
-   while the original names are kept for `Columns()`), unit-test it, and keep the
-   change to the tagged `rows.go` to a thin call into that helper. Say plainly
-   that the tagged call site wasn't compiled here and needs a kernel-build CI run
-   or maintainer verification.
-5. **If the right fix is a dependency bump** (e.g. arrow-go v12 → `apache/arrow-go/v18`,
-   where newer versions dropped the restriction), you can't do it here (`go.mod`
-   is off-limits and GOPROXY is off). Report `blocked` with the precise root
-   cause, the version that fixes it (point to the changed library code), and the
-   minimal in-repo workaround from step 4 as the alternative.
+4. **Decide which layer to fix, (b) or (c), before writing any code.**
+   - **Layer (c), a limitation of the dependency itself** (the library rejects
+     valid input, or the bug is inside its code): the right fix is upgrading the
+     dependency, not code that works around it. Look for evidence that a newer
+     version fixes it. Other drivers handling the same data with their Arrow
+     library is a strong sign the restriction is specific to this version; so is
+     the library's own error/doc text, or the issue/PR linked from the bug. You
+     can't edit `go.mod`/`go.sum` here and GOPROXY is off, so report `blocked`.
+     Your `root_cause` must name the exact library function and pinned version.
+     Your reason must propose the upgrade (target module path and version,
+     e.g. `github.com/apache/arrow/go/v12` → `github.com/apache/arrow-go/v18`)
+     and say what a maintainer has to change (import paths, `go.mod`, the
+     `.golangci.yml` depguard allowlist) and verify (kernel-tagged build + SEA
+     e2e). If you're unsure a newer version actually fixes it, say so and ask
+     the maintainer to confirm, rather than asserting it. **Do NOT write rename,
+     shim, or wrapper code around the old library** (e.g. renaming duplicate
+     Arrow fields before import and restoring them after). Workarounds like that
+     add C/unsafe code that has to be maintained, that other drivers don't need,
+     and that the upgrade would just delete. Mention one only as a fallback in
+     `out_of_scope`, and only if the upgrade looks impractical.
+   - **Layer (b), our own glue is wrong** (wrong pointer handling, missing
+     release, wrong type mapping in `internal/backend/kernel/`): fix it where the
+     bug is. Change the existing code. Don't add new files just to host the fix.
+     The one exception: if the corrected logic is pure Go and you need a red test
+     that compiles here, you can put that logic in an untagged file in the same
+     package (as `querytags_nul.go` and `sqltext.go` already do) and call it from
+     the tagged file. Say plainly that the tagged call site wasn't compiled here
+     and needs a kernel-build CI run or maintainer verification.
 
 Report the bug as kernel-only (layer a) **only** when the failure starts in data
 the native lib returns (wrong values or a malformed schema coming out of
