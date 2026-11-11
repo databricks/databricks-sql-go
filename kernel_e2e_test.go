@@ -715,6 +715,25 @@ func TestKernelE2EVolumeFileLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer rows.Close()
+	columns, err := rows.Columns()
+	if err != nil || len(columns) != 4 {
+		t.Fatalf("raw instruction columns: %v, %v", columns, err)
+	}
+	if !rows.Next() {
+		t.Fatalf("missing raw instruction: %v", rows.Err())
+	}
+	var operation, storageURL, local string
+	var headers any
+	if err := rows.Scan(&operation, &storageURL, &headers, &local); err != nil {
+		t.Fatal(err)
+	}
+	if operation != "GET" || local != destination || storageURL == "" {
+		t.Fatalf("unexpected raw instruction: operation=%q local=%q", operation, local)
+	}
+	if rows.Next() || rows.Err() != nil {
+		t.Fatalf("expected one raw instruction: %v", rows.Err())
+	}
 	if err := rows.Close(); err != nil {
 		t.Fatal(err)
 	}
