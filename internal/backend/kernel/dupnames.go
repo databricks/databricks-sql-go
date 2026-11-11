@@ -61,30 +61,37 @@ func uniqueFieldNames(names []string) ([]string, bool) {
 
 // restoreSchemaNames returns sch with its top-level field names replaced by
 // names (which may contain duplicates). Types, nullability, and field/schema
-// metadata are preserved. If names doesn't match the field count, sch is
-// returned unchanged.
-func restoreSchemaNames(sch *arrow.Schema, names []string) *arrow.Schema {
-	if sch == nil || len(names) != len(sch.Fields()) {
-		return sch
+// metadata are preserved. A names/field-count mismatch is an internal
+// invariant violation (names come from the same C schema) and returns an error
+// rather than silently exposing the import-only names (e.g. "a_1").
+func restoreSchemaNames(sch *arrow.Schema, names []string) (*arrow.Schema, error) {
+	if sch == nil {
+		return nil, fmt.Errorf("kernel: restore column names: nil schema")
 	}
 	// Copy: Schema.Fields() may return the schema's backing slice.
 	fields := append([]arrow.Field(nil), sch.Fields()...)
-	for i := range fields {
-		fields[i].Name = names[i]
+	if len(names) != len(fields) {
+		return nil, fmt.Errorf("kernel: restore column names: have %d names for %d columns", len(names), len(fields))
+	}
+	for i, n := range names {
+		fields[i].Name = n
 	}
 	md := sch.Metadata()
-	return arrow.NewSchema(fields, &md)
+	return arrow.NewSchema(fields, &md), nil
 }
 
 // restoreRecordNames returns rec re-wrapped under a schema whose top-level
-// field names are names (which may contain duplicates). The returned record
-// owns its own reference; the caller still releases rec.
-func restoreRecordNames(rec arrow.Record, names []string) arrow.Record {
-	if rec == nil || len(names) != int(rec.NumCols()) {
-		if rec != nil {
-			rec.Retain()
-		}
-		return rec
+// field names are names (which may contain duplicates). On success the
+// returned record owns its own reference; in all cases the caller still
+// releases rec. A names/column-count mismatch returns an error (see
+// restoreSchemaNames) and no record.
+func restoreRecordNames(rec arrow.Record, names []string) (arrow.Record, error) {
+	if rec == nil {
+		return nil, fmt.Errorf("kernel: restore column names: nil record")
 	}
-	return array.NewRecord(restoreSchemaNames(rec.Schema(), names), rec.Columns(), rec.NumRows())
+	sch, err := restoreSchemaNames(rec.Schema(), names)
+	if err != nil {
+		return nil, err
+	}
+	return array.NewRecord(sch, rec.Columns(), rec.NumRows()), nil
 }

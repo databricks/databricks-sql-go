@@ -204,7 +204,11 @@ func newKernelRows(ctx context.Context, op *kernelOp, stream *C.kernel_result_st
 	}
 	if origNames != nil {
 		// Expose the server's (duplicate) names on Columns()/GetArrowBatches.
-		sch = restoreSchemaNames(sch, origNames)
+		sch, err = restoreSchemaNames(sch, origNames)
+		if err != nil {
+			r.Close()
+			return nil, err
+		}
 		r.hasDupNames = true
 	}
 	r.schema = sch
@@ -454,8 +458,11 @@ func (r *kernelRows) nextBatch() error {
 		return fmt.Errorf("kernel: import batch: %w", err)
 	}
 	if origNames != nil {
-		restored := restoreRecordNames(rec, origNames)
+		restored, rerr := restoreRecordNames(rec, origNames)
 		rec.Release()
+		if rerr != nil {
+			return rerr
+		}
 		rec = restored
 	}
 	r.cur = rec

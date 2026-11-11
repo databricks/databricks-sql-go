@@ -153,12 +153,18 @@ func TestRestoreDuplicateFieldNames(t *testing.T) {
 
 	orig := []string{"a", "a"}
 
-	sch := restoreSchemaNames(importSchema, orig)
+	sch, err := restoreSchemaNames(importSchema, orig)
+	if err != nil {
+		t.Fatalf("restoreSchemaNames: %v", err)
+	}
 	if len(sch.Fields()) != 2 || sch.Field(0).Name != "a" || sch.Field(1).Name != "a" {
 		t.Fatalf("restored schema fields: got %v, want [a a]", sch.Fields())
 	}
 
-	out := restoreRecordNames(rec, orig)
+	out, err := restoreRecordNames(rec, orig)
+	if err != nil {
+		t.Fatalf("restoreRecordNames: %v", err)
+	}
 	defer out.Release()
 	if out.NumCols() != 2 || out.NumRows() != 1 {
 		t.Fatalf("restored record shape: %d cols x %d rows, want 2 x 1", out.NumCols(), out.NumRows())
@@ -174,4 +180,47 @@ func TestRestoreDuplicateFieldNames(t *testing.T) {
 	if v0.Value(0) != 1 || v1.Value(0) != 2 {
 		t.Fatalf("values: got (%d, %d), want (1, 2)", v0.Value(0), v1.Value(0))
 	}
+}
+
+// A names/column-count mismatch is an invariant violation: it must surface as
+// an error rather than silently exposing import-only names (e.g. "a_1"), and
+// must not leak or over-release the caller's record.
+func TestRestoreNamesCountMismatch(t *testing.T) {
+	alloc := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer alloc.AssertSize(t, 0)
+
+	importSchema := arrow.NewSchema([]arrow.Field{
+		{Name: "a", Type: arrow.PrimitiveTypes.Int32},
+		{Name: "a_1", Type: arrow.PrimitiveTypes.Int32},
+	}, nil)
+	b := array.NewInt32Builder(alloc)
+	b.Append(1)
+	c0 := b.NewArray()
+	b.Append(2)
+	c1 := b.NewArray()
+	b.Release()
+	rec := array.NewRecord(importSchema, []arrow.Array{c0, c1}, 1)
+	c0.Release()
+	c1.Release()
+
+	for _, names := range [][]string{{"a"}, {"a", "a", "a"}, nil} {
+		if sch, err := restoreSchemaNames(importSchema, names); err == nil || sch != nil {
+			t.Errorf("restoreSchemaNames(%v): got (%v, %v), want (nil, error)", names, sch, err)
+		}
+		if out, err := restoreRecordNames(rec, names); err == nil || out != nil {
+			t.Errorf("restoreRecordNames(%v): got (%v, %v), want (nil, error)", names, out, err)
+			if out != nil {
+				out.Release()
+			}
+		}
+	}
+	if _, err := restoreSchemaNames(nil, []string{"a"}); err == nil {
+		t.Error("restoreSchemaNames(nil): want error")
+	}
+	if _, err := restoreRecordNames(nil, []string{"a"}); err == nil {
+		t.Error("restoreRecordNames(nil): want error")
+	}
+
+	// The caller's single release must free everything (no Retain on error).
+	rec.Release()
 }
