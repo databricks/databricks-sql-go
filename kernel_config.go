@@ -35,6 +35,7 @@ import (
 const u2mKernelClientID = "databricks-sql-connector"
 
 const kernelCloudDownloadConfKey = "can_cloud_download"
+const kernelCloudFetchEnabledConfKey = "cloudfetch_enabled"
 
 func validateClientQueryTimeout(timeout *time.Duration) error {
 	if timeout == nil {
@@ -187,8 +188,8 @@ func buildKernelConfig(cfg *config.Config, kauth kernel.Auth) kernel.Config {
 	if !cfg.UseCloudFetch {
 		// Paged inline delivery avoids the legacy INLINE result-size limit.
 		for key, value := range kc.SessionConf {
-			if strings.EqualFold(key, kernelCloudDownloadConfKey) || strings.EqualFold(key, "cloudfetch_enabled") {
-				if strings.EqualFold(key, "cloudfetch_enabled") || !strings.EqualFold(value, "false") {
+			if strings.EqualFold(key, kernelCloudDownloadConfKey) || strings.EqualFold(key, kernelCloudFetchEnabledConfKey) {
+				if strings.EqualFold(key, kernelCloudFetchEnabledConfKey) || !strings.EqualFold(value, "false") {
 					logger.Warn().Msgf("WithCloudFetch(false) overrides session parameter %q", key)
 				}
 				delete(kc.SessionConf, key)
