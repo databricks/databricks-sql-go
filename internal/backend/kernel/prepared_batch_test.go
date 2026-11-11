@@ -48,7 +48,7 @@ func TestPreparedBatchRetainedStrings(t *testing.T) {
 				var retained, want []driver.Value
 				for batch := 0; batch < 2; batch++ {
 					b := array.NewBuilder(mem, dt)
-					values := []string{"excluded prefix", "alpha", "", "ignored", "日本語", strings.Repeat("x", 4096), "excluded suffix"}
+					values := []string{"excluded prefix", "alpha", "", "ignored", "日本語", strings.Repeat("x", 100), "excluded suffix"}
 					valid := []bool{true, true, true, false, true, true, true}
 					if tc.allNull {
 						valid = make([]bool, len(values))
@@ -94,6 +94,20 @@ func TestPreparedBatchRetainedStrings(t *testing.T) {
 				require.Positive(t, poison.frees)
 			})
 		}
+	}
+}
+
+func TestPreparedBatchEmptyStringColumnWithoutBuffers(t *testing.T) {
+	for _, dt := range []arrow.DataType{arrow.BinaryTypes.String, arrow.BinaryTypes.LargeString} {
+		data := array.NewData(dt, 0, []*memory.Buffer{nil, nil, nil}, nil, 0, 0)
+		col := array.MakeFromData(data)
+		data.Release()
+		rec := array.NewRecord(arrow.NewSchema([]arrow.Field{{Name: "s", Type: dt}}, nil), []arrow.Array{col}, 0)
+		col.Release()
+		require.NotPanics(t, func() {
+			prepareBatch(rec, time.UTC, []bool{false}, []bool{false}, false, nil)
+		})
+		rec.Release()
 	}
 }
 

@@ -10,6 +10,9 @@ import (
 	"errors"
 	"io"
 	"os"
+	"runtime"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -339,6 +342,48 @@ func TestKernelE2ECloudFetch(t *testing.T) {
 	}
 	if last != want-1 {
 		t.Errorf("last id = %d, want %d", last, want-1)
+	}
+}
+
+// TestKernelE2ERetainedStrings keeps every STRING value across a multi-batch
+// drain. Imported kernel batches are freed as the stream advances, so a value
+// aliasing their buffers would be corrupted when re-read after Close.
+func TestKernelE2ERetainedStrings(t *testing.T) {
+	db := kernelTestDB(t)
+	defer db.Close()
+
+	rows, err := db.QueryContext(context.Background(),
+		"SELECT id, concat(CAST(id AS STRING), '-', repeat('x', 40)) FROM range(0, 1000000)")
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	var ids []int64
+	var kept []string
+	for rows.Next() {
+		var id int64
+		var s string
+		if err := rows.Scan(&id, &s); err != nil {
+			t.Fatalf("scan at row %d: %v", len(kept), err)
+		}
+		ids = append(ids, id)
+		kept = append(kept, s)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iteration: %v", err)
+	}
+	if err := rows.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	runtime.GC()
+
+	if len(kept) != 1_000_000 {
+		t.Fatalf("row count = %d, want 1000000", len(kept))
+	}
+	suffix := "-" + strings.Repeat("x", 40)
+	for i, s := range kept {
+		if want := strconv.FormatInt(ids[i], 10) + suffix; s != want {
+			t.Fatalf("retained row %d = %q, want %q", i, s, want)
+		}
 	}
 }
 
