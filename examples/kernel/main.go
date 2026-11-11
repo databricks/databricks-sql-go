@@ -95,7 +95,7 @@ func main() {
 
 	if source, destination := os.Getenv("VOLUME_UPLOAD_SOURCE"), os.Getenv("VOLUME_UPLOAD_DESTINATION"); source != "" && destination != "" {
 		stagingCtx := driverctx.NewContextWithStagingInfo(ctx, []string{source})
-		quote := func(value string) string { return "'" + strings.ReplaceAll(value, "'", "''") + "'" }
+		quote := func(value string) string { return "'" + strings.NewReplacer(`\`, `\\`, `'`, `\'`).Replace(value) + "'" }
 		if _, err := db.ExecContext(stagingCtx, "PUT "+quote(source)+" INTO "+quote(destination)+" OVERWRITE"); err != nil {
 			log.Fatalf("upload: %v", err)
 		}

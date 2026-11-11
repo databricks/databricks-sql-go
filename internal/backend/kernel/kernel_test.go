@@ -532,7 +532,7 @@ func TestExecuteHandleLessOpContract(t *testing.T) {
 }
 
 func TestExecuteRequiresStagingContext(t *testing.T) {
-	for _, query := range []string{"PUT '/tmp/f' INTO '/Volumes/main/s/v/f'", "REMOVE '/Volumes/main/s/v/f'", "/* upload */ PUT '/tmp/f' INTO '/Volumes/main/s/v/f'"} {
+	for _, query := range []string{"GET '/Volumes/main/s/v/f' TO '/tmp/f'", "PUT '/tmp/f' INTO '/Volumes/main/s/v/f'", "REMOVE '/Volumes/main/s/v/f'", "/* upload */ PUT '/tmp/f' INTO '/Volumes/main/s/v/f'"} {
 		t.Run(query, func(t *testing.T) {
 			k := &KernelBackend{}
 			op, err := k.Execute(context.Background(), backend.ExecRequest{Query: query, TransferFiles: true})
@@ -547,6 +547,17 @@ func TestExecuteRequiresStagingContext(t *testing.T) {
 				t.Fatalf("Close = %v, %v", closed, closeErr)
 			}
 		})
+	}
+}
+
+func TestQueryTransferInstructionsNeedNoStagingContext(t *testing.T) {
+	k := &KernelBackend{}
+	op, err := k.Execute(context.Background(), backend.ExecRequest{Query: "GET '/Volumes/c/s/v/file' TO '/tmp/file'", TransferFiles: false})
+	if op == nil {
+		t.Fatal("expected non-nil operation")
+	}
+	if err == nil || !strings.Contains(err.Error(), "new_statement") {
+		t.Fatalf("expected native statement creation, got %v", err)
 	}
 }
 

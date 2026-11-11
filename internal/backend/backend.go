@@ -119,7 +119,8 @@ type ExecRequest struct {
 	// dbsql.Parameter/SqlType types; each backend maps these neutral params to its
 	// own wire type.
 	Params []Param
-	// QueryContext exposes transfer instructions without touching local files.
+	// TransferFiles asks the backend to complete SQL file transfers.
+	// When false, transfer instructions remain available to the caller.
 	TransferFiles bool
 }
 
