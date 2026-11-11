@@ -1,5 +1,8 @@
 # Release History
 
+## Unreleased
+- Interrupt in-flight Thrift status polls when the query context is cancelled, so remote query cancellation can proceed promptly.
+
 ## v1.19.0 (2026-11-04)
 - Upgrade the SQL kernel bindings to v1.4.0.
 - Upgrade go-oidc to v3.21.0 (go-jose v4.1.6) and x/oauth2 to v0.36.0 to address go-jose/v3 security findings (databricks/databricks-sql-go#526).
