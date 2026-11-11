@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/databricks/databricks-sql-go/auth/noop"
@@ -36,6 +37,8 @@ const u2mKernelClientID = "databricks-sql-connector"
 
 const kernelCloudDownloadConfKey = "can_cloud_download"
 const kernelCloudFetchEnabledConfKey = "cloudfetch_enabled"
+
+var kernelCloudFetchOverrideWarnOnce sync.Once
 
 func validateClientQueryTimeout(timeout *time.Duration) error {
 	if timeout == nil {
@@ -189,10 +192,10 @@ func buildKernelConfig(cfg *config.Config, kauth kernel.Auth) kernel.Config {
 		// Paged inline delivery avoids the legacy INLINE result-size limit.
 		for key, value := range kc.SessionConf {
 			if strings.EqualFold(key, kernelCloudDownloadConfKey) || strings.EqualFold(key, kernelCloudFetchEnabledConfKey) {
-				if strings.EqualFold(key, kernelCloudFetchEnabledConfKey) {
-					logger.Warn().Msgf("WithCloudFetch(false) replaces legacy INLINE session parameter %q with paged inline delivery", key)
-				} else if !strings.EqualFold(value, "false") {
-					logger.Warn().Msgf("WithCloudFetch(false) overrides session parameter %q", key)
+				if strings.EqualFold(key, kernelCloudFetchEnabledConfKey) || !strings.EqualFold(value, "false") {
+					kernelCloudFetchOverrideWarnOnce.Do(func() {
+						logger.Warn().Msg("WithCloudFetch(false) overrides raw CloudFetch session parameters to request complete inline results")
+					})
 				}
 				delete(kc.SessionConf, key)
 			}
