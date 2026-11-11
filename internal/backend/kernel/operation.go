@@ -11,6 +11,7 @@ import "C"
 import (
 	"context"
 	"database/sql/driver"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sync"
@@ -35,8 +36,7 @@ import (
 //     client-timeout path, let an in-flight cancel finish in the background so
 //     it cannot extend the client deadline
 //
-// Binds any query parameters (bindParams) before executing; staging statements
-// are rejected up front by Execute, so none reach here.
+// Binds query parameters and configures local file access before executing.
 func (k *KernelBackend) execute(ctx context.Context, req backend.ExecRequest) (backend.Operation, error) {
 	// Log the SQL length, not the text: query bodies can carry PII/secrets in
 	// WHERE/INSERT/SET, and this goes to stderr. Matches the driver's own
@@ -77,6 +77,27 @@ func (k *KernelBackend) execute(ctx context.Context, req backend.ExecRequest) (b
 		return &kernelOp{}, fmt.Errorf("kernel: set_sql: %w", toStatementError(err))
 	}
 	sql.free()
+
+	if req.TransferFiles {
+		paths := driverctx.StagingPathsFromContext(ctx)
+		if paths == nil {
+			paths = []string{}
+		}
+		encoded, err := json.Marshal(paths)
+		if err != nil {
+			C.kernel_statement_close(stmt)
+			return &kernelOp{}, err
+		}
+		value := newCStr(string(encoded))
+		err = call(func() C.KernelStatusCode {
+			return C.kernel_statement_set_staging_allowed_local_paths(stmt, value.c, false)
+		})
+		value.free()
+		if err != nil {
+			C.kernel_statement_close(stmt)
+			return &kernelOp{}, fmt.Errorf("kernel: allowed local paths: %w", toStatementError(err))
+		}
+	}
 
 	// Bind parameters. The driver hands us backend.Param{Name, Type, Value}: the
 	// value is already stringified, Type is the Databricks SQL type name, and a nil
@@ -384,10 +405,8 @@ func (o *kernelOp) Results(ctx context.Context, callbacks *dbsqlrows.TelemetryCa
 	return newKernelRows(ctx, o, stream, callbacks)
 }
 
-// IsStaging reports whether this is a staging (PUT/GET/REMOVE) operation. Always
-// false on the kernel path: staging statements are rejected up front in
-// Execute (isStagingStatement), so no kernelOp is ever produced for one — there
-// is nothing for conn.execStagingOperation to act on here.
+// IsStaging is false because the kernel completes configured file transfers
+// before returning the result.
 func (o *kernelOp) IsStaging(ctx context.Context) (bool, error) { return false, nil }
 
 // Close best-effort closes the executed statement and its statement handle. It is

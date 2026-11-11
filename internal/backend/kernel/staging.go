@@ -6,18 +6,8 @@ import "strings"
 // Staging detection is pure Go (string inspection of the SQL), so keeping it
 // untagged lets its test run under CGO_ENABLED=0.
 
-// isStagingStatement reports whether sql is a Unity Catalog volume staging
-// command (PUT / GET / REMOVE). The Thrift backend learns a statement is staging
-// from server result metadata (IsStagingOperation); the kernel C ABI exposes no
-// such signal, and the kernel path cannot perform the local file transfer these
-// commands require. We therefore detect them from the SQL and reject at execute
-// time (see Execute) rather than silently returning success with no file moved —
-// which is what returning false from IsStaging would do. Case-insensitive; skips
-// leading whitespace AND leading SQL comments (`-- ...` and `/* ... */`), so a
-// comment-prefixed staging command is still caught rather than slipping through
-// as a silent no-op. Errs toward matching only a clear leading keyword — a false
-// negative just yields the kernel's normal "unsupported syntax" server error,
-// whereas a false positive would reject a legitimate query.
+// Missing staging context must fail for volume commands even when REMOVE
+// does not need a local file path.
 func isStagingStatement(sql string) bool {
 	s := stripLeadingSQLComments(sql)
 	for _, kw := range []string{"PUT", "GET", "REMOVE"} {
