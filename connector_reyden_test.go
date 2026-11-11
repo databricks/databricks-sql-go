@@ -196,7 +196,8 @@ func TestReydenReactiveRecovery(t *testing.T) {
 			func(ctx context.Context, cfg *config.Config) (backend.Backend, error) {
 				require.False(t, cfg.UseCloudFetch)
 				kc := buildKernelConfig(cfg, kernel.Auth{Mode: kernel.AuthPAT, Token: "test-token"})
-				require.Equal(t, "false", kc.SessionConf[kernelCloudDownloadConfKey])
+				require.NotNil(t, kc.CloudFetchEnabled)
+				require.False(t, *kc.CloudFetchEnabled)
 				return kernelBackend, nil
 			},
 		)

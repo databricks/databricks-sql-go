@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"net/url"
 	"strconv"
-	"strings"
-	"sync"
 	"time"
 
 	"github.com/databricks/databricks-sql-go/auth/noop"
@@ -16,7 +14,6 @@ import (
 	"github.com/databricks/databricks-sql-go/internal/backend/kernel"
 	"github.com/databricks/databricks-sql-go/internal/client"
 	"github.com/databricks/databricks-sql-go/internal/config"
-	"github.com/databricks/databricks-sql-go/logger"
 	"github.com/databricks/databricks-sql-go/telemetry"
 )
 
@@ -34,11 +31,6 @@ import (
 // the kernel path must not send the Azure Entra-direct app id. See
 // resolveKernelAuth's U2M case.
 const u2mKernelClientID = "databricks-sql-connector"
-
-const kernelCloudDownloadConfKey = "can_cloud_download"
-const kernelCloudFetchEnabledConfKey = "cloudfetch_enabled"
-
-var kernelCloudFetchOverrideWarnOnce sync.Once
 
 func validateClientQueryTimeout(timeout *time.Duration) error {
 	if timeout == nil {
@@ -189,18 +181,8 @@ func buildKernelConfig(cfg *config.Config, kauth kernel.Auth) kernel.Config {
 		EnableGeoSpatialSupport: false,
 	}
 	if !cfg.UseCloudFetch {
-		// Paged inline delivery avoids the legacy INLINE result-size limit.
-		for key, value := range kc.SessionConf {
-			if strings.EqualFold(key, kernelCloudDownloadConfKey) || strings.EqualFold(key, kernelCloudFetchEnabledConfKey) {
-				if strings.EqualFold(key, kernelCloudFetchEnabledConfKey) || !strings.EqualFold(value, "false") {
-					kernelCloudFetchOverrideWarnOnce.Do(func() {
-						logger.Warn().Msg("WithCloudFetch(false) overrides raw can_cloud_download and cloudfetch_enabled session parameters for complete inline results")
-					})
-				}
-				delete(kc.SessionConf, key)
-			}
-		}
-		kc.SessionConf[kernelCloudDownloadConfKey] = "false"
+		enabled := false
+		kc.CloudFetchEnabled = &enabled
 	}
 	if cfg.ClientQueryTimeout != nil {
 		timeout := *cfg.ClientQueryTimeout

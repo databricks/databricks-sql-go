@@ -67,6 +67,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -294,6 +295,19 @@ func (k *KernelBackend) OpenSession(ctx context.Context) error {
 		cv.free()
 		if errSet != nil {
 			return fmt.Errorf("kernel: set_session_conf[%s]: %w", key, toConnError(errSet))
+		}
+	}
+
+	if k.cfg.CloudFetchEnabled != nil {
+		key := newCStr("cloudfetch_enabled")
+		value := newCStr(strconv.FormatBool(*k.cfg.CloudFetchEnabled))
+		errSet := call(func() C.KernelStatusCode {
+			return C.kernel_session_config_set_client_conf(cfg, key.c, value.c)
+		})
+		key.free()
+		value.free()
+		if errSet != nil {
+			return fmt.Errorf("kernel: set CloudFetch option: %w", toConnError(errSet))
 		}
 	}
 

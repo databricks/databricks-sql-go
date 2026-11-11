@@ -1,14 +1,11 @@
 package dbsql
 
 import (
-	"bytes"
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"net/http"
-	"os"
 	"reflect"
-	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -18,64 +15,7 @@ import (
 	"github.com/databricks/databricks-sql-go/internal/backend/kernel"
 	"github.com/databricks/databricks-sql-go/internal/client"
 	"github.com/databricks/databricks-sql-go/internal/config"
-	"github.com/databricks/databricks-sql-go/logger"
 )
-
-func TestBuildKernelConfigCloudFetchOverrideWarning(t *testing.T) {
-	previousLevel := logger.Logger.GetLevel()
-	t.Cleanup(func() {
-		logger.SetLogOutput(os.Stderr)
-		logger.Logger.Logger = logger.Logger.Level(previousLevel)
-		kernelCloudFetchOverrideWarnOnce = sync.Once{}
-	})
-	if err := logger.SetLogLevel("warn"); err != nil {
-		t.Fatal(err)
-	}
-
-	for _, tc := range []struct {
-		name    string
-		enabled bool
-		params  map[string]string
-		warn    bool
-	}{
-		{name: "no raw configuration"},
-		{name: "matching capability", params: map[string]string{"CAN_CLOUD_DOWNLOAD": "FALSE"}},
-		{name: "conflicting capability", params: map[string]string{"Can_Cloud_Download": "true"}, warn: true},
-		{name: "private value", params: map[string]string{"can_cloud_download": "private-setting-value"}, warn: true},
-		{name: "legacy disabled", params: map[string]string{"CLOUDFETCH_ENABLED": "false"}, warn: true},
-		{name: "legacy enabled", params: map[string]string{"cloudfetch_enabled": "true"}, warn: true},
-		{name: "enabled preserves raw configuration", enabled: true, params: map[string]string{"can_cloud_download": "true", "cloudfetch_enabled": "false"}},
-		{name: "unrelated parameter", params: map[string]string{"TIMEZONE": "UTC"}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			kernelCloudFetchOverrideWarnOnce = sync.Once{}
-			var output bytes.Buffer
-			logger.SetLogOutput(&output)
-			cfg := baseKernelConfig()
-			cfg.UseCloudFetch = tc.enabled
-			cfg.SessionParams = tc.params
-			buildKernelConfig(cfg, kernel.Auth{})
-			first := output.String()
-			wantWarnings := 0
-			if tc.warn {
-				wantWarnings = 1
-			}
-			if got := strings.Count(first, `"level":"warn"`); got != wantWarnings {
-				t.Fatalf("warning count = %d, want %d: %s", got, wantWarnings, first)
-			}
-			if tc.warn && (!strings.Contains(first, "can_cloud_download") || !strings.Contains(first, "cloudfetch_enabled")) {
-				t.Fatalf("warning does not name both overridden settings: %s", first)
-			}
-			if strings.Contains(first, "private-setting-value") {
-				t.Fatal("warning exposes a raw parameter value")
-			}
-			buildKernelConfig(cfg, kernel.Auth{})
-			if output.String() != first {
-				t.Fatal("warning repeated for a second configuration")
-			}
-		})
-	}
-}
 
 // nonPATAuth stands in for any non-PAT, non-OAuth authenticator (token-provider /
 // external / static) — the kernel backend must reject it. It implements neither
@@ -763,54 +703,25 @@ func TestBuildKernelConfig(t *testing.T) {
 		}
 	})
 
-	for _, key := range []string{"can_cloud_download", "CAN_CLOUD_DOWNLOAD", "Can_Cloud_Download"} {
-		t.Run("CloudFetch disabled overrides "+key, func(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		t.Run(fmt.Sprintf("CloudFetch enabled=%v", enabled), func(t *testing.T) {
 			c := baseKernelConfig()
-			c.UseCloudFetch = false
-			c.SessionParams = map[string]string{"TIMEZONE": "UTC", key: "true"}
+			c.UseCloudFetch = enabled
+			c.SessionParams = map[string]string{"can_cloud_download": "true", "CLOUDFETCH_ENABLED": "true", "TIMEZONE": "UTC"}
+			original := map[string]string{"can_cloud_download": "true", "CLOUDFETCH_ENABLED": "true", "TIMEZONE": "UTC"}
 			kc := buildKernelConfig(c, kernel.Auth{Mode: kernel.AuthPAT, Token: "dapi-x"})
-			if kc.SessionConf[kernelCloudDownloadConfKey] != "false" || kc.SessionConf["TIMEZONE"] != "UTC" || len(kc.SessionConf) != 2 {
-				t.Fatalf("unexpected session configuration: %v", kc.SessionConf)
+			if enabled {
+				if kc.CloudFetchEnabled != nil {
+					t.Fatal("enabled mode must keep the kernel default")
+				}
+			} else if kc.CloudFetchEnabled == nil || *kc.CloudFetchEnabled {
+				t.Fatal("disabled mode must forward the client option")
 			}
-			if c.SessionParams[key] != "true" {
-				t.Fatal("caller session parameters were mutated")
+			if !reflect.DeepEqual(kc.SessionConf, original) || !reflect.DeepEqual(c.SessionParams, original) {
+				t.Fatal("session parameters must be preserved for the kernel to interpret")
 			}
 		})
 	}
-
-	t.Run("CloudFetch enabled keeps the server default", func(t *testing.T) {
-		c := baseKernelConfig()
-		c.UseCloudFetch = true
-		kc := buildKernelConfig(c, kernel.Auth{Mode: kernel.AuthPAT, Token: "dapi-x"})
-		if _, present := kc.SessionConf["can_cloud_download"]; present {
-			t.Fatalf("unexpected CloudFetch override: %v", kc.SessionConf)
-		}
-	})
-
-	for _, key := range []string{"cloudfetch_enabled", "CLOUDFETCH_ENABLED"} {
-		t.Run("CloudFetch disabled overrides legacy "+key, func(t *testing.T) {
-			c := baseKernelConfig()
-			c.UseCloudFetch = false
-			c.SessionParams = map[string]string{key: "false", "TIMEZONE": "UTC"}
-			kc := buildKernelConfig(c, kernel.Auth{Mode: kernel.AuthPAT, Token: "dapi-x"})
-			if kc.SessionConf[kernelCloudDownloadConfKey] != "false" || kc.SessionConf["TIMEZONE"] != "UTC" || len(kc.SessionConf) != 2 {
-				t.Fatalf("unexpected session configuration: %v", kc.SessionConf)
-			}
-			if c.SessionParams[key] != "false" {
-				t.Fatal("caller session parameters were mutated")
-			}
-		})
-	}
-
-	t.Run("CloudFetch enabled preserves explicit session parameters", func(t *testing.T) {
-		c := baseKernelConfig()
-		c.UseCloudFetch = true
-		c.SessionParams = map[string]string{"CAN_CLOUD_DOWNLOAD": "false", "cloudfetch_enabled": "false", "TIMEZONE": "UTC"}
-		kc := buildKernelConfig(c, kernel.Auth{Mode: kernel.AuthPAT, Token: "dapi-x"})
-		if !reflect.DeepEqual(kc.SessionConf, c.SessionParams) {
-			t.Fatalf("session parameters changed: %v", kc.SessionConf)
-		}
-	})
 
 	t.Run("MaxChunksInMemory injected into kernel SessionConf", func(t *testing.T) {
 		c := baseKernelConfig()
