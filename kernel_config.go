@@ -15,6 +15,7 @@ import (
 	"github.com/databricks/databricks-sql-go/internal/backend/kernel"
 	"github.com/databricks/databricks-sql-go/internal/client"
 	"github.com/databricks/databricks-sql-go/internal/config"
+	"github.com/databricks/databricks-sql-go/logger"
 	"github.com/databricks/databricks-sql-go/telemetry"
 )
 
@@ -185,8 +186,11 @@ func buildKernelConfig(cfg *config.Config, kauth kernel.Auth) kernel.Config {
 	}
 	if !cfg.UseCloudFetch {
 		// Paged inline delivery avoids the legacy INLINE result-size limit.
-		for key := range kc.SessionConf {
+		for key, value := range kc.SessionConf {
 			if strings.EqualFold(key, kernelCloudDownloadConfKey) || strings.EqualFold(key, "cloudfetch_enabled") {
+				if strings.EqualFold(key, "cloudfetch_enabled") || !strings.EqualFold(value, "false") {
+					logger.Warn().Msgf("WithCloudFetch(false) overrides session parameter %q", key)
+				}
 				delete(kc.SessionConf, key)
 			}
 		}
