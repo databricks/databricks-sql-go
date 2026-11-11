@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -25,9 +26,11 @@ func TestE2EKernelCloudFetchDisabledLargeResults(t *testing.T) {
 		t.Skip("skipping large inline result in -short mode")
 	}
 	host, httpPath, token := pecoTestingCreds(t)
+	_, workspaceHost := parseHostName(host)
+	workspaceAuthority := net.JoinHostPort(workspaceHost, "443")
 	var workspaceConnections, blockedConnections atomic.Int64
 	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodConnect || r.Host != net.JoinHostPort(host, "443") {
+		if r.Method != http.MethodConnect || !strings.EqualFold(r.Host, workspaceAuthority) {
 			blockedConnections.Add(1)
 			http.Error(w, "Only the SQL workspace is reachable", http.StatusForbidden)
 			return

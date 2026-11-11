@@ -315,12 +315,12 @@ func (k *KernelBackend) OpenSession(ctx context.Context) error {
 	// customer reports a hung connect or a large-result OOM, on-call can see from the
 	// debug log what was actually applied (these are otherwise silent — forwarded to
 	// the kernel with no observable trace). Kept at Debug and cheap to format.
-	cloudFetchEnabled := "kernel-default"
+	cloudFetchOption := "unset"
 	if k.cfg.CloudFetchEnabled != nil {
-		cloudFetchEnabled = strconv.FormatBool(*k.cfg.CloudFetchEnabled)
+		cloudFetchOption = strconv.FormatBool(*k.cfg.CloudFetchEnabled)
 	}
-	klogCtx(ctx, "OpenSession resolved: retry=%s cloudfetchMaxChunksInMemory=%s cloudFetchEnabled=%s",
-		describeRetry(k.cfg.Retry), k.cfg.SessionConf[kernelMaxChunksInMemoryConfKey], cloudFetchEnabled)
+	klogCtx(ctx, "OpenSession resolved: retry=%s cloudfetchMaxChunksInMemory=%s cloudFetchOption=%s",
+		describeRetry(k.cfg.Retry), k.cfg.SessionConf[kernelMaxChunksInMemoryConfKey], cloudFetchOption)
 
 	// kernel_session_open takes ownership of cfg here. Its documented C-ABI
 	// contract (databricks_kernel.h: "CONSUMES config on both success and failure
