@@ -74,7 +74,7 @@ func testKernelCloudFetchDisabledUnsupportedServer(t *testing.T, automaticRecove
 	dbConnector, err := NewConnector(
 		WithServerHostname(server.URL), WithHTTPPath("/sql/1.0/warehouses/test"),
 		WithAccessToken("test-token"), WithUseKernel(true), WithCloudFetch(false),
-		WithSessionParams(map[string]string{"cloudfetch_enabled": "false", "CAN_CLOUD_DOWNLOAD": "true"}),
+		WithSessionParams(map[string]string{"CAN_CLOUD_DOWNLOAD": "true"}),
 		WithSkipTLSHostVerify(), WithRetries(-1, time.Millisecond, time.Millisecond),
 	)
 	require.NoError(t, err)

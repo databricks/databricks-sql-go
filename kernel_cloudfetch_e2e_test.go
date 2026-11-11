@@ -60,7 +60,6 @@ func TestE2EKernelCloudFetchDisabledLargeResults(t *testing.T) {
 	connector, err := NewConnector(
 		WithServerHostname(host), WithHTTPPath(httpPath), WithAccessToken(token),
 		WithUseKernel(true), WithCloudFetch(false),
-		WithSessionParams(map[string]string{"cloudfetch_enabled": "false"}),
 		WithKernelProxy(KernelProxy{URL: proxy.URL}),
 		WithRetries(-1, time.Millisecond, time.Millisecond),
 	)
