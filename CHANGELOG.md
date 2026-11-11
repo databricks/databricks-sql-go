@@ -2,6 +2,7 @@
 
 ## Unreleased
 - **Behavior change:** Honor `WithCloudFetch(false)` / `useCloudFetch=false` on the kernel backend, taking precedence over raw `can_cloud_download` and `cloudfetch_enabled` session parameters. Complete results use paged inline delivery without storage downloads. Servers without paged inline support return a configuration error at session creation or statement execution; the driver does not fall back to storage downloads. This also applies when a connection automatically switches to the kernel backend after a protocol rejection.
+  Configurations combining `WithCloudFetch(false)` with the previously documented `cloudfetch_enabled=false` now require a warehouse with paged inline support. To retain the legacy INLINE behavior on an unsupported warehouse, remove `WithCloudFetch(false)` / `useCloudFetch=false` and keep only the raw session parameter; that legacy mode has a result-size limit and does not guarantee complete large results. Configurations using only the raw parameter retain their existing behavior.
 
 ## v1.19.0 (2026-11-04)
 - Upgrade the SQL kernel bindings to v1.4.0.
