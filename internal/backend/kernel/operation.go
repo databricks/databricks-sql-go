@@ -85,13 +85,9 @@ func (k *KernelBackend) execute(ctx context.Context, req backend.ExecRequest) (b
 		if paths == nil {
 			paths = []string{}
 		}
-		encoded, err := json.Marshal(paths)
-		if err != nil {
-			C.kernel_statement_close(stmt)
-			return &kernelOp{}, fmt.Errorf("kernel: encode allowed local paths: %w", err)
-		}
+		encoded, _ := json.Marshal(paths)
 		value := newCStr(string(encoded))
-		err = call(func() C.KernelStatusCode {
+		err := call(func() C.KernelStatusCode {
 			return C.kernel_statement_set_staging_allowed_local_paths(stmt, value.c, false)
 		})
 		value.free()
