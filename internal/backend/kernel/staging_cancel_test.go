@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -35,6 +36,7 @@ func TestExecuteCancelsFileTransfer(t *testing.T) {
 				t.Fatal(err)
 			}
 			started := make(chan struct{})
+			var startedOnce sync.Once
 			release := make(chan struct{})
 			var instruction []byte
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -48,7 +50,7 @@ func TestExecuteCancelsFileTransfer(t *testing.T) {
 						_, _ = w.Write([]byte("partial"))
 						w.(http.Flusher).Flush()
 					}
-					close(started)
+					startedOnce.Do(func() { close(started) })
 					select {
 					case <-r.Context().Done():
 					case <-release:
