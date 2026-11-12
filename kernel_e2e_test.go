@@ -20,6 +20,7 @@ import (
 
 	"github.com/databricks/databricks-sql-go/driverctx"
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
+	dbsqlerrint "github.com/databricks/databricks-sql-go/internal/errors"
 	dbsqlrows "github.com/databricks/databricks-sql-go/rows"
 )
 
@@ -753,12 +754,15 @@ func TestKernelE2EVolumeFileLifecycle(t *testing.T) {
 	if err := os.WriteFile(denied, payload, 0600); err != nil {
 		t.Fatal(err)
 	}
-	for _, test := range []struct{ local, message string }{
-		{denied, "restricted"},
-		{filepath.Join(directory, "missing.bin"), "File transfer failed"},
+	for _, test := range []struct {
+		local    string
+		category dbsqlerrint.ErrorCategory
+	}{
+		{denied, dbsqlerrint.CategoryPermissionError},
+		{filepath.Join(directory, "missing.bin"), dbsqlerrint.CategoryNotFound},
 	} {
-		if _, err := db.ExecContext(stagingCtx, "PUT "+literal(test.local)+" INTO "+literal(remote)+" OVERWRITE"); err == nil || !strings.Contains(err.Error(), test.message) {
-			t.Fatalf("PUT %q: expected %q, got %v", test.local, test.message, err)
+		if _, err := db.ExecContext(stagingCtx, "PUT "+literal(test.local)+" INTO "+literal(remote)+" OVERWRITE"); err == nil || dbsqlerrint.CategoryFromError(err) != test.category {
+			t.Fatalf("PUT %q: expected category %q, got %v", test.local, test.category, err)
 		}
 	}
 	for range 2 {
