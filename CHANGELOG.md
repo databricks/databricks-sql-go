@@ -1,7 +1,7 @@
 # Release History
 
 ## Unreleased
-- Support SQL PUT, GET, and REMOVE through kernel-backed `ExecContext` with a staging context. `QueryContext` continues to return transfer instructions. Kernel-backed `ExecContext` performs supported transfers instead of returning `ErrNotSupportedByKernel`; callers should remove fallback handling for that error on these operations.
+- Support SQL PUT, GET, and REMOVE through kernel-backed `ExecContext` with a staging context. Kernel-backed `QueryContext` now returns raw transfer instructions, matching Thrift, instead of `ErrNotSupportedByKernel`; it does not transfer files. Callers should review fallback handling that depends on that error and use `ExecContext` to complete transfers.
 
 ## v1.19.0 (2026-11-04)
 - Upgrade the SQL kernel bindings to v1.4.0.
