@@ -981,13 +981,18 @@ type transferCaptureBackend struct {
 	transferFiles []bool
 }
 
-func (b *transferCaptureBackend) Execute(_ context.Context, req backend.ExecRequest) (backend.Operation, error) {
+func (b *transferCaptureBackend) Execute(ctx context.Context, req backend.ExecRequest) (backend.Operation, error) {
 	b.transferFiles = append(b.transferFiles, req.TransferFiles)
-	return nil, fmt.Errorf("capture request")
+	return b.Backend.Execute(ctx, req)
 }
 
 func TestConnectionTransferMode(t *testing.T) {
-	capture := &transferCaptureBackend{}
+	testClient := &client.TestClient{
+		FnExecuteStatement: func(context.Context, *cli_service.TExecuteStatementReq) (*cli_service.TExecuteStatementResp, error) {
+			return &cli_service.TExecuteStatementResp{}, fmt.Errorf("capture request")
+		},
+	}
+	capture := &transferCaptureBackend{Backend: thriftbackend.NewForTest(testClient, getTestSession(), config.WithDefaults())}
 	connection := &conn{cfg: config.WithDefaults(), backend: capture}
 	_, execErr := connection.ExecContext(context.Background(), "REMOVE '/Volumes/c/s/v/file'", nil)
 	_, queryErr := connection.QueryContext(context.Background(), "GET '/Volumes/c/s/v/file' TO '/tmp/file'", nil)
