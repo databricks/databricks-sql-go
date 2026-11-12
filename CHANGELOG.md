@@ -9,7 +9,7 @@
 - **Behavior change:** After `Close`, a raw `driver.Conn` now fails `Prepare`, `PrepareContext`, `ExecContext` and `QueryContext` immediately with a `driver.ErrBadConn` ("connection is closed") and sends no request. Previously `Prepare` returned a statement and the failure came from the server or kernel at execute. `database/sql` users are unaffected (databricks/databricks-sql-go#521).
 - Report `statement_type` (`SQL`, as on the kernel backend) and the result delivery format (`INLINE_ARROW`, `EXTERNAL_LINKS` or `COLUMNAR_INLINE`) in Thrift statement telemetry. The format is reported when the driver already has the result metadata (databricks/databricks-sql-go#454).
 - **Behavior change:** The DSN `timeout` param now rejects values outside ±9223372036 seconds with an error naming `timeout`. These values previously overflowed `time.Duration` and silently became a different, often negative, timeout. Negative values within range are still accepted (databricks/databricks-sql-go#490).
-- Avoid redundant CloudFetch result fetches and defer operation cleanup to `Rows.Close()` for `database/sql` iteration on the Thrift backend (databricks/databricks-sql-go#539).
+- Avoid redundant CloudFetch result fetches on the Thrift backend. Row and Arrow IPC stream iteration defer operation cleanup to the parent `Rows.Close()`, which callers must invoke even after draining or closing an IPC iterator (databricks/databricks-sql-go#539).
 
 ## v1.19.0 (2026-11-04)
 - Upgrade the SQL kernel bindings to v1.4.0.

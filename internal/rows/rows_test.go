@@ -1289,6 +1289,88 @@ func TestGetArrowBatches(t *testing.T) {
 	})
 }
 
+func TestRowsArrowIPCStreamsLifecycle(t *testing.T) {
+	moreRows, noMoreRows := true, false
+	for _, tc := range []struct {
+		name        string
+		hasMoreRows *bool
+		wantFetches int
+	}{
+		{name: "complete", hasMoreRows: &noMoreRows},
+		{name: "paginated", hasMoreRows: &moreRows, wantFetches: 1},
+		{name: "unknown", wantFetches: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var execute cli_service.TExecuteStatementResp
+			loadTestData(t, "directResultsMultipleFetch/ExecuteStatement.json", &execute)
+			execute.DirectResults.CloseOperation = nil
+			execute.DirectResults.ResultSet.HasMoreRows = tc.hasMoreRows
+			var fetched cli_service.TFetchResultsResp
+			loadTestData(t, "directResultsMultipleFetch/FetchResults1.json", &fetched)
+			fetched.HasMoreRows = &noMoreRows
+
+			fetches, closes, callbacks := 0, 0, 0
+			closeErr := errors.New("close failed")
+			testClient := &client.TestClient{
+				FnFetchResults: func(context.Context, *cli_service.TFetchResultsReq) (*cli_service.TFetchResultsResp, error) {
+					fetches++
+					require.LessOrEqual(t, fetches, tc.wantFetches)
+					return &fetched, nil
+				},
+				FnCloseOperation: func(context.Context, *cli_service.TCloseOperationReq) (*cli_service.TCloseOperationResp, error) {
+					closes++
+					return nil, closeErr
+				},
+			}
+			dr, err := NewRows(context.Background(), nil, testClient, config.WithDefaults(), execute.DirectResults, &TelemetryCallbacks{
+				OnClose: func(_ int64, _ int, iterErr, rpcErr error) {
+					callbacks++
+					assert.Equal(t, 1, closes)
+					assert.NoError(t, iterErr)
+					assert.ErrorIs(t, rpcErr, closeErr)
+				},
+			})
+			require.NoError(t, err)
+			defer dr.Close() //nolint:errcheck
+			streams, streamErr := dr.(dbsqlrows.Rows).GetArrowIPCStreams(context.Background())
+			require.NoError(t, streamErr)
+			defer streams.Close()
+
+			var gotRows, wantRows int64
+			for _, batch := range execute.DirectResults.ResultSet.Results.ArrowBatches {
+				wantRows += batch.RowCount
+			}
+			if tc.wantFetches > 0 {
+				for _, batch := range fetched.Results.ArrowBatches {
+					wantRows += batch.RowCount
+				}
+			}
+			for streams.HasNext() {
+				stream, nextErr := streams.Next()
+				require.NoError(t, nextErr)
+				reader, readErr := ipc.NewReader(stream)
+				require.NoError(t, readErr)
+				for reader.Next() {
+					gotRows += reader.Record().NumRows()
+				}
+				readErr = reader.Err()
+				reader.Release()
+				require.NoError(t, readErr)
+				assert.Zero(t, closes, "iteration must not close the operation")
+			}
+			assert.Equal(t, wantRows, gotRows)
+			assert.Equal(t, tc.wantFetches, fetches)
+			streams.Close()
+			assert.Zero(t, closes, "closing the IPC iterator must leave operation cleanup to Rows.Close")
+			assert.Zero(t, callbacks)
+			assert.ErrorIs(t, dr.Close(), closeErr)
+			assert.ErrorIs(t, dr.Close(), closeErr)
+			assert.Equal(t, 1, closes)
+			assert.Equal(t, 1, callbacks)
+		})
+	}
+}
+
 type rowTestPagingResult struct {
 	getMetadataCount  int
 	fetchResultsCount int
