@@ -39,6 +39,7 @@ func TestExecuteCancelsFileTransfer(t *testing.T) {
 			var startedOnce sync.Once
 			release := make(chan struct{})
 			var instruction []byte
+			instructionReady := make(chan struct{})
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch {
 				case r.URL.Path == "/storage":
@@ -56,6 +57,7 @@ func TestExecuteCancelsFileTransfer(t *testing.T) {
 					case <-release:
 					}
 				case r.Method == "POST" && r.URL.Path == "/api/2.0/sql/statements":
+					<-instructionReady
 					_, _ = w.Write(instruction)
 				case strings.HasSuffix(r.URL.Path, "/sessions"):
 					_, _ = io.WriteString(w, `{"session_id":"session","warehouse_id":"test"}`)
@@ -65,17 +67,23 @@ func TestExecuteCancelsFileTransfer(t *testing.T) {
 			}))
 			defer server.Close()
 			instruction = fileTransferInstruction(t, verb, server.URL+"/storage", local)
+			close(instructionReady)
 			k := New(Config{Host: server.URL, WarehouseID: "test", Auth: Auth{Mode: AuthPAT, Token: "test"}})
 			if err := k.OpenSession(context.Background()); err != nil {
 				t.Fatal(err)
 			}
 			defer k.CloseSession(context.Background())
-			raw, err := k.Execute(context.Background(), backend.ExecRequest{Query: "get '/Volumes/c/s/v/file' to '" + local + "'"})
-			if err != nil {
-				t.Fatalf("raw execution without staging context: %v", err)
-			}
-			if _, err := raw.Close(context.Background()); err != nil {
-				t.Fatal(err)
+			for _, rawCtx := range []context.Context{
+				context.Background(),
+				driverctx.NewContextWithStagingInfo(context.Background(), []string{directory}),
+			} {
+				raw, err := k.Execute(rawCtx, backend.ExecRequest{Query: "get '/Volumes/c/s/v/file' to '" + local + "'"})
+				if err != nil {
+					t.Fatalf("raw execution: %v", err)
+				}
+				if _, err := raw.Close(context.Background()); err != nil {
+					t.Fatal(err)
+				}
 			}
 			select {
 			case <-started:

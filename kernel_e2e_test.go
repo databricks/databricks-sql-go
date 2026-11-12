@@ -714,7 +714,7 @@ func TestKernelE2EVolumeFileLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	get := "GET " + literal(remote) + " TO " + literal(destination)
-	rows, err := db.QueryContext(ctx, get)
+	rows, err := db.QueryContext(stagingCtx, get)
 	if err != nil {
 		t.Fatal(err)
 	}
