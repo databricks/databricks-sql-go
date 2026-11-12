@@ -113,12 +113,11 @@ Notes:
 
 - Boolean-valued keys should use the exact strings `"true"` / `"false"` — the kernel does
   not pre-validate values and forwards them as-is.
-- `WithCloudFetch(false)` passes `cloudfetch_enabled=false` through the native
-  client-conf API. The kernel requests paged inline delivery by setting
-  `can_cloud_download=false` for the session. Explicit disable takes precedence over
-  case-insensitive `can_cloud_download` and `cloudfetch_enabled` session parameters.
-  The server must support
-  this capability; unsupported servers return a configuration error.
+- `WithCloudFetch(false)` fetches complete results through the SQL connection
+  without cloud-storage downloads. On the kernel backend, this option takes
+  precedence over conflicting session parameters. Servers without paged inline
+  support return a configuration error at session creation or statement execution;
+  the driver does not fall back to storage downloads.
 
 ### Kernel client-result confs
 
@@ -130,7 +129,7 @@ Thrift options where available.
 
 | DSN / session-conf key | Dedicated connector option | Thrift | Kernel | Default | Notes |
 |---|---|:---:|:---:|---|---|
-| `cloudfetch_enabled` | `WithCloudFetch` | ⚠️ | ✅ | `true` | With the pinned kernel, `false` requests paged inline results without storage downloads. Use `WithCloudFetch` for the standard option on either backend. |
+| `cloudfetch_enabled` | `WithCloudFetch` | ⚠️ | ✅ | `true` | Set `false` to fetch complete results without cloud-storage downloads. Use `WithCloudFetch` for the standard option on either backend. |
 | `cloudfetch_link_prefetch_window` | *(none; use `WithSessionParams`)* | ⚠️ | ✅ | `10` | Number of presigned Cloud Fetch links prefetched ahead of the consumer. |
 | `cloudfetch_max_chunks_in_memory` | `WithKernelMaxChunksInMemory` | ⚠️ | ✅ | `16` | Maximum decompressed Cloud Fetch chunks held in memory. Values above 256 are clamped with a warning, not rejected. |
 | `inline_max_chunks_in_memory` | *(none; use `WithSessionParams`)* | ⚠️ | ✅ | `4` | Inline-Arrow prefetch window; `1` disables prefetching. |
@@ -178,15 +177,6 @@ an internal setting) and non-Arrow values also retain legacy session-location pa
 | `useCloudFetch` | `WithCloudFetch` | ✅ | ✅ | `true` | Set false to fetch complete results through the SQL connection without direct cloud-storage access. |
 | `maxDownloadThreads` | `WithMaxDownloadThreads` | ✅ | ⚠️ | `10` | Concurrent download goroutines (Thrift). Inert on the kernel path. |
 | | `WithKernelMaxChunksInMemory(n)` | ❌ | ✅ | kernel default (16) | Bounds decompressed Cloud Fetch chunks held in memory — trades large-result throughput for peak memory. |
-
-On the kernel backend, `WithCloudFetch(false)` sets the native client setting
-`cloudfetch_enabled=false`. The kernel requests paged inline results using
-`can_cloud_download=false`. This requires a server that
-supports paged inline result delivery. Unsupported servers return a configuration
-error; the driver does not fall back to storage downloads. The standard disable
-option takes precedence over case-insensitive copies of that session parameter.
-The raw `cloudfetch_enabled=false` setting has the same result-delivery behavior
-with the native kernel required by this connector.
 
 ## TLS
 
