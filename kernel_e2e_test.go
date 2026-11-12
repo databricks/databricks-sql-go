@@ -692,7 +692,9 @@ func TestKernelE2EVolumeFileLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() {
-		if _, err := db.ExecContext(context.Background(), "DROP SCHEMA "+namespace+" CASCADE"); err != nil {
+		cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), time.Minute)
+		defer cancelCleanup()
+		if _, err := db.ExecContext(cleanupCtx, "DROP SCHEMA "+namespace+" CASCADE"); err != nil {
 			t.Error(err)
 		}
 	}()
