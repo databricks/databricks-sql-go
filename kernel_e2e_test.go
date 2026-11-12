@@ -8,8 +8,11 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"errors"
+	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -17,6 +20,7 @@ import (
 
 	"github.com/databricks/databricks-sql-go/driverctx"
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
+	dbsqlerrint "github.com/databricks/databricks-sql-go/internal/errors"
 	dbsqlrows "github.com/databricks/databricks-sql-go/rows"
 )
 
@@ -669,5 +673,107 @@ func TestKernelE2EGetArrowBatches(t *testing.T) {
 	}
 	if rowCount != want {
 		t.Errorf("GetArrowBatches row count = %d, want %d", rowCount, want)
+	}
+}
+
+func TestKernelE2EVolumeFileLifecycle(t *testing.T) {
+	catalog := os.Getenv("DATABRICKS_VOLUME_TEST_CATALOG")
+	if catalog == "" {
+		t.Skip("set DATABRICKS_VOLUME_TEST_CATALOG to a writable catalog")
+	}
+	db := kernelTestDB(t)
+	defer db.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	schema := fmt.Sprintf("driver_volume_%d", time.Now().UnixNano())
+	identifier := func(value string) string { return "`" + strings.ReplaceAll(value, "`", "``") + "`" }
+	literal := func(value string) string { return "'" + strings.NewReplacer(`\`, `\\`, `'`, `\'`).Replace(value) + "'" }
+	namespace := identifier(catalog) + "." + identifier(schema)
+	if _, err := db.ExecContext(ctx, "CREATE SCHEMA "+namespace); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), time.Minute)
+		defer cancelCleanup()
+		if _, err := db.ExecContext(cleanupCtx, "DROP SCHEMA "+namespace+" CASCADE"); err != nil {
+			t.Error(err)
+		}
+	}()
+	if _, err := db.ExecContext(ctx, "CREATE VOLUME "+namespace+".files"); err != nil {
+		t.Fatal(err)
+	}
+	directory := t.TempDir()
+	source, destination := filepath.Join(directory, "input.bin"), filepath.Join(directory, "output.bin")
+	payload := bytes.Repeat([]byte{0, 255, 1, 128}, 262144)
+	if err := os.WriteFile(source, payload, 0600); err != nil {
+		t.Fatal(err)
+	}
+	remote := "/Volumes/" + catalog + "/" + schema + "/files/input.bin"
+	stagingCtx := driverctx.NewContextWithStagingInfo(ctx, []string{directory})
+	if _, err := db.ExecContext(stagingCtx, "PUT "+literal(source)+" INTO "+literal(remote)+" OVERWRITE"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, "REMOVE "+literal(remote)); err == nil || !strings.Contains(err.Error(), "staging ctx must be provided") {
+		t.Fatalf("REMOVE without staging context: %v", err)
+	}
+	get := "GET " + literal(remote) + " TO " + literal(destination)
+	rows, err := db.QueryContext(stagingCtx, get)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	columns, err := rows.Columns()
+	if err != nil || len(columns) != 4 {
+		t.Fatalf("raw instruction columns: %v, %v", columns, err)
+	}
+	if !rows.Next() {
+		t.Fatalf("missing raw instruction: %v", rows.Err())
+	}
+	var operation, storageURL, local string
+	var headers any
+	if err := rows.Scan(&operation, &storageURL, &headers, &local); err != nil {
+		t.Fatal(err)
+	}
+	if operation != "GET" || local != destination || storageURL == "" {
+		t.Fatalf("unexpected raw instruction: operation=%q local=%q", operation, local)
+	}
+	if rows.Next() || rows.Err() != nil {
+		t.Fatalf("expected one raw instruction: %v", rows.Err())
+	}
+	if err := rows.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(destination); !os.IsNotExist(err) {
+		t.Fatalf("raw instructions changed local destination: %v", err)
+	}
+	if _, err := db.ExecContext(stagingCtx, get); err != nil {
+		t.Fatal(err)
+	}
+	actual, err := os.ReadFile(destination)
+	if err != nil || !bytes.Equal(actual, payload) {
+		t.Fatalf("download differs: %v", err)
+	}
+	denied := filepath.Join(t.TempDir(), "denied.bin")
+	if err := os.WriteFile(denied, payload, 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		local    string
+		category dbsqlerrint.ErrorCategory
+	}{
+		{denied, dbsqlerrint.CategoryPermissionError},
+		{filepath.Join(directory, "missing.bin"), dbsqlerrint.CategoryNotFound},
+	} {
+		if _, err := db.ExecContext(stagingCtx, "PUT "+literal(test.local)+" INTO "+literal(remote)+" OVERWRITE"); err == nil || dbsqlerrint.CategoryFromError(err) != test.category {
+			t.Fatalf("PUT %q: expected category %q, got %v", test.local, test.category, err)
+		}
+	}
+	for range 2 {
+		if _, err := db.ExecContext(stagingCtx, "REMOVE "+literal(remote)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.ExecContext(stagingCtx, get); err == nil {
+		t.Fatal("GET succeeded after REMOVE")
 	}
 }

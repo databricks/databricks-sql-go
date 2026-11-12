@@ -119,6 +119,9 @@ type ExecRequest struct {
 	// dbsql.Parameter/SqlType types; each backend maps these neutral params to its
 	// own wire type.
 	Params []Param
+	// TransferFiles requests native completion where the backend supports it.
+	// Other backends leave transfers to the connection layer.
+	TransferFiles bool
 }
 
 // Param is one bound query parameter in backend-neutral form: the name (empty

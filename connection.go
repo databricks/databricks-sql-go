@@ -148,7 +148,7 @@ func (c *conn) ExecContext(ctx context.Context, query string, args []driver.Name
 
 	// Capture execution start time for telemetry before running the query
 	executeStart := time.Now()
-	op, err := c.runQuery(ctx, query, args)
+	op, err := c.runQuery(ctx, query, args, true)
 	// A nil op means execution never reached the backend (parameter conversion
 	// failed): no server statement to close or measure. Return the already-wrapped
 	// error directly.
@@ -278,7 +278,7 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 
 	// Capture execution start time for telemetry before running the query
 	executeStart := time.Now()
-	op, err := c.runQuery(ctx, query, args)
+	op, err := c.runQuery(ctx, query, args, false)
 	// A nil op means execution never reached the backend (parameter conversion
 	// failed): no statement id, no telemetry to emit. Log and return the
 	// already-wrapped error directly.
@@ -437,12 +437,12 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 // which case the wrapped error is returned directly. Once the backend is called,
 // backend.Execute guarantees a non-nil Operation, so callers guard only for the
 // pre-backend nil.
-func (c *conn) runQuery(ctx context.Context, query string, args []driver.NamedValue) (backend.Operation, error) {
+func (c *conn) runQuery(ctx context.Context, query string, args []driver.NamedValue, transferFiles bool) (backend.Operation, error) {
 	params, err := convertNamedValuesToParams(args)
 	if err != nil {
 		return nil, dbsqlerrint.NewExecutionError(ctx, dbsqlerr.ErrQueryExecution, err, nil)
 	}
-	return c.backend.Execute(ctx, backend.ExecRequest{Query: query, Params: params})
+	return c.backend.Execute(ctx, backend.ExecRequest{Query: query, Params: params, TransferFiles: transferFiles})
 }
 
 // enrichQueryId sets the operation's statement id as the context queryId. A

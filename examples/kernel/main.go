@@ -87,14 +87,4 @@ func main() {
 		log.Fatalf("query: %v", err)
 	}
 	fmt.Printf("server version: %s\n", version)
-
-	// Options the kernel can't honor are rejected with an error wrapping
-	// ErrNotSupportedByKernel, never silently ignored. Staging (PUT/GET/REMOVE on a
-	// Unity Catalog volume) is one such feature, rejected at execute.
-	_, err = db.ExecContext(ctx, "PUT '/tmp/local.csv' INTO '/Volumes/main/default/vol/f.csv' OVERWRITE")
-	if errors.Is(err, dbsqlerr.ErrNotSupportedByKernel) {
-		fmt.Println("staging is not supported on the kernel backend (use Thrift for staging)")
-	} else if err != nil {
-		fmt.Printf("staging: %v\n", err)
-	}
 }

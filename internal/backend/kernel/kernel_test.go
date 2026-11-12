@@ -531,30 +531,22 @@ func TestExecuteHandleLessOpContract(t *testing.T) {
 	}
 }
 
-// TestExecuteRejectsStaging drives Execute with a staging statement (not just the
-// isStagingStatement detector in isolation) to pin the detector→Execute wiring: a
-// refactor that dropped or reordered the check would silently reopen the
-// silent-no-op data-loss path. Mirrors TestExecuteRejectsParams.
-func TestExecuteRejectsStaging(t *testing.T) {
-	k := &KernelBackend{}
-	op, err := k.Execute(context.Background(), backend.ExecRequest{
-		Query: "PUT '/tmp/f' INTO '/Volumes/main/s/e/f.csv'",
-	})
-	if err == nil {
-		t.Fatal("expected an error for a staging statement, got nil")
-	}
-	if !errors.Is(err, dbsqlerr.ErrNotSupportedByKernel) {
-		t.Errorf("staging rejection should wrap ErrNotSupportedByKernel, got %v", err)
-	}
-	if op == nil {
-		t.Fatal("Execute must return a non-nil Operation per the Backend contract")
-	}
-	closed, closeErr := op.Close(context.Background())
-	if closeErr != nil {
-		t.Errorf("Close error = %v, want nil", closeErr)
-	}
-	if closed {
-		t.Error("Close on a handle-less op must report closed=false (no CLOSE_STATEMENT)")
+func TestExecuteRequiresStagingContext(t *testing.T) {
+	for _, query := range []string{"GET '/Volumes/main/s/v/f' TO '/tmp/f'", "PUT '/tmp/f' INTO '/Volumes/main/s/v/f'", "REMOVE '/Volumes/main/s/v/f'", "/* upload */ PUT '/tmp/f' INTO '/Volumes/main/s/v/f'"} {
+		t.Run(query, func(t *testing.T) {
+			k := &KernelBackend{}
+			op, err := k.Execute(context.Background(), backend.ExecRequest{Query: query, TransferFiles: true})
+			if err == nil || !strings.Contains(err.Error(), "staging ctx must be provided") {
+				t.Fatalf("expected missing staging context error, got %v", err)
+			}
+			if op == nil {
+				t.Fatal("expected non-nil operation")
+			}
+			closed, closeErr := op.Close(context.Background())
+			if closed || closeErr != nil {
+				t.Fatalf("Close = %v, %v", closed, closeErr)
+			}
+		})
 	}
 }
 

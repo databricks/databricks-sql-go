@@ -220,16 +220,17 @@ RUST_LOG. Filter on the target databricks::sql::kernel (note the colons):
 Supported on the kernel backend: PAT and OAuth (M2M via WithClientCredentials, U2M
 via the authType=oauthU2M DSN param); reading scalar, nested, and complex-typed
 results (CloudFetch is transparent); bound query parameters (positional and named);
-context cancellation during execute; the initial namespace (WithInitialNamespace,
+context cancellation during execute; SQL PUT/GET/REMOVE on Unity Catalog Volumes
+through ExecContext with a staging context (QueryContext returns raw instructions);
+the initial namespace (WithInitialNamespace,
 applied post-connect via USE CATALOG / USE SCHEMA); metric-view metadata
 (WithEnableMetricViewMetadata); the retry / backoff policy (WithRetries:
 RetryWaitMin / RetryWaitMax / RetryMax, including the disable form, forwarded to the
 kernel's HTTP retry config); and the TLS, proxy, and session-conf (query tags,
 statement timeout, time zone) options. Federated token providers use one token snapshot
 during setup. Nothing is silently ignored: WithTimeout and token-provider / external /
-static authenticators are rejected at connect; staging (PUT/GET/REMOVE on a
-Unity Catalog volume) is rejected at execute. WithMaxRows is accepted but inert (the
-kernel manages fetching below the C ABI).
+static authenticators are rejected at connect. WithMaxRows is accepted but inert
+(the kernel manages fetching below the C ABI).
 
 Kernel HTTP requests inherit the driver's ClientTimeout (900s by default). If
 that value is zero, the kernel uses its own 120s default; zero is neither

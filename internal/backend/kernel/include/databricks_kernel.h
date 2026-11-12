@@ -688,6 +688,11 @@ KernelStatusCode kernel_session_rollback(kernel_session_t* session);
  * so a reused statement handle starts each query with a fresh parameter set. */
 KernelStatusCode kernel_statement_set_sql(kernel_statement_t* stmt, const char* sql);
 
+/** Configure allowed local paths; null restores caller-managed transfers.
+ * retain_result keeps instructions after transfer. */
+KernelStatusCode kernel_statement_set_staging_allowed_local_paths(
+    kernel_statement_t* stmt, const char* paths_json, bool retain_result);
+
 /* Typed positional parameter binding (1-based ordinal); the kernel infers the
  * SEA wire type from the C type. These are the "typed params" the
  * kernel_statement_bind_parameter contract refers to: within one statement they

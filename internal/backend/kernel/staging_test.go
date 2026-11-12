@@ -13,6 +13,11 @@ func TestIsStagingStatement(t *testing.T) {
 		"/* a */ /* b */ PUT '/l' INTO '/Volumes/x'",        // multiple block comments
 		"-- upload the file\nPUT '/l' INTO '/Volumes/x'",    // leading line comment, then staging
 		"  /* c */\n  -- d\n  REMOVE '/Volumes/x'",          // mixed comments + whitespace
+		"/* outer /* inner */ outer */ REMOVE '/Volumes/x'",
+		"REMOVE/* note */ '/Volumes/x'",
+		"REMOVE-- note\n'/Volumes/x'",
+		"REMOVE\f'/Volumes/x'",
+		"REMOVE\v'/Volumes/x'",
 	}
 	for _, sql := range staging {
 		if !isStagingStatement(sql) {
@@ -32,6 +37,7 @@ func TestIsStagingStatement(t *testing.T) {
 		"SELECT 'PUT ' AS col",     // keyword only inside a literal
 		"/* unterminated PUT '/x'", // unterminated block comment consumes the rest
 		"/* c */ SELECT 1",         // real leading comment, but not a staging command
+		"/* outer /* inner */ REMOVE '/Volumes/x'",
 	}
 	for _, sql := range notStaging {
 		if isStagingStatement(sql) {

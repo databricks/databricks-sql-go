@@ -237,3 +237,12 @@ unset), kernel telemetry follows its server feature flag, and `telemetry_batch_s
 The Go wrapper telemetry interceptor is skipped on the kernel path so it does not
 duplicate kernel-owned telemetry for the same connection and statements. See
 [`telemetry/DESIGN.md`](./telemetry/DESIGN.md).
+
+## Volume file transfers
+
+Both backends support SQL PUT, GET, and REMOVE through `ExecContext` with
+`driverctx.NewContextWithStagingInfo(ctx, allowedLocalPaths)`. The context must
+contain at least one allowed path, including for REMOVE. `QueryContext` returns
+the transfer instructions for callers that handle file transfers themselves.
+
+The credential-gated `TestKernelE2EVolumeFileLifecycle` uses `DATABRICKS_VOLUME_TEST_CATALOG` as a writable catalog and creates and removes an isolated schema and Volume. It covers ExecContext transfers and QueryContext raw instructions.

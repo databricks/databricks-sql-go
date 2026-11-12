@@ -18,6 +18,7 @@ import (
 	"github.com/pkg/errors"
 
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
+	"github.com/databricks/databricks-sql-go/internal/backend"
 	thriftbackend "github.com/databricks/databricks-sql-go/internal/backend/thrift"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/client"
@@ -973,4 +974,29 @@ func TestConn_handleStagingRetry(t *testing.T) {
 		// regression where cancellation is honored only at retry boundaries.
 		assert.Less(t, elapsed, 2*time.Second, "context cancel should abort PUT retry backoff promptly")
 	})
+}
+
+type transferCaptureBackend struct {
+	backend.Backend
+	transferFiles []bool
+}
+
+func (b *transferCaptureBackend) Execute(ctx context.Context, req backend.ExecRequest) (backend.Operation, error) {
+	b.transferFiles = append(b.transferFiles, req.TransferFiles)
+	return b.Backend.Execute(ctx, req)
+}
+
+func TestConnectionTransferMode(t *testing.T) {
+	testClient := &client.TestClient{
+		FnExecuteStatement: func(context.Context, *cli_service.TExecuteStatementReq) (*cli_service.TExecuteStatementResp, error) {
+			return &cli_service.TExecuteStatementResp{}, fmt.Errorf("capture request")
+		},
+	}
+	capture := &transferCaptureBackend{Backend: thriftbackend.NewForTest(testClient, getTestSession(), config.WithDefaults())}
+	connection := &conn{cfg: config.WithDefaults(), backend: capture}
+	_, execErr := connection.ExecContext(context.Background(), "REMOVE '/Volumes/c/s/v/file'", nil)
+	_, queryErr := connection.QueryContext(context.Background(), "GET '/Volumes/c/s/v/file' TO '/tmp/file'", nil)
+	assert.Error(t, execErr)
+	assert.Error(t, queryErr)
+	assert.Equal(t, []bool{true, false}, capture.transferFiles)
 }
