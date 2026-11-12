@@ -550,7 +550,7 @@ func TestExecuteRequiresStagingContext(t *testing.T) {
 	}
 }
 
-func TestQueryTransferInstructionsNeedNoStagingContext(t *testing.T) {
+func TestQuerySkipsStagingContextGuard(t *testing.T) {
 	k := &KernelBackend{}
 	op, err := k.Execute(context.Background(), backend.ExecRequest{Query: "GET '/Volumes/c/s/v/file' TO '/tmp/file'", TransferFiles: false})
 	if op == nil {
