@@ -58,7 +58,7 @@ func NewResultPageIterator(
 	delimiter Delimiter,
 	maxPageSize int64,
 	opHandle *cli_service.TOperationHandle,
-	isFinished bool,
+	hasMoreRows *bool,
 	closedOnServer bool,
 	client cli_service.TCLIService,
 	logger *dbsqllog.DBSQLLogger,
@@ -67,7 +67,7 @@ func NewResultPageIterator(
 	return &resultPageIterator{
 		ctx:            ctx,
 		Delimiter:      delimiter,
-		isFinished:     isFinished || closedOnServer,
+		isFinished:     closedOnServer || (hasMoreRows != nil && !*hasMoreRows),
 		maxPageSize:    maxPageSize,
 		opHandle:       opHandle,
 		closedOnServer: closedOnServer,

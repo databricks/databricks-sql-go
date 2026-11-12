@@ -272,14 +272,16 @@ func NewRows(
 
 	// CloudFetch may deliver all links without closing the server operation.
 	closedOnServer := directResults != nil && directResults.CloseOperation != nil
-	isFinished := closedOnServer || (directResults != nil && directResults.ResultSet != nil &&
-		directResults.ResultSet.HasMoreRows != nil && !*directResults.ResultSet.HasMoreRows)
+	var hasMoreRows *bool
+	if directResults != nil && directResults.ResultSet != nil {
+		hasMoreRows = directResults.ResultSet.HasMoreRows
+	}
 	r.ResultPageIterator = rowscanner.NewResultPageIterator(
 		resultsCtx,
 		d,
 		pageSize,
 		opHandle,
-		isFinished,
+		hasMoreRows,
 		closedOnServer,
 		client,
 		r.logger(),
