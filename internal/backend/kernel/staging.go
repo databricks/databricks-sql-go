@@ -13,7 +13,7 @@ func isStagingStatement(sql string) bool {
 	for _, kw := range []string{"PUT", "GET", "REMOVE"} {
 		if len(s) > len(kw) &&
 			strings.EqualFold(s[:len(kw)], kw) &&
-			isSQLTokenBreak(s[len(kw)]) {
+			(isSQLTokenBreak(s[len(kw)]) || strings.HasPrefix(s[len(kw):], "/*") || strings.HasPrefix(s[len(kw):], "--")) {
 			return true
 		}
 	}
@@ -23,9 +23,9 @@ func isStagingStatement(sql string) bool {
 // stripLeadingSQLComments removes leading whitespace and leading SQL comments
 // (both `-- ...` line comments and `/* ... */` block comments), repeatedly, so
 // the first real token is exposed. An unterminated block comment consumes the
-// rest of the string (yielding ""). Comment bodies are not scanned for nested
-// markers — SQL block comments do not nest — and this only touches the LEADING
-// run, so a comment later in the statement is untouched.
+// rest of the string (yielding ""). Nested block comments must be balanced so
+// their trailing text cannot hide a staging keyword. Only the leading run is
+// removed; comments later in the statement are untouched.
 func stripLeadingSQLComments(sql string) string {
 	s := strings.TrimSpace(sql)
 	for {
@@ -37,11 +37,23 @@ func stripLeadingSQLComments(sql string) string {
 				return "" // line comment to end of input
 			}
 		case strings.HasPrefix(s, "/*"):
-			if i := strings.Index(s[2:], "*/"); i >= 0 {
-				s = s[2+i+2:]
-			} else {
+			depth, i := 1, 2
+			for i < len(s) && depth > 0 {
+				switch {
+				case strings.HasPrefix(s[i:], "/*"):
+					depth++
+					i += 2
+				case strings.HasPrefix(s[i:], "*/"):
+					depth--
+					i += 2
+				default:
+					i++
+				}
+			}
+			if depth != 0 {
 				return "" // unterminated block comment
 			}
+			s = s[i:]
 		default:
 			return s
 		}
@@ -49,9 +61,9 @@ func stripLeadingSQLComments(sql string) string {
 	}
 }
 
-// isSQLTokenBreak reports whether b ends a leading keyword — a space or a quote
+// isSQLTokenBreak reports whether b ends a leading keyword, whitespace or a quote
 // (staging commands take a quoted path, e.g. PUT '<local>' INTO '<volume>'), so
 // "PUT '..." matches but an identifier like "PUTS" or "GETTER" does not.
 func isSQLTokenBreak(b byte) bool {
-	return b == ' ' || b == '\t' || b == '\n' || b == '\r' || b == '\'' || b == '"'
+	return b == ' ' || b == '\t' || b == '\n' || b == '\r' || b == '\f' || b == '\v' || b == '\'' || b == '"'
 }

@@ -713,6 +713,17 @@ func TestKernelE2EVolumeFileLifecycle(t *testing.T) {
 	if _, err := db.ExecContext(stagingCtx, "PUT "+literal(source)+" INTO "+literal(remote)+" OVERWRITE"); err != nil {
 		t.Fatal(err)
 	}
+	for _, remove := range []string{
+		"/* outer /* inner */ outer */ REMOVE " + literal(remote),
+		"REMOVE/* note */ " + literal(remote),
+		"REMOVE-- note\n" + literal(remote),
+		"REMOVE\f" + literal(remote),
+		"REMOVE\v" + literal(remote),
+	} {
+		if _, err := db.ExecContext(ctx, remove); err == nil || !strings.Contains(err.Error(), "staging ctx must be provided") {
+			t.Fatalf("REMOVE without staging context: %v", err)
+		}
+	}
 	get := "GET " + literal(remote) + " TO " + literal(destination)
 	rows, err := db.QueryContext(stagingCtx, get)
 	if err != nil {
