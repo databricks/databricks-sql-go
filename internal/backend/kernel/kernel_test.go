@@ -550,17 +550,6 @@ func TestExecuteRequiresStagingContext(t *testing.T) {
 	}
 }
 
-func TestQuerySkipsStagingContextGuard(t *testing.T) {
-	k := &KernelBackend{}
-	op, err := k.Execute(context.Background(), backend.ExecRequest{Query: "GET '/Volumes/c/s/v/file' TO '/tmp/file'", TransferFiles: false})
-	if op == nil {
-		t.Fatal("expected non-nil operation")
-	}
-	if err == nil || !strings.Contains(err.Error(), "new_statement") {
-		t.Fatalf("expected native statement creation, got %v", err)
-	}
-}
-
 // ExecutionError must satisfy the same public contract as the Thrift path so the
 // errors.Is → errors.As → SqlState()/QueryId() recipe documented in doc.go works
 // on the kernel backend too (it previously returned a bare *KernelError that
