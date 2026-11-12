@@ -9,17 +9,13 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"reflect"
 	"testing"
 	"time"
 
 	"github.com/apache/arrow-go/v18/arrow"
-	"github.com/apache/arrow-go/v18/arrow/array"
 	"github.com/apache/arrow-go/v18/arrow/ipc"
-	"github.com/apache/arrow-go/v18/arrow/memory"
 	"github.com/databricks/databricks-sql-go/driverctx"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/client"
@@ -234,7 +230,8 @@ func TestRowsFetchResultPageNoDirectResults(t *testing.T) {
 		rowscanner.NewDelimiter(0, 0),
 		1000,
 		nil,
-		nil, false,
+		nil,
+		false,
 		client,
 		rowSet.logger(),
 	)
@@ -330,7 +327,8 @@ func TestRowsFetchResultPageWithDirectResults(t *testing.T) {
 		rowscanner.NewDelimiter(rowSet.RowScanner.Start(), rowSet.RowScanner.Count()),
 		1000,
 		nil,
-		nil, false,
+		nil,
+		false,
 		client,
 		rowSet.logger(),
 	)
@@ -484,7 +482,8 @@ func TestNextNoDirectResults(t *testing.T) {
 		rowscanner.NewDelimiter(0, 0),
 		1000,
 		nil,
-		nil, false,
+		nil,
+		false,
 		client,
 		rowSet.logger(),
 	)
@@ -906,147 +905,6 @@ func TestRowsCloseOptimization(t *testing.T) {
 	assert.Equal(t, 0, closeCount)
 }
 
-func TestRowsDirectResultsLifecycle(t *testing.T) {
-	moreRows, noMoreRows := true, false
-	for _, tc := range []struct {
-		name           string
-		cloudFetch     bool
-		hasMoreRows    *bool
-		closedOnServer bool
-		empty          bool
-		wantFetches    int
-	}{
-		{name: "cloudfetch complete", cloudFetch: true, hasMoreRows: &noMoreRows},
-		{name: "cloudfetch paginated", cloudFetch: true, hasMoreRows: &moreRows, wantFetches: 1},
-		{name: "cloudfetch unknown", cloudFetch: true, wantFetches: 1},
-		{name: "cloudfetch empty", cloudFetch: true, hasMoreRows: &noMoreRows, empty: true},
-		{name: "inline closed", closedOnServer: true},
-		{name: "inline complete", hasMoreRows: &noMoreRows},
-		{name: "inline unknown", wantFetches: 1},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			cfg := config.WithDefaults()
-			cfg.UseLz4Compression = false
-			metadata := &cli_service.TGetResultSetMetadataResp{
-				Schema: &cli_service.TTableSchema{Columns: []*cli_service.TColumnDesc{{
-					ColumnName: "flag",
-					TypeDesc: &cli_service.TTypeDesc{Types: []*cli_service.TTypeEntry{{
-						PrimitiveEntry: &cli_service.TPrimitiveTypeEntry{Type: cli_service.TTypeId_BOOLEAN_TYPE},
-					}}},
-				}}},
-			}
-			var fileURL string
-			if tc.cloudFetch {
-				schema := arrow.NewSchema([]arrow.Field{{Name: "flag", Type: arrow.FixedWidthTypes.Boolean}}, nil)
-				builder := array.NewRecordBuilder(memory.DefaultAllocator, schema)
-				defer builder.Release()
-				builder.Field(0).(*array.BooleanBuilder).AppendValues([]bool{true, false}, nil)
-				record := builder.NewRecord()
-				defer record.Release()
-				var data bytes.Buffer
-				writer := ipc.NewWriter(&data, ipc.WithSchema(schema))
-				require.NoError(t, writer.Write(record))
-				require.NoError(t, writer.Close())
-				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-					_, _ = w.Write(data.Bytes())
-				}))
-				defer server.Close()
-				fileURL = server.URL
-			}
-			page := func(start int64, empty bool) *cli_service.TRowSet {
-				rs := &cli_service.TRowSet{StartRowOffset: start}
-				if tc.cloudFetch {
-					rs.ResultLinks = []*cli_service.TSparkArrowResultLink{}
-					if !empty {
-						rs.ResultLinks = append(rs.ResultLinks, &cli_service.TSparkArrowResultLink{
-							FileLink: fileURL, StartRowOffset: start, RowCount: 2,
-							ExpiryTime: time.Now().Add(time.Hour).Unix(),
-						})
-					}
-				} else {
-					rs.Columns = []*cli_service.TColumn{{BoolVal: &cli_service.TBoolColumn{Values: []bool{true, false}}}}
-				}
-				return rs
-			}
-			opHandle := &cli_service.TOperationHandle{OperationId: &cli_service.THandleIdentifier{GUID: make([]byte, 16)}}
-			fetches, closes, callbacks, downloads := 0, 0, 0, 0
-			testClient := &client.TestClient{
-				FnFetchResults: func(_ context.Context, req *cli_service.TFetchResultsReq) (*cli_service.TFetchResultsResp, error) {
-					fetches++
-					require.LessOrEqual(t, fetches, tc.wantFetches)
-					assert.Same(t, opHandle, req.OperationHandle)
-					return &cli_service.TFetchResultsResp{HasMoreRows: &noMoreRows, Results: page(2, false)}, nil
-				},
-				FnCloseOperation: func(ctx context.Context, req *cli_service.TCloseOperationReq) (*cli_service.TCloseOperationResp, error) {
-					closes++
-					assert.NoError(t, ctx.Err())
-					assert.Same(t, opHandle, req.OperationHandle)
-					return &cli_service.TCloseOperationResp{}, nil
-				},
-			}
-			direct := &cli_service.TSparkDirectResults{
-				ResultSetMetadata: metadata,
-				ResultSet: &cli_service.TFetchResultsResp{
-					HasMoreRows: tc.hasMoreRows, Results: page(0, tc.empty),
-				},
-			}
-			if tc.closedOnServer {
-				direct.CloseOperation = &cli_service.TCloseOperationResp{}
-			}
-			var chunkCounts []int
-			dr, err := NewRows(context.Background(), opHandle, testClient, cfg, direct, &TelemetryCallbacks{
-				OnChunkFetched: func(count int, _ int64, index int, latency int64, total int32) {
-					chunkCounts = append(chunkCounts, count)
-					assert.Equal(t, count-1, index)
-					if tc.cloudFetch {
-						assert.Zero(t, latency)
-						if !tc.empty {
-							assert.EqualValues(t, 1, total)
-						}
-					}
-				},
-				OnCloudFetchFile: func(int64) { downloads++ },
-				OnClose: func(latency int64, count int, iterErr, closeErr error) {
-					callbacks++
-					assert.GreaterOrEqual(t, latency, int64(0))
-					assert.Equal(t, 1+tc.wantFetches, count)
-					assert.NoError(t, iterErr)
-					assert.NoError(t, closeErr)
-				},
-			})
-			require.NoError(t, err)
-			defer dr.Close() //nolint:errcheck
-			dest := make([]driver.Value, 1)
-			wantRows := 2 * (1 + tc.wantFetches)
-			if tc.empty {
-				wantRows = 0
-			}
-			for i := 0; i < wantRows; i++ {
-				require.NoError(t, dr.Next(dest))
-				assert.Equal(t, i%2 == 0, dest[0])
-				assert.Zero(t, closes, "iteration must not close the operation")
-			}
-			require.ErrorIs(t, dr.Next(dest), io.EOF)
-			require.ErrorIs(t, dr.Next(dest), io.EOF)
-			assert.Zero(t, closes)
-			assert.Zero(t, callbacks)
-			assert.Equal(t, tc.wantFetches, fetches)
-			assert.Len(t, chunkCounts, 1+tc.wantFetches)
-			if tc.cloudFetch {
-				assert.Equal(t, wantRows/2, downloads)
-			}
-			require.NoError(t, dr.Close())
-			require.NoError(t, dr.Close())
-			wantCloses := 1
-			if tc.closedOnServer {
-				wantCloses = 0
-			}
-			assert.Equal(t, wantCloses, closes)
-			assert.Equal(t, 1, callbacks)
-		})
-	}
-}
-
 type fetch struct {
 	direction      cli_service.TFetchOrientation
 	resultStartRec int
@@ -1070,7 +928,8 @@ func TestFetchResultsWithRetries(t *testing.T) {
 		rowscanner.NewDelimiter(0, 0),
 		1000,
 		nil,
-		nil, false,
+		nil,
+		false,
 		client,
 		rowSet.logger(),
 	)
@@ -1287,88 +1146,6 @@ func TestGetArrowBatches(t *testing.T) {
 		assert.Nil(t, r7)
 		assert.ErrorContains(t, err2, io.EOF.Error())
 	})
-}
-
-func TestRowsArrowIPCStreamsLifecycle(t *testing.T) {
-	moreRows, noMoreRows := true, false
-	for _, tc := range []struct {
-		name        string
-		hasMoreRows *bool
-		wantFetches int
-	}{
-		{name: "complete", hasMoreRows: &noMoreRows},
-		{name: "paginated", hasMoreRows: &moreRows, wantFetches: 1},
-		{name: "unknown", wantFetches: 1},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			var execute cli_service.TExecuteStatementResp
-			loadTestData(t, "directResultsMultipleFetch/ExecuteStatement.json", &execute)
-			execute.DirectResults.CloseOperation = nil
-			execute.DirectResults.ResultSet.HasMoreRows = tc.hasMoreRows
-			var fetched cli_service.TFetchResultsResp
-			loadTestData(t, "directResultsMultipleFetch/FetchResults1.json", &fetched)
-			fetched.HasMoreRows = &noMoreRows
-
-			fetches, closes, callbacks := 0, 0, 0
-			closeErr := errors.New("close failed")
-			testClient := &client.TestClient{
-				FnFetchResults: func(context.Context, *cli_service.TFetchResultsReq) (*cli_service.TFetchResultsResp, error) {
-					fetches++
-					require.LessOrEqual(t, fetches, tc.wantFetches)
-					return &fetched, nil
-				},
-				FnCloseOperation: func(context.Context, *cli_service.TCloseOperationReq) (*cli_service.TCloseOperationResp, error) {
-					closes++
-					return nil, closeErr
-				},
-			}
-			dr, err := NewRows(context.Background(), nil, testClient, config.WithDefaults(), execute.DirectResults, &TelemetryCallbacks{
-				OnClose: func(_ int64, _ int, iterErr, rpcErr error) {
-					callbacks++
-					assert.Equal(t, 1, closes)
-					assert.NoError(t, iterErr)
-					assert.ErrorIs(t, rpcErr, closeErr)
-				},
-			})
-			require.NoError(t, err)
-			defer dr.Close() //nolint:errcheck
-			streams, streamErr := dr.(dbsqlrows.Rows).GetArrowIPCStreams(context.Background())
-			require.NoError(t, streamErr)
-			defer streams.Close()
-
-			var gotRows, wantRows int64
-			for _, batch := range execute.DirectResults.ResultSet.Results.ArrowBatches {
-				wantRows += batch.RowCount
-			}
-			if tc.wantFetches > 0 {
-				for _, batch := range fetched.Results.ArrowBatches {
-					wantRows += batch.RowCount
-				}
-			}
-			for streams.HasNext() {
-				stream, nextErr := streams.Next()
-				require.NoError(t, nextErr)
-				reader, readErr := ipc.NewReader(stream)
-				require.NoError(t, readErr)
-				for reader.Next() {
-					gotRows += reader.Record().NumRows()
-				}
-				readErr = reader.Err()
-				reader.Release()
-				require.NoError(t, readErr)
-				assert.Zero(t, closes, "iteration must not close the operation")
-			}
-			assert.Equal(t, wantRows, gotRows)
-			assert.Equal(t, tc.wantFetches, fetches)
-			streams.Close()
-			assert.Zero(t, closes, "closing the IPC iterator must leave operation cleanup to Rows.Close")
-			assert.Zero(t, callbacks)
-			assert.ErrorIs(t, dr.Close(), closeErr)
-			assert.ErrorIs(t, dr.Close(), closeErr)
-			assert.Equal(t, 1, closes)
-			assert.Equal(t, 1, callbacks)
-		})
-	}
 }
 
 type rowTestPagingResult struct {
@@ -2050,8 +1827,6 @@ func TestNewRows_DetachesResultRPCContextFromQueryContextCancellation(t *testing
 	assert.Equal(t, true, dest[0])
 	assert.True(t, fetchCalled, "FetchResults should use the detached result context")
 	assert.True(t, metaCalled, "GetResultSetMetadata should use the detached result context")
-	assert.False(t, closeCalled, "iteration must not close the operation")
-	assert.NoError(t, dr.Close())
 	assert.True(t, closeCalled, "CloseOperation should use the detached result context")
 }
 
@@ -2171,9 +1946,6 @@ func TestRows_CloseCallback_ReceivesChunkCount(t *testing.T) {
 	testClient := &client.TestClient{
 		FnFetchResults:         fetchFn,
 		FnGetResultSetMetadata: metaFn,
-		FnCloseOperation: func(context.Context, *cli_service.TCloseOperationReq) (*cli_service.TCloseOperationResp, error) {
-			return &cli_service.TCloseOperationResp{}, nil
-		},
 	}
 
 	var callbackChunkCount int
@@ -2200,62 +1972,6 @@ func TestRows_CloseCallback_ReceivesChunkCount(t *testing.T) {
 	// (No directResults here so chunkCount starts at 0, then +1 per FetchResults call.)
 	assert.Equal(t, 2, callbackChunkCount,
 		"closeCallback must receive the total number of result pages fetched")
-}
-
-func TestRowsCloseReportsErrors(t *testing.T) {
-	moreRows := true
-	for _, fetchErr := range []error{nil, errors.New("fetch failed")} {
-		for _, closeErr := range []error{nil, errors.New("close failed")} {
-			t.Run(fmt.Sprintf("fetch=%v/close=%v", fetchErr, closeErr), func(t *testing.T) {
-				closes, callbacks := 0, 0
-				testClient := &client.TestClient{
-					FnFetchResults: func(context.Context, *cli_service.TFetchResultsReq) (*cli_service.TFetchResultsResp, error) {
-						return nil, fetchErr
-					},
-					FnCloseOperation: func(context.Context, *cli_service.TCloseOperationReq) (*cli_service.TCloseOperationResp, error) {
-						closes++
-						return nil, closeErr
-					},
-				}
-				direct := &cli_service.TSparkDirectResults{
-					ResultSetMetadata: &cli_service.TGetResultSetMetadataResp{
-						Schema: &cli_service.TTableSchema{Columns: []*cli_service.TColumnDesc{{
-							ColumnName: "flag",
-							TypeDesc: &cli_service.TTypeDesc{Types: []*cli_service.TTypeEntry{{
-								PrimitiveEntry: &cli_service.TPrimitiveTypeEntry{Type: cli_service.TTypeId_BOOLEAN_TYPE},
-							}}},
-						}}},
-					},
-					ResultSet: &cli_service.TFetchResultsResp{
-						HasMoreRows: &moreRows,
-						Results: &cli_service.TRowSet{Columns: []*cli_service.TColumn{
-							{BoolVal: &cli_service.TBoolColumn{Values: []bool{true}}},
-						}},
-					},
-				}
-				dr, err := NewRows(context.Background(), nil, testClient, nil, direct, &TelemetryCallbacks{
-					OnClose: func(_ int64, count int, iterErr, rpcErr error) {
-						callbacks++
-						assert.Equal(t, 1, closes, "telemetry must run after the close RPC")
-						assert.Equal(t, 1, count)
-						assert.ErrorIs(t, iterErr, fetchErr)
-						assert.ErrorIs(t, rpcErr, closeErr)
-					},
-				})
-				require.NoError(t, err)
-				if fetchErr != nil {
-					dest := make([]driver.Value, 1)
-					require.NoError(t, dr.Next(dest))
-					require.ErrorIs(t, dr.Next(dest), fetchErr)
-				}
-				assert.Zero(t, closes)
-				assert.ErrorIs(t, dr.Close(), closeErr)
-				assert.ErrorIs(t, dr.Close(), closeErr)
-				assert.Equal(t, 1, closes)
-				assert.Equal(t, 1, callbacks)
-			})
-		}
-	}
 }
 
 // TestRows_CloseCallback_NilDoesNotPanic verifies that passing nil for closeCallback

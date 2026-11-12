@@ -9,9 +9,6 @@ import (
 
 type Rows interface {
 	GetArrowBatches(context.Context) (ArrowBatchIterator, error)
-	// GetArrowIPCStreams returns an iterator over Arrow IPC streams.
-	// Close the originating driver.Rows to release the server operation,
-	// even after the iterator is exhausted or closed.
 	GetArrowIPCStreams(context.Context) (ArrowIPCStreamIterator, error)
 }
 
