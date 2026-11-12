@@ -87,7 +87,7 @@ func (k *KernelBackend) execute(ctx context.Context, req backend.ExecRequest) (b
 		encoded, err := json.Marshal(paths)
 		if err != nil {
 			C.kernel_statement_close(stmt)
-			return &kernelOp{}, err
+			return &kernelOp{}, fmt.Errorf("kernel: encode allowed local paths: %w", err)
 		}
 		value := newCStr(string(encoded))
 		err = call(func() C.KernelStatusCode {
