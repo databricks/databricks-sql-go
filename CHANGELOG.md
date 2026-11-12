@@ -10,6 +10,7 @@
 - Report `statement_type` (`SQL`, as on the kernel backend) and the result delivery format (`INLINE_ARROW`, `EXTERNAL_LINKS` or `COLUMNAR_INLINE`) in Thrift statement telemetry. The format is reported when the driver already has the result metadata (databricks/databricks-sql-go#454).
 - **Behavior change:** The DSN `timeout` param now rejects values outside ±9223372036 seconds with an error naming `timeout`. These values previously overflowed `time.Duration` and silently became a different, often negative, timeout. Negative values within range are still accepted (databricks/databricks-sql-go#490).
 - Avoid redundant CloudFetch result fetches on the Thrift backend. Row and Arrow IPC stream iteration defer operation cleanup to the parent `Rows.Close()`, which callers must invoke even after draining or closing an IPC iterator (databricks/databricks-sql-go#539).
+- **Behavior change:** On the Thrift backend, `Rows.Err()` now reports a failed `CloseOperation` during automatic cleanup after all rows have been read. Check `Rows.Err()` even after consuming the full result (databricks/databricks-sql-go#539).
 
 ## v1.19.0 (2026-11-04)
 - Upgrade the SQL kernel bindings to v1.4.0.
