@@ -78,7 +78,8 @@ func (k *KernelBackend) execute(ctx context.Context, req backend.ExecRequest) (b
 	}
 	sql.free()
 
-	// An empty list denies local transfers; leaving the option unset returns raw instructions.
+	// Every ExecContext opts into completion, including transfers missed by the SQL recognizer.
+	// An empty list denies local transfers instead of reporting raw instructions as success.
 	if req.TransferFiles {
 		paths := driverctx.StagingPathsFromContext(ctx)
 		if paths == nil {
