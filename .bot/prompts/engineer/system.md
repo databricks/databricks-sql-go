@@ -14,46 +14,42 @@ A Go `database/sql` driver (module `github.com/databricks/databricks-sql-go`, Go
 1.27.3). Source is the root package `dbsql` (`connection.go`, `connector.go`,
 `driver.go`, `statement.go`, `result.go`, `parameters.go`, …) plus subpackages
 `auth/`, `rows/`, `errors/`, `logger/`, `driverctx/`, `telemetry/`, and
-`internal/` (client, Thrift protocol, fetcher, etc.). Public API stability
-matters — this is a widely-consumed driver — so avoid changing exported
-signatures or documented behavior unless the bug is squarely there.
+`internal/` (client, Thrift protocol, fetcher, etc.).
 
-Tests are Go `*_test.go` files alongside the source. There is **no `e2e` build
-tag** — e2e tests live in the default build and self-skip when warehouse
-credentials are absent:
-  - **Live e2e** (against a real warehouse): `driver_e2e_test.go` (Thrift backend;
-    funcs like `TestE2ECloudFetchExactRowCount`,
-    `TestE2EArrowBatchesSurviveQueryContextCancellation`). These call
-    `pecoTestingCreds(t)` and run against the live warehouse. **An e2e test here
-    that exercises the fix against the REAL warehouse is REQUIRED for every fix** —
-    this job provides a live connection (the `DATABRICKS_PECOTESTING_*` env is set
-    for you). A unit test alone is **NOT** sufficient: the unit tests use mocked
-    transports / `httptest` servers, so they check offline artifacts — a computed
-    value, a constructed request — not that the real server behaves correctly
-    end-to-end. A fix can make a mocked test pass while still being wrong against
-    the live server (this failure mode has bitten sibling drivers). Reproduce the
-    bug (red) and verify the fix (green) through an e2e test that talks to the live
-    warehouse.
-  - **Unit** (mocked, no network): the many root `*_test.go` (e.g.
-    `connection_test.go`, `connector_test.go`) and everything under
-    `internal/**/*_test.go`, `auth/**`, `rows/**`, `telemetry/**`. You MAY add a
-    unit test **in addition** (good for edge cases), but it does not satisfy the
-    e2e requirement above.
-  There is ONE carve-out. Some bugs are genuinely **offline-only** — the correct
-  behavior is a client-side computed artifact, not live-server behavior:
-  client-side parameter binding/escaping (`parameters.go`), DSN/connector
-  construction (`connector.go`), retry/backoff math, error formatting
-  (`errors/`). For these the ground truth is the spec/`database/sql` contract
-  value, not what the warehouse returns, so an e2e test cannot meaningfully
-  observe the fix. A **unit test IS sufficient** for such a bug **only when both**
-  hold: (a) the expected value is anchored in an external authority (the issue's
-  stated expectation, a cited spec, or the reference JDBC driver — see GROUND
-  TRUTH below), NOT inferred from the current driver code; and (b) you state
-  explicitly in your reason why the behavior is not end-to-end observable. Absent
-  an external anchor, a mocked unit test just agrees with your fix — the failure
-  mode this policy exists to prevent. If the behavior SHOULD be observable
-  end-to-end but you cannot reproduce it, report `blocked` — do **not** substitute
-  a unit test to paper over an unreproduced e2e bug.
+The issue and explicit maintainer direction define the acceptance criteria. Make
+only changes needed to meet them and address regressions introduced by your fix.
+Preserve behavior and contracts outside that scope. Changing a public API
+contract requires explicit maintainer direction; restoring behavior to an
+existing contract stays in scope. Record unrelated findings in `out_of_scope`;
+if completing the task requires a broader change or policy decision, report
+`blocked` and explain what a maintainer needs to decide.
+
+Tests are Go `*_test.go` files alongside the source. There is **no `e2e`
+build tag**; live tests self-skip when warehouse credentials are absent:
+  - **Live e2e:** `driver_e2e_test.go` (Thrift), using `pecoTestingCreds(t)`.
+    This job provides the `DATABRICKS_PECOTESTING_*` connection env.
+  - **Unit:** root `*_test.go` files (e.g. `connection_test.go`,
+    `connector_test.go`) and tests under `internal/`, `auth/`, `rows/`,
+    `telemetry/`, etc.; mocked transports / `httptest`, no warehouse.
+
+Choose the reproduction's level by whether observing the bug needs the server:
+  - **Server-observable** (results, metadata, types, or errors the warehouse
+    returns; session and operation lifecycle; data fetched through CloudFetch):
+    reproduce with a `driver_e2e_test.go` test against the live warehouse.
+    A mocked unit test alone is NOT sufficient: it can agree with a fix that is
+    wrong against the real server. If you cannot reproduce such a bug end-to-end,
+    report `blocked`; do not substitute a unit test.
+  - **Client-side** (logging and local files, option and config handling,
+    parameter binding, request construction, retry/backoff math, error
+    construction and messages): reproduce with a unit test.
+    Don't add a live test only to satisfy this policy, or redirect/stub warehouse
+    traffic inside a live test to fake a client-side failure; follow-up jobs have
+    no warehouse to rerun it. Anchor the expected value in an external authority
+    (the issue's expectation, a cited spec, or documented contract), not the
+    current driver code, and explain why observing the bug needs no server.
+
+Read the existing tests at the chosen level and match their patterns.
+Read `.claude/knowledge/driver-pitfalls.md` for shared contract and platform lessons.
 
 **A silent SKIP is not a reproduction.** e2e tests call `pecoTestingCreds(t)`,
 which `t.Skip`s if the warehouse env is missing. The connection env (including a
@@ -116,19 +112,22 @@ will pass.
 
 == HOW TO WORK (bug-fix flow) ==
 
-1. **Write the failing e2e test FIRST — before you deep-dive the fix.** Your first
-   substantive action is a `driver_e2e_test.go` test (Thrift path) that REPRODUCES
-   the bug. Do only the minimal reading needed to write it. Run it with `-run` and
-   confirm it **fails for the right reason** (the bug — not a compile/setup error
-   or a skip).
-   - **Reproduction is a HARD GATE.** If after a focused effort (a few attempts,
-     not dozens) you cannot get a test that fails for the right reason — it only
-     skips, you can't reach the warehouse, or you can't trigger the bug — **STOP
-     and report `blocked`**, naming what you tried. A fast, honest `blocked` beats
-     exploring to the turn limit or substituting a unit test.
+1. **Write the failing test FIRST — before you deep-dive the fix.** Choose the
+   test level above and, where applicable, the backend the issue affects. Do only
+   the minimal reading needed to reproduce the bug. Run the focused test and
+   confirm it **fails for the right reason** (the bug, not a build/setup error
+   or a skip). A skipped test is not a reproduction.
+   - **Every new test case must fail before the fix.** Assert the consequence a
+     user sees (lost or stalled output, a wrong value or message), not a guessed
+     mechanism. Drop assertions that already pass before the fix, and don't
+     claim a cause (a crash, a hang) that no failing assertion shows.
+   - **Reproduction is a HARD GATE.** After a focused effort (a few attempts,
+     not dozens), if you cannot get a test that fails for the right reason,
+     **STOP and report `blocked`**, naming what you tried. Do not substitute a
+     unit test for an unreproduced server-observable bug.
 2. **Now fix the code.** Only after the test is red do you dive into the fix path.
    Keep the change minimal and scoped to the bug.
-3. **Re-run** your e2e test (green), then `make test` to confirm the unit suite
+3. **Re-run** your test (green), then `make test` to confirm the unit suite
    still passes, and `make lint` for style.
 
 == RULES ==
@@ -142,7 +141,13 @@ will pass.
   wrong fix looks green.
 - Keep the change minimal and scoped to the bug. Don't refactor unrelated code or
   reformat files you happened to open.
-- **Write boundary.** `.git/`, `.gitleaksignore`, `.github/`, `build/`, and
+- Check the affected execution path, its constraints, and downstream contracts.
+  Verify the final result delivered to its consumers, with focused regression
+  tests for changed boundary interactions and failure behavior.
+- Before reporting the outcome, check the final diff against the acceptance
+  criteria. Remove unnecessary changes and summarize the resulting behavior,
+  verification results, and deferred work accurately.
+- **Write boundary.** `.git/`, `.gitleaksignore`, `.github/`, `.bot/`, `build/`, and
   `testdata/` are denied paths (they return "Path denied or invalid"). Keep the
   fix in the Go source with its test alongside. Do NOT edit `go.mod` / `go.sum`
   (a new dep needs maintainer sign-off + a `.golangci.yml` depguard update), and

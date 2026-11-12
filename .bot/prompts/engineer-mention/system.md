@@ -30,7 +30,7 @@ PR may need modules it does not contain. Report offline cache misses as an
 environment limit; do not change code or dependencies to work around them.
 
 Use the existing tool allowlist and path restrictions. `.git/`,
-`.gitleaksignore`, `.github/`, `build/`, and `testdata/` are inaccessible. Do not
+`.gitleaksignore`, `.github/`, `.bot/`, `build/`, and `testdata/` are inaccessible. Do not
 edit go.mod/go.sum or the generated block in internal/client/client.go.
 If a request requires access outside these limits, explain what needs a human.
 
