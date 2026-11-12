@@ -26,13 +26,16 @@ max_replies_per_thread: 5
 # go.sum / .golangci.yml / Makefile / .github/, and note that
 # internal/client/client.go contains a `stringer`-GENERATED block (a fix should
 # not hand-edit the generated section).
+# Deny .bot/ so an agent cannot change its own allowlist or instructions.
 denied_subpaths:
+  - .bot
   - .github
   - build
   - testdata
 
 # Filled from the tracking ISSUE the maintainer labelled. (pr_body_template has no
-# engine default, so it stays required here.)
+# engine default, so it stays required here.) Omit files_changed: follow-up
+# pushes cannot refresh that inventory, so it would go stale.
 pr_body_template: |-
   ## Summary
 
@@ -42,9 +45,6 @@ pr_body_template: |-
 
   ## Root cause & plan
   {plan}
-
-  ## Files changed
-  {files_changed}
 
   ## Test plan
   {test_plan}
