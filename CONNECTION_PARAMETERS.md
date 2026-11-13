@@ -175,7 +175,7 @@ an internal setting) and non-Arrow values also retain legacy session-location pa
 | DSN parameter | Connector option | Thrift | Kernel | Default | Notes |
 |---|---|:---:|:---:|---|---|
 | `useCloudFetch` | `WithCloudFetch` | ✅ | ✅ | `true` | Set false to fetch complete results through the SQL connection without direct cloud-storage access. |
-| `maxDownloadThreads` | `WithMaxDownloadThreads` | ✅ | ⚠️ | `10` | Concurrent download goroutines (Thrift). Inert on the kernel path. |
+| `maxDownloadThreads` | `WithMaxDownloadThreads` | ✅ | ⚠️ | `10` | Concurrent download goroutines (Thrift). A value <= 0 logs a warning and uses the default. Inert on the kernel path. |
 | | `WithKernelMaxChunksInMemory(n)` | ❌ | ✅ | kernel default (16) | Bounds decompressed Cloud Fetch chunks held in memory — trades large-result throughput for peak memory. |
 
 ## TLS
