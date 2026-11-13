@@ -896,6 +896,42 @@ func TestE2ECloudFetchNonPositiveMaxDownloadThreads(t *testing.T) {
 	require.Positive(t, transport.downloads.Load(), "expected the result to be fetched over CloudFetch")
 }
 
+// testDSNQueryTimeout runs SELECT 1 through a DSN with each accepted timeout and
+// checks that a timeout overflowing time.Duration fails sql.Open (#490).
+func testDSNQueryTimeout(t *testing.T, params string, accepted ...string) {
+	host, httpPath, token := pecoTestingCreds(t)
+	_, hostname := parseHostName(host)
+	dsn := func(timeout string) string {
+		u := url.URL{
+			Scheme:   "https",
+			User:     url.UserPassword("token", token),
+			Host:     hostname + ":443",
+			Path:     httpPath,
+			RawQuery: params + "timeout=" + timeout,
+		}
+		return u.String()
+	}
+
+	for _, timeout := range accepted {
+		t.Run("timeout="+timeout, func(t *testing.T) {
+			db, err := sql.Open("databricks", dsn(timeout))
+			require.NoError(t, err)
+			defer db.Close() //nolint:errcheck
+			var one int
+			require.NoError(t, db.QueryRowContext(context.Background(), "SELECT 1").Scan(&one))
+			require.Equal(t, 1, one)
+		})
+	}
+
+	_, err := sql.Open("databricks", dsn("9223372037"))
+	require.ErrorIs(t, err, dbsqlerr.RequestError)
+	require.ErrorContains(t, err, "param timeout with value 9223372037 is out of range")
+}
+
+func TestE2EDSNQueryTimeout(t *testing.T) {
+	testDSNQueryTimeout(t, "", "60", "-1")
+}
+
 // TestE2ETimestampNTZTypeName asserts that a zoned TIMESTAMP and a TIMESTAMP_NTZ
 // in the same result set report distinct database type names. The Databricks
 // TIMESTAMP_NTZ type is a wall-clock value with no zone; it must be reported as
