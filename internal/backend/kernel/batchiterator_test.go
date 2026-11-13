@@ -12,10 +12,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/apache/arrow/go/v12/arrow"
-	"github.com/apache/arrow/go/v12/arrow/array"
-	"github.com/apache/arrow/go/v12/arrow/ipc"
-	"github.com/apache/arrow/go/v12/arrow/memory"
+	"github.com/apache/arrow-go/v18/arrow"
+	"github.com/apache/arrow-go/v18/arrow/array"
+	"github.com/apache/arrow-go/v18/arrow/ipc"
+	"github.com/apache/arrow-go/v18/arrow/memory"
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 	"github.com/databricks/databricks-sql-go/internal/arrowscan"
 	dbsqlrows "github.com/databricks/databricks-sql-go/internal/rows"
@@ -137,7 +137,7 @@ func TestRowsTimestampNTZWithServerSchema(t *testing.T) {
 	defer builder.Release()
 	builder.Field(0).(*array.TimestampBuilder).Append(arrow.Timestamp(wall.Add(4 * time.Hour).UnixMicro()))
 	builder.Field(1).(*array.TimestampBuilder).Append(arrow.Timestamp(wall.UnixMicro()))
-	record := builder.NewRecord()
+	record := builder.NewRecordBatch()
 	defer record.Release()
 	rowSet := &kernelRows{
 		op: &kernelOp{location: location}, cur: record,

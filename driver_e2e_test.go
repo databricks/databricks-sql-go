@@ -7,10 +7,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
+	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"strconv"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -798,6 +802,94 @@ func TestE2ECloudFetchExactRowCount(t *testing.T) {
 	}
 
 	require.Equal(t, int64(wantRows), rowCount, "CloudFetch must surface exactly the requested rows, with no Arrow padding")
+}
+
+// cloudDownloadCounter counts requests sent to hosts other than the warehouse,
+// i.e. CloudFetch presigned-URL downloads.
+type cloudDownloadCounter struct {
+	warehouseHost string
+	downloads     atomic.Int64
+}
+
+// newCloudDownloadCounter accepts the hostname forms WithServerHostname does
+// (optional scheme, optional port).
+func newCloudDownloadCounter(serverHostname string) *cloudDownloadCounter {
+	_, host := parseHostName(serverHostname)
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	return &cloudDownloadCounter{warehouseHost: host}
+}
+
+func (c *cloudDownloadCounter) RoundTrip(req *http.Request) (*http.Response, error) {
+	if !strings.EqualFold(req.URL.Hostname(), c.warehouseHost) {
+		c.downloads.Add(1)
+	}
+	return http.DefaultTransport.RoundTrip(req)
+}
+
+func TestCloudDownloadCounterIgnoresWarehouseHost(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer server.Close()
+	u, err := url.Parse(server.URL)
+	require.NoError(t, err)
+
+	cases := []struct {
+		serverHostname string
+		wantDownloads  int64
+	}{
+		{"127.0.0.1", 0},
+		{"http://127.0.0.1", 0},
+		{"HTTP://127.0.0.1", 0},
+		{"http://" + u.Host, 0},
+		{u.Host, 0},
+		{"https://example.cloud.databricks.com", 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.serverHostname, func(t *testing.T) {
+			counter := newCloudDownloadCounter(tc.serverHostname)
+			resp, err := (&http.Client{Transport: counter}).Post(server.URL, "application/x-thrift", nil)
+			require.NoError(t, err)
+			require.NoError(t, resp.Body.Close())
+			assert.Equal(t, tc.wantDownloads, counter.downloads.Load())
+		})
+	}
+}
+
+// TestE2ECloudFetchNonPositiveMaxDownloadThreads is the live regression guard for
+// issue #439: a non-positive download-thread count must degrade to the default
+// instead of failing the first CloudFetch read with "... not contained in any
+// arrow batch: EOF".
+func TestE2ECloudFetchNonPositiveMaxDownloadThreads(t *testing.T) {
+	host, httpPath, token := pecoTestingCreds(t)
+
+	const wantRows = 300000
+	transport := newCloudDownloadCounter(host)
+	connector, err := NewConnector(
+		WithServerHostname(host),
+		WithPort(443),
+		WithHTTPPath(httpPath),
+		WithAccessToken(token),
+		WithTransport(transport),
+		WithMaxDownloadThreads(-1),
+	)
+	require.NoError(t, err)
+
+	db := sql.OpenDB(connector)
+	defer db.Close() //nolint:errcheck
+
+	rows, err := db.QueryContext(context.Background(),
+		fmt.Sprintf("SELECT id, repeat('x', 64) AS pad FROM range(%d)", wantRows))
+	require.NoError(t, err)
+	defer rows.Close() //nolint:errcheck
+
+	var n int
+	for rows.Next() {
+		n++
+	}
+	require.NoError(t, rows.Err())
+	require.Equal(t, wantRows, n)
+	require.Positive(t, transport.downloads.Load(), "expected the result to be fetched over CloudFetch")
 }
 
 // TestE2ETimestampNTZTypeName asserts that a zoned TIMESTAMP and a TIMESTAMP_NTZ

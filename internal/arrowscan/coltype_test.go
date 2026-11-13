@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/apache/arrow/go/v12/arrow"
+	"github.com/apache/arrow-go/v18/arrow"
 )
 
 // TestColumnTypeInfoFor pins the Arrow → column-metadata mapping so it stays

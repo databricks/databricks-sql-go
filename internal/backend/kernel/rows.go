@@ -21,8 +21,8 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/apache/arrow/go/v12/arrow"
-	"github.com/apache/arrow/go/v12/arrow/cdata"
+	"github.com/apache/arrow-go/v18/arrow"
+	"github.com/apache/arrow-go/v18/arrow/cdata"
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 	"github.com/databricks/databricks-sql-go/internal/arrowscan"
 	context2 "github.com/databricks/databricks-sql-go/internal/compat/context"
@@ -52,7 +52,7 @@ var (
 //
 // The batch/row split mirrors the kernel's own ResultStream: next_batch does the
 // per-batch network/decode work once; row reads walk the already-imported
-// arrow.Record with O(1) indexing.
+// arrow.RecordBatch with O(1) indexing.
 type kernelRows struct {
 	// ctx is detached from the caller's QueryContext (via context2.WithoutCancel)
 	// so a submit-gating deadline can't truncate a large CloudFetch stream, matching
@@ -68,7 +68,7 @@ type kernelRows struct {
 	geoBinary  []bool                     // top-level logical geo structs become EWKB for database/sql
 	ntz        []bool                     // top-level TIMESTAMP_NTZ columns scan in UTC, not the session location
 	schema     *arrow.Schema              // result-set schema, for GetArrowBatches().Schema()
-	cur        arrow.Record               // current batch (nil until first Next)
+	cur        arrow.RecordBatch          // current batch (nil until first Next)
 	rowInCur   int                        // next row index within cur
 	chunkCount int                        // cumulative batches fetched, for OnChunkFetched
 	closed     bool
@@ -297,7 +297,7 @@ func (r *kernelRows) nextBatch() error {
 		return io.EOF
 	}
 	// Zero-copy import. The kernel exports self-contained batches (Rust to_ffi
-	// moves the Arc-owned buffers in), so the arrow.Record safely outlives the
+	// moves the Arc-owned buffers in), so the arrow.RecordBatch safely outlives the
 	// stream; we still Release each batch explicitly as we advance.
 	rec, err := cdata.ImportCRecordBatch(
 		(*cdata.CArrowArray)(unsafe.Pointer(&carr)),
@@ -325,7 +325,7 @@ func (r *kernelRows) nextBatch() error {
 	return nil
 }
 
-// GetArrowBatches exposes the kernel stream as an arrow.Record iterator (the
+// GetArrowBatches exposes the kernel stream as an arrow.RecordBatch iterator (the
 // public zero-copy batch API), reusing the row scanner's next_batch pull. Callers
 // MUST Release() each record.
 func (r *kernelRows) GetArrowBatches(context.Context) (dbrows.ArrowBatchIterator, error) {
@@ -345,9 +345,9 @@ func (r *kernelRows) GetArrowIPCStreams(context.Context) (dbrows.ArrowIPCStreamI
 // each record's ownership to the caller, who must Release it.
 type kernelBatchIterator struct {
 	r       *kernelRows
-	pending arrow.Record // prefetched, not yet handed out
-	done    bool         // stream drained (io.EOF seen)
-	err     error        // sticky fetch error, surfaced by Next
+	pending arrow.RecordBatch // prefetched, not yet handed out
+	done    bool              // stream drained (io.EOF seen)
+	err     error             // sticky fetch error, surfaced by Next
 }
 
 var _ dbrows.ArrowBatchIterator = (*kernelBatchIterator)(nil)
@@ -378,7 +378,7 @@ func (it *kernelBatchIterator) fill() {
 }
 
 // Next returns the next record (caller owns it) or io.EOF when the stream drains.
-func (it *kernelBatchIterator) Next() (arrow.Record, error) {
+func (it *kernelBatchIterator) Next() (arrow.RecordBatch, error) {
 	it.fill()
 	if it.err != nil {
 		// Surface a fetch error exactly once, then terminate the iterator: mark
