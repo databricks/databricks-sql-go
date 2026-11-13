@@ -40,10 +40,11 @@ func TestOOpenConnector(t *testing.T) {
 
 	t.Run("Should reject a timeout that overflows time.Duration", func(t *testing.T) {
 		d := &databricksDriver{}
+		// 32-bit platforms reject this value in strconv.Atoi, before the range check.
 		_, err := d.OpenConnector("token:token@databricks-host:443/http-path?timeout=9223372037")
 		require.Error(t, err)
 		assert.ErrorIs(t, err, dbsqlerr.RequestError)
-		assert.ErrorContains(t, err, "param timeout with value 9223372037 is out of range")
+		assert.ErrorContains(t, err, "param timeout with value 9223372037")
 
 		c, err := d.OpenConnector("token:token@databricks-host:443/http-path?timeout=-1")
 		require.NoError(t, err)
