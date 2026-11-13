@@ -703,6 +703,47 @@ func TestBuildKernelConfig(t *testing.T) {
 		}
 	})
 
+	// The kernel prefetches connector-service flags whenever the identity is set;
+	// with telemetry explicitly off nothing reads them (#499).
+	t.Run("driver identity omitted only when telemetry is explicitly disabled", func(t *testing.T) {
+		for _, tc := range []struct {
+			name         string
+			dsnValue     string
+			wantIdentity bool
+		}{
+			{name: "unset", wantIdentity: true},
+			{name: "true", dsnValue: "true", wantIdentity: true},
+			{name: "TRUE", dsnValue: "TRUE", wantIdentity: true},
+			{name: "1", dsnValue: "1", wantIdentity: true},
+			{name: "false", dsnValue: "false"},
+			{name: "FALSE", dsnValue: "FALSE"},
+			{name: "0", dsnValue: "0"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				dsn := "token:dapi-x@h.databricks.com:443/sql/1.0/warehouses/abc?useKernel=true"
+				if tc.dsnValue != "" {
+					dsn += "&enableTelemetry=" + tc.dsnValue
+				}
+				ucfg, err := config.ParseDSN(dsn)
+				if err != nil {
+					t.Fatalf("ParseDSN: %v", err)
+				}
+				c := baseKernelConfig()
+				c.EnableTelemetry = ucfg.EnableTelemetry
+				kc := buildKernelConfig(c, kernel.Auth{Mode: kernel.AuthPAT, Token: "dapi-x"})
+				if got := kc.DriverSystemConfiguration != nil; got != tc.wantIdentity {
+					t.Errorf("DriverSystemConfiguration present = %v, want %v", got, tc.wantIdentity)
+				}
+				if kc.Telemetry == nil {
+					t.Fatal("Telemetry not forwarded")
+				}
+				if (tc.dsnValue == "") != (kc.Telemetry.Enabled == nil) {
+					t.Errorf("Telemetry.Enabled = %v for enableTelemetry=%q", kc.Telemetry.Enabled, tc.dsnValue)
+				}
+			})
+		}
+	})
+
 	for _, enabled := range []bool{false, true} {
 		t.Run(fmt.Sprintf("CloudFetch enabled=%v", enabled), func(t *testing.T) {
 			c := baseKernelConfig()
