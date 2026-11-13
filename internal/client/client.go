@@ -17,6 +17,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
@@ -57,7 +58,22 @@ const (
 	// outcome surfaced individually (e.g. the telemetry exporter, whose
 	// circuit breaker is the sole arbiter of when to back off).
 	SkipTransientRetries
+	attemptStateKey
 )
+
+// attemptState tracks the current HTTP attempt of an ExecuteStatement call.
+type attemptState struct {
+	// redirected is set once the attempt follows a redirect: an earlier hop
+	// then received the request, so a later dial error doesn't prove it unsent.
+	redirected atomic.Bool
+}
+
+// sentByEarlierHop reports whether the current attempt may already have
+// delivered the request. Without attempt tracking it assumes so.
+func sentByEarlierHop(ctx context.Context) bool {
+	s, ok := ctx.Value(attemptStateKey).(*attemptState)
+	return !ok || s.redirected.Load()
+}
 
 // WithSkipTransientRetries returns a context that disables retryablehttp's
 // retries for the transient-server-response codes (429 + 503). The caller
@@ -195,6 +211,7 @@ func (tsc *ThriftServiceClient) GetResultSetMetadata(ctx context.Context, req *c
 // If RecordResults is true, the results will be marshalled to JSON format and written to ExecuteStatement<index>.json
 func (tsc *ThriftServiceClient) ExecuteStatement(ctx context.Context, req *cli_service.TExecuteStatementReq) (*cli_service.TExecuteStatementResp, error) {
 	ctx = startClientMethod(ctx, clientMethodExecuteStatement)
+	ctx = context.WithValue(ctx, attemptStateKey, &attemptState{})
 	var log *logger.DBSQLLogger
 	log, ctx = LoggerAndContext(ctx, req)
 	msg, start := log.Track("ExecuteStatement")
@@ -544,6 +561,12 @@ type Transport struct {
 }
 
 func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
+	// http.Client sets Response only on the requests it creates to follow a
+	// redirect, and each retry attempt starts with the original request.
+	if s, ok := req.Context().Value(attemptStateKey).(*attemptState); ok {
+		s.redirected.Store(req.Response != nil)
+	}
+
 	if t.trace {
 		trace := &httptrace.ClientTrace{
 			GotConn: func(info httptrace.GotConnInfo) { log.Printf("conn was reused: %t", info.Reused) },
@@ -738,7 +761,9 @@ func RetryPolicy(ctx context.Context, resp *http.Response, err error) (bool, err
 	_, nonRetryableClientMethod := nonRetryableClientMethods[caller]
 
 	if err != nil {
-		if isRetryableError(err) && !nonRetryableClientMethod {
+		// ExecuteStatement is not idempotent, so it retries only requests that were never sent.
+		if isRetryableError(err) && (!nonRetryableClientMethod ||
+			caller == clientMethodExecuteStatement && isDialError(err) && !sentByEarlierHop(ctx)) {
 			return true, nil
 		}
 
@@ -804,6 +829,28 @@ func isRetryableError(err error) bool {
 
 	// The error is likely recoverable so retry.
 	return true
+}
+
+// isDialError reports whether err came from dialing the server or proxy, so
+// no request bytes were sent and a non-idempotent request can be retried.
+// TLS handshake, read and write failures happen after the dial and never match.
+func isDialError(err error) bool {
+	if errors.Is(err, context.Canceled) {
+		return false
+	}
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) && dnsErr.IsNotFound {
+		return false
+	}
+	var opErr *net.OpError
+	if !errors.As(err, &opErr) {
+		return false
+	}
+	// net/http reports a failed proxy dial as proxyconnect wrapping the dial error.
+	if opErr.Op == "proxyconnect" && !errors.As(opErr.Err, &opErr) {
+		return false
+	}
+	return opErr.Op == "dial"
 }
 
 func backoff(min, max time.Duration, attemptNum int, resp *http.Response) time.Duration {
