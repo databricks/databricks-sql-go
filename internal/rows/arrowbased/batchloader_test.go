@@ -1004,7 +1004,11 @@ func TestCloudFetchIterator_CloseReleasesInFlightDownloads(t *testing.T) {
 
 	// Kick off the first batch download. The iterator schedules
 	// MaxDownloadThreads concurrent fetches behind the scenes.
-	go func() { _, _ = bi.Next() }()
+	nextDone := make(chan struct{})
+	go func() {
+		defer close(nextDone)
+		_, _ = bi.Next()
+	}()
 
 	// Wait for all MaxDownloadThreads goroutines to be blocked inside the
 	// server handler (they've issued the GET and are waiting for the body).
@@ -1018,9 +1022,12 @@ func TestCloudFetchIterator_CloseReleasesInFlightDownloads(t *testing.T) {
 	// will be queued, blocked on the send.
 	close(release)
 
-	// Give the goroutines time to finish their HTTP work and reach the
-	// channel send.
-	time.Sleep(200 * time.Millisecond)
+	// Serialize iterator access while the other downloads remain in flight.
+	select {
+	case <-nextDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("foreground Next did not finish")
+	}
 
 	// Close the iterator without consuming the remaining batches.
 	bi.Close()
@@ -1114,7 +1121,11 @@ func TestCloudFetchIterator_CloseReleasesAfterRetry(t *testing.T) {
 
 	// One foreground reader. It drains exactly one batch and then exits;
 	// the remaining MaxDownloadThreads-1 in-flight tasks have nobody reading.
-	go func() { _, _ = bi.Next() }()
+	nextDone := make(chan struct{})
+	go func() {
+		defer close(nextDone)
+		_, _ = bi.Next()
+	}()
 
 	// Wait for every concurrent task to have completed its 503 retry, slept
 	// the backoff, and reached its second-attempt handler (where it's
@@ -1131,8 +1142,12 @@ func TestCloudFetchIterator_CloseReleasesAfterRetry(t *testing.T) {
 	// goroutines park on resultChan (via sendResult).
 	close(release)
 
-	// Give the goroutines time to reach the channel send.
-	time.Sleep(200 * time.Millisecond)
+	// Serialize iterator access while the other downloads remain in flight.
+	select {
+	case <-nextDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("foreground Next did not finish")
+	}
 
 	// Close without draining. cft.ctx is cancelled for every queued task,
 	// so each parked sendResult must unblock via its ctx.Done arm.
