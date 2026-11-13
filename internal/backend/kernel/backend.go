@@ -67,6 +67,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -298,12 +299,29 @@ func (k *KernelBackend) OpenSession(ctx context.Context) error {
 		}
 	}
 
+	if k.cfg.CloudFetchEnabled != nil {
+		key := newCStr("cloudfetch_enabled")
+		value := newCStr(strconv.FormatBool(*k.cfg.CloudFetchEnabled))
+		errSet := call(func() C.KernelStatusCode {
+			return C.kernel_session_config_set_client_conf(cfg, key.c, value.c)
+		})
+		key.free()
+		value.free()
+		if errSet != nil {
+			return fmt.Errorf("kernel: set_client_conf[cloudfetch_enabled]: %w", toConnError(errSet))
+		}
+	}
+
 	// Log the resolved retry policy + CloudFetch chunk cap before connecting, so if a
 	// customer reports a hung connect or a large-result OOM, on-call can see from the
 	// debug log what was actually applied (these are otherwise silent — forwarded to
 	// the kernel with no observable trace). Kept at Debug and cheap to format.
-	klogCtx(ctx, "OpenSession resolved: retry=%s cloudfetchMaxChunksInMemory=%s",
-		describeRetry(k.cfg.Retry), k.cfg.SessionConf[kernelMaxChunksInMemoryConfKey])
+	cloudFetchOption := "unset"
+	if k.cfg.CloudFetchEnabled != nil {
+		cloudFetchOption = strconv.FormatBool(*k.cfg.CloudFetchEnabled)
+	}
+	klogCtx(ctx, "OpenSession resolved: retry=%s cloudfetchMaxChunksInMemory=%s cloudFetchOption=%s",
+		describeRetry(k.cfg.Retry), k.cfg.SessionConf[kernelMaxChunksInMemoryConfKey], cloudFetchOption)
 
 	// kernel_session_open takes ownership of cfg here. Its documented C-ABI
 	// contract (databricks_kernel.h: "CONSUMES config on both success and failure

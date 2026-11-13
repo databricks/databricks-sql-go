@@ -2,6 +2,7 @@
 
 ## Unreleased
 - Support SQL PUT, GET, and REMOVE through kernel-backed `ExecContext` with a staging context. Kernel-backed `QueryContext` now returns raw transfer instructions, matching Thrift, instead of `ErrNotSupportedByKernel`; it does not transfer files. Callers should review fallback handling that depends on that error and use `ExecContext` to complete transfers.
+- Honor `WithCloudFetch(false)` / `useCloudFetch=false` on the kernel backend to fetch complete results without cloud-storage downloads. The option overrides conflicting session configuration and remains effective after automatic backend recovery. Servers without paged inline support return a configuration error; the driver does not fall back to storage downloads.
 
 ## v1.19.0 (2026-11-04)
 - Upgrade the SQL kernel bindings to v1.4.0.

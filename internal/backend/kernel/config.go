@@ -44,6 +44,9 @@ type Config struct {
 	// Thrift backend forwards (STATEMENT_TIMEOUT, QUERY_TAGS, TIMEZONE, …).
 	SessionConf map[string]string
 
+	// Nil preserves the kernel default and any raw session configuration.
+	CloudFetchEnabled *bool
+
 	// TLSSkipVerify accepts any server cert (maps the driver's
 	// WithSkipTLSHostVerify / TLSConfig.InsecureSkipVerify). crypto/tls's
 	// InsecureSkipVerify disables both chain validation and the hostname check,
