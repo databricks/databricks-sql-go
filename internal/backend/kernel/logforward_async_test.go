@@ -60,6 +60,25 @@ func TestEnqueueKernelLogDropsWhenFullAndNoopWhenUnset(t *testing.T) {
 	}
 }
 
+// startDrain runs drainKernelLogs and joins it at cleanup. observe fires before
+// forward writes, so an unjoined drain can write into a later test's log output.
+func startDrain(t *testing.T, ch chan kernelLogRecord, sink *logSink) {
+	t.Helper()
+	drained := make(chan struct{})
+	go func() {
+		defer close(drained)
+		drainKernelLogs(ch, sink)
+	}()
+	t.Cleanup(func() {
+		close(ch)
+		select {
+		case <-drained:
+		case <-time.After(5 * time.Second):
+			t.Error("drain goroutine did not return after its channel was closed")
+		}
+	})
+}
+
 // A panicking writer must not kill the drain goroutine (an unrecovered goroutine
 // panic is fatal to the process); the drain contains it and keeps processing.
 func TestDrainRecoversFromWriterPanic(t *testing.T) {
@@ -75,8 +94,7 @@ func TestDrainRecoversFromWriterPanic(t *testing.T) {
 	}
 
 	ch := make(chan kernelLogRecord, 2)
-	go drainKernelLogs(ch, sink)
-	defer close(ch)
+	startDrain(t, ch, sink)
 
 	ch <- kernelLogRecord{level: "error", target: "t", message: "boom"} // triggers the panic
 	ch <- kernelLogRecord{level: "info", target: "t", message: "after"} // must still be delivered
@@ -122,10 +140,9 @@ func TestDrainContainsPanicFromForwardAndDropWarning(t *testing.T) {
 	}
 
 	ch := make(chan kernelLogRecord, 4)
+	startDrain(t, ch, sink) // registered first so cleanup unpublishes ch before closing it
 	prev := logQueue.Swap(&ch)
 	t.Cleanup(func() { logQueue.Store(prev) })
-	go drainKernelLogs(ch, sink)
-	defer close(ch)
 
 	enqueueKernelLog(time.Now(), "info", "databricks::sql::kernel", "boom")
 	enqueueKernelLog(time.Now(), "info", "databricks::sql::kernel", "after")
