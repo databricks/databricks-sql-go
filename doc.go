@@ -132,6 +132,7 @@ External id, such as request ID, to track what happens under a request. Useful t
 
 Use the logger package under logger.go to set up logging (from zerolog).
 By default, logging level is `warn`. If you want to disable logging, use `disabled`.
+Level names are case-insensitive in SetLogLevel and DATABRICKS_LOG_LEVEL.
 The user can also utilize Track() and Duration() to custom log the elapsed time of anything tracked.
 
 	import (
@@ -194,12 +195,12 @@ time rather than silently using Thrift.
 
 Kernel-backend logging uses the same knob as the rest of the driver: the
 binding-layer trace is emitted through the shared logger at Debug level, so
-DATABRICKS_LOG_LEVEL=debug or dbsql.SetLogLevel("debug") turns it on and it lands in
+DATABRICKS_LOG_LEVEL=debug or logger.SetLogLevel("debug") turns it on and it lands in
 the driver's normal sink (including a custom logger.SetLogOutput). Where a context is
 in scope, lines carry the usual connId/corrId/queryId fields. At the default Warn
 level the lines are suppressed with no cost.
 
-	dbsql.SetLogLevel("debug") // or DATABRICKS_LOG_LEVEL=debug
+	logger.SetLogLevel("debug") // or DATABRICKS_LOG_LEVEL=debug
 
 The same level is mapped into the kernel's internal (Rust) log subscriber. Its
 records are forwarded into the driver's logger, so they use the same output as the

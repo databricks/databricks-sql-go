@@ -44,6 +44,15 @@ func TestKernelE2ESelect1(t *testing.T) {
 	}
 }
 
+// TestKernelE2ELogLevelNamesAnyCase is the kernel-backend leg of
+// TestE2ELogLevelNamesAnyCase.
+func TestKernelE2ELogLevelNamesAnyCase(t *testing.T) {
+	db := kernelTestDB(t)
+	defer db.Close()
+
+	assertLogLevelNamesE2E(t, db)
+}
+
 // kernelTestDBWith opens a kernel-backed *sql.DB with extra connector options on
 // top of the base host/path/PAT, or skips when creds are unset. It is the config
 // counterpart to kernelTestDB.

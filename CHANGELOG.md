@@ -1,6 +1,7 @@
 # Release History
 
 ## Unreleased
+- **Behavior change:** `logger.SetLogLevel` and `DATABRICKS_LOG_LEVEL` accept level names in any case (for example `DEBUG` or `Info`). Previously these were rejected, and an environment value such as `DATABRICKS_LOG_LEVEL=DEBUG` was ignored in favor of `warn`. `SetLogLevel` also logs a warning naming an unrecognized value; it still returns the error and keeps the current level (databricks/databricks-sql-go#441).
 - Honor `WithCloudFetch(false)` / `useCloudFetch=false` on the kernel backend to fetch complete results without cloud-storage downloads. The option overrides conflicting session configuration and remains effective after automatic backend recovery. Servers without paged inline support return a configuration error; the driver does not fall back to storage downloads.
 
 ## v1.19.0 (2026-11-04)

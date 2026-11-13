@@ -1,11 +1,15 @@
 package logger
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"runtime"
+	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/mattn/go-isatty"
 	"github.com/rs/zerolog"
@@ -114,7 +118,7 @@ func init() {
 	// by default only log warns or above
 	loglvl := zerolog.WarnLevel
 	if lvst := os.Getenv("DATABRICKS_LOG_LEVEL"); lvst != "" {
-		if lv, err := zerolog.ParseLevel(lvst); err != nil {
+		if lv, err := parseLevel(lvst); err != nil {
 			Logger.Error().Msgf("log level %s not recognized", lvst)
 		} else {
 			loglvl = lv
@@ -125,14 +129,51 @@ func init() {
 }
 
 // Sets log level. Default is "warn"
-// Available levels are: "trace" "debug" "info" "warn" "error" "fatal" "panic" or "disabled"
+// Available levels are: "trace" "debug" "info" "warn" "error" "fatal" "panic" or "disabled",
+// in any case. An unrecognized value returns an error, logs a warning, and keeps the current level.
 func SetLogLevel(l string) error {
-	if lv, err := zerolog.ParseLevel(l); err != nil {
+	lv, err := parseLevel(l)
+	if err != nil {
+		Logger.Warn().Msgf("log level %s not recognized; keeping %s", quoteForLog(l), Logger.GetLevel())
 		return err
-	} else {
-		Logger.Logger = Logger.Level(lv)
-		return nil
 	}
+	Logger.Logger = Logger.Level(lv)
+	return nil
+}
+
+var namedLevels = []zerolog.Level{
+	zerolog.TraceLevel, zerolog.DebugLevel, zerolog.InfoLevel, zerolog.WarnLevel,
+	zerolog.ErrorLevel, zerolog.FatalLevel, zerolog.PanicLevel, zerolog.Disabled,
+}
+
+// parseLevel is zerolog.ParseLevel with case-insensitive names (v1.28 matches
+// only the exact spelling). A name matches a level's canonical name or its
+// zerolog.LevelFieldMarshalFunc spelling.
+func parseLevel(l string) (zerolog.Level, error) {
+	lv, err := zerolog.ParseLevel(l)
+	if err == nil {
+		return lv, nil
+	}
+	for _, named := range namedLevels {
+		if strings.EqualFold(l, named.String()) || strings.EqualFold(l, zerolog.LevelFieldMarshalFunc(named)) {
+			return named, nil
+		}
+	}
+	return lv, err
+}
+
+const maxLoggedValueLen = 64
+
+// quoteForLog quotes v, keeping at most maxLoggedValueLen bytes of it.
+func quoteForLog(v string) string {
+	if len(v) <= maxLoggedValueLen {
+		return strconv.Quote(v)
+	}
+	cut := maxLoggedValueLen
+	for i := 0; i < utf8.UTFMax && cut > 0 && !utf8.RuneStart(v[cut]); i++ {
+		cut--
+	}
+	return fmt.Sprintf("%q... (%d bytes)", v[:cut], len(v))
 }
 
 // Sets logging output. Default is os.Stderr. If in terminal, pretty logs are enabled.
