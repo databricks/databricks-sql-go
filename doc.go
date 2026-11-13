@@ -227,8 +227,7 @@ RetryWaitMin / RetryWaitMax / RetryMax, including the disable form, forwarded to
 kernel's HTTP retry config); and the TLS, proxy, and session-conf (query tags,
 statement timeout, time zone) options. Federated token providers use one token snapshot
 during setup. Nothing is silently ignored: WithTimeout and token-provider / external /
-static authenticators are rejected at connect; staging (PUT/GET/REMOVE on a
-Unity Catalog volume) is rejected at execute. WithMaxRows is accepted but inert (the
+static authenticators are rejected at connect. WithMaxRows is accepted but inert (the
 kernel manages fetching below the C ABI).
 
 Kernel HTTP requests inherit the driver's ClientTimeout (900s by default). If
@@ -367,6 +366,13 @@ The Go driver now supports staging operations. In order to use a staging operati
 After doing so, you can execute staging operations using this context using the exec context.
 
 	_, err1 := db.ExecContext(ctx, `PUT 'staging/file.csv' INTO '/Volumes/main/staging_test/e2etests/file.csv' OVERWRITE`)
+
+With the kernel backend, ExecContext completes the transfer and reports zero
+rows affected. QueryContext returns raw instruction rows without file effects.
+Both the requested local path and its resolved symlink target must remain
+within the configured staging roots. Symlinks within those roots are permitted;
+escapes are rejected, which is stricter than Thrift's requested-path check.
+The staging context is required for REMOVE as well as PUT and GET.
 
 # Errors
 

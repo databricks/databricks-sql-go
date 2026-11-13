@@ -17,7 +17,9 @@ import (
 	"github.com/apache/thrift/lib/go/thrift"
 	"github.com/pkg/errors"
 
+	"github.com/databricks/databricks-sql-go/driverctx"
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
+	"github.com/databricks/databricks-sql-go/internal/backend"
 	thriftbackend "github.com/databricks/databricks-sql-go/internal/backend/thrift"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/client"
@@ -973,4 +975,37 @@ func TestConn_handleStagingRetry(t *testing.T) {
 		// regression where cancellation is honored only at retry boundaries.
 		assert.Less(t, elapsed, 2*time.Second, "context cancel should abort PUT retry backoff promptly")
 	})
+}
+
+type nativeStagingStub struct {
+	backend.Operation
+	marked    bool
+	completed bool
+	err       error
+}
+
+func (o *nativeStagingStub) StatementID() string                     { return "volume-test" }
+func (o *nativeStagingStub) IsStaging(context.Context) (bool, error) { return o.marked, nil }
+func (o *nativeStagingStub) CompleteStaging(context.Context) error   { o.completed = true; return o.err }
+
+func TestConnNativeStagingDispatch(t *testing.T) {
+	for _, tc := range []struct {
+		name                               string
+		marked, roots, wantCall, wantError bool
+	}{
+		{"ordinary query", false, true, false, false},
+		{"missing roots", true, false, false, true},
+		{"native completion", true, true, true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			if tc.roots {
+				ctx = driverctx.NewContextWithStagingInfo(ctx, []string{t.TempDir()})
+			}
+			op := &nativeStagingStub{marked: tc.marked}
+			err := (&conn{}).execStagingOperation(op, ctx)
+			assert.Equal(t, tc.wantError, err != nil)
+			assert.Equal(t, tc.wantCall, op.completed)
+		})
+	}
 }
