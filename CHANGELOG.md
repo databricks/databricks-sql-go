@@ -1,6 +1,7 @@
 # Release History
 
 ## Unreleased
+- Bound each OAuth M2M token request to 60 seconds, so a hung token endpoint no longer blocks every request on the connector indefinitely (databricks/databricks-sql-go#475).
 - Honor `WithCloudFetch(false)` / `useCloudFetch=false` on the kernel backend to fetch complete results without cloud-storage downloads. The option overrides conflicting session configuration and remains effective after automatic backend recovery. Servers without paged inline support return a configuration error; the driver does not fall back to storage downloads.
 
 ## v1.19.0 (2026-11-04)
