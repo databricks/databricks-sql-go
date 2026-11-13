@@ -30,9 +30,12 @@ type thriftOperation struct {
 	// this Operation, so a second call is a no-op per the backend.Operation
 	// idempotency contract.
 	closed bool
+	// resultSetMetadata is the GetResultSetMetadata response IsStaging fetched.
+	resultSetMetadata *cli_service.TGetResultSetMetadataResp
 }
 
 var _ backend.Operation = (*thriftOperation)(nil)
+var _ backend.ResultFormatReporter = (*thriftOperation)(nil)
 
 // hasHandle reports whether the server returned an operation handle. Every
 // accessor tolerates its absence so the non-nil-Operation contract holds even on
@@ -99,7 +102,17 @@ func (o *thriftOperation) IsStaging(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	o.resultSetMetadata = resp
 	return resp.IsStagingOperation != nil && *resp.IsStagingOperation, nil
+}
+
+// ResultFormat reports the execution_result from direct-results metadata or the
+// metadata IsStaging fetched; it never issues an RPC.
+func (o *thriftOperation) ResultFormat() string {
+	if o.exStmtResp != nil && o.exStmtResp.DirectResults != nil && o.exStmtResp.DirectResults.ResultSetMetadata != nil {
+		return dbsqlrows.ExecutionResultFormat(o.exStmtResp.DirectResults.ResultSetMetadata)
+	}
+	return dbsqlrows.ExecutionResultFormat(o.resultSetMetadata)
 }
 
 // Close best-effort closes the server operation. It skips the CloseOperation RPC

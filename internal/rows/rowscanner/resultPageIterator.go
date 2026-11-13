@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"sync/atomic"
 
 	"github.com/databricks/databricks-sql-go/driverctx"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
@@ -28,6 +29,10 @@ type ResultPageIterator interface {
 	// (i.e. the result set was fully consumed).
 	Err() error
 	Close() error
+	// ResultSetMetadata returns the result-set metadata carried by the first
+	// fetched page that included it, or nil if no fetched page has. It never
+	// issues an RPC.
+	ResultSetMetadata() *cli_service.TGetResultSetMetadataResp
 	Delimiter
 }
 
@@ -112,9 +117,23 @@ type resultPageIterator struct {
 
 	// Hold on to errors so they can be returned by Next()
 	err error
+
+	// resultSetMetadata is the metadata from the first fetched page that
+	// carried it. Atomic because Rows.Close may read it from a goroutine other
+	// than the one consuming pages through an Arrow iterator.
+	resultSetMetadata atomic.Pointer[cli_service.TGetResultSetMetadataResp]
 }
 
 var _ ResultPageIterator = (*resultPageIterator)(nil)
+
+// ResultSetMetadata returns the result-set metadata from the first fetched page
+// that included it, or nil. It never issues an RPC.
+func (rpf *resultPageIterator) ResultSetMetadata() *cli_service.TGetResultSetMetadataResp {
+	if rpf == nil {
+		return nil
+	}
+	return rpf.resultSetMetadata.Load()
+}
 
 // Err returns the error, if any, that caused HasNext() to report that there are
 // no more pages. A normal end-of-results (io.EOF) is not considered an error and
@@ -218,6 +237,10 @@ func (rpf *resultPageIterator) getNextPage() (*cli_service.TFetchResultsResp, er
 				return nil, dbsqlerrint.NewRequestError(rpf.ctx, errRowsResultFetchFailed, err)
 			}
 			return nil, dbsqlerrint.NewRequestError(rpf.ctx, errRowsResultFetchFailed, err).WithCategory(dbsqlerrint.CategoryResultSet)
+		}
+
+		if fetchResult.ResultSetMetadata != nil {
+			rpf.resultSetMetadata.CompareAndSwap(nil, fetchResult.ResultSetMetadata)
 		}
 
 		rpf.Delimiter = NewDelimiter(fetchResult.Results.StartRowOffset, CountRows(fetchResult.Results))
