@@ -607,12 +607,12 @@ KernelStatusCode kernel_session_config_set_u2m_token_cache_config(KernelSessionC
  *
  * Recognised keys (case-insensitive):
  * - "cloudfetch_enabled" = "true"|"false" — false serves every result
- *   inline (SEA disposition = INLINE), mirroring JDBC EnableQueryResultDownload=0.
+ *   through paged inline delivery without cloud-storage downloads.
  * - "cloudfetch_link_prefetch_window" = positive integer.
  * - "cloudfetch_max_chunks_in_memory" = positive integer (bounds peak RSS;
  *   values above the kernel ceiling of 256 are clamped with a warning).
  * - "inline_max_chunks_in_memory" = positive integer (inline-Arrow prefetch
- *   window, used when cloudfetch_enabled = false).
+ *   window for paged inline results).
  * - "complex_types_as_json" = "true"|"false" — render ARRAY / MAP / STRUCT /
  *   VARIANT / GEOMETRY / GEOGRAPHY as JSON text (PySQL
  *   _use_arrow_native_complex_types=False, JDBC complexDatatypeSupport=false).
