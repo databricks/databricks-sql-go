@@ -772,6 +772,10 @@ func (arrowConfig ArrowConfig) DeepCopy() ArrowConfig {
 	}
 }
 
+// DefaultMaxDownloadThreads is the CloudFetch download concurrency used when the
+// configured value is unset or not positive.
+const DefaultMaxDownloadThreads = 10
+
 type CloudFetchConfig struct {
 	UseCloudFetch                bool
 	MaxDownloadThreads           int
@@ -785,7 +789,7 @@ func (cfg CloudFetchConfig) WithDefaults() CloudFetchConfig {
 	cfg.UseCloudFetch = true
 
 	if cfg.MaxDownloadThreads <= 0 {
-		cfg.MaxDownloadThreads = 10
+		cfg.MaxDownloadThreads = DefaultMaxDownloadThreads
 	}
 
 	if cfg.MaxFilesInMemory < 1 {

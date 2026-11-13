@@ -171,6 +171,12 @@ func NewConnector(options ...ConnOption) (driver.Connector, error) {
 	for _, opt := range options {
 		opt(cfg)
 	}
+	// Covers the DSN path too, which applies ParseDSN's UserConfig as an option.
+	if cfg.MaxDownloadThreads <= 0 {
+		logger.Warn().Msgf("databricks: maxDownloadThreads (WithMaxDownloadThreads) value %d is not positive; using the default %d",
+			cfg.MaxDownloadThreads, config.DefaultMaxDownloadThreads)
+		cfg.MaxDownloadThreads = config.DefaultMaxDownloadThreads
+	}
 	if err := validateClientQueryTimeout(cfg.ClientQueryTimeout); err != nil {
 		return nil, err
 	}
@@ -542,6 +548,7 @@ func WithCloudFetch(useCloudFetch bool) ConnOption {
 }
 
 // WithMaxDownloadThreads sets up maximum download threads for cloud fetch. Default is 10.
+// A value <= 0 logs a warning and uses the default.
 func WithMaxDownloadThreads(numThreads int) ConnOption {
 	return func(c *config.Config) {
 		c.MaxDownloadThreads = numThreads
