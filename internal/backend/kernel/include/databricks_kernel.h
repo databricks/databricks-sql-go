@@ -190,6 +190,11 @@ typedef struct KernelError {
  * last kernel call cleared the buffer.
  */
 bool kernel_get_last_error(KernelError* out);
+/* These accessors preserve the last error. Strings are borrowed until the next
+ * error-clearing kernel call; absent strings are NULL, absent OS code is zero. */
+int32_t kernel_get_last_error_local_os_error(void);
+const char* kernel_get_last_error_local_kind(void);
+const char* kernel_get_last_error_local_path(void);
 
 /* ─── Opaque handles ──────────────────────────────────────────────────
  *
@@ -966,6 +971,17 @@ KernelStatusCode kernel_executed_async_statement_close(
  */
 KernelStatusCode kernel_result_stream_get_schema(kernel_result_stream_t* stream,
                                                  struct ArrowSchema* out);
+/* Volume completion preserves raw rows. Roots are a JSON array of strings;
+ * out_status is 0=ordinary result, 1=input bytes required, 2=completed.
+ * The detached result-stream canceller can interrupt completion. */
+KernelStatusCode kernel_executed_statement_is_volume_operation(
+    const kernel_executed_statement_t* exec, bool* out);
+KernelStatusCode kernel_result_stream_is_volume_operation(
+    const kernel_result_stream_t* stream, bool* out);
+KernelStatusCode kernel_result_stream_complete_volume_operation(
+    kernel_result_stream_t* stream, const char* allowed_paths_json,
+    bool remove_not_found_is_success, int32_t* out_status);
+
 KernelStatusCode kernel_result_stream_next_batch(kernel_result_stream_t* stream,
                                                  struct ArrowArray* out_array,
                                                  struct ArrowSchema* out_schema);
