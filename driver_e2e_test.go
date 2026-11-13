@@ -7,10 +7,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -708,6 +710,56 @@ func TestE2ECloudFetchExactRowCount(t *testing.T) {
 	}
 
 	require.Equal(t, int64(wantRows), rowCount, "CloudFetch must surface exactly the requested rows, with no Arrow padding")
+}
+
+// cloudDownloadCounter counts requests sent to hosts other than the warehouse,
+// i.e. CloudFetch presigned-URL downloads.
+type cloudDownloadCounter struct {
+	warehouseHost string
+	downloads     atomic.Int64
+}
+
+func (c *cloudDownloadCounter) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.URL.Hostname() != c.warehouseHost {
+		c.downloads.Add(1)
+	}
+	return http.DefaultTransport.RoundTrip(req)
+}
+
+// TestE2ECloudFetchNonPositiveMaxDownloadThreads is the live regression guard for
+// issue #439: a non-positive download-thread count must degrade to the default
+// instead of failing the first CloudFetch read with "... not contained in any
+// arrow batch: EOF".
+func TestE2ECloudFetchNonPositiveMaxDownloadThreads(t *testing.T) {
+	host, httpPath, token := pecoTestingCreds(t)
+
+	const wantRows = 300000
+	transport := &cloudDownloadCounter{warehouseHost: host}
+	connector, err := NewConnector(
+		WithServerHostname(host),
+		WithPort(443),
+		WithHTTPPath(httpPath),
+		WithAccessToken(token),
+		WithTransport(transport),
+		WithMaxDownloadThreads(-1),
+	)
+	require.NoError(t, err)
+
+	db := sql.OpenDB(connector)
+	defer db.Close() //nolint:errcheck
+
+	rows, err := db.QueryContext(context.Background(),
+		fmt.Sprintf("SELECT id, repeat('x', 64) AS pad FROM range(%d)", wantRows))
+	require.NoError(t, err)
+	defer rows.Close() //nolint:errcheck
+
+	var n int
+	for rows.Next() {
+		n++
+	}
+	require.NoError(t, rows.Err())
+	require.Equal(t, wantRows, n)
+	require.Positive(t, transport.downloads.Load(), "expected the result to be fetched over CloudFetch")
 }
 
 // TestE2ETimestampNTZTypeName asserts that a zoned TIMESTAMP and a TIMESTAMP_NTZ
