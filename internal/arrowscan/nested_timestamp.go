@@ -17,8 +17,8 @@ const sparkJSONTypeMetadataKey = "Spark:DataType:JsonType"
 // metadata to top-level fields only and gives a nested NTZ child the physical
 // zone "UTC", so without the label a nested NTZ wall clock would be shifted
 // into the session location (databricks/databricks-sql-go#520). Columns whose
-// JSON type is missing, malformed or shaped differently from their Arrow type
-// are left unchanged; schema itself is returned when nothing changes.
+// JSON type is missing, malformed or shaped differently from their timestamp
+// subtrees are left unchanged; schema itself is returned when nothing changes.
 func WithNestedTimestampTypes(schema *arrow.Schema) *arrow.Schema {
 	var fields []arrow.Field
 	for i, f := range schema.Fields() {
@@ -50,8 +50,8 @@ func withNestedTimestampTypes(f arrow.Field) (arrow.Field, bool) {
 	if err != nil {
 		return f, false
 	}
-	t, ok := labelType(f.Type, st)
-	if !ok {
+	t, changed, ok := labelType(f.Type, st)
+	if !changed || !ok {
 		return f, false
 	}
 	f.Type = t
@@ -127,87 +127,100 @@ func parseSparkType(raw json.RawMessage) (*sparkType, error) {
 	return st, nil
 }
 
-// labelField labels f's timestamp leaves from st, reporting whether f changed.
-// A timestamp that already carries logical-type metadata keeps it.
-func labelField(f arrow.Field, st *sparkType) (arrow.Field, bool) {
-	if _, ok := f.Type.(*arrow.TimestampType); ok {
-		var name string
-		switch st.name {
-		case "timestamp_ntz":
-			name = "TIMESTAMP_NTZ"
-		case "timestamp":
-			name = "TIMESTAMP"
-		default:
-			return f, false
-		}
-		for _, key := range [...]string{databricksTypeNameMetadataKey, sparkSQLNameMetadataKey} {
-			if v, ok := f.Metadata.GetValue(key); ok && strings.TrimSpace(v) != "" {
-				return f, false
-			}
-		}
-		keys := append(append([]string(nil), f.Metadata.Keys()...), databricksTypeNameMetadataKey)
-		values := append(append([]string(nil), f.Metadata.Values()...), name)
-		f.Metadata = arrow.NewMetadata(keys, values)
-		return f, true
+// labelField labels f's timestamp leaves from st. changed reports whether f
+// changed; ok is false when a subtree holding a timestamp does not match st, so
+// the caller keeps the whole column as is. Subtrees without timestamps are not
+// compared. A timestamp that already carries a non-blank logical type keeps it.
+func labelField(f arrow.Field, st *sparkType) (out arrow.Field, changed, ok bool) {
+	if !hasTimestamp(f.Type) {
+		return f, false, true
 	}
-	t, ok := labelType(f.Type, st)
-	if ok {
-		f.Type = t
+	if _, isTimestamp := f.Type.(*arrow.TimestampType); !isTimestamp {
+		t, changed, ok := labelType(f.Type, st)
+		if changed {
+			f.Type = t
+		}
+		return f, changed, ok
 	}
-	return f, ok
+	var name string
+	switch st.name {
+	case "timestamp_ntz":
+		name = "TIMESTAMP_NTZ"
+	case "timestamp":
+		name = "TIMESTAMP"
+	default:
+		return f, false, false
+	}
+	for _, key := range [...]string{databricksTypeNameMetadataKey, sparkSQLNameMetadataKey} {
+		if v, ok := f.Metadata.GetValue(key); ok && strings.TrimSpace(v) != "" {
+			return f, false, true
+		}
+	}
+	// Drop any blank type name: metadata lookups return the first match.
+	keys := []string{databricksTypeNameMetadataKey}
+	values := []string{name}
+	for i, k := range f.Metadata.Keys() {
+		if k != databricksTypeNameMetadataKey {
+			keys = append(keys, k)
+			values = append(values, f.Metadata.Values()[i])
+		}
+	}
+	f.Metadata = arrow.NewMetadata(keys, values)
+	return f, true, true
 }
 
-// labelType rebuilds a nested type with labelled children. Only field metadata
-// changes, so the physical layout is identical to dt.
-func labelType(dt arrow.DataType, st *sparkType) (arrow.DataType, bool) {
+// labelType rebuilds a nested type with labelled children (see labelField for
+// changed and ok). Only field metadata changes, so the physical layout is
+// identical to dt.
+func labelType(dt arrow.DataType, st *sparkType) (out arrow.DataType, changed, ok bool) {
 	switch t := dt.(type) {
-	case *arrow.ListType:
-		if st.name != "array" {
-			return dt, false
+	case *arrow.ListType, *arrow.LargeListType, *arrow.FixedSizeListType:
+		if st.name != "array" || len(st.children) != 1 {
+			return dt, false, false
 		}
-		if e, ok := labelField(t.ElemField(), st.children[0]); ok {
-			return arrow.ListOfField(e), true
+		e, changed, ok := labelField(t.(interface{ ElemField() arrow.Field }).ElemField(), st.children[0])
+		if !changed || !ok {
+			return dt, false, ok
 		}
-	case *arrow.LargeListType:
-		if st.name != "array" {
-			return dt, false
-		}
-		if e, ok := labelField(t.ElemField(), st.children[0]); ok {
-			return arrow.LargeListOfField(e), true
-		}
-	case *arrow.FixedSizeListType:
-		if st.name != "array" {
-			return dt, false
-		}
-		if e, ok := labelField(t.ElemField(), st.children[0]); ok {
-			return arrow.FixedSizeListOfField(t.Len(), e), true
+		switch t := t.(type) {
+		case *arrow.LargeListType:
+			return arrow.LargeListOfField(e), true, true
+		case *arrow.FixedSizeListType:
+			return arrow.FixedSizeListOfField(t.Len(), e), true, true
+		default:
+			return arrow.ListOfField(e), true, true
 		}
 	case *arrow.MapType:
-		if st.name != "map" {
-			return dt, false
+		if st.name != "map" || len(st.children) != 2 {
+			return dt, false, false
 		}
-		k, keyChanged := labelField(t.KeyField(), st.children[0])
-		v, itemChanged := labelField(t.ItemField(), st.children[1])
-		if keyChanged || itemChanged {
-			m := arrow.MapOfWithMetadata(k.Type, k.Metadata, v.Type, v.Metadata)
-			m.KeysSorted = t.KeysSorted
-			m.SetItemNullable(v.Nullable)
-			return m, true
+		k, keyChanged, keyOK := labelField(t.KeyField(), st.children[0])
+		v, itemChanged, itemOK := labelField(t.ItemField(), st.children[1])
+		if !keyOK || !itemOK || (!keyChanged && !itemChanged) {
+			return dt, false, keyOK && itemOK
 		}
+		m := arrow.MapOfWithMetadata(k.Type, k.Metadata, v.Type, v.Metadata)
+		m.KeysSorted = t.KeysSorted
+		m.SetItemNullable(v.Nullable)
+		return m, true, true
 	case *arrow.StructType:
 		if st.name != "struct" || len(st.children) != len(t.Fields()) {
-			return dt, false
+			return dt, false, false
 		}
 		fields := make([]arrow.Field, len(t.Fields()))
-		changed := false
+		anyChanged := false
 		for i := range fields {
-			var ok bool
-			fields[i], ok = labelField(t.Field(i), st.children[i])
-			changed = changed || ok
+			var changed, ok bool
+			fields[i], changed, ok = labelField(t.Field(i), st.children[i])
+			if !ok {
+				return dt, false, false
+			}
+			anyChanged = anyChanged || changed
 		}
-		if changed {
-			return arrow.StructOf(fields...), true
+		if !anyChanged {
+			return dt, false, true
 		}
+		return arrow.StructOf(fields...), true, true
 	}
-	return dt, false
+	return dt, false, false
 }

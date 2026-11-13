@@ -196,10 +196,66 @@ func TestWithNestedTimestampTypesUnchanged(t *testing.T) {
 		"field count":        {Name: "c", Type: arrow.StructOf(arrow.Field{Name: "a", Type: tsUTC}), Metadata: jsonMeta(`{"type":"struct","fields":[]}`)},
 		"non-timestamp leaf": {Name: "c", Type: arrow.ListOf(tsUTC), Metadata: jsonMeta(`{"type":"array","elementType":"string"}`)},
 		"child metadata":     {Name: "c", Type: arrow.ListOfField(labelled), Metadata: jsonMeta(`{"type":"array","elementType":"timestamp_ntz"}`)},
+		"bare array":         {Name: "c", Type: arrow.ListOf(tsUTC), Metadata: jsonMeta(`"array"`)},
+		"bare map":           {Name: "c", Type: arrow.MapOf(arrow.BinaryTypes.String, tsUTC), Metadata: jsonMeta(`"map"`)},
+		"bare nested array": {Name: "c", Type: arrow.StructOf(arrow.Field{Name: "a", Type: arrow.ListOf(tsUTC)}),
+			Metadata: jsonMeta(`{"type":"struct","fields":[{"name":"a","type":"array"}]}`)},
+		"map without value": {Name: "c", Type: arrow.MapOf(arrow.BinaryTypes.String, tsUTC), Metadata: jsonMeta(`{"type":"map","keyType":"string"}`)},
+		"one subtree mismatched": {Name: "c",
+			Type:     arrow.StructOf(arrow.Field{Name: "a", Type: tsUTC}, arrow.Field{Name: "b", Type: arrow.ListOf(tsUTC)}),
+			Metadata: jsonMeta(`{"type":"struct","fields":[{"name":"a","type":"timestamp_ntz"},{"name":"b","type":"string"}]}`)},
 	} {
 		t.Run(name, func(t *testing.T) {
 			in := arrow.NewSchema([]arrow.Field{f}, nil)
 			require.Same(t, in, WithNestedTimestampTypes(in))
 		})
 	}
+}
+
+// TestWithNestedTimestampTypesBlankLabel replaces a blank existing type name
+// rather than adding a second key that metadata lookups would never reach, and
+// relabelling a labelled schema is a no-op.
+func TestWithNestedTimestampTypesBlankLabel(t *testing.T) {
+	loc, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Skipf("tz database unavailable: %v", err)
+	}
+	tsUTC := &arrow.TimestampType{Unit: arrow.Microsecond, TimeZone: "UTC"}
+	for _, blank := range []string{"", "  "} {
+		elem := arrow.Field{Name: "e", Type: tsUTC, Nullable: true,
+			Metadata: arrow.NewMetadata([]string{"other", databricksTypeNameMetadataKey}, []string{"kept", blank})}
+		in := arrow.NewSchema([]arrow.Field{{Name: "c", Type: arrow.ListOfField(elem),
+			Metadata: arrow.NewMetadata([]string{sparkJSONTypeMetadataKey}, []string{`{"type":"array","elementType":"timestamp_ntz"}`})}}, nil)
+
+		out := WithNestedTimestampTypes(in)
+		md := out.Field(0).Type.(*arrow.ListType).ElemField().Metadata
+		require.Equal(t, arrow.NewMetadata([]string{databricksTypeNameMetadataKey, "other"}, []string{"TIMESTAMP_NTZ", "kept"}), md)
+		require.Same(t, out, WithNestedTimestampTypes(out))
+
+		b := array.NewBuilder(memory.NewGoAllocator(), out.Field(0).Type).(*array.ListBuilder)
+		b.Append(true)
+		b.ValueBuilder().(*array.TimestampBuilder).Append(arrow.Timestamp(time.Date(2024, time.June, 15, 9, 15, 0, 123456000, time.UTC).UnixMicro()))
+		col := b.NewArray()
+		b.Release()
+		got, err := ScanCellCached(col, 0, loc, NewStructKeyCache())
+		col.Release()
+		require.NoError(t, err)
+		require.Equal(t, `["2024-06-15 09:15:00.123456 +0000 UTC"]`, got)
+	}
+}
+
+// TestWithNestedTimestampTypesIgnoresTimestampFreeMismatch still labels a
+// timestamp when a timestamp-free sibling (e.g. a binary geospatial struct)
+// differs from its JSON type.
+func TestWithNestedTimestampTypesIgnoresTimestampFreeMismatch(t *testing.T) {
+	geo := arrow.StructOf(arrow.Field{Name: "srid", Type: arrow.PrimitiveTypes.Int32}, arrow.Field{Name: "wkb", Type: arrow.BinaryTypes.Binary})
+	tsUTC := &arrow.TimestampType{Unit: arrow.Microsecond, TimeZone: "UTC"}
+	in := arrow.NewSchema([]arrow.Field{{Name: "c",
+		Type: arrow.StructOf(arrow.Field{Name: "g", Type: geo}, arrow.Field{Name: "n", Type: tsUTC}),
+		Metadata: arrow.NewMetadata([]string{sparkJSONTypeMetadataKey},
+			[]string{`{"type":"struct","fields":[{"name":"g","type":"geometry(4326)"},{"name":"n","type":"timestamp_ntz"}]}`})}}, nil)
+
+	st := WithNestedTimestampTypes(in).Field(0).Type.(*arrow.StructType)
+	require.Equal(t, "", typeName(st.Field(0)))
+	require.Equal(t, "TIMESTAMP_NTZ", typeName(st.Field(1)))
 }
