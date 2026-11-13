@@ -2,6 +2,7 @@
 
 ## Unreleased
 - Honor `WithCloudFetch(false)` / `useCloudFetch=false` on the kernel backend to fetch complete results without cloud-storage downloads. The option overrides conflicting session configuration and remains effective after automatic backend recovery. Servers without paged inline support return a configuration error; the driver does not fall back to storage downloads.
+- Skip the kernel backend's connector-service feature-flag request on connect when `enableTelemetry=false`, since telemetry is the only consumer of those flags. Unset still defers to the server flag (databricks/databricks-sql-go#499).
 
 ## v1.19.0 (2026-11-04)
 - Upgrade the SQL kernel bindings to v1.4.0.

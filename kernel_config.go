@@ -172,8 +172,8 @@ func buildKernelConfig(cfg *config.Config, kauth kernel.Auth) kernel.Config {
 		// server identically with no per-backend translation.
 		SessionConf: cfg.EffectiveSessionParams(),
 		// Kernel-owned telemetry. The Go wrapper interceptor is skipped on the
-		// kernel path, but the kernel still needs the user's telemetry knobs and
-		// this binding's system identity for its own runtime.
+		// kernel path, but the kernel still needs the user's telemetry knobs and,
+		// unless telemetry is explicitly off, this binding's system identity.
 		Telemetry:                 kernelTelemetryConfig(cfg),
 		DriverSystemConfiguration: kernelDriverSystemConfiguration(cfg),
 		// Preserve string results by default, including automatic kernel recovery.
@@ -240,7 +240,14 @@ func kernelTelemetryConfig(cfg *config.Config) *kernel.TelemetryConfig {
 	}
 }
 
+// kernelDriverSystemConfiguration returns nil when telemetry is explicitly off:
+// the kernel uses the identity only for telemetry and for a connector-service
+// flag prefetch whose sole consumer is the telemetry flag (#499). Revisit if a
+// kernel upgrade adds other flag consumers.
 func kernelDriverSystemConfiguration(cfg *config.Config) *kernel.DriverSystemConfiguration {
+	if enabled, isSet := cfg.EnableTelemetry.Get(); isSet && !enabled {
+		return nil
+	}
 	system := telemetry.GetSystemConfiguration(cfg.DriverVersion)
 	if system == nil {
 		return nil

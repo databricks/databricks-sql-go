@@ -123,7 +123,8 @@ type Config struct {
 	Telemetry *TelemetryConfig
 
 	// DriverSystemConfiguration is the driver/runtime identity stamped onto
-	// kernel-owned telemetry. Nil lets the kernel use its built-in defaults.
+	// kernel-owned telemetry. Nil lets the kernel use its built-in defaults and
+	// skips its connector-service feature-flag prefetch.
 	DriverSystemConfiguration *DriverSystemConfiguration
 }
 
