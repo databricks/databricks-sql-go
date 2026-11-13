@@ -99,7 +99,8 @@ func newTelemetryTestConn(t *testing.T, cli *client.TestClient) (*conn, *telemet
 }
 
 // closeAndAwaitExecuteEvent closes the conn (flushing telemetry) and returns
-// the single EXECUTE_STATEMENT event exported for the test statement.
+// the single EXECUTE_STATEMENT event exported for the test statement. Every
+// Thrift statement, failed or not, is classified SQL (as on the kernel).
 func closeAndAwaitExecuteEvent(t *testing.T, c *conn, capture *telemetryCapture) *telemetry.TelemetryEvent {
 	t.Helper()
 	stmtID := client.SprintGuid(telemetryTestOpHandle().OperationId.GUID)
@@ -110,6 +111,7 @@ func closeAndAwaitExecuteEvent(t *testing.T, c *conn, capture *telemetryCapture)
 	time.Sleep(100 * time.Millisecond)
 	events := capture.executeEvents(stmtID)
 	require.Len(t, events, 1, "exactly one EXECUTE_STATEMENT event per statement")
+	assert.Equal(t, "SQL", events[0].SQLOperation.StatementType, "statement_type")
 	return events[0]
 }
 
@@ -377,6 +379,23 @@ func TestConn_QueryContextTelemetryExecutionResult(t *testing.T) {
 
 		ev := closeAndAwaitExecuteEvent(t, c, capture)
 		assert.Equal(t, "COLUMNAR_INLINE", ev.SQLOperation.ExecutionResult)
+		assert.NotNil(t, ev.ErrorInfo)
+	})
+
+	t.Run("result setup failure is still classified", func(t *testing.T) {
+		t.Parallel()
+		var metadataCalls int32
+		md := &cli_service.TGetResultSetMetadataResp{
+			Schema: telemetryTestSchema(), ArrowSchema: []byte("not an arrow schema"),
+			ResultFormat: rowSetType(cli_service.TSparkRowSetType_ARROW_BASED_SET),
+		}
+		rs := &cli_service.TRowSet{ArrowBatches: []*cli_service.TSparkArrowBatch{{Batch: batchBytes, RowCount: 1}}}
+		c, capture := newTelemetryTestConn(t, directResultsClient(md, rs, &metadataCalls))
+
+		_, err := c.QueryContext(context.Background(), "SELECT 1 AS n", nil)
+		require.Error(t, err)
+
+		ev := closeAndAwaitExecuteEvent(t, c, capture)
 		assert.NotNil(t, ev.ErrorInfo)
 	})
 }

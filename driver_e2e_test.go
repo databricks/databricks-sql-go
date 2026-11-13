@@ -1025,7 +1025,8 @@ func (c *thriftTelemetryCapture) executeEvents(statementID string) []*telemetry.
 }
 
 // TestE2ETelemetryReportsExecutionResult checks the exported Thrift statement
-// event reports how the result was delivered (issue #454).
+// event reports how the result was delivered and the SQL statement type
+// (issue #454).
 func TestE2ETelemetryReportsExecutionResult(t *testing.T) {
 	host, httpPath, token := pecoTestingCreds(t)
 
@@ -1064,6 +1065,7 @@ func TestE2ETelemetryReportsExecutionResult(t *testing.T) {
 			events := capture.executeEvents(statementID)
 			require.Len(t, events, 1)
 			assert.Equal(t, tc.want, events[0].SQLOperation.ExecutionResult)
+			assert.Equal(t, "SQL", events[0].SQLOperation.StatementType)
 		})
 	}
 }

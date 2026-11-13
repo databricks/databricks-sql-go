@@ -15,6 +15,7 @@ const (
 // createTelemetryRequest / aggregator — keep them in sync.
 const (
 	TagStatementID        = "statement.id"
+	TagStatementType      = "statement_type"
 	TagResultFormat       = "result.format"
 	TagChunkCount         = "chunk_count"
 	TagBytesDownloaded    = "bytes_downloaded"

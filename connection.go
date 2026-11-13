@@ -191,6 +191,7 @@ func (c *conn) ExecContext(ctx context.Context, query string, args []driver.Name
 		statementID = op.StatementID()
 		ctx = c.telemetry.BeforeExecuteWithTime(ctx, c.id, statementID, executeStart)
 		c.telemetry.AddTag(ctx, telemetry.TagOperationType, telemetry.OperationTypeExecuteStatement)
+		c.telemetry.AddTag(ctx, telemetry.TagStatementType, telemetry.StatementTypeSQL)
 	}
 
 	stagingErr := c.execStagingOperation(op, ctx)
@@ -332,6 +333,7 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 		statementID = op.StatementID()
 		ctx = c.telemetry.BeforeExecuteWithTime(ctx, c.id, statementID, executeStart)
 		c.telemetry.AddTag(ctx, telemetry.TagOperationType, telemetry.OperationTypeExecuteStatement)
+		c.telemetry.AddTag(ctx, telemetry.TagStatementType, telemetry.StatementTypeSQL)
 	}
 
 	if err != nil {
