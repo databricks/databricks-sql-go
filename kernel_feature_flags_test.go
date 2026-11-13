@@ -18,6 +18,7 @@ import (
 	"github.com/databricks/databricks-sql-go/internal/client"
 	"github.com/databricks/databricks-sql-go/internal/config"
 	"github.com/databricks/databricks-sql-go/internal/warehouse_cache"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -33,17 +34,17 @@ var kernelFlagWorkspaceSeq atomic.Int64
 func TestKernelFeatureFlagRequestsFollowTelemetrySetting(t *testing.T) {
 	for _, tc := range []struct {
 		name          string
-		telemetry     *bool
+		telemetry     config.ConfigValue[bool] // zero value leaves enableTelemetry unset
 		serverFlag    bool
 		recovery      bool
 		wantFlagGets  int64
 		wantTelemetry bool
 	}{
-		{name: "explicit false", telemetry: boolPtr(false), serverFlag: true},
-		{name: "explicit false after automatic recovery", telemetry: boolPtr(false), serverFlag: true, recovery: true},
+		{name: "explicit false", telemetry: config.NewConfigValue(false), serverFlag: true},
+		{name: "explicit false after automatic recovery", telemetry: config.NewConfigValue(false), serverFlag: true, recovery: true},
 		{name: "unset with server flag on", serverFlag: true, wantFlagGets: 1, wantTelemetry: true},
 		{name: "unset with server flag off", wantFlagGets: 1},
-		{name: "explicit true", telemetry: boolPtr(true), wantFlagGets: 1, wantTelemetry: true},
+		{name: "explicit true", telemetry: config.NewConfigValue(true), wantFlagGets: 1, wantTelemetry: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			defer warehouse_cache.ClearCache()
@@ -54,9 +55,10 @@ func TestKernelFeatureFlagRequestsFollowTelemetrySetting(t *testing.T) {
 				switch {
 				case strings.HasPrefix(r.URL.Path, "/api/2.0/connector-service/feature-flags/"):
 					flagGets.Add(1)
-					require.Equal(t, http.MethodGet, r.Method)
-					require.Equal(t, "/api/2.0/connector-service/feature-flags/GOLANG/"+DriverVersion, r.URL.Path)
-					require.Equal(t, workspaceID, r.Header.Get("X-Databricks-Org-Id"))
+					// assert, not require: FailNow must not run on the server goroutine.
+					assert.Equal(t, http.MethodGet, r.Method)
+					assert.Equal(t, "/api/2.0/connector-service/feature-flags/GOLANG/"+DriverVersion, r.URL.Path)
+					assert.Equal(t, workspaceID, r.Header.Get("X-Databricks-Org-Id"))
 					value := "false"
 					if tc.serverFlag {
 						value = "true"
@@ -79,10 +81,7 @@ func TestKernelFeatureFlagRequestsFollowTelemetrySetting(t *testing.T) {
 				WithServerHostname(server.URL), WithHTTPPath("/sql/1.0/warehouses/test?o=" + workspaceID),
 				WithAccessToken("test-token"), WithUseKernel(true), WithSkipTLSHostVerify(),
 				WithRetries(-1, time.Millisecond, time.Millisecond),
-			}
-			if tc.telemetry != nil {
-				enabled := *tc.telemetry
-				options = append(options, func(cfg *config.Config) { cfg.EnableTelemetry = config.NewConfigValue(enabled) })
+				func(cfg *config.Config) { cfg.EnableTelemetry = tc.telemetry },
 			}
 			dbConnector, err := NewConnector(options...)
 			require.NoError(t, err)
@@ -109,5 +108,3 @@ func TestKernelFeatureFlagRequestsFollowTelemetrySetting(t *testing.T) {
 		})
 	}
 }
-
-func boolPtr(v bool) *bool { return &v }
