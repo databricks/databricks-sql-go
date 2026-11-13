@@ -382,22 +382,41 @@ func TestConn_QueryContextTelemetryExecutionResult(t *testing.T) {
 		assert.NotNil(t, ev.ErrorInfo)
 	})
 
-	t.Run("result setup failure is still classified", func(t *testing.T) {
-		t.Parallel()
-		var metadataCalls int32
-		md := &cli_service.TGetResultSetMetadataResp{
-			Schema: telemetryTestSchema(), ArrowSchema: []byte("not an arrow schema"),
-			ResultFormat: rowSetType(cli_service.TSparkRowSetType_ARROW_BASED_SET),
-		}
-		rs := &cli_service.TRowSet{ArrowBatches: []*cli_service.TSparkArrowBatch{{Batch: batchBytes, RowCount: 1}}}
-		c, capture := newTelemetryTestConn(t, directResultsClient(md, rs, &metadataCalls))
+	// Results either fails (the conn reports the direct-results format) or
+	// succeeds (only Rows.Close reports it); either way it is reported once.
+	for _, tc := range []struct {
+		name        string
+		arrowSchema []byte
+		setupFails  bool
+	}{
+		{"direct results format reported once by Rows.Close", schemaBytes, false},
+		{"result setup failure keeps the received format", []byte("not an arrow schema"), true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var metadataCalls int32
+			md := &cli_service.TGetResultSetMetadataResp{
+				Schema: telemetryTestSchema(), ArrowSchema: tc.arrowSchema,
+				ResultFormat: rowSetType(cli_service.TSparkRowSetType_ARROW_BASED_SET),
+			}
+			rs := &cli_service.TRowSet{ArrowBatches: []*cli_service.TSparkArrowBatch{{Batch: batchBytes, RowCount: 1}}}
+			c, capture := newTelemetryTestConn(t, directResultsClient(md, rs, &metadataCalls))
 
-		_, err := c.QueryContext(context.Background(), "SELECT 1 AS n", nil)
-		require.Error(t, err)
+			r, err := c.QueryContext(context.Background(), "SELECT 1 AS n", nil)
+			if tc.setupFails {
+				require.Error(t, err)
+				require.Nil(t, r)
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, 1, drainRows(t, r))
+			}
 
-		ev := closeAndAwaitExecuteEvent(t, c, capture)
-		assert.NotNil(t, ev.ErrorInfo)
-	})
+			ev := closeAndAwaitExecuteEvent(t, c, capture)
+			assert.Equal(t, "INLINE_ARROW", ev.SQLOperation.ExecutionResult)
+			assert.Equal(t, tc.setupFails, ev.ErrorInfo != nil, "error_info")
+			assert.Zero(t, atomic.LoadInt32(&metadataCalls), "no metadata RPC added for telemetry")
+		})
+	}
 }
 
 func TestConn_ExecContextTelemetryExecutionResult(t *testing.T) {

@@ -465,6 +465,14 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 		// metric's HTTP request — a cancelled ctx would abort the export and drop
 		// the very completing metric this branch exists to emit.
 		if c.telemetry != nil && statementID != "" {
+			// The discarded Rows never reports its format, so report the one the
+			// server already returned (as in JDBC). This is the only report on
+			// this path; on success only Rows.Close reports it.
+			if r, ok := op.(backend.ResultFormatReporter); ok {
+				if format := r.ResultFormat(); format != "" {
+					c.telemetry.AddTag(telemetryCtx, telemetry.TagResultFormat, format)
+				}
+			}
 			c.telemetry.AfterExecute(telemetryCtx, err)
 			c.telemetry.CompleteStatement(telemetryCtx, statementID, true)
 		}
