@@ -506,6 +506,106 @@ func TestConn_PrepareContext(t *testing.T) {
 	})
 }
 
+// TestConn_ClosedRejectsStatements covers SESSION-021: after Close, statement
+// creation and execution fail eagerly with a retryable ErrBadConn and send no
+// request, including when the CloseSession RPC itself failed.
+func TestConn_ClosedRejectsStatements(t *testing.T) {
+	for _, closeFails := range []bool{false, true} {
+		t.Run(fmt.Sprintf("closeFails=%v", closeFails), func(t *testing.T) {
+			var executeCalls, closeCalls int
+			testClient := &client.TestClient{
+				FnExecuteStatement: func(ctx context.Context, req *cli_service.TExecuteStatementReq) (*cli_service.TExecuteStatementResp, error) {
+					executeCalls++
+					return nil, fmt.Errorf("unexpected ExecuteStatement on a closed connection")
+				},
+				FnCloseSession: func(ctx context.Context, req *cli_service.TCloseSessionReq) (*cli_service.TCloseSessionResp, error) {
+					closeCalls++
+					if closeFails {
+						return nil, fmt.Errorf("close failed")
+					}
+					return &cli_service.TCloseSessionResp{Status: &cli_service.TStatus{StatusCode: cli_service.TStatusCode_SUCCESS_STATUS}}, nil
+				},
+			}
+			testConn := &conn{
+				id:      "conn-1",
+				cfg:     config.WithDefaults(),
+				backend: thriftbackend.NewForTest(testClient, getTestSession(), config.WithDefaults()),
+			}
+			preparedBeforeClose, err := testConn.Prepare("select 1")
+			assert.NoError(t, err)
+
+			closeErr := testConn.Close()
+			assert.Equal(t, closeFails, closeErr != nil)
+			assert.Equal(t, 1, closeCalls)
+
+			assertClosedErr := func(t *testing.T, err error) {
+				t.Helper()
+				assert.ErrorContains(t, err, "connection is closed")
+				assert.ErrorIs(t, err, driver.ErrBadConn)
+				assert.ErrorIs(t, err, dbsqlerr.DriverError)
+				var dbErr dbsqlerr.DBDriverError
+				if assert.ErrorAs(t, err, &dbErr) {
+					assert.Equal(t, "conn-1", dbErr.ConnectionId())
+				}
+			}
+
+			ctx := context.Background()
+			s, err := testConn.Prepare("select 1")
+			assert.Nil(t, s)
+			assertClosedErr(t, err)
+
+			s, err = testConn.PrepareContext(ctx, "select 1")
+			assert.Nil(t, s)
+			assertClosedErr(t, err)
+
+			res, err := testConn.ExecContext(ctx, "select 1", nil)
+			assert.Nil(t, res)
+			assertClosedErr(t, err)
+
+			rows, err := testConn.QueryContext(ctx, "select 1", nil)
+			assert.Nil(t, rows)
+			assertClosedErr(t, err)
+
+			res, err = preparedBeforeClose.(driver.StmtExecContext).ExecContext(ctx, nil)
+			assert.Nil(t, res)
+			assertClosedErr(t, err)
+
+			rows, err = preparedBeforeClose.(driver.StmtQueryContext).QueryContext(ctx, nil)
+			assert.Nil(t, rows)
+			assertClosedErr(t, err)
+
+			assert.Equal(t, 0, executeCalls)
+		})
+	}
+}
+
+// TestConn_CloseRacesPrepare guards the closed flag against data races when a
+// raw driver.Conn caller closes while another goroutine prepares (go test -race).
+func TestConn_CloseRacesPrepare(t *testing.T) {
+	testClient := &client.TestClient{
+		FnCloseSession: func(ctx context.Context, req *cli_service.TCloseSessionReq) (*cli_service.TCloseSessionResp, error) {
+			return &cli_service.TCloseSessionResp{Status: &cli_service.TStatus{StatusCode: cli_service.TStatusCode_SUCCESS_STATUS}}, nil
+		},
+	}
+	testConn := &conn{
+		cfg:     config.WithDefaults(),
+		backend: thriftbackend.NewForTest(testClient, getTestSession(), config.WithDefaults()),
+	}
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 100; i++ {
+			_, _ = testConn.PrepareContext(context.Background(), "select 1")
+		}
+	}()
+	assert.NoError(t, testConn.Close())
+	wg.Wait()
+
+	_, err := testConn.Prepare("select 1")
+	assert.ErrorIs(t, err, driver.ErrBadConn)
+}
+
 func TestConn_execStagingOperation(t *testing.T) {
 	t.Run("handles nil IsStagingOperation from DirectResults", func(t *testing.T) {
 		testClient := &client.TestClient{}

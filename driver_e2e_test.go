@@ -579,6 +579,96 @@ func loadTestData(t *testing.T, name string, v any) {
 	}
 }
 
+// assertClosedConnRejected checks SESSION-021 through connector: after Close,
+// Prepare, PrepareContext and direct execution fail with the closed-connection
+// error, and a new conn from the same connector still returns one row.
+func assertClosedConnRejected(t *testing.T, connector driver.Connector) {
+	t.Helper()
+	ctx := context.Background()
+
+	a, err := connector.Connect(ctx)
+	require.NoError(t, err)
+	queryOneRow(t, a)
+	require.NoError(t, a.Close())
+
+	requireClosed := func(err error) {
+		t.Helper()
+		require.ErrorIs(t, err, driver.ErrBadConn)
+		require.ErrorContains(t, err, "connection is closed")
+	}
+	_, err = a.Prepare("SELECT 1")
+	requireClosed(err)
+	_, err = a.(driver.ConnPrepareContext).PrepareContext(ctx, "SELECT 1")
+	requireClosed(err)
+	_, err = a.(driver.QueryerContext).QueryContext(ctx, "SELECT 1", nil)
+	requireClosed(err)
+	_, err = a.(driver.ExecerContext).ExecContext(ctx, "SELECT 1", nil)
+	requireClosed(err)
+
+	b, err := connector.Connect(ctx)
+	require.NoError(t, err, "a connection opened after the rejected calls must still open")
+	defer b.Close() //nolint:errcheck
+	queryOneRow(t, b)
+}
+
+func queryOneRow(t *testing.T, c driver.Conn) {
+	t.Helper()
+	s, err := c.Prepare("SELECT 1")
+	require.NoError(t, err)
+	defer s.Close() //nolint:errcheck
+	rows, err := s.(driver.StmtQueryContext).QueryContext(context.Background(), nil)
+	require.NoError(t, err)
+	defer rows.Close() //nolint:errcheck
+	dest := make([]driver.Value, len(rows.Columns()))
+	require.NoError(t, rows.Next(dest))
+	require.Equal(t, io.EOF, rows.Next(dest))
+}
+
+// TestClosedConnRejectsStatementsWithoutRequests runs the SESSION-021 check
+// against the fake Thrift server and asserts the rejected calls sent nothing:
+// only conn A and conn B each open a session and execute one query.
+func TestClosedConnRejectsStatementsWithoutRequests(t *testing.T) {
+	state := &callState{}
+	loadTestData(t, "OpenSessionSuccess.json", &state.openSessionResp)
+	loadTestData(t, "CloseSessionSuccess.json", &state.closeSessionResp)
+	loadTestData(t, "CloseOperationSuccess.json", &state.closeOperationResp)
+	loadTestData(t, "GetResultSetMetadataNotStaging.json", &state.getResultSetMetadataResp)
+	loadTestData(t, "ExecuteStatement1.json", &state.executeStatementResp)
+	ts := getServer(state)
+	defer ts.Close()
+
+	r, err := url.Parse(ts.URL)
+	require.NoError(t, err)
+	port, err := strconv.Atoi(r.Port())
+	require.NoError(t, err)
+	connector, err := NewConnector(
+		WithServerHostname("localhost"),
+		WithPort(port),
+		WithHTTPPath(""),
+		WithAccessToken(""),
+	)
+	require.NoError(t, err)
+
+	assertClosedConnRejected(t, connector)
+
+	assert.Equal(t, 2, state.openSessionCalls)
+	assert.Equal(t, 2, state.executeStatementCalls)
+	assert.Equal(t, 2, state.closeSessionCalls)
+}
+
+// TestE2EClosedConnRejectsStatements is the live Thrift leg of SESSION-021.
+func TestE2EClosedConnRejectsStatements(t *testing.T) {
+	host, httpPath, token := pecoTestingCreds(t)
+	connector, err := NewConnector(
+		WithServerHostname(host),
+		WithPort(443),
+		WithHTTPPath(httpPath),
+		WithAccessToken(token),
+	)
+	require.NoError(t, err)
+	assertClosedConnRejected(t, connector)
+}
+
 type callState struct {
 	openSessionCalls int
 	openSessionResp  cli_service.TOpenSessionResp
