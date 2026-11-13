@@ -199,17 +199,17 @@ jobs:
             apt-get update && apt-get install -y build-essential
           fi
 
-      # Same guard as the Thrift job: require host, http path, and at least one of
-      # _TOKEN / _TOKEN_PERSONAL so a missing credential fails loud instead of skipping.
-      - name: Verify warehouse credentials are present
+      # Require a writable catalog as well as credentials so volume coverage cannot skip.
+      - name: Verify warehouse credentials and volume catalog are present
         env:
           HOST: ${{ secrets.DATABRICKS_PECOTESTING_SERVER_HOSTNAME }}
           HTTP_PATH: ${{ secrets.DATABRICKS_PECOTESTING_HTTP_PATH2 }}
           TOKEN: ${{ secrets.DATABRICKS_PECOTESTING_TOKEN }}
           TOKEN_PERSONAL: ${{ secrets.DATABRICKS_PECOTESTING_TOKEN_PERSONAL }}
+          DATABRICKS_VOLUME_TEST_CATALOG: ${{ vars.DATABRICKS_VOLUME_TEST_CATALOG }}
         run: |
-          if [ -z "$HOST" ] || [ -z "$HTTP_PATH" ] || { [ -z "$TOKEN" ] && [ -z "$TOKEN_PERSONAL" ]; }; then
-            echo "::error::Nightly E2E warehouse secrets are not set (need DATABRICKS_PECOTESTING_SERVER_HOSTNAME, _HTTP_PATH2, and _TOKEN or _TOKEN_PERSONAL). Provision them in the repository settings." >&2
+          if [ -z "$HOST" ] || [ -z "$HTTP_PATH" ] || { [ -z "$TOKEN" ] && [ -z "$TOKEN_PERSONAL" ]; } || [ -z "$DATABRICKS_VOLUME_TEST_CATALOG" ]; then
+            echo "::error::Nightly kernel E2E requires warehouse secrets (DATABRICKS_PECOTESTING_SERVER_HOSTNAME, _HTTP_PATH2, and _TOKEN or _TOKEN_PERSONAL) and the DATABRICKS_VOLUME_TEST_CATALOG repository variable." >&2
             exit 1
           fi
 
@@ -241,6 +241,7 @@ jobs:
           DATABRICKS_PECOTESTING_HTTP_PATH2: ${{ secrets.DATABRICKS_PECOTESTING_HTTP_PATH2 }}
           DATABRICKS_PECOTESTING_TOKEN: ${{ secrets.DATABRICKS_PECOTESTING_TOKEN }}
           DATABRICKS_PECOTESTING_TOKEN_PERSONAL: ${{ secrets.DATABRICKS_PECOTESTING_TOKEN_PERSONAL }}
+          DATABRICKS_VOLUME_TEST_CATALOG: ${{ vars.DATABRICKS_VOLUME_TEST_CATALOG }}
         run: |
           CGO_ENABLED=1 go test -tags databricks_kernel -count=1 -v -timeout 30m \
             -run 'TestKernelE2E|TestKernelThriftParity|TestKernelParamsVsThrift' \

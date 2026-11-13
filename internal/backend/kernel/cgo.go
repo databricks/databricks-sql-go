@@ -38,7 +38,9 @@ import "C"
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"runtime"
+	"syscall"
 	"unsafe"
 
 	"github.com/databricks/databricks-sql-go/driverctx"
@@ -157,8 +159,9 @@ func maxClientQueryTimeoutMillisecondsFromC() uint64 {
 }
 
 // lastError reads the kernel's thread-local last error and copies its string
-// fields out immediately — the C `char*` fields are valid only until the next
-// FFI call on this thread. Must run on the same OS thread as the failing call;
+// fields before logging or leaving the pinned thread. The error getters preserve
+// the buffer; calls that clear or replace the error invalidate its C pointers.
+// Must run on the same OS thread as the failing call;
 // call guarantees that via LockOSThread.
 func lastError(code C.KernelStatusCode) *KernelError {
 	var e C.KernelError
@@ -177,6 +180,14 @@ func lastError(code C.KernelStatusCode) *KernelError {
 	}
 	if e.query_id != nil {
 		ke.QueryID = C.GoString(e.query_id)
+	}
+	var raw C.int32_t
+	var filename *C.char
+	if bool(C.kernel_get_last_error_os(&raw, &filename)) {
+		ke.osCause = syscall.Errno(uint32(raw))
+		if filename != nil {
+			ke.osCause = &fs.PathError{Path: C.GoString(filename), Err: ke.osCause}
+		}
 	}
 	klog("kernel error: code=%d sqlstate=%q vendor=%d http=%d retryable=%v msg=%q",
 		ke.Code, ke.SQLState, ke.VendorCode, ke.HTTPStatus, ke.Retryable, ke.Message)

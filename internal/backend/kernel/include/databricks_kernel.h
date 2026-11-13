@@ -32,9 +32,10 @@
  * Every fallible entry point returns a `KernelStatusCode`. On any
  * non-`Success` return, call `kernel_get_last_error` to fetch the typed
  * detail for the current thread. The thread-local error buffer is reset
- * at the start of every kernel call, and the `char*` fields it hands
- * back are valid only until the next kernel call on the same thread —
- * copy them out before calling again.
+ * at the start of kernel calls except `kernel_get_last_error` and
+ * `kernel_get_last_error_os`, which leave it intact. Borrowed `char*`
+ * fields remain valid until a call clears or replaces that thread's
+ * buffer; copy them before such a call.
  *
  * ## ABI versioning
  *
@@ -44,7 +45,7 @@
  * pointers to them, never read their fields — so their Rust-side layout
  * is irrelevant. The one caller-*readable* struct, `KernelError`, is laid
  * out exactly as declared here; copy its fields out before the next
- * `kernel_*` call on the thread.
+ * call that clears or replaces the thread's error buffer.
  *
  * ## Lifecycle & threading notes
  *
@@ -168,9 +169,9 @@ typedef enum KernelStatementStatusKind {
 /*
  * Typed last-error detail. Populated by `kernel_get_last_error`. The
  * `char*` fields point into the calling thread's last-error buffer and
- * are valid only until the next kernel call on that thread; a NULL
- * pointer means the field was absent. `vendor_code` / `http_status` are
- * `0` when absent.
+ * remain valid until a call clears or replaces it; both error getters
+ * leave it intact. A NULL pointer means the field was absent.
+ * `vendor_code` / `http_status` are `0` when absent.
  */
 typedef struct KernelError {
   /* Discriminant value of `KernelStatusCode`. */
@@ -187,9 +188,20 @@ typedef struct KernelError {
 /*
  * Fetch the last error recorded on the calling thread. Returns `false`
  * (leaving `*out` untouched) if no error has been recorded since the
- * last kernel call cleared the buffer.
+ * last kernel call cleared the buffer, or if `out` is NULL. Both error
+ * getters are read-only and can be called repeatedly in either order.
  */
 bool kernel_get_last_error(KernelError* out);
+
+/*
+ * Fetch optional OS details from the calling thread's last error. Returns
+ * `false` without writing outputs if either output pointer is NULL or OS
+ * details are absent. On `true`, `*code_out` is the raw native code (errno
+ * on Unix, system error code on Windows) and `*filename_out` is NULL when
+ * absent. A non-NULL filename borrows the error buffer until a call clears
+ * or replaces it. Both error getters leave the buffer and strings intact.
+ */
+bool kernel_get_last_error_os(int32_t* code_out, const char** filename_out);
 
 /* ─── Opaque handles ──────────────────────────────────────────────────
  *

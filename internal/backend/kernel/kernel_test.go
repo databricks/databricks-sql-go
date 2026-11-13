@@ -8,15 +8,22 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 	"errors"
+	"io"
+	"io/fs"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/databricks/databricks-sql-go/driverctx"
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 	"github.com/databricks/databricks-sql-go/internal/backend"
+	dbsqlerrint "github.com/databricks/databricks-sql-go/internal/errors"
 	dbsqlrows "github.com/databricks/databricks-sql-go/internal/rows"
 	"github.com/databricks/databricks-sql-go/logger"
 )
@@ -586,6 +593,93 @@ func TestExecutionErrorContract(t *testing.T) {
 	var ke *KernelError
 	if !errors.As(err, &ke) {
 		t.Error("the *KernelError cause should remain reachable via errors.As")
+	}
+
+	for _, tc := range []struct {
+		name    string
+		missing bool
+	}{{"missing local PUT", true}, {"storage HTTP 404", false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			directory := t.TempDir()
+			local := filepath.Join(directory, "input.bin")
+			var wantErrno syscall.Errno
+			if tc.missing {
+				file, controlErr := os.Open(local)
+				if file != nil {
+					file.Close()
+				}
+				if !errors.Is(controlErr, os.ErrNotExist) || !errors.As(controlErr, &wantErrno) {
+					t.Fatalf("local os.Open control = %v, want a missing-file errno", controlErr)
+				}
+			} else if err := os.WriteFile(local, []byte("upload"), 0600); err != nil {
+				t.Fatal(err)
+			}
+
+			var instruction []byte
+			ready := make(chan struct{})
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case r.URL.Path == "/storage":
+					w.WriteHeader(http.StatusNotFound)
+				case r.Method == "POST" && r.URL.Path == "/api/2.0/sql/statements":
+					<-ready
+					_, _ = w.Write(instruction)
+				case strings.HasSuffix(r.URL.Path, "/sessions"):
+					_, _ = io.WriteString(w, `{"session_id":"session","warehouse_id":"test"}`)
+				default:
+					_, _ = io.WriteString(w, `{}`)
+				}
+			}))
+			defer server.Close()
+			instruction = fileTransferInstruction(t, "PUT", server.URL+"/storage", local)
+			close(ready)
+			k := New(Config{Host: server.URL, WarehouseID: "test", Auth: Auth{Mode: AuthPAT, Token: "test"}})
+			if err := k.OpenSession(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			defer k.CloseSession(context.Background())
+			ctx := driverctx.NewContextWithStagingInfo(context.Background(), []string{directory})
+			op, cause := k.Execute(ctx, backend.ExecRequest{
+				Query: "PUT '" + local + "' INTO '/Volumes/c/s/v/file' OVERWRITE", TransferFiles: true,
+			})
+			if op == nil {
+				t.Fatal("Execute returned no operation")
+			}
+			defer op.Close(context.Background())
+			wrapped := op.ExecutionError(ctx, cause)
+			var execution dbsqlerr.DBExecutionError
+			var kernelCause *KernelError
+			if !errors.Is(wrapped, dbsqlerr.ExecutionError) || !errors.As(wrapped, &execution) || !errors.As(wrapped, &kernelCause) {
+				t.Fatalf("execution error lost its public/kernel attribution: %v", wrapped)
+			}
+			if execution.SqlState() != "HY000" || execution.QueryId() != "transfer" {
+				t.Errorf("execution state/query = %q/%q, want HY000/transfer", execution.SqlState(), execution.QueryId())
+			}
+			if got := dbsqlerrint.CategoryFromError(wrapped); got != dbsqlerrint.CategoryNotFound {
+				t.Errorf("category = %q, want not_found", got)
+			}
+			if !tc.missing && kernelCause.HTTPStatus != http.StatusNotFound {
+				t.Errorf("HTTP status = %d, want 404", kernelCause.HTTPStatus)
+			}
+			for _, chain := range []error{wrapped, execution.Cause()} {
+				if got := errors.Is(chain, os.ErrNotExist); got != tc.missing {
+					t.Errorf("errors.Is(%T, os.ErrNotExist) = %v, want %v", chain, got, tc.missing)
+				}
+				var pathErr *fs.PathError
+				if got := errors.As(chain, &pathErr); got != tc.missing {
+					t.Errorf("errors.As(%T, *fs.PathError) = %v, want %v", chain, got, tc.missing)
+				}
+				if pathErr != nil {
+					if pathErr.Path != local || pathErr.Op != "" {
+						t.Errorf("PathError path/op = %q/%q, want %q/unspecified", pathErr.Path, pathErr.Op, local)
+					}
+					var gotErrno syscall.Errno
+					if !errors.As(pathErr.Err, &gotErrno) || gotErrno != wantErrno {
+						t.Errorf("PathError errno = %v, want %v from os.Open", pathErr.Err, wantErrno)
+					}
+				}
+			}
+		})
 	}
 }
 
