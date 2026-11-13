@@ -2,6 +2,7 @@
 
 ## Unreleased
 - Honor `WithCloudFetch(false)` / `useCloudFetch=false` on the kernel backend to fetch complete results without cloud-storage downloads. The option overrides conflicting session configuration and remains effective after automatic backend recovery. Servers without paged inline support return a configuration error; the driver does not fall back to storage downloads.
+- **Behavior change:** After `Close`, a raw `driver.Conn` now fails `Prepare`, `PrepareContext`, `ExecContext` and `QueryContext` immediately with a `driver.ErrBadConn` ("connection is closed") and sends no request. Previously `Prepare` returned a statement and the failure came from the server or kernel at execute. `database/sql` users are unaffected (databricks/databricks-sql-go#521).
 
 ## v1.19.0 (2026-11-04)
 - Upgrade the SQL kernel bindings to v1.4.0.
