@@ -196,6 +196,8 @@ func (c *conn) ExecContext(ctx context.Context, query string, args []driver.Name
 	stagingErr := c.execStagingOperation(op, ctx)
 
 	if c.telemetry != nil && statementID != "" {
+		// Gate only on execution: a staging failure happens after the result
+		// metadata arrived, so its format is still reported (as in JDBC).
 		if r, ok := op.(backend.ResultFormatReporter); ok && err == nil {
 			if format := r.ResultFormat(); format != "" {
 				c.telemetry.AddTag(ctx, telemetry.TagResultFormat, format)

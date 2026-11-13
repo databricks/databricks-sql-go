@@ -355,6 +355,30 @@ func TestConn_QueryContextTelemetryExecutionResult(t *testing.T) {
 		assert.Empty(t, ev.SQLOperation.ExecutionResult)
 		assert.NotNil(t, ev.ErrorInfo)
 	})
+
+	t.Run("fetch failure keeps the received format", func(t *testing.T) {
+		t.Parallel()
+		var metadataCalls int32
+		md := &cli_service.TGetResultSetMetadataResp{
+			Schema:       telemetryTestSchema(),
+			ResultFormat: rowSetType(cli_service.TSparkRowSetType_COLUMN_BASED_SET),
+		}
+		cli := pollingClient(md, nil, &metadataCalls)
+		cli.FnFetchResults = func(context.Context, *cli_service.TFetchResultsReq) (*cli_service.TFetchResultsResp, error) {
+			return nil, io.ErrUnexpectedEOF
+		}
+		c, capture := newTelemetryTestConn(t, cli)
+
+		r, err := c.QueryContext(context.Background(), "SELECT 1 AS n", nil)
+		require.NoError(t, err)
+		dest := make([]driver.Value, len(r.Columns())) // reads the metadata
+		require.Error(t, r.Next(dest))
+		_ = r.Close()
+
+		ev := closeAndAwaitExecuteEvent(t, c, capture)
+		assert.Equal(t, "COLUMNAR_INLINE", ev.SQLOperation.ExecutionResult)
+		assert.NotNil(t, ev.ErrorInfo)
+	})
 }
 
 func TestConn_ExecContextTelemetryExecutionResult(t *testing.T) {
@@ -418,6 +442,27 @@ func TestConn_ExecContextTelemetryExecutionResult(t *testing.T) {
 
 		ev := closeAndAwaitExecuteEvent(t, c, capture)
 		assert.Empty(t, ev.SQLOperation.ExecutionResult)
+		assert.NotNil(t, ev.ErrorInfo)
+	})
+
+	// Like JDBC, the format describes a result the server already returned, so
+	// a failure after the metadata was read keeps it.
+	t.Run("staging failure keeps the received format", func(t *testing.T) {
+		t.Parallel()
+		var metadataCalls int32
+		staging := true
+		md := &cli_service.TGetResultSetMetadataResp{
+			Schema: telemetryTestSchema(), IsStagingOperation: &staging,
+			ResultFormat: rowSetType(cli_service.TSparkRowSetType_ARROW_BASED_SET),
+		}
+		c, capture := newTelemetryTestConn(t, directResultsClient(md, nil, &metadataCalls))
+
+		// No staging paths in the context, so the staging step fails.
+		_, err := c.ExecContext(context.Background(), "PUT '/tmp/x' INTO '/Volumes/a/b/c/x'", nil)
+		require.Error(t, err)
+
+		ev := closeAndAwaitExecuteEvent(t, c, capture)
+		assert.Equal(t, "INLINE_ARROW", ev.SQLOperation.ExecutionResult)
 		assert.NotNil(t, ev.ErrorInfo)
 	})
 }
