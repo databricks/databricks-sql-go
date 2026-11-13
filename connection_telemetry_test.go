@@ -26,6 +26,7 @@ import (
 	"github.com/databricks/databricks-sql-go/internal/client"
 	"github.com/databricks/databricks-sql-go/internal/config"
 	"github.com/databricks/databricks-sql-go/internal/featureflags"
+	dbsqlrows "github.com/databricks/databricks-sql-go/rows"
 	"github.com/databricks/databricks-sql-go/telemetry"
 )
 
@@ -318,6 +319,62 @@ func TestConn_QueryContextTelemetryExecutionResult(t *testing.T) {
 		assert.Equal(t, "COLUMNAR_INLINE", ev.SQLOperation.ExecutionResult)
 		assert.Equal(t, int32(1), atomic.LoadInt32(&metadataCalls), "no metadata RPC beyond the one rows already issue")
 	})
+
+	// The public Arrow iterators consume pages directly and never populate the
+	// rows' own metadata, so the format comes from the fetched pages.
+	for _, api := range []struct {
+		name    string
+		consume func(t *testing.T, r dbsqlrows.Rows)
+	}{
+		{"GetArrowBatches", func(t *testing.T, r dbsqlrows.Rows) {
+			it, err := r.GetArrowBatches(context.Background())
+			require.NoError(t, err)
+			defer it.Close()
+			n := int64(0)
+			for it.HasNext() {
+				rec, err := it.Next()
+				require.NoError(t, err)
+				n += rec.NumRows()
+				rec.Release()
+			}
+			assert.Equal(t, int64(1), n)
+		}},
+		{"GetArrowIPCStreams", func(t *testing.T, r dbsqlrows.Rows) {
+			it, err := r.GetArrowIPCStreams(context.Background())
+			require.NoError(t, err)
+			defer it.Close()
+			streams := 0
+			for it.HasNext() {
+				rd, err := it.Next()
+				require.NoError(t, err)
+				_, err = io.ReadAll(rd)
+				require.NoError(t, err)
+				streams++
+			}
+			assert.Equal(t, 1, streams)
+		}},
+	} {
+		t.Run(api.name+" reports the fetched page format", func(t *testing.T) {
+			t.Parallel()
+			var metadataCalls int32
+			md := &cli_service.TGetResultSetMetadataResp{
+				Schema: telemetryTestSchema(), ArrowSchema: schemaBytes,
+				ResultFormat: rowSetType(cli_service.TSparkRowSetType_ARROW_BASED_SET),
+			}
+			rs := &cli_service.TRowSet{ArrowBatches: []*cli_service.TSparkArrowBatch{{Batch: batchBytes, RowCount: 1}}}
+			c, capture := newTelemetryTestConn(t, pollingClient(md, rs, &metadataCalls))
+
+			r, err := c.QueryContext(context.Background(), "SELECT 1 AS n", nil)
+			require.NoError(t, err)
+			api.consume(t, r.(dbsqlrows.Rows))
+			require.NoError(t, r.Close())
+
+			ev := closeAndAwaitExecuteEvent(t, c, capture)
+			assert.Equal(t, "INLINE_ARROW", ev.SQLOperation.ExecutionResult)
+			assert.Nil(t, ev.ErrorInfo)
+			assert.Zero(t, atomic.LoadInt32(&metadataCalls), "format taken from fetched pages, no metadata RPC")
+		})
+	}
 
 	t.Run("unknown format is omitted without a metadata RPC", func(t *testing.T) {
 		t.Parallel()

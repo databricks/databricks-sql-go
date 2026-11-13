@@ -140,13 +140,21 @@ func ExecutionResultFormat(md *cli_service.TGetResultSetMetadataResp) string {
 }
 
 // ResultFormat returns the execution_result of the metadata the rows hold
-// (from direct results or already fetched), or "". It never issues an RPC, and
-// is valid on the rows NewRows returns alongside an error.
+// (from direct results or already fetched), or "". When the rows hold none, it
+// falls back to the metadata carried by fetched result pages, which covers
+// results consumed through GetArrowBatches/GetArrowIPCStreams. It never issues
+// an RPC, and is valid on the rows NewRows returns alongside an error.
 func (r *rows) ResultFormat() string {
 	if r == nil {
 		return ""
 	}
-	return ExecutionResultFormat(r.resultSetMetadata)
+	if format := ExecutionResultFormat(r.resultSetMetadata); format != "" {
+		return format
+	}
+	if r.ResultPageIterator != nil {
+		return ExecutionResultFormat(r.ResultPageIterator.ResultSetMetadata())
+	}
+	return ""
 }
 
 func NewRows(
