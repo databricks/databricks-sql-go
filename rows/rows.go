@@ -13,7 +13,8 @@ type Rows interface {
 }
 
 type ArrowBatchIterator interface {
-	// Retrieve the next arrow.Record.
+	// Retrieve the next arrow.Record. The caller owns it and must Release it;
+	// values referencing its buffers are valid only until that release.
 	// Will return io.EOF if there are no more records
 	Next() (arrow.Record, error)
 

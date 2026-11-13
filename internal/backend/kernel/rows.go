@@ -69,6 +69,7 @@ type kernelRows struct {
 	ntz        []bool                     // top-level TIMESTAMP_NTZ columns scan in UTC, not the session location
 	schema     *arrow.Schema              // result-set schema, for GetArrowBatches().Schema()
 	cur        arrow.Record               // current batch (nil until first Next)
+	prepared   []columnAccessor           // lazy row-scan state; unused by GetArrowBatches
 	rowInCur   int                        // next row index within cur
 	chunkCount int                        // cumulative batches fetched, for OnChunkFetched
 	closed     bool
@@ -206,6 +207,7 @@ func (r *kernelRows) Close() error {
 		r.cur.Release()
 		r.cur = nil
 	}
+	r.prepared = nil
 	if r.stream != nil {
 		C.kernel_result_stream_close(r.stream)
 		r.stream = nil
@@ -249,16 +251,11 @@ func (r *kernelRows) next(dest []driver.Value) error {
 			return err
 		}
 	}
-	rec := r.cur
+	if r.prepared == nil {
+		r.prepared = prepareBatch(r.cur, r.op.location, r.ntz, r.geoBinary, r.op.decimalAsFloat, r.keyCache)
+	}
 	for c := 0; c < len(dest); c++ {
-		location := r.op.location
-		if r.ntz[c] {
-			location = time.UTC
-		}
-		v, err := arrowscan.ScanCellCachedWithOptions(rec.Column(c), r.rowInCur, location, r.keyCache, arrowscan.ScanOptions{
-			DecimalAsFloat:   r.op.decimalAsFloat,
-			GeospatialBinary: r.geoBinary[c],
-		})
+		v, err := r.prepared[c](r.rowInCur)
 		if err != nil {
 			return fmt.Errorf("kernel: scan col %d (%s): %w", c, r.cols[c], err)
 		}
@@ -283,6 +280,7 @@ func (r *kernelRows) nextBatch() error {
 		r.cur.Release()
 		r.cur = nil
 	}
+	r.prepared = nil
 	var carr C.struct_ArrowArray
 	var csch C.struct_ArrowSchema
 	if err := call(func() C.KernelStatusCode {
@@ -327,7 +325,8 @@ func (r *kernelRows) nextBatch() error {
 
 // GetArrowBatches exposes the kernel stream as an arrow.Record iterator (the
 // public zero-copy batch API), reusing the row scanner's next_batch pull. Callers
-// MUST Release() each record.
+// own each record and MUST Release() it. Values alias its buffers and are valid
+// only until that record is released.
 func (r *kernelRows) GetArrowBatches(context.Context) (dbrows.ArrowBatchIterator, error) {
 	return &kernelBatchIterator{r: r}, nil
 }
