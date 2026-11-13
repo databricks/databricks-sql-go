@@ -999,7 +999,10 @@ func TestCloudFetchIterator_CloseReleasesInFlightDownloads(t *testing.T) {
 	cfg.UseLz4Compression = false
 	cfg.MaxDownloadThreads = 10
 
-	bi, err := NewCloudBatchIterator(context.Background(), links, 0, nil, cfg, nil)
+	// Cancelled on return so a failed wait below cannot leak downloads into later tests.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	bi, err := NewCloudBatchIterator(ctx, links, 0, nil, cfg, nil)
 	assert.Nil(t, err)
 
 	// Kick off the first batch download. The iterator schedules
@@ -1116,7 +1119,10 @@ func TestCloudFetchIterator_CloseReleasesAfterRetry(t *testing.T) {
 	cfg.RetryWaitMin = 10 * time.Millisecond
 	cfg.RetryWaitMax = 50 * time.Millisecond
 
-	bi, err := NewCloudBatchIterator(context.Background(), links, 0, nil, cfg, nil)
+	// Cancelled on return so a failed wait below cannot leak downloads into later tests.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	bi, err := NewCloudBatchIterator(ctx, links, 0, nil, cfg, nil)
 	assert.Nil(t, err)
 
 	// One foreground reader. It drains exactly one batch and then exits;

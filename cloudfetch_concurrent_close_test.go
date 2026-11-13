@@ -129,6 +129,7 @@ func TestCloudFetchRowsCloseFromAnotherGoroutine(t *testing.T) {
 
 	rows, err := db.QueryContext(context.Background(), "SELECT id")
 	require.NoError(t, err)
+	defer rows.Close() //nolint:errcheck // idempotent; cleans up if an assertion fails first
 
 	var consumed atomic.Int64
 	readerDone := make(chan struct{})
