@@ -178,6 +178,45 @@ func TestKernelE2ETimestampNTZ(t *testing.T) {
 	}
 }
 
+// TestKernelE2ENestedTimestampNTZ checks that TIMESTAMP_NTZ leaves inside
+// ARRAY, MAP and STRUCT keep their wall clock under a non-UTC session zone, and
+// render exactly as on the Thrift path (databricks/databricks-sql-go#520).
+func TestKernelE2ENestedTimestampNTZ(t *testing.T) {
+	skipOnReyden(t, "reyden shifts a zoned TIMESTAMP literal like an NTZ — engine timestamp-tz divergence")
+	tz := WithSessionParams(map[string]string{"timezone": "America/New_York"})
+	const query = "SELECT " +
+		"array(TIMESTAMP_NTZ '2024-06-15 09:15:00.123456'), " +
+		"map('a', TIMESTAMP_NTZ '2024-06-15 09:15:00.123456'), " +
+		"named_struct('label', 'pt', 'ntz', TIMESTAMP_NTZ '2024-06-15 09:15:00.123456', " +
+		"'zoned', TIMESTAMP '2024-06-15 09:15:00.123456', " +
+		"'inner', named_struct('ntz', TIMESTAMP_NTZ '2024-06-15 09:15:00.123456'))"
+	const ntz = `"2024-06-15 09:15:00.123456 +0000 UTC"`
+	want := []string{
+		`[` + ntz + `]`,
+		`{"a":` + ntz + `}`,
+		`{"label":"pt","ntz":` + ntz + `,"zoned":"2024-06-15 09:15:00.123456 -0400 EDT","inner":{"ntz":` + ntz + `}}`,
+	}
+
+	kernelDB := kernelTestDBWith(t, tz)
+	defer kernelDB.Close() //nolint:errcheck
+	host, httpPath, token := pecoTestingCreds(t)
+	thriftConnector, err := NewConnector(WithServerHostname(host), WithHTTPPath(httpPath), WithAccessToken(token), tz)
+	if err != nil {
+		t.Fatalf("NewConnector (thrift): %v", err)
+	}
+	thriftDB := sql.OpenDB(thriftConnector)
+	defer thriftDB.Close() //nolint:errcheck
+
+	for name, db := range map[string]*sql.DB{"kernel": kernelDB, "thrift": thriftDB} {
+		got := scanOneRowAsStrings(t, db, query)
+		for i := range want {
+			if got[i] != want[i] {
+				t.Errorf("%s col %d = %s, want %s", name, i, got[i], want[i])
+			}
+		}
+	}
+}
+
 // TestKernelE2ETLSSkipVerify checks that WithSkipTLSHostVerify (a relaxation
 // knob) is accepted on the kernel path; the connection must still succeed
 // against the warehouse's valid certificate.

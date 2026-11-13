@@ -111,8 +111,8 @@ func newKernelRows(ctx context.Context, op *kernelOp, stream *C.kernel_result_st
 		r.Close()
 		return nil, fmt.Errorf("kernel: import schema: %w", err)
 	}
-	r.schema = sch
-	fields := sch.Fields()
+	r.schema = arrowscan.WithNestedTimestampTypes(sch)
+	fields := r.schema.Fields()
 	r.cols = make([]string, len(fields))
 	// Derive per-column type metadata from the Arrow schema up front (the same
 	// schema Columns() is built from), so the RowsColumnType* interfaces report
@@ -299,7 +299,7 @@ func (r *kernelRows) nextBatch() error {
 	// Zero-copy import. The kernel exports self-contained batches (Rust to_ffi
 	// moves the Arc-owned buffers in), so the arrow.Record safely outlives the
 	// stream; we still Release each batch explicitly as we advance.
-	rec, err := cdata.ImportCRecordBatch(
+	rec, err := importBatch(
 		(*cdata.CArrowArray)(unsafe.Pointer(&carr)),
 		(*cdata.CArrowSchema)(unsafe.Pointer(&csch)))
 	if err != nil {
@@ -323,6 +323,29 @@ func (r *kernelRows) nextBatch() error {
 	}
 	klogCtx(r.ctx, "nextBatch: %d rows (chunk %d)", rec.NumRows(), r.chunkCount)
 	return nil
+}
+
+// importBatch imports one exported batch with its nested timestamp children
+// labelled (arrowscan.WithNestedTimestampTypes), so the scanner keeps nested
+// TIMESTAMP_NTZ wall clocks. It always releases csch, and releases carr on error.
+func importBatch(carr *cdata.CArrowArray, csch *cdata.CArrowSchema) (arrow.Record, error) {
+	field, err := cdata.ImportCArrowField(csch)
+	if err != nil {
+		cdata.ReleaseCArrowArray(carr)
+		return nil, err
+	}
+	st, ok := field.Type.(*arrow.StructType)
+	if !ok {
+		cdata.ReleaseCArrowArray(carr)
+		return nil, fmt.Errorf("record batch schema is %s, not a struct", field.Type)
+	}
+	sch := arrow.NewSchema(st.Fields(), &field.Metadata)
+	rec, err := cdata.ImportCRecordBatchWithSchema(carr, arrowscan.WithNestedTimestampTypes(sch))
+	if err != nil {
+		cdata.ReleaseCArrowArray(carr)
+		return nil, err
+	}
+	return rec, nil
 }
 
 // GetArrowBatches exposes the kernel stream as an arrow.Record iterator (the
