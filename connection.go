@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/databricks/databricks-sql-go/driverctx"
@@ -33,6 +34,19 @@ type conn struct {
 	backend      backend.Backend
 	featureFlags *featureflags.Request
 	telemetry    *telemetry.Interceptor // Optional telemetry interceptor
+	// closed is set by Close, even when CloseSession fails. The Thrift backend
+	// keeps its session handle after close, so SessionValid can't be used here.
+	closed atomic.Bool
+}
+
+// errIfClosed rejects use of a closed connection before any request is sent.
+// It returns driver.ErrBadConn, so database/sql may safely retry on a new conn.
+func (c *conn) errIfClosed(ctx context.Context) error {
+	if !c.closed.Load() {
+		return nil
+	}
+	ctx = driverctx.NewContextWithConnId(ctx, c.id)
+	return dbsqlerrint.NewBadConnectionError(dbsqlerrint.NewDriverError(ctx, "connection is closed", nil))
 }
 
 // tagStatementClosed returns a telemetry-only copy of a close-RPC error tagged
@@ -46,19 +60,24 @@ func tagStatementClosed(ctx context.Context, err error) error {
 }
 
 // Prepare prepares a statement with the query bound to this connection.
+// It fails with driver.ErrBadConn once the connection is closed.
 func (c *conn) Prepare(query string) (driver.Stmt, error) {
-	return &stmt{conn: c, query: query}, nil
+	return c.PrepareContext(context.Background(), query)
 }
 
 // PrepareContext prepares a statement with the query bound to this connection.
-// Currently, PrepareContext does not use context and is functionally equivalent to Prepare.
+// The context is used only to tag the error returned for a closed connection.
 func (c *conn) PrepareContext(ctx context.Context, query string) (driver.Stmt, error) {
+	if err := c.errIfClosed(ctx); err != nil {
+		return nil, err
+	}
 	return &stmt{conn: c, query: query}, nil
 }
 
 // Close closes the session.
 // sql package maintains a free pool of connections and only calls Close when there's a surplus of idle connections.
 func (c *conn) Close() error {
+	c.closed.Store(true)
 	log := logger.WithContext(c.id, "", "")
 	ctx := driverctx.NewContextWithConnId(context.Background(), c.id)
 
@@ -138,6 +157,9 @@ func (c *conn) IsValid() bool {
 // ExecContext honors the context timeout and return when it is canceled.
 // Statement ExecContext is the same as connection ExecContext
 func (c *conn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
+	if err := c.errIfClosed(ctx); err != nil {
+		return nil, err
+	}
 	ctx = driverctx.NewContextWithConnId(ctx, c.id)
 	log, _ := client.LoggerAndContext(ctx, nil)
 	msg, start := logger.Track("ExecContext")
@@ -266,6 +288,9 @@ func (a *chunkTimingAccumulator) applyTags(ctx context.Context, interceptor *tel
 // QueryContext honors the context timeout and return when it is canceled.
 // Statement QueryContext is the same as connection QueryContext
 func (c *conn) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
+	if err := c.errIfClosed(ctx); err != nil {
+		return nil, err
+	}
 	ctx = driverctx.NewContextWithConnId(ctx, c.id)
 	log, _ := client.LoggerAndContext(ctx, nil)
 	msg, start := log.Track("QueryContext")

@@ -49,6 +49,13 @@ func TestKernelE2ESelect1(t *testing.T) {
 // counterpart to kernelTestDB.
 func kernelTestDBWith(t *testing.T, extra ...ConnOption) *sql.DB {
 	t.Helper()
+	return sql.OpenDB(kernelTestConnector(t, extra...))
+}
+
+// kernelTestConnector is the driver.Connector behind kernelTestDBWith, for tests
+// that drive raw driver.Conn methods.
+func kernelTestConnector(t *testing.T, extra ...ConnOption) driver.Connector {
+	t.Helper()
 	// Same DATABRICKS_PECOTESTING_* warehouse credentials as the Thrift E2E suite, so
 	// both backends run against one test warehouse from one secret set.
 	host, httpPath, token := pecoTestingCreds(t)
@@ -67,7 +74,12 @@ func kernelTestDBWith(t *testing.T, extra ...ConnOption) *sql.DB {
 	if err != nil {
 		t.Fatalf("NewConnector: %v", err)
 	}
-	return sql.OpenDB(connector)
+	return connector
+}
+
+// TestKernelE2EClosedConnRejectsStatements is the live SEA leg of SESSION-021.
+func TestKernelE2EClosedConnRejectsStatements(t *testing.T) {
+	assertClosedConnRejected(t, kernelTestConnector(t))
 }
 
 // TestKernelE2EQueryTags proves session confs reach the server: WithQueryTags
