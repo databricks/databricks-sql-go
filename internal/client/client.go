@@ -738,7 +738,9 @@ func RetryPolicy(ctx context.Context, resp *http.Response, err error) (bool, err
 	_, nonRetryableClientMethod := nonRetryableClientMethods[caller]
 
 	if err != nil {
-		if isRetryableError(err) && !nonRetryableClientMethod {
+		// ExecuteStatement is not idempotent, so it retries only requests that were never sent.
+		if isRetryableError(err) && (!nonRetryableClientMethod ||
+			caller == clientMethodExecuteStatement && isDialError(err)) {
 			return true, nil
 		}
 
@@ -804,6 +806,28 @@ func isRetryableError(err error) bool {
 
 	// The error is likely recoverable so retry.
 	return true
+}
+
+// isDialError reports whether err came from dialing the server or proxy, so
+// no request bytes were sent and a non-idempotent request can be retried.
+// TLS handshake, read and write failures happen after the dial and never match.
+func isDialError(err error) bool {
+	if errors.Is(err, context.Canceled) {
+		return false
+	}
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) && dnsErr.IsNotFound {
+		return false
+	}
+	var opErr *net.OpError
+	if !errors.As(err, &opErr) {
+		return false
+	}
+	// net/http reports a failed proxy dial as proxyconnect wrapping the dial error.
+	if opErr.Op == "proxyconnect" && !errors.As(opErr.Err, &opErr) {
+		return false
+	}
+	return opErr.Op == "dial"
 }
 
 func backoff(min, max time.Duration, attemptNum int, resp *http.Response) time.Duration {

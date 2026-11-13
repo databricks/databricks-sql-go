@@ -4,6 +4,7 @@
 
 - **Breaking change:** Upgrade Apache Arrow Go from v12 to v18.8.0 (`github.com/apache/arrow-go/v18`). The public `rows.ArrowBatchIterator` now uses v18 `arrow.RecordBatch` and `*arrow.Schema` types; callers using Arrow batches must migrate their Arrow imports and dependent code. This requires a major driver release (v2.0.0), including a `/v2` driver module path before publication.
 - Fix CloudFetch reads failing with `row number 0 is not contained in any arrow batch: EOF` when `WithMaxDownloadThreads` / `maxDownloadThreads` is 0 or negative. Such values now log a warning and use the default of 10 (databricks/databricks-sql-go#439).
+- **Behavior change:** On the Thrift backend, `ExecuteStatement` is now retried (per `WithRetries`) when the connection to the server or proxy can't be opened, for example connection refused or a connect timeout, because the statement was never sent. Failures after the connection exists are still not retried, so a statement never runs twice. With default retry settings, a refused connection now fails after about 15 seconds instead of immediately (databricks/databricks-sql-go#423).
 - Honor `WithCloudFetch(false)` / `useCloudFetch=false` on the kernel backend to fetch complete results without cloud-storage downloads. The option overrides conflicting session configuration and remains effective after automatic backend recovery. Servers without paged inline support return a configuration error; the driver does not fall back to storage downloads.
 
 ## v1.19.0 (2026-11-04)
