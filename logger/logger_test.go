@@ -62,20 +62,68 @@ func TestSetLogLevelAcceptsNamesInAnyCase(t *testing.T) {
 	}
 }
 
-// A custom zerolog.LevelFieldMarshalFunc changes the spellings ParseLevel matches;
-// the spelling that worked before must keep working.
-func TestSetLogLevelKeepsCustomLevelSpelling(t *testing.T) {
+// A custom zerolog.LevelFieldMarshalFunc changes the spellings ParseLevel matches.
+// The custom spelling keeps working, and the level names stay case-insensitive.
+func TestSetLogLevelWithCustomLevelSpelling(t *testing.T) {
 	restoreLogger(t)
 	prevMarshal := zerolog.LevelFieldMarshalFunc
 	t.Cleanup(func() { zerolog.LevelFieldMarshalFunc = prevMarshal })
-	zerolog.LevelFieldMarshalFunc = func(l zerolog.Level) string { return strings.ToUpper(l.String()) }
-
-	Logger.Logger = Logger.Level(zerolog.WarnLevel)
-	if err := SetLogLevel("DEBUG"); err != nil {
-		t.Fatalf("SetLogLevel(DEBUG) = %v, want nil", err)
+	zerolog.LevelFieldMarshalFunc = func(l zerolog.Level) string {
+		if l == zerolog.DebugLevel {
+			return "DBG"
+		}
+		return strings.ToUpper(l.String())
 	}
-	if got := Logger.GetLevel(); got != zerolog.DebugLevel {
-		t.Fatalf("level = %v, want debug", got)
+
+	for in, want := range map[string]zerolog.Level{
+		"DBG": zerolog.DebugLevel, "dbg": zerolog.DebugLevel,
+		"DEBUG": zerolog.DebugLevel, "Debug": zerolog.DebugLevel, "debug": zerolog.DebugLevel,
+		"WARN": zerolog.WarnLevel, "warn": zerolog.WarnLevel, "Trace": zerolog.TraceLevel,
+	} {
+		Logger.Logger = Logger.Level(zerolog.ErrorLevel)
+		if err := SetLogLevel(in); err != nil {
+			t.Errorf("SetLogLevel(%q) = %v, want nil", in, err)
+			continue
+		}
+		if got := Logger.GetLevel(); got != want {
+			t.Errorf("SetLogLevel(%q) level = %v, want %v", in, got, want)
+		}
+	}
+}
+
+// The warning quotes at most a bounded prefix of the rejected value; the returned
+// error is zerolog's, unchanged.
+func TestSetLogLevelWarningIsBounded(t *testing.T) {
+	restoreLogger(t)
+
+	for name, value := range map[string]string{
+		"long":    strings.Repeat("v", 1<<20),
+		"escaped": strings.Repeat("\x00", 1<<20),
+		"utf8":    strings.Repeat("é", 1<<19),
+	} {
+		t.Run(name, func(t *testing.T) {
+			var buf bytes.Buffer
+			SetLogOutput(&buf)
+			Logger.Logger = Logger.Level(zerolog.WarnLevel)
+
+			_, wantErr := zerolog.ParseLevel(value)
+			if err := SetLogLevel(value); err == nil || err.Error() != wantErr.Error() {
+				t.Fatalf("SetLogLevel error changed: got %d bytes, want zerolog's error", len(fmt.Sprint(err)))
+			}
+			var rec struct {
+				Level   string `json:"level"`
+				Message string `json:"message"`
+			}
+			if err := json.Unmarshal(bytes.TrimSpace(buf.Bytes()), &rec); err != nil {
+				t.Fatalf("record is not one JSON line (%d bytes): %v", buf.Len(), err)
+			}
+			if rec.Level != "warn" || buf.Len() > 1024 {
+				t.Fatalf("got a %d-byte %q record, want one warning under 1 KiB", buf.Len(), rec.Level)
+			}
+			if want := fmt.Sprintf("(%d bytes)", len(value)); !strings.Contains(rec.Message, want) {
+				t.Fatalf("message %q does not report the value length %s", rec.Message, want)
+			}
+		})
 	}
 }
 
