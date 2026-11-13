@@ -15,10 +15,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/apache/arrow/go/v12/arrow"
-	"github.com/apache/arrow/go/v12/arrow/array"
-	"github.com/apache/arrow/go/v12/arrow/ipc"
-	"github.com/apache/arrow/go/v12/arrow/memory"
+	"github.com/apache/arrow-go/v18/arrow"
+	"github.com/apache/arrow-go/v18/arrow/array"
+	"github.com/apache/arrow-go/v18/arrow/ipc"
+	"github.com/apache/arrow-go/v18/arrow/memory"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/stretchr/testify/require"
 )
@@ -46,7 +46,7 @@ func TestCloudFetchRowsCloseFromAnotherGoroutine(t *testing.T) {
 		}
 		col := b.NewArray()
 		defer col.Release()
-		rec := array.NewRecord(schema, []arrow.Array{col}, rowsPerFile)
+		rec := array.NewRecordBatch(schema, []arrow.Array{col}, rowsPerFile)
 		defer rec.Release()
 		var buf bytes.Buffer
 		w := ipc.NewWriter(&buf, ipc.WithSchema(schema))
@@ -80,7 +80,6 @@ func TestCloudFetchRowsCloseFromAnotherGoroutine(t *testing.T) {
 		_, _ = w.Write(fileBytes(int64(idx * rowsPerFile)))
 	}))
 	defer files.Close()
-	defer close(stop)
 
 	links := make([]*cli_service.TSparkArrowResultLink, nFiles)
 	for i := range links {
@@ -129,7 +128,11 @@ func TestCloudFetchRowsCloseFromAnotherGoroutine(t *testing.T) {
 
 	rows, err := db.QueryContext(context.Background(), "SELECT id")
 	require.NoError(t, err)
-	defer rows.Close() //nolint:errcheck // idempotent; cleans up if an assertion fails first
+	defer func() {
+		// Release blocked downloads before Close waits for Next.
+		close(stop)
+		_ = rows.Close()
+	}()
 
 	var consumed atomic.Int64
 	readerDone := make(chan struct{})
