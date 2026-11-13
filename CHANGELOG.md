@@ -2,6 +2,7 @@
 
 ## Unreleased
 - Honor `WithCloudFetch(false)` / `useCloudFetch=false` on the kernel backend to fetch complete results without cloud-storage downloads. The option overrides conflicting session configuration and remains effective after automatic backend recovery. Servers without paged inline support return a configuration error; the driver does not fall back to storage downloads.
+- **Behavior change:** On the kernel backend, TIMESTAMP_NTZ values nested in ARRAY / MAP / STRUCT keep their wall clock under a non-UTC session time zone and render as on Thrift (`2024-06-15 09:15:00 +0000 UTC`), instead of being shifted into the session zone. Nested timestamp fields in `GetArrowBatches` schemas now carry `databricks.type_name` metadata (databricks/databricks-sql-go#520).
 
 ## v1.19.0 (2026-11-04)
 - Upgrade the SQL kernel bindings to v1.4.0.
