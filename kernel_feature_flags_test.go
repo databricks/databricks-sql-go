@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -19,6 +20,11 @@ import (
 	"github.com/databricks/databricks-sql-go/internal/warehouse_cache"
 	"github.com/stretchr/testify/require"
 )
+
+// kernelFlagWorkspaceSeq gives every fixture its own workspace ID. The kernel's
+// process-wide flag cache otherwise keys on host:port, and httptest can reuse a
+// port within the flag TTL, turning a cold fetch into a cache hit.
+var kernelFlagWorkspaceSeq atomic.Int64
 
 // The kernel prefetches connector-service flags before CreateSession whenever
 // the driver identity is set. Telemetry is the kernel's only flag consumer, so
@@ -41,6 +47,7 @@ func TestKernelFeatureFlagRequestsFollowTelemetrySetting(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			defer warehouse_cache.ClearCache()
+			workspaceID := strconv.FormatInt(4990000000+kernelFlagWorkspaceSeq.Add(1), 10)
 			var flagGets, telemetryPosts, sessions atomic.Int64
 			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
@@ -49,6 +56,7 @@ func TestKernelFeatureFlagRequestsFollowTelemetrySetting(t *testing.T) {
 					flagGets.Add(1)
 					require.Equal(t, http.MethodGet, r.Method)
 					require.Equal(t, "/api/2.0/connector-service/feature-flags/GOLANG/"+DriverVersion, r.URL.Path)
+					require.Equal(t, workspaceID, r.Header.Get("X-Databricks-Org-Id"))
 					value := "false"
 					if tc.serverFlag {
 						value = "true"
@@ -68,7 +76,7 @@ func TestKernelFeatureFlagRequestsFollowTelemetrySetting(t *testing.T) {
 			defer server.Close()
 
 			options := []ConnOption{
-				WithServerHostname(server.URL), WithHTTPPath("/sql/1.0/warehouses/test"),
+				WithServerHostname(server.URL), WithHTTPPath("/sql/1.0/warehouses/test?o=" + workspaceID),
 				WithAccessToken("test-token"), WithUseKernel(true), WithSkipTLSHostVerify(),
 				WithRetries(-1, time.Millisecond, time.Millisecond),
 			}
