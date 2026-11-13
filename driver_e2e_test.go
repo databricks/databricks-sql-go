@@ -7,11 +7,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -719,11 +721,49 @@ type cloudDownloadCounter struct {
 	downloads     atomic.Int64
 }
 
+// newCloudDownloadCounter accepts the hostname forms WithServerHostname does
+// (optional scheme, optional port).
+func newCloudDownloadCounter(serverHostname string) *cloudDownloadCounter {
+	_, host := parseHostName(serverHostname)
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	return &cloudDownloadCounter{warehouseHost: host}
+}
+
 func (c *cloudDownloadCounter) RoundTrip(req *http.Request) (*http.Response, error) {
-	if req.URL.Hostname() != c.warehouseHost {
+	if !strings.EqualFold(req.URL.Hostname(), c.warehouseHost) {
 		c.downloads.Add(1)
 	}
 	return http.DefaultTransport.RoundTrip(req)
+}
+
+func TestCloudDownloadCounterIgnoresWarehouseHost(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer server.Close()
+	u, err := url.Parse(server.URL)
+	require.NoError(t, err)
+
+	cases := []struct {
+		serverHostname string
+		wantDownloads  int64
+	}{
+		{"127.0.0.1", 0},
+		{"http://127.0.0.1", 0},
+		{"HTTP://127.0.0.1", 0},
+		{"http://" + u.Host, 0},
+		{u.Host, 0},
+		{"https://example.cloud.databricks.com", 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.serverHostname, func(t *testing.T) {
+			counter := newCloudDownloadCounter(tc.serverHostname)
+			resp, err := (&http.Client{Transport: counter}).Post(server.URL, "application/x-thrift", nil)
+			require.NoError(t, err)
+			require.NoError(t, resp.Body.Close())
+			assert.Equal(t, tc.wantDownloads, counter.downloads.Load())
+		})
+	}
 }
 
 // TestE2ECloudFetchNonPositiveMaxDownloadThreads is the live regression guard for
@@ -734,7 +774,7 @@ func TestE2ECloudFetchNonPositiveMaxDownloadThreads(t *testing.T) {
 	host, httpPath, token := pecoTestingCreds(t)
 
 	const wantRows = 300000
-	transport := &cloudDownloadCounter{warehouseHost: host}
+	transport := newCloudDownloadCounter(host)
 	connector, err := NewConnector(
 		WithServerHostname(host),
 		WithPort(443),
