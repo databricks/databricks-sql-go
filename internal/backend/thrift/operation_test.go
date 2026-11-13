@@ -277,6 +277,46 @@ func TestOperationIsStaging(t *testing.T) {
 	})
 }
 
+// TestOperationResultFormat checks the format comes from metadata the operation
+// already holds and that reading it never issues an RPC.
+func TestOperationResultFormat(t *testing.T) {
+	arrowBased := cli_service.TSparkRowSetType_ARROW_BASED_SET
+	columnar := cli_service.TSparkRowSetType_COLUMN_BASED_SET
+	metaCalls := 0
+	tc := &client.TestClient{
+		FnGetResultSetMetadata: func(ctx context.Context, req *cli_service.TGetResultSetMetadataReq) (*cli_service.TGetResultSetMetadataResp, error) {
+			metaCalls++
+			return &cli_service.TGetResultSetMetadataResp{ResultFormat: &columnar}, nil
+		},
+	}
+	be := NewForTest(tc, getTestSession(), config.WithDefaults())
+
+	t.Run("direct results metadata", func(t *testing.T) {
+		op := be.OperationForTest(&cli_service.TExecuteStatementResp{
+			OperationHandle: opHandle(),
+			DirectResults: &cli_service.TSparkDirectResults{
+				ResultSetMetadata: &cli_service.TGetResultSetMetadataResp{ResultFormat: &arrowBased},
+			},
+		}, nil)
+		assert.Equal(t, "INLINE_ARROW", op.ResultFormat())
+	})
+
+	t.Run("metadata fetched by IsStaging", func(t *testing.T) {
+		op := be.OperationForTest(&cli_service.TExecuteStatementResp{OperationHandle: opHandle()}, nil)
+		assert.Empty(t, op.ResultFormat(), "unknown before IsStaging")
+		_, err := op.IsStaging(context.Background())
+		require.NoError(t, err)
+		assert.Equal(t, "COLUMNAR_INLINE", op.ResultFormat())
+	})
+
+	t.Run("no handle", func(t *testing.T) {
+		op := be.OperationForTest(&cli_service.TExecuteStatementResp{}, nil)
+		assert.Empty(t, op.ResultFormat())
+	})
+
+	assert.Equal(t, 1, metaCalls, "only IsStaging issues the metadata RPC")
+}
+
 // TestOperationExecutionError pins the exact user-visible composed error string
 // returned when a statement finishes in a non-FINISHED terminal state, plus the
 // sqlstate carried on the wrapped DBExecutionError. The string is the driver's

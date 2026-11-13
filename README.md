@@ -328,7 +328,7 @@ parallel via cloud storage
 | DSN parameter | Connector option | Protocol | Default | Description |
 |---|---|---|---|---|
 | `useCloudFetch` | `WithCloudFetch` | Both | `true` | Enable Cloud Fetch. Set to false to fetch results through the SQL connection without direct cloud-storage access. |
-| `maxDownloadThreads` | `WithMaxDownloadThreads` | Thrift only (inert on kernel) | `10` | Concurrent download goroutines (Thrift). Inert on the kernel path. |
+| `maxDownloadThreads` | `WithMaxDownloadThreads` | Thrift only (inert on kernel) | `10` | Concurrent download goroutines (Thrift). A value <= 0 logs a warning and uses the default. Inert on the kernel path. |
 | | `WithKernelMaxChunksInMemory(n)` | SEA only | kernel default (16) | Bounds decompressed Cloud Fetch chunks held in memory — trades large-result throughput for peak memory. |
 
 On the Thrift backend:

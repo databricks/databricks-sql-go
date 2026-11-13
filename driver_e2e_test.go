@@ -1,16 +1,22 @@
 package dbsql
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"database/sql/driver"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
+	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"strconv"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -18,8 +24,10 @@ import (
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/client"
+	"github.com/databricks/databricks-sql-go/internal/config"
 	"github.com/databricks/databricks-sql-go/logger"
 	dbsqlrows "github.com/databricks/databricks-sql-go/rows"
+	"github.com/databricks/databricks-sql-go/telemetry"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -575,6 +583,96 @@ func loadTestData(t *testing.T, name string, v any) {
 	}
 }
 
+// assertClosedConnRejected checks SESSION-021 through connector: after Close,
+// Prepare, PrepareContext and direct execution fail with the closed-connection
+// error, and a new conn from the same connector still returns one row.
+func assertClosedConnRejected(t *testing.T, connector driver.Connector) {
+	t.Helper()
+	ctx := context.Background()
+
+	a, err := connector.Connect(ctx)
+	require.NoError(t, err)
+	queryOneRow(t, a)
+	require.NoError(t, a.Close())
+
+	requireClosed := func(err error) {
+		t.Helper()
+		require.ErrorIs(t, err, driver.ErrBadConn)
+		require.ErrorContains(t, err, "connection is closed")
+	}
+	_, err = a.Prepare("SELECT 1")
+	requireClosed(err)
+	_, err = a.(driver.ConnPrepareContext).PrepareContext(ctx, "SELECT 1")
+	requireClosed(err)
+	_, err = a.(driver.QueryerContext).QueryContext(ctx, "SELECT 1", nil)
+	requireClosed(err)
+	_, err = a.(driver.ExecerContext).ExecContext(ctx, "SELECT 1", nil)
+	requireClosed(err)
+
+	b, err := connector.Connect(ctx)
+	require.NoError(t, err, "a connection opened after the rejected calls must still open")
+	defer b.Close() //nolint:errcheck
+	queryOneRow(t, b)
+}
+
+func queryOneRow(t *testing.T, c driver.Conn) {
+	t.Helper()
+	s, err := c.Prepare("SELECT 1")
+	require.NoError(t, err)
+	defer s.Close() //nolint:errcheck
+	rows, err := s.(driver.StmtQueryContext).QueryContext(context.Background(), nil)
+	require.NoError(t, err)
+	defer rows.Close() //nolint:errcheck
+	dest := make([]driver.Value, len(rows.Columns()))
+	require.NoError(t, rows.Next(dest))
+	require.Equal(t, io.EOF, rows.Next(dest))
+}
+
+// TestClosedConnRejectsStatementsWithoutRequests runs the SESSION-021 check
+// against the fake Thrift server and asserts the rejected calls sent nothing:
+// only conn A and conn B each open a session and execute one query.
+func TestClosedConnRejectsStatementsWithoutRequests(t *testing.T) {
+	state := &callState{}
+	loadTestData(t, "OpenSessionSuccess.json", &state.openSessionResp)
+	loadTestData(t, "CloseSessionSuccess.json", &state.closeSessionResp)
+	loadTestData(t, "CloseOperationSuccess.json", &state.closeOperationResp)
+	loadTestData(t, "GetResultSetMetadataNotStaging.json", &state.getResultSetMetadataResp)
+	loadTestData(t, "ExecuteStatement1.json", &state.executeStatementResp)
+	ts := getServer(state)
+	defer ts.Close()
+
+	r, err := url.Parse(ts.URL)
+	require.NoError(t, err)
+	port, err := strconv.Atoi(r.Port())
+	require.NoError(t, err)
+	connector, err := NewConnector(
+		WithServerHostname("localhost"),
+		WithPort(port),
+		WithHTTPPath(""),
+		WithAccessToken(""),
+	)
+	require.NoError(t, err)
+
+	assertClosedConnRejected(t, connector)
+
+	assert.Equal(t, 2, state.openSessionCalls)
+	assert.Equal(t, 2, state.executeStatementCalls)
+	assert.Equal(t, 2, state.closeSessionCalls)
+}
+
+// TestE2EClosedConnRejectsStatements is the live Thrift leg of SESSION-021.
+func TestE2EClosedConnRejectsStatements(t *testing.T) {
+	host, httpPath, token := pecoTestingCreds(t)
+	connector, err := NewConnector(
+		WithServerHostname(host),
+		WithPort(443),
+		WithHTTPPath(httpPath),
+		WithAccessToken(token),
+	)
+	require.NoError(t, err)
+	assertClosedConnRejected(t, connector)
+}
+
 type callState struct {
 	openSessionCalls int
 	openSessionResp  cli_service.TOpenSessionResp
@@ -710,6 +808,94 @@ func TestE2ECloudFetchExactRowCount(t *testing.T) {
 	require.Equal(t, int64(wantRows), rowCount, "CloudFetch must surface exactly the requested rows, with no Arrow padding")
 }
 
+// cloudDownloadCounter counts requests sent to hosts other than the warehouse,
+// i.e. CloudFetch presigned-URL downloads.
+type cloudDownloadCounter struct {
+	warehouseHost string
+	downloads     atomic.Int64
+}
+
+// newCloudDownloadCounter accepts the hostname forms WithServerHostname does
+// (optional scheme, optional port).
+func newCloudDownloadCounter(serverHostname string) *cloudDownloadCounter {
+	_, host := parseHostName(serverHostname)
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	return &cloudDownloadCounter{warehouseHost: host}
+}
+
+func (c *cloudDownloadCounter) RoundTrip(req *http.Request) (*http.Response, error) {
+	if !strings.EqualFold(req.URL.Hostname(), c.warehouseHost) {
+		c.downloads.Add(1)
+	}
+	return http.DefaultTransport.RoundTrip(req)
+}
+
+func TestCloudDownloadCounterIgnoresWarehouseHost(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer server.Close()
+	u, err := url.Parse(server.URL)
+	require.NoError(t, err)
+
+	cases := []struct {
+		serverHostname string
+		wantDownloads  int64
+	}{
+		{"127.0.0.1", 0},
+		{"http://127.0.0.1", 0},
+		{"HTTP://127.0.0.1", 0},
+		{"http://" + u.Host, 0},
+		{u.Host, 0},
+		{"https://example.cloud.databricks.com", 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.serverHostname, func(t *testing.T) {
+			counter := newCloudDownloadCounter(tc.serverHostname)
+			resp, err := (&http.Client{Transport: counter}).Post(server.URL, "application/x-thrift", nil)
+			require.NoError(t, err)
+			require.NoError(t, resp.Body.Close())
+			assert.Equal(t, tc.wantDownloads, counter.downloads.Load())
+		})
+	}
+}
+
+// TestE2ECloudFetchNonPositiveMaxDownloadThreads is the live regression guard for
+// issue #439: a non-positive download-thread count must degrade to the default
+// instead of failing the first CloudFetch read with "... not contained in any
+// arrow batch: EOF".
+func TestE2ECloudFetchNonPositiveMaxDownloadThreads(t *testing.T) {
+	host, httpPath, token := pecoTestingCreds(t)
+
+	const wantRows = 300000
+	transport := newCloudDownloadCounter(host)
+	connector, err := NewConnector(
+		WithServerHostname(host),
+		WithPort(443),
+		WithHTTPPath(httpPath),
+		WithAccessToken(token),
+		WithTransport(transport),
+		WithMaxDownloadThreads(-1),
+	)
+	require.NoError(t, err)
+
+	db := sql.OpenDB(connector)
+	defer db.Close() //nolint:errcheck
+
+	rows, err := db.QueryContext(context.Background(),
+		fmt.Sprintf("SELECT id, repeat('x', 64) AS pad FROM range(%d)", wantRows))
+	require.NoError(t, err)
+	defer rows.Close() //nolint:errcheck
+
+	var n int
+	for rows.Next() {
+		n++
+	}
+	require.NoError(t, rows.Err())
+	require.Equal(t, wantRows, n)
+	require.Positive(t, transport.downloads.Load(), "expected the result to be fetched over CloudFetch")
+}
+
 // TestE2ETimestampNTZTypeName asserts that a zoned TIMESTAMP and a TIMESTAMP_NTZ
 // in the same result set report distinct database type names. The Databricks
 // TIMESTAMP_NTZ type is a wall-clock value with no zone; it must be reported as
@@ -792,4 +978,94 @@ func TestE2ETimestampNTZPreservesWallClock(t *testing.T) {
 	// session timezone (America/New_York), so its UTC instant is 13:15:00.123456Z.
 	assert.Equal(t, time.Date(2024, time.June, 15, 13, 15, 0, 123456000, time.UTC), zoned.UTC(),
 		"zoned TIMESTAMP must remain the correct instant")
+}
+
+// thriftTelemetryCapture forwards every request and records the statement
+// events the driver exports to /telemetry-ext.
+type thriftTelemetryCapture struct {
+	base   http.RoundTripper
+	mu     sync.Mutex
+	events []*telemetry.TelemetryEvent
+}
+
+func (c *thriftTelemetryCapture) RoundTrip(req *http.Request) (*http.Response, error) {
+	if strings.Contains(req.URL.Path, "/telemetry-ext") && req.Body != nil {
+		body, err := io.ReadAll(req.Body)
+		_ = req.Body.Close()
+		if err != nil {
+			return nil, err
+		}
+		req.Body = io.NopCloser(bytes.NewReader(body))
+		var r telemetry.TelemetryRequest
+		if json.Unmarshal(body, &r) == nil {
+			c.mu.Lock()
+			for _, pl := range r.ProtoLogs {
+				var fl telemetry.TelemetryFrontendLog
+				if json.Unmarshal([]byte(pl), &fl) == nil && fl.Entry != nil && fl.Entry.SQLDriverLog != nil {
+					c.events = append(c.events, fl.Entry.SQLDriverLog)
+				}
+			}
+			c.mu.Unlock()
+		}
+	}
+	return c.base.RoundTrip(req)
+}
+
+func (c *thriftTelemetryCapture) executeEvents(statementID string) []*telemetry.TelemetryEvent {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var out []*telemetry.TelemetryEvent
+	for _, ev := range c.events {
+		if ev.SQLStatementID == statementID && ev.SQLOperation != nil && ev.SQLOperation.OperationDetail != nil &&
+			ev.SQLOperation.OperationDetail.OperationType == telemetry.OperationTypeExecuteStatement {
+			out = append(out, ev)
+		}
+	}
+	return out
+}
+
+// TestE2ETelemetryReportsExecutionResult checks the exported Thrift statement
+// event reports how the result was delivered and the SQL statement type
+// (issue #454).
+func TestE2ETelemetryReportsExecutionResult(t *testing.T) {
+	host, httpPath, token := pecoTestingCreds(t)
+
+	for _, tc := range []struct{ name, query, want string }{
+		{"inline Arrow", "SELECT 1 AS n", "INLINE_ARROW"},
+		{"CloudFetch", "SELECT id, repeat('x', 64) AS pad FROM range(2000000)", "EXTERNAL_LINKS"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dc, err := NewConnector(
+				WithServerHostname(host),
+				WithPort(443),
+				WithHTTPPath(httpPath),
+				WithAccessToken(token),
+				func(cfg *config.Config) { cfg.EnableTelemetry = config.NewConfigValue(true) },
+			)
+			require.NoError(t, err)
+			c := dc.(*connector)
+			capture := &thriftTelemetryCapture{base: c.client.Transport}
+			if capture.base == nil {
+				capture.base = http.DefaultTransport
+			}
+			c.client.Transport = capture
+
+			db := sql.OpenDB(dc)
+			var statementID string
+			ctx := driverctx.NewContextWithQueryIdCallback(context.Background(), func(id string) { statementID = id })
+			rows, err := db.QueryContext(ctx, tc.query)
+			require.NoError(t, err)
+			require.True(t, rows.Next(), "expected a first row")
+			require.NoError(t, rows.Close())
+			require.NoError(t, db.Close()) // flushes telemetry
+
+			require.NotEmpty(t, statementID)
+			require.Eventually(t, func() bool { return len(capture.executeEvents(statementID)) > 0 },
+				30*time.Second, 100*time.Millisecond, "EXECUTE_STATEMENT event exported")
+			events := capture.executeEvents(statementID)
+			require.Len(t, events, 1)
+			assert.Equal(t, tc.want, events[0].SQLOperation.ExecutionResult)
+			assert.Equal(t, "SQL", events[0].SQLOperation.StatementType)
+		})
+	}
 }

@@ -12,6 +12,7 @@ func TestTagConstants_NonEmpty(t *testing.T) {
 		{"TagSessionID", TagSessionID},
 		{"TagDriverVersion", TagDriverVersion},
 		{"TagStatementID", TagStatementID},
+		{"TagStatementType", TagStatementType},
 		{"TagResultFormat", TagResultFormat},
 		{"TagChunkCount", TagChunkCount},
 		{"TagBytesDownloaded", TagBytesDownloaded},

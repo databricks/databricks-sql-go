@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/apache/arrow/go/v12/arrow"
+	"github.com/apache/arrow-go/v18/arrow"
 	dbsql "github.com/databricks/databricks-sql-go"
 	dbsqlrows "github.com/databricks/databricks-sql-go/rows"
 	"github.com/joho/godotenv"
@@ -124,7 +124,7 @@ func loopWithNext(db *sql.DB) {
 	}
 
 	var iBatch, nRows int
-	var b arrow.Record
+	var b arrow.RecordBatch
 	for b, err = batches.Next(); err == nil; b, err = batches.Next() {
 		log.Printf("batch %v: nRecords=%v\n", iBatch, b.NumRows())
 		iBatch += 1
