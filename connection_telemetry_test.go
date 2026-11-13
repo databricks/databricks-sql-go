@@ -241,6 +241,11 @@ func drainRows(t *testing.T, r driver.Rows) int {
 }
 
 func TestConn_QueryContextTelemetryExecutionResult(t *testing.T) {
+	// Arrow v12 caches the shared Timestamp_us zone without a lock (see #465).
+	// Warm it while tests still run serially so the parallel Arrow cases below
+	// don't race on it.
+	_, err := arrow.FixedWidthTypes.Timestamp_us.(*arrow.TimestampType).GetToTimeFunc()
+	require.NoError(t, err)
 	t.Parallel()
 	schemaBytes, batchBytes, stream := telemetryTestArrow(t)
 
