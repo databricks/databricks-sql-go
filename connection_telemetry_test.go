@@ -382,15 +382,21 @@ func TestConn_QueryContextTelemetryExecutionResult(t *testing.T) {
 		assert.NotNil(t, ev.ErrorInfo)
 	})
 
-	// Results either fails (the conn reports the direct-results format) or
-	// succeeds (only Rows.Close reports it); either way it is reported once.
+	// Results either fails (the conn reports the format the discarded rows
+	// received) or succeeds (only Rows.Close reports it); either way it is
+	// reported once. The metadata comes inline in the direct results or from
+	// the RPC the rows already issue when the direct results omit it.
 	for _, tc := range []struct {
-		name        string
-		arrowSchema []byte
-		setupFails  bool
+		name          string
+		arrowSchema   []byte
+		setupFails    bool
+		inlineMD      bool
+		metadataCalls int32
 	}{
-		{"direct results format reported once by Rows.Close", schemaBytes, false},
-		{"result setup failure keeps the received format", []byte("not an arrow schema"), true},
+		{"direct results format reported once by Rows.Close", schemaBytes, false, true, 0},
+		{"result setup failure keeps the received format", []byte("not an arrow schema"), true, true, 0},
+		{"fetched metadata format reported once by Rows.Close", schemaBytes, false, false, 1},
+		{"result setup failure keeps the fetched format", []byte("not an arrow schema"), true, false, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -400,7 +406,15 @@ func TestConn_QueryContextTelemetryExecutionResult(t *testing.T) {
 				ResultFormat: rowSetType(cli_service.TSparkRowSetType_ARROW_BASED_SET),
 			}
 			rs := &cli_service.TRowSet{ArrowBatches: []*cli_service.TSparkArrowBatch{{Batch: batchBytes, RowCount: 1}}}
-			c, capture := newTelemetryTestConn(t, directResultsClient(md, rs, &metadataCalls))
+			cli := directResultsClient(md, rs, &metadataCalls)
+			if !tc.inlineMD {
+				cli = directResultsClient(nil, rs, &metadataCalls)
+				cli.FnGetResultSetMetadata = func(context.Context, *cli_service.TGetResultSetMetadataReq) (*cli_service.TGetResultSetMetadataResp, error) {
+					atomic.AddInt32(&metadataCalls, 1)
+					return md, nil
+				}
+			}
+			c, capture := newTelemetryTestConn(t, cli)
 
 			r, err := c.QueryContext(context.Background(), "SELECT 1 AS n", nil)
 			if tc.setupFails {
@@ -414,7 +428,7 @@ func TestConn_QueryContextTelemetryExecutionResult(t *testing.T) {
 			ev := closeAndAwaitExecuteEvent(t, c, capture)
 			assert.Equal(t, "INLINE_ARROW", ev.SQLOperation.ExecutionResult)
 			assert.Equal(t, tc.setupFails, ev.ErrorInfo != nil, "error_info")
-			assert.Zero(t, atomic.LoadInt32(&metadataCalls), "no metadata RPC added for telemetry")
+			assert.Equal(t, tc.metadataCalls, atomic.LoadInt32(&metadataCalls), "no metadata RPC added for telemetry")
 		})
 	}
 }

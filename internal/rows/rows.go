@@ -139,6 +139,16 @@ func ExecutionResultFormat(md *cli_service.TGetResultSetMetadataResp) string {
 	}
 }
 
+// ResultFormat returns the execution_result of the metadata the rows hold
+// (from direct results or already fetched), or "". It never issues an RPC, and
+// is valid on the rows NewRows returns alongside an error.
+func (r *rows) ResultFormat() string {
+	if r == nil {
+		return ""
+	}
+	return ExecutionResultFormat(r.resultSetMetadata)
+}
+
 func NewRows(
 	ctx context.Context,
 	opHandle *cli_service.TOperationHandle,
@@ -313,7 +323,7 @@ func (r *rows) Close() error {
 		closeStart := time.Now()
 		err := r.ResultPageIterator.Close()
 		if r.resultFormatCallback != nil {
-			if format := ExecutionResultFormat(r.resultSetMetadata); format != "" {
+			if format := r.ResultFormat(); format != "" {
 				r.resultFormatCallback(format)
 			}
 		}

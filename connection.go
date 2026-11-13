@@ -466,11 +466,16 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 		// the very completing metric this branch exists to emit.
 		if c.telemetry != nil && statementID != "" {
 			// The discarded Rows never reports its format, so report the one the
-			// server already returned (as in JDBC). This is the only report on
-			// this path; on success only Rows.Close reports it.
-			if r, ok := op.(backend.ResultFormatReporter); ok {
-				if format := r.ResultFormat(); format != "" {
-					c.telemetry.AddTag(telemetryCtx, telemetry.TagResultFormat, format)
+			// server already returned (as in JDBC). The rows hold metadata they
+			// fetched themselves; the operation holds direct-results metadata.
+			// This is the only report on this path; on success only Rows.Close
+			// reports it.
+			for _, src := range []any{rows, op} {
+				if r, ok := src.(backend.ResultFormatReporter); ok {
+					if format := r.ResultFormat(); format != "" {
+						c.telemetry.AddTag(telemetryCtx, telemetry.TagResultFormat, format)
+						break
+					}
 				}
 			}
 			c.telemetry.AfterExecute(telemetryCtx, err)
