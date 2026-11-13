@@ -3,8 +3,10 @@ package dbsql
 import (
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/databricks/databricks-sql-go/auth/pat"
+	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 	"github.com/databricks/databricks-sql-go/internal/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -36,4 +38,16 @@ func TestOOpenConnector(t *testing.T) {
 		assert.NotNil(t, coni.client)
 	})
 
+	t.Run("Should reject a timeout that overflows time.Duration", func(t *testing.T) {
+		d := &databricksDriver{}
+		// 32-bit platforms reject this value in strconv.Atoi, before the range check.
+		_, err := d.OpenConnector("token:token@databricks-host:443/http-path?timeout=9223372037")
+		require.Error(t, err)
+		assert.ErrorIs(t, err, dbsqlerr.RequestError)
+		assert.ErrorContains(t, err, "param timeout with value 9223372037")
+
+		c, err := d.OpenConnector("token:token@databricks-host:443/http-path?timeout=-1")
+		require.NoError(t, err)
+		assert.Equal(t, -time.Second, c.(*connector).cfg.QueryTimeout)
+	})
 }

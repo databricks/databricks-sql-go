@@ -490,6 +490,15 @@ func TestKernelE2ECancellation(t *testing.T) {
 	t.Logf("cancelled after %v with err=%v", elapsed, err)
 }
 
+// The kernel backend rejects a positive server timeout, so only 0 and -1 run.
+func TestKernelE2EDSNQueryTimeout(t *testing.T) {
+	host, httpPath, token := pecoTestingCreds(t)
+	if isReydenLeg() {
+		httpPath = reydenHTTPPath()
+	}
+	testDSNQueryTimeout(t, host, httpPath, token, "useKernel=true&", "0", "-1")
+}
+
 // TestKernelE2EClientQueryTimeout verifies the kernel-owned execution deadline
 // returns HYT00 promptly and leaves the same connection reusable.
 func TestKernelE2EClientQueryTimeout(t *testing.T) {

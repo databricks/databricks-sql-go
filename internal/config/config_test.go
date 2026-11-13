@@ -4,6 +4,8 @@ import (
 	"crypto/tls"
 	"fmt"
 	"reflect"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -723,6 +725,52 @@ func TestParseDSNEnableGeoSpatialSupport(t *testing.T) {
 
 	if _, err := ParseDSN(base + "?enableGeoSpatialSupport=notabool"); err == nil {
 		t.Error("malformed enableGeoSpatialSupport should fail DSN parsing")
+	}
+}
+
+func TestParseDSNQueryTimeoutRange(t *testing.T) {
+	if strconv.IntSize < 64 {
+		t.Skip("strconv.Atoi rejects these values before the range check on 32-bit platforms")
+	}
+	base := "token:supersecret@example.cloud.databricks.com:443/sql/1.0/endpoints/abc?timeout="
+	for _, tc := range []struct {
+		value   string
+		want    time.Duration
+		wantErr string
+	}{
+		{value: "0", want: 0},
+		{value: "1", want: time.Second},
+		{value: "9223372036", want: 9223372036 * time.Second},
+		// Negative values within range are still accepted.
+		{value: "-1", want: -time.Second},
+		{value: "-9223372036", want: -9223372036 * time.Second},
+		// These would wrap: the first two to negative, the rest to positive durations.
+		{value: "9223372037", wantErr: "invalid DSN: param timeout with value 9223372037 is out of range"},
+		{value: "9223372036854775807", wantErr: "invalid DSN: param timeout with value 9223372036854775807 is out of range"},
+		{value: "18446744074", wantErr: "invalid DSN: param timeout with value 18446744074 is out of range"},
+		{value: "-9223372037", wantErr: "invalid DSN: param timeout with value -9223372037 is out of range"},
+		// Parse failures keep their existing error.
+		{value: "9223372036854775808", wantErr: "invalid DSN: param timeout with value 9223372036854775808 is not of type int"},
+		{value: "abc", wantErr: "invalid DSN: param timeout with value abc is not of type int"},
+	} {
+		t.Run(tc.value, func(t *testing.T) {
+			got, err := ParseDSN(base + tc.value)
+			if tc.wantErr != "" {
+				if err == nil {
+					t.Fatalf("ParseDSN(timeout=%s) QueryTimeout = %v, want error containing %q", tc.value, got.QueryTimeout, tc.wantErr)
+				}
+				if !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("ParseDSN(timeout=%s) error = %q, want it to contain %q", tc.value, err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ParseDSN(timeout=%s) error = %v", tc.value, err)
+			}
+			if got.QueryTimeout != tc.want {
+				t.Errorf("ParseDSN(timeout=%s) QueryTimeout = %v, want %v", tc.value, got.QueryTimeout, tc.want)
+			}
+		})
 	}
 }
 

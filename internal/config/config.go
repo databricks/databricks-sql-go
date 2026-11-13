@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -430,6 +431,12 @@ func WithDefaults() *Config {
 
 }
 
+// Bounds of the DSN timeout param, in whole seconds representable as a time.Duration.
+const (
+	maxTimeoutSeconds = int64(math.MaxInt64 / time.Second)
+	minTimeoutSeconds = int64(math.MinInt64 / time.Second)
+)
+
 // ParseDSN constructs UserConfig and CloudFetchConfig by parsing DSN string supplied to `sql.Open()`
 func ParseDSN(dsn string) (UserConfig, error) {
 	fullDSN := dsn
@@ -473,6 +480,12 @@ func ParseDSN(dsn string) (UserConfig, error) {
 	if timeoutSeconds, ok, err := params.extractAsInt("timeout"); ok {
 		if err != nil {
 			return UserConfig{}, err
+		}
+		// Reject seconds whose nanosecond count would overflow time.Duration.
+		if s := int64(timeoutSeconds); s > maxTimeoutSeconds || s < minTimeoutSeconds {
+			msg := fmt.Sprintf("invalid DSN: param timeout with value %d is out of range [%d, %d] seconds",
+				timeoutSeconds, minTimeoutSeconds, maxTimeoutSeconds)
+			return UserConfig{}, dbsqlerrint.NewRequestError(context.TODO(), msg, nil)
 		}
 		ucfg.QueryTimeout = time.Duration(timeoutSeconds) * time.Second
 	}
