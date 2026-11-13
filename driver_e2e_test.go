@@ -1,6 +1,7 @@
 package dbsql
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"database/sql/driver"
@@ -14,6 +15,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -22,8 +24,10 @@ import (
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/client"
+	"github.com/databricks/databricks-sql-go/internal/config"
 	"github.com/databricks/databricks-sql-go/logger"
 	dbsqlrows "github.com/databricks/databricks-sql-go/rows"
+	"github.com/databricks/databricks-sql-go/telemetry"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -974,4 +978,92 @@ func TestE2ETimestampNTZPreservesWallClock(t *testing.T) {
 	// session timezone (America/New_York), so its UTC instant is 13:15:00.123456Z.
 	assert.Equal(t, time.Date(2024, time.June, 15, 13, 15, 0, 123456000, time.UTC), zoned.UTC(),
 		"zoned TIMESTAMP must remain the correct instant")
+}
+
+// thriftTelemetryCapture forwards every request and records the statement
+// events the driver exports to /telemetry-ext.
+type thriftTelemetryCapture struct {
+	base   http.RoundTripper
+	mu     sync.Mutex
+	events []*telemetry.TelemetryEvent
+}
+
+func (c *thriftTelemetryCapture) RoundTrip(req *http.Request) (*http.Response, error) {
+	if strings.Contains(req.URL.Path, "/telemetry-ext") && req.Body != nil {
+		body, err := io.ReadAll(req.Body)
+		_ = req.Body.Close()
+		if err != nil {
+			return nil, err
+		}
+		req.Body = io.NopCloser(bytes.NewReader(body))
+		var r telemetry.TelemetryRequest
+		if json.Unmarshal(body, &r) == nil {
+			c.mu.Lock()
+			for _, pl := range r.ProtoLogs {
+				var fl telemetry.TelemetryFrontendLog
+				if json.Unmarshal([]byte(pl), &fl) == nil && fl.Entry != nil && fl.Entry.SQLDriverLog != nil {
+					c.events = append(c.events, fl.Entry.SQLDriverLog)
+				}
+			}
+			c.mu.Unlock()
+		}
+	}
+	return c.base.RoundTrip(req)
+}
+
+func (c *thriftTelemetryCapture) executeEvents(statementID string) []*telemetry.TelemetryEvent {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var out []*telemetry.TelemetryEvent
+	for _, ev := range c.events {
+		if ev.SQLStatementID == statementID && ev.SQLOperation != nil && ev.SQLOperation.OperationDetail != nil &&
+			ev.SQLOperation.OperationDetail.OperationType == telemetry.OperationTypeExecuteStatement {
+			out = append(out, ev)
+		}
+	}
+	return out
+}
+
+// TestE2ETelemetryReportsExecutionResult checks the exported Thrift statement
+// event reports how the result was delivered (issue #454).
+func TestE2ETelemetryReportsExecutionResult(t *testing.T) {
+	host, httpPath, token := pecoTestingCreds(t)
+
+	for _, tc := range []struct{ name, query, want string }{
+		{"inline Arrow", "SELECT 1 AS n", "INLINE_ARROW"},
+		{"CloudFetch", "SELECT id, repeat('x', 64) AS pad FROM range(2000000)", "EXTERNAL_LINKS"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dc, err := NewConnector(
+				WithServerHostname(host),
+				WithPort(443),
+				WithHTTPPath(httpPath),
+				WithAccessToken(token),
+				func(cfg *config.Config) { cfg.EnableTelemetry = config.NewConfigValue(true) },
+			)
+			require.NoError(t, err)
+			c := dc.(*connector)
+			capture := &thriftTelemetryCapture{base: c.client.Transport}
+			if capture.base == nil {
+				capture.base = http.DefaultTransport
+			}
+			c.client.Transport = capture
+
+			db := sql.OpenDB(dc)
+			var statementID string
+			ctx := driverctx.NewContextWithQueryIdCallback(context.Background(), func(id string) { statementID = id })
+			rows, err := db.QueryContext(ctx, tc.query)
+			require.NoError(t, err)
+			require.True(t, rows.Next(), "expected a first row")
+			require.NoError(t, rows.Close())
+			require.NoError(t, db.Close()) // flushes telemetry
+
+			require.NotEmpty(t, statementID)
+			require.Eventually(t, func() bool { return len(capture.executeEvents(statementID)) > 0 },
+				30*time.Second, 100*time.Millisecond, "EXECUTE_STATEMENT event exported")
+			events := capture.executeEvents(statementID)
+			require.Len(t, events, 1)
+			assert.Equal(t, tc.want, events[0].SQLOperation.ExecutionResult)
+		})
+	}
 }

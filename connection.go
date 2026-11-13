@@ -196,6 +196,11 @@ func (c *conn) ExecContext(ctx context.Context, query string, args []driver.Name
 	stagingErr := c.execStagingOperation(op, ctx)
 
 	if c.telemetry != nil && statementID != "" {
+		if r, ok := op.(backend.ResultFormatReporter); ok && err == nil {
+			if format := r.ResultFormat(); format != "" {
+				c.telemetry.AddTag(ctx, telemetry.TagResultFormat, format)
+			}
+		}
 		defer func() {
 			finalErr := err
 			if stagingErr != nil {
@@ -423,10 +428,19 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 		}
 	}
 
+	var resultFormatCallback func(format string)
+	if c.telemetry != nil && statementID != "" {
+		interceptor := c.telemetry
+		resultFormatCallback = func(format string) {
+			interceptor.AddTag(telemetryCtx, telemetry.TagResultFormat, format)
+		}
+	}
+
 	rows, err := op.Results(ctx, &rows.TelemetryCallbacks{
 		OnChunkFetched:   telemetryUpdate,
 		OnClose:          closeCallback,
 		OnCloudFetchFile: cloudFetchCallback,
+		OnResultFormat:   resultFormatCallback,
 	})
 	if err != nil {
 		// Results failed AFTER a successful server execute (e.g. result-schema
