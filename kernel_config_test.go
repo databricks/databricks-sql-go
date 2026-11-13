@@ -3,6 +3,7 @@ package dbsql
 import (
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"net/http"
 	"reflect"
 	"testing"
@@ -473,9 +474,9 @@ var kernelConfigFieldDisposition = map[string]string{
 	"EnableGeoSpatialSupportDSN": "inert", // DSN carrier; forwarded to KernelExperimental.EnableGeoSpatialSupport
 
 	// Fields promoted from the embedded CloudFetchConfig. The kernel does
-	// CloudFetch internally (below the C ABI), so none is forwarded — but each is
+	// CloudFetch internally (below the C ABI); each option is
 	// classified individually so a new CloudFetch option can't slip the guard.
-	"UseCloudFetch":                "inert",
+	"UseCloudFetch":                "forwarded",
 	"MaxDownloadThreads":           "inert",
 	"MaxFilesInMemory":             "inert",
 	"MinTimeToExpiry":              "inert",
@@ -701,6 +702,26 @@ func TestBuildKernelConfig(t *testing.T) {
 			t.Errorf("Telemetry.Enabled = %v, want explicit true", kc.Telemetry.Enabled)
 		}
 	})
+
+	for _, enabled := range []bool{false, true} {
+		t.Run(fmt.Sprintf("CloudFetch enabled=%v", enabled), func(t *testing.T) {
+			c := baseKernelConfig()
+			c.UseCloudFetch = enabled
+			c.SessionParams = map[string]string{"can_cloud_download": "true", "CLOUDFETCH_ENABLED": "true", "TIMEZONE": "UTC"}
+			original := map[string]string{"can_cloud_download": "true", "CLOUDFETCH_ENABLED": "true", "TIMEZONE": "UTC"}
+			kc := buildKernelConfig(c, kernel.Auth{Mode: kernel.AuthPAT, Token: "dapi-x"})
+			if enabled {
+				if kc.CloudFetchEnabled != nil {
+					t.Fatal("enabled mode must keep the kernel default")
+				}
+			} else if kc.CloudFetchEnabled == nil || *kc.CloudFetchEnabled {
+				t.Fatal("disabled mode must forward the client option")
+			}
+			if !reflect.DeepEqual(kc.SessionConf, original) || !reflect.DeepEqual(c.SessionParams, original) {
+				t.Fatal("session parameters must be preserved for the kernel to interpret")
+			}
+		})
+	}
 
 	t.Run("MaxChunksInMemory injected into kernel SessionConf", func(t *testing.T) {
 		c := baseKernelConfig()

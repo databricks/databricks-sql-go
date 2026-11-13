@@ -8,6 +8,7 @@ import (
 
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 	"github.com/databricks/databricks-sql-go/internal/backend"
+	"github.com/databricks/databricks-sql-go/internal/backend/kernel"
 	"github.com/databricks/databricks-sql-go/internal/backend/thrift"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/client"
@@ -193,10 +194,15 @@ func TestReydenReactiveRecovery(t *testing.T) {
 				return fakeThrift, nil
 			},
 			func(ctx context.Context, cfg *config.Config) (backend.Backend, error) {
+				require.False(t, cfg.UseCloudFetch)
+				kc := buildKernelConfig(cfg, kernel.Auth{Mode: kernel.AuthPAT, Token: "test-token"})
+				require.NotNil(t, kc.CloudFetchEnabled)
+				require.False(t, *kc.CloudFetchEnabled)
 				return kernelBackend, nil
 			},
 		)
 
+		conn.cfg.UseCloudFetch = false
 		be, _, err := conn.openSessionWithReydenFallback(context.Background())
 		require.NoError(t, err)
 
