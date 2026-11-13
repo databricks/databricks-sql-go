@@ -50,7 +50,7 @@ import (
 //
 // Binding-level debug lines (entry, status codes, handle addresses, batch counts)
 // go through the driver's shared logger.Logger at Debug level, so the SAME knob
-// that controls the rest of the driver — DATABRICKS_LOG_LEVEL / dbsql.SetLogLevel
+// that controls the rest of the driver — DATABRICKS_LOG_LEVEL / logger.SetLogLevel
 // — turns kernel binding logs on and off, and each line carries the structured
 // connId/corrId/queryId fields (via klogCtx) that let it be correlated in a
 // multi-conn process. zerolog no-ops a Debug() event when the level is above debug,

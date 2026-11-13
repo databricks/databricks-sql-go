@@ -69,3 +69,19 @@ func TestResolveKernelLogArg(t *testing.T) {
 		t.Errorf("unset at fatal: got (level=%q, useNULL=%v), want (\"OFF\", false)", lvl, useNULL)
 	}
 }
+
+// A level name set in any case reaches the kernel as the same canonical level.
+func TestResolveKernelLogArgFollowsSetLogLevelAnyCase(t *testing.T) {
+	prevLevel := logger.Logger.GetLevel()
+	t.Cleanup(func() { logger.Logger.Logger = logger.Logger.Level(prevLevel) })
+	t.Setenv("DBSQL_KERNEL_DEBUG", "")
+
+	for in, want := range map[string]string{"TRACE": "TRACE", "Debug": "DEBUG", "info": "INFO", "DISABLED": "OFF"} {
+		if err := logger.SetLogLevel(in); err != nil {
+			t.Fatalf("SetLogLevel(%q): %v", in, err)
+		}
+		if lvl, useNULL := resolveKernelLogArg(); useNULL || lvl != want {
+			t.Errorf("after SetLogLevel(%q): got (level=%q, useNULL=%v), want (%q, false)", in, lvl, useNULL, want)
+		}
+	}
+}

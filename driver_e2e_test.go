@@ -1,6 +1,7 @@
 package dbsql
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"database/sql/driver"
@@ -11,6 +12,8 @@ import (
 	"net/url"
 	"os"
 	"strconv"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -792,4 +795,78 @@ func TestE2ETimestampNTZPreservesWallClock(t *testing.T) {
 	// session timezone (America/New_York), so its UTC instant is 13:15:00.123456Z.
 	assert.Equal(t, time.Date(2024, time.June, 15, 13, 15, 0, 123456000, time.UTC), zoned.UTC(),
 		"zoned TIMESTAMP must remain the correct instant")
+}
+
+// lockedBuffer is a log destination safe for the driver's concurrent writers.
+type lockedBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (w *lockedBuffer) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.b.Write(p)
+}
+
+func (w *lockedBuffer) String() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.b.String()
+}
+
+// assertLogLevelNamesE2E checks on a live connection that an upper-case level
+// name takes effect and an unrecognized one warns in the configured output
+// without changing the level. See databricks/databricks-sql-go#441.
+func assertLogLevelNamesE2E(t *testing.T, db *sql.DB) {
+	t.Helper()
+	prevLevel := logger.Logger.GetLevel()
+	out := &lockedBuffer{}
+	logger.SetLogOutput(out)
+	t.Cleanup(func() {
+		logger.SetLogOutput(os.Stderr)
+		logger.Logger.Logger = logger.Logger.Level(prevLevel)
+	})
+
+	require.NoError(t, logger.SetLogLevel("DEBUG"))
+	require.Error(t, logger.SetLogLevel("Verbose"))
+	require.Equal(t, "debug", logger.Logger.GetLevel().String())
+
+	var one int
+	require.NoError(t, db.QueryRowContext(context.Background(), "SELECT 1").Scan(&one))
+	require.Equal(t, 1, one)
+
+	var debugRecords, warnings int
+	for _, line := range strings.Split(strings.TrimSpace(out.String()), "\n") {
+		var rec struct {
+			Level   string `json:"level"`
+			Message string `json:"message"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(line), &rec), line)
+		switch {
+		case rec.Level == "debug":
+			debugRecords++
+		case rec.Level == "warn" && rec.Message == `log level "Verbose" not recognized; keeping debug`:
+			warnings++
+		}
+	}
+	assert.Equal(t, 1, warnings, "one warning naming the rejected value")
+	assert.Positive(t, debugRecords, "DEBUG records from the query reach the configured output")
+}
+
+func TestE2ELogLevelNamesAnyCase(t *testing.T) {
+	host, httpPath, token := pecoTestingCreds(t)
+
+	connector, err := NewConnector(
+		WithServerHostname(host),
+		WithPort(443),
+		WithHTTPPath(httpPath),
+		WithAccessToken(token),
+	)
+	require.NoError(t, err)
+
+	db := sql.OpenDB(connector)
+	defer db.Close() //nolint:errcheck
+
+	assertLogLevelNamesE2E(t, db)
 }
