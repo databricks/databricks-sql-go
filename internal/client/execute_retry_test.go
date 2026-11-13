@@ -96,11 +96,23 @@ func TestIsDialError(t *testing.T) {
 func TestRetryPolicyExecuteStatementDialErrors(t *testing.T) {
 	refused := dialOpErr(&os.SyscallError{Syscall: "connect", Err: syscall.ECONNREFUSED})
 	reset := &url.Error{Op: "Post", URL: "http://host", Err: &net.OpError{Op: "read", Net: "tcp", Err: syscall.ECONNRESET}}
-	execCtx := context.WithValue(context.Background(), ClientMethod, clientMethodExecuteStatement)
+	methodCtx := context.WithValue(context.Background(), ClientMethod, clientMethodExecuteStatement)
+	attempt := &attemptState{}
+	execCtx := context.WithValue(methodCtx, attemptStateKey, attempt)
 
 	retry, err := RetryPolicy(execCtx, nil, refused)
 	require.True(t, retry)
 	require.NoError(t, err)
+
+	// Without attempt state, or after a redirect, the request may have been delivered.
+	retry, err = RetryPolicy(methodCtx, nil, refused)
+	require.False(t, retry)
+	require.Equal(t, refused, err)
+	attempt.redirected.Store(true)
+	retry, err = RetryPolicy(execCtx, nil, refused)
+	require.False(t, retry)
+	require.Equal(t, refused, err)
+	attempt.redirected.Store(false)
 
 	retry, err = RetryPolicy(execCtx, nil, reset)
 	require.False(t, retry)
@@ -141,6 +153,8 @@ func newExecServer() *execServer {
 	return s
 }
 
+const testHTTPPath = "/sql/1.0/warehouses/test"
+
 // newExecClient builds the production Thrift client over RetryableClient.
 // A nil transport uses PooledTransport.
 func newExecClient(t *testing.T, rawURL string, tr http.RoundTripper, clientTimeout time.Duration) *ThriftServiceClient {
@@ -154,7 +168,7 @@ func newExecClient(t *testing.T, rawURL string, tr http.RoundTripper, clientTime
 	cfg.Protocol = u.Scheme
 	cfg.Host = u.Hostname()
 	cfg.Port = port
-	cfg.HTTPPath = "/sql/1.0/warehouses/test"
+	cfg.HTTPPath = testHTTPPath
 	cfg.RetryWaitMin = time.Millisecond
 	cfg.RetryWaitMax = 5 * time.Millisecond
 	cfg.Transport = tr
@@ -329,6 +343,75 @@ func TestExecuteStatementRetriesOnlyNeverSentRequests(t *testing.T) {
 			require.Eventually(t, func() bool { return accepts.Load() == 1 }, time.Second, 5*time.Millisecond)
 		})
 	}
+
+	// A followed redirect means an earlier hop received the request, so a dial
+	// failure on a later hop must not replay it.
+	for _, status := range []int{http.StatusSeeOther, http.StatusTemporaryRedirect, http.StatusPermanentRedirect} {
+		t.Run("dial failure after "+strconv.Itoa(status)+" redirect", func(t *testing.T) {
+			srv := newExecServer()
+			target := "http://" + closedAddr(t) + testHTTPPath
+			var received atomic.Int32
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				received.Add(1)
+				srv.thrift(httptest.NewRecorder(), r)
+				http.Redirect(w, r, target, status)
+			}))
+			defer ts.Close()
+
+			require.Error(t, execute(context.Background(), newExecClient(t, ts.URL, nil, 0), "INSERT INTO t VALUES (1)"))
+			require.Equal(t, int32(1), received.Load())
+			require.Equal(t, int32(1), srv.executions.Load())
+		})
+	}
+
+	t.Run("redirect to a reachable server", func(t *testing.T) {
+		dst := newExecServer()
+		dts := httptest.NewServer(dst.thrift)
+		defer dts.Close()
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, dts.URL+testHTTPPath, http.StatusTemporaryRedirect)
+		}))
+		defer ts.Close()
+
+		require.NoError(t, execute(context.Background(), newExecClient(t, ts.URL, nil, 0), "SELECT 1"))
+		require.Equal(t, int32(1), dst.executions.Load())
+	})
+
+	// Attempt 1 is redirected and gets a 429; attempt 2's first hop is refused.
+	// The redirect belongs to attempt 1 only, so attempt 2 is still retried.
+	t.Run("refused first hop after an earlier redirected attempt", func(t *testing.T) {
+		dst := newExecServer()
+		var rateLimited atomic.Bool
+		dts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if rateLimited.CompareAndSwap(false, true) {
+				w.Header().Set("Retry-After", "0")
+				w.WriteHeader(http.StatusTooManyRequests)
+				return
+			}
+			dst.thrift(w, r)
+		}))
+		defer dts.Close()
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Connection", "close")
+			http.Redirect(w, r, dts.URL+testHTTPPath, http.StatusTemporaryRedirect)
+		}))
+		defer ts.Close()
+
+		origin := ts.Listener.Addr().String()
+		refusedAddr := closedAddr(t)
+		var originDials atomic.Int32
+		tr := &http.Transport{DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			if addr == origin && originDials.Add(1) == 2 {
+				addr = refusedAddr
+			}
+			return (&net.Dialer{}).DialContext(ctx, network, addr)
+		}}
+		defer tr.CloseIdleConnections()
+
+		require.NoError(t, execute(context.Background(), newExecClient(t, ts.URL, tr, 0), "SELECT 1"))
+		require.Equal(t, int32(3), originDials.Load())
+		require.Equal(t, int32(1), dst.executions.Load())
+	})
 
 	t.Run("untrusted certificate", func(t *testing.T) {
 		srv := newExecServer()
