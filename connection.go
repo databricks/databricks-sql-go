@@ -191,11 +191,19 @@ func (c *conn) ExecContext(ctx context.Context, query string, args []driver.Name
 		statementID = op.StatementID()
 		ctx = c.telemetry.BeforeExecuteWithTime(ctx, c.id, statementID, executeStart)
 		c.telemetry.AddTag(ctx, telemetry.TagOperationType, telemetry.OperationTypeExecuteStatement)
+		c.telemetry.AddTag(ctx, telemetry.TagStatementType, telemetry.StatementTypeSQL)
 	}
 
 	stagingErr := c.execStagingOperation(op, ctx)
 
 	if c.telemetry != nil && statementID != "" {
+		// Gate only on execution: a staging failure happens after the result
+		// metadata arrived, so its format is still reported (as in JDBC).
+		if r, ok := op.(backend.ResultFormatReporter); ok && err == nil {
+			if format := r.ResultFormat(); format != "" {
+				c.telemetry.AddTag(ctx, telemetry.TagResultFormat, format)
+			}
+		}
 		defer func() {
 			finalErr := err
 			if stagingErr != nil {
@@ -325,6 +333,7 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 		statementID = op.StatementID()
 		ctx = c.telemetry.BeforeExecuteWithTime(ctx, c.id, statementID, executeStart)
 		c.telemetry.AddTag(ctx, telemetry.TagOperationType, telemetry.OperationTypeExecuteStatement)
+		c.telemetry.AddTag(ctx, telemetry.TagStatementType, telemetry.StatementTypeSQL)
 	}
 
 	if err != nil {
@@ -423,10 +432,19 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 		}
 	}
 
+	var resultFormatCallback func(format string)
+	if c.telemetry != nil && statementID != "" {
+		interceptor := c.telemetry
+		resultFormatCallback = func(format string) {
+			interceptor.AddTag(telemetryCtx, telemetry.TagResultFormat, format)
+		}
+	}
+
 	rows, err := op.Results(ctx, &rows.TelemetryCallbacks{
 		OnChunkFetched:   telemetryUpdate,
 		OnClose:          closeCallback,
 		OnCloudFetchFile: cloudFetchCallback,
+		OnResultFormat:   resultFormatCallback,
 	})
 	if err != nil {
 		// Results failed AFTER a successful server execute (e.g. result-schema
@@ -447,6 +465,19 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 		// metric's HTTP request — a cancelled ctx would abort the export and drop
 		// the very completing metric this branch exists to emit.
 		if c.telemetry != nil && statementID != "" {
+			// The discarded Rows never reports its format, so report the one the
+			// server already returned (as in JDBC). The rows hold metadata they
+			// fetched themselves; the operation holds direct-results metadata.
+			// This is the only report on this path; on success only Rows.Close
+			// reports it.
+			for _, src := range []any{rows, op} {
+				if r, ok := src.(backend.ResultFormatReporter); ok {
+					if format := r.ResultFormat(); format != "" {
+						c.telemetry.AddTag(telemetryCtx, telemetry.TagResultFormat, format)
+						break
+					}
+				}
+			}
 			c.telemetry.AfterExecute(telemetryCtx, err)
 			c.telemetry.CompleteStatement(telemetryCtx, statementID, true)
 		}

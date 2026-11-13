@@ -6,6 +6,7 @@
 - Fix CloudFetch reads failing with `row number 0 is not contained in any arrow batch: EOF` when `WithMaxDownloadThreads` / `maxDownloadThreads` is 0 or negative. Such values now log a warning and use the default of 10 (databricks/databricks-sql-go#439).
 - Honor `WithCloudFetch(false)` / `useCloudFetch=false` on the kernel backend to fetch complete results without cloud-storage downloads. The option overrides conflicting session configuration and remains effective after automatic backend recovery. Servers without paged inline support return a configuration error; the driver does not fall back to storage downloads.
 - **Behavior change:** After `Close`, a raw `driver.Conn` now fails `Prepare`, `PrepareContext`, `ExecContext` and `QueryContext` immediately with a `driver.ErrBadConn` ("connection is closed") and sends no request. Previously `Prepare` returned a statement and the failure came from the server or kernel at execute. `database/sql` users are unaffected (databricks/databricks-sql-go#521).
+- Report `statement_type` (`SQL`, as on the kernel backend) and the result delivery format (`INLINE_ARROW`, `EXTERNAL_LINKS` or `COLUMNAR_INLINE`) in Thrift statement telemetry. The format is reported when the driver already has the result metadata (databricks/databricks-sql-go#454).
 
 ## v1.19.0 (2026-11-04)
 - Upgrade the SQL kernel bindings to v1.4.0.

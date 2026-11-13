@@ -107,6 +107,13 @@ type Operation interface {
 	ExecutionError(ctx context.Context, cause error) error
 }
 
+// ResultFormatReporter is optionally implemented by an Operation that can report
+// its telemetry execution_result from metadata it already holds, without I/O.
+type ResultFormatReporter interface {
+	// ResultFormat returns the format, or "" when none is known.
+	ResultFormat() string
+}
+
 // ExecRequest is a backend-neutral statement-execution request. Per-backend wire
 // options (Arrow flags, CloudFetch, direct results, query tags, timeouts) are
 // derived from the config and context inside the backend implementation.

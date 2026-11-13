@@ -186,6 +186,9 @@ func createTelemetryRequest(metrics []*telemetryMetric, driverVersion string) (*
 		if tags := metric.tags; tags != nil {
 			sqlOp := &SQLExecutionEvent{}
 
+			if v, ok := tags[TagStatementType].(string); ok {
+				sqlOp.StatementType = v
+			}
 			if v, ok := tags[TagResultFormat].(string); ok {
 				sqlOp.ExecutionResult = v
 			}

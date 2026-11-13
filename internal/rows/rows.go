@@ -93,6 +93,8 @@ type rows struct {
 	chunkCount         int
 	bytesDownloaded    int64
 	iterationErr       error // first error from Next()/fetchResultPage, passed to closeCallback
+
+	resultFormatCallback func(format string)
 }
 
 var _ driver.Rows = (*rows)(nil)
@@ -113,6 +115,46 @@ type TelemetryCallbacks struct {
 	OnClose func(latencyMs int64, chunkCount int, iterErr error, closeErr error)
 	// OnCloudFetchFile is called per S3 file download for CloudFetch result sets.
 	OnCloudFetchFile func(downloadMs int64)
+	// OnResultFormat is called from rows.Close(), before OnClose, with the
+	// telemetry execution_result of the result-set metadata the rows already
+	// hold. It is not called when that format is unknown.
+	OnResultFormat func(format string)
+}
+
+// ExecutionResultFormat maps the result format declared by Thrift result-set
+// metadata to the telemetry execution_result value, or "" when none is declared.
+func ExecutionResultFormat(md *cli_service.TGetResultSetMetadataResp) string {
+	if md == nil || !md.IsSetResultFormat() {
+		return ""
+	}
+	switch md.GetResultFormat() {
+	case cli_service.TSparkRowSetType_ARROW_BASED_SET:
+		return "INLINE_ARROW"
+	case cli_service.TSparkRowSetType_URL_BASED_SET:
+		return "EXTERNAL_LINKS"
+	case cli_service.TSparkRowSetType_COLUMN_BASED_SET:
+		return "COLUMNAR_INLINE"
+	default:
+		return ""
+	}
+}
+
+// ResultFormat returns the execution_result of the metadata the rows hold
+// (from direct results or already fetched), or "". When the rows hold none, it
+// falls back to the metadata carried by fetched result pages, which covers
+// results consumed through GetArrowBatches/GetArrowIPCStreams. It never issues
+// an RPC, and is valid on the rows NewRows returns alongside an error.
+func (r *rows) ResultFormat() string {
+	if r == nil {
+		return ""
+	}
+	if format := ExecutionResultFormat(r.resultSetMetadata); format != "" {
+		return format
+	}
+	if r.ResultPageIterator != nil {
+		return ExecutionResultFormat(r.ResultPageIterator.ResultSetMetadata())
+	}
+	return ""
 }
 
 func NewRows(
@@ -177,6 +219,7 @@ func NewRows(
 	if callbacks != nil {
 		r.telemetryUpdate = callbacks.OnChunkFetched
 		r.cloudFetchCallback = callbacks.OnCloudFetchFile
+		r.resultFormatCallback = callbacks.OnResultFormat
 		r.closeCallback = callbacks.OnClose
 	}
 
@@ -287,6 +330,11 @@ func (r *rows) Close() error {
 		r.logger().Debug().Msgf("databricks: closing Rows operation")
 		closeStart := time.Now()
 		err := r.ResultPageIterator.Close()
+		if r.resultFormatCallback != nil {
+			if format := r.ResultFormat(); format != "" {
+				r.resultFormatCallback(format)
+			}
+		}
 		if r.closeCallback != nil {
 			r.closeCallback(time.Since(closeStart).Milliseconds(), r.chunkCount, r.iterationErr, err)
 		}
