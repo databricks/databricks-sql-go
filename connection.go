@@ -820,25 +820,29 @@ func (c *conn) execStagingOperation(
 		return nil
 	}
 
-	if len(driverctx.StagingPathsFromContext(ctx)) != 0 {
-		// Telemetry callback for staging operation row fetching (chunk timing not tracked for staging ops).
-		telemetryUpdate := func(chunkCount int, bytesDownloaded int64, chunkIndex int, chunkLatencyMs int64, totalChunksPresent int32) {
-			if c.telemetry != nil {
-				c.telemetry.AddTag(ctx, telemetry.TagChunkCount, chunkCount)
-				c.telemetry.AddTag(ctx, telemetry.TagBytesDownloaded, bytesDownloaded)
-			}
-		}
-		row, err = op.Results(ctx, &rows.TelemetryCallbacks{
-			OnChunkFetched: telemetryUpdate,
-		})
-		if err != nil {
-			return dbsqlerrint.NewDriverError(ctx, "error reading row.", err)
-		}
-		defer row.Close() //nolint:errcheck
-
-	} else {
+	if len(driverctx.StagingPathsFromContext(ctx)) == 0 {
 		return dbsqlerrint.NewDriverError(ctx, "staging ctx must be provided.", nil)
 	}
+	if native, ok := op.(interface{ CompleteStaging(context.Context) error }); ok {
+		if err := native.CompleteStaging(ctx); err != nil {
+			return dbsqlerrint.NewDriverError(ctx, "error performing staging operation", err)
+		}
+		return nil
+	}
+	// Telemetry callback for staging operation row fetching (chunk timing not tracked for staging ops).
+	telemetryUpdate := func(chunkCount int, bytesDownloaded int64, chunkIndex int, chunkLatencyMs int64, totalChunksPresent int32) {
+		if c.telemetry != nil {
+			c.telemetry.AddTag(ctx, telemetry.TagChunkCount, chunkCount)
+			c.telemetry.AddTag(ctx, telemetry.TagBytesDownloaded, bytesDownloaded)
+		}
+	}
+	row, err = op.Results(ctx, &rows.TelemetryCallbacks{
+		OnChunkFetched: telemetryUpdate,
+	})
+	if err != nil {
+		return dbsqlerrint.NewDriverError(ctx, "error reading row.", err)
+	}
+	defer row.Close() //nolint:errcheck
 
 	var sqlRow []driver.Value
 	colNames := row.Columns()

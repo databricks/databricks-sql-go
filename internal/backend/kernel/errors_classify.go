@@ -49,7 +49,10 @@ type KernelError struct {
 	HTTPStatus uint16
 	Retryable  bool
 	QueryID    string
+	cause      error
 }
+
+func (e *KernelError) Unwrap() error { return e.cause }
 
 func (e *KernelError) Error() string {
 	// Append the server query id when present — it is the one correlation handle
