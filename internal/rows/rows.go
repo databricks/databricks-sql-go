@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/apache/arrow/go/v12/arrow/ipc"
+	"github.com/apache/arrow-go/v18/arrow/ipc"
 	"github.com/databricks/databricks-sql-go/driverctx"
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 	"github.com/databricks/databricks-sql-go/internal/arrowscan"

@@ -8,9 +8,9 @@ import (
 	"io"
 	"time"
 
-	"github.com/apache/arrow/go/v12/arrow"
-	"github.com/apache/arrow/go/v12/arrow/array"
-	"github.com/apache/arrow/go/v12/arrow/ipc"
+	"github.com/apache/arrow-go/v18/arrow"
+	"github.com/apache/arrow-go/v18/arrow/array"
+	"github.com/apache/arrow-go/v18/arrow/ipc"
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 	"github.com/databricks/databricks-sql-go/internal/arrowscan"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
@@ -33,7 +33,7 @@ type SparkArrowBatch interface {
 // Abstraction for an arrow record
 type SparkArrowRecord interface {
 	rowscanner.Delimiter
-	arrow.Record
+	arrow.RecordBatch
 }
 
 type timeStampFn func(arrow.Timestamp) time.Time
@@ -768,20 +768,20 @@ func (b *sparkArrowBatch) Close() {
 // the rows corresponding to the record.
 type sparkArrowRecord struct {
 	rowscanner.Delimiter
-	arrow.Record
+	arrow.RecordBatch
 }
 
 var _ SparkArrowRecord = (*sparkArrowRecord)(nil)
 
 func (sar *sparkArrowRecord) Release() {
-	if sar.Record != nil {
-		sar.Record.Release()
-		sar.Record = nil
+	if sar.RecordBatch != nil {
+		sar.RecordBatch.Release()
+		sar.RecordBatch = nil
 	}
 }
 
 func (sar *sparkArrowRecord) Retain() {
-	if sar.Record != nil {
-		sar.Record.Retain()
+	if sar.RecordBatch != nil {
+		sar.RecordBatch.Retain()
 	}
 }

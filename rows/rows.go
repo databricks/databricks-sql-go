@@ -4,7 +4,7 @@ import (
 	"context"
 	"io"
 
-	"github.com/apache/arrow/go/v12/arrow"
+	"github.com/apache/arrow-go/v18/arrow"
 )
 
 type Rows interface {
@@ -13,9 +13,9 @@ type Rows interface {
 }
 
 type ArrowBatchIterator interface {
-	// Retrieve the next arrow.Record.
+	// Retrieve the next arrow.RecordBatch.
 	// Will return io.EOF if there are no more records
-	Next() (arrow.Record, error)
+	Next() (arrow.RecordBatch, error)
 
 	// Return true if the iterator contains more batches, false otherwise.
 	HasNext() bool

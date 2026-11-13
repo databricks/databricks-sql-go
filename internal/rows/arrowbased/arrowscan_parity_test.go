@@ -5,10 +5,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/apache/arrow/go/v12/arrow"
-	"github.com/apache/arrow/go/v12/arrow/array"
-	"github.com/apache/arrow/go/v12/arrow/decimal128"
-	"github.com/apache/arrow/go/v12/arrow/memory"
+	"github.com/apache/arrow-go/v18/arrow"
+	"github.com/apache/arrow-go/v18/arrow/array"
+	"github.com/apache/arrow-go/v18/arrow/decimal128"
+	"github.com/apache/arrow-go/v18/arrow/memory"
 
 	"github.com/databricks/databricks-sql-go/internal/arrowscan"
 )
@@ -298,7 +298,7 @@ func TestArrowbasedKernelRenderParity(t *testing.T) {
 				{"flag":null,"tiny":null,"small":null,"int":null,"big":null},
 				null
 			]`
-			full, _, err := array.FromJSON(pool, dt, strings.NewReader(input), array.WithUseNumber())
+			full, _, err := array.FromJSON(pool, dt, strings.NewReader(input))
 			if err != nil {
 				t.Fatal(err)
 			}

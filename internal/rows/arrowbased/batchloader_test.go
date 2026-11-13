@@ -19,10 +19,10 @@ import (
 	"github.com/databricks/databricks-sql-go/internal/config"
 	"github.com/pkg/errors"
 
-	"github.com/apache/arrow/go/v12/arrow"
-	"github.com/apache/arrow/go/v12/arrow/array"
-	"github.com/apache/arrow/go/v12/arrow/ipc"
-	"github.com/apache/arrow/go/v12/arrow/memory"
+	"github.com/apache/arrow-go/v18/arrow"
+	"github.com/apache/arrow-go/v18/arrow/array"
+	"github.com/apache/arrow-go/v18/arrow/ipc"
+	"github.com/apache/arrow-go/v18/arrow/memory"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -920,7 +920,7 @@ func TestCloudFetchIterator_OnFileDownloaded_NilCallbackDoesNotPanic(t *testing.
 	}, "nil onFileDownloaded must not cause a panic")
 }
 
-func generateArrowRecord() arrow.Record {
+func generateArrowRecord() arrow.RecordBatch {
 	mem := memory.NewCheckedAllocator(memory.NewGoAllocator())
 
 	fields := []arrow.Field{
@@ -935,12 +935,12 @@ func generateArrowRecord() arrow.Record {
 	builder.Field(0).(*array.Int32Builder).AppendValues([]int32{1, 2, 3}, nil)
 	builder.Field(1).(*array.StringBuilder).AppendValues([]string{"one", "two", "three"}, nil)
 
-	record := builder.NewRecord()
+	record := builder.NewRecordBatch()
 
 	return record
 }
 
-func generateMockArrowBytes(record arrow.Record) []byte {
+func generateMockArrowBytes(record arrow.RecordBatch) []byte {
 
 	defer record.Release()
 
