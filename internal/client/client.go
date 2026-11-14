@@ -644,23 +644,38 @@ func PooledClient(cfg *config.Config) *http.Client {
 		return nil
 	}
 
-	var tr *Transport
-	if cfg.Transport != nil {
-		tr = &Transport{
-			Base:  cfg.Transport,
-			Authr: cfg.Authenticator,
-		}
-	} else {
-		tr = &Transport{
-			Base:  PooledTransport(cfg),
-			Authr: cfg.Authenticator,
+	base := cfg.Transport
+	if base == nil {
+		base = PooledTransport(cfg)
+	}
+	authenticator := cfg.Authenticator
+	if configurable, ok := authenticator.(interface {
+		WithHTTPClient(*http.Client) auth.Authenticator
+	}); ok {
+		configured := configurable.WithHTTPClient(&http.Client{
+			Transport: &userAgentTransport{base: base, userAgent: BuildUserAgent(cfg)},
+			Timeout:   cfg.ClientTimeout,
+		})
+		if configured != nil {
+			authenticator = configured
 		}
 	}
 
 	return &http.Client{
-		Transport: tr,
+		Transport: &Transport{Base: base, Authr: authenticator},
 		Timeout:   cfg.ClientTimeout,
 	}
+}
+
+type userAgentTransport struct {
+	base      http.RoundTripper
+	userAgent string
+}
+
+func (transport *userAgentTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	cloned := cloneRequest(request)
+	cloned.Header.Set("User-Agent", transport.userAgent)
+	return transport.base.RoundTrip(cloned)
 }
 
 // cloneRequest returns a clone of the provided *http.Request.

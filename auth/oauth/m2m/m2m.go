@@ -26,6 +26,7 @@ func NewAuthenticatorWithScopes(clientID, clientSecret, hostName string, scopes 
 		clientSecret: clientSecret,
 		hostName:     hostName,
 		scopes:       scopes,
+		cache:        &tokenCache{},
 	}
 }
 
@@ -34,8 +35,25 @@ type authClient struct {
 	clientSecret string
 	hostName     string
 	scopes       []string
-	tokenSource  oauth2.TokenSource
-	mx           sync.Mutex
+	httpClient   *http.Client
+	cache        *tokenCache
+}
+
+type tokenCache struct {
+	mutex  sync.Mutex
+	token  *oauth2.Token
+	config *clientcredentials.Config
+}
+
+func (c *authClient) WithHTTPClient(client *http.Client) auth.Authenticator {
+	return &authClient{
+		clientID:     c.clientID,
+		clientSecret: c.clientSecret,
+		hostName:     c.hostName,
+		scopes:       append([]string(nil), c.scopes...),
+		httpClient:   client,
+		cache:        c.cache,
+	}
 }
 
 // M2MCredentials exposes the raw client-credentials so the SEA-via-kernel backend
@@ -55,29 +73,32 @@ func (c *authClient) M2MScopes() []string {
 // Auth will start the OAuth Authorization Flow to authenticate the cli client
 // using the users credentials in the browser. Compatible with SSO.
 func (c *authClient) Authenticate(r *http.Request) error {
-	c.mx.Lock()
-	defer c.mx.Unlock()
-	if c.tokenSource != nil {
-		token, err := c.tokenSource.Token()
-		if err != nil {
-			return err
-		}
-		token.SetAuthHeader(r)
+	c.cache.mutex.Lock()
+	defer c.cache.mutex.Unlock()
+	if c.cache.token.Valid() {
+		c.cache.token.SetAuthHeader(r)
 		return nil
 	}
 
-	config, err := GetConfig(context.Background(), c.hostName, c.clientID, c.clientSecret, c.scopes)
-	if err != nil {
-		return fmt.Errorf("unable to generate clientCredentials.Config: %w", err)
+	ctx := context.Background()
+	if c.httpClient != nil {
+		ctx = context.WithValue(ctx, oauth2.HTTPClient, c.httpClient)
+	}
+	if c.cache.config == nil {
+		config, err := GetConfig(ctx, c.hostName, c.clientID, c.clientSecret, c.scopes)
+		if err != nil {
+			return fmt.Errorf("unable to generate clientCredentials.Config: %w", err)
+		}
+		c.cache.config = &config
 	}
 
-	c.tokenSource = GetTokenSource(config)
-	token, err := c.tokenSource.Token()
+	token, err := c.cache.config.Token(ctx)
 	if err != nil {
 		logger.Err(err).Msg("failed to get token")
 
 		return err
 	}
+	c.cache.token = token
 	// Log via the driver's configurable logger (defaults to Warn) rather than the
 	// global zerolog logger, so this line honors SetLogLevel like every other.
 	logger.Debug().Msgf("databricks OAuth token fetched successfully")
