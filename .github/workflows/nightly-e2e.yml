@@ -89,8 +89,8 @@ jobs:
           DATABRICKS_PECOTESTING_TOKEN: ${{ secrets.DATABRICKS_PECOTESTING_TOKEN }}
           DATABRICKS_PECOTESTING_TOKEN_PERSONAL: ${{ secrets.DATABRICKS_PECOTESTING_TOKEN_PERSONAL }}
         run: |
-          go test -count=1 -v -timeout 15m \
-            -run 'TestE2EArrowBatchesSurviveQueryContextCancellation|TestE2ECloudFetchExactRowCount|TestE2ECloudFetchNonPositiveMaxDownloadThreads' .
+          go test -tags e2e -count=1 -v -timeout 15m \
+            -run 'TestE2EArrowBatchesSurviveQueryContextCancellation|TestE2ECloudFetchExactRowCount|TestE2ECloudFetchNonPositiveMaxDownloadThreads|^TestE2ETime(Results|ArrowResults)$' .
 
   kernel-e2e:
     name: E2E (kernel backend)
@@ -243,7 +243,7 @@ jobs:
           DATABRICKS_PECOTESTING_TOKEN: ${{ secrets.DATABRICKS_PECOTESTING_TOKEN }}
           DATABRICKS_PECOTESTING_TOKEN_PERSONAL: ${{ secrets.DATABRICKS_PECOTESTING_TOKEN_PERSONAL }}
         run: |
-          CGO_ENABLED=1 go test -tags databricks_kernel -count=1 -v -timeout 30m \
+          CGO_ENABLED=1 go test -tags databricks_kernel,e2e -count=1 -v -timeout 30m \
             -run 'TestKernelE2E|TestKernelThriftParity|TestKernelParamsVsThrift' \
             -skip 'TestKernelE2EM2M' .
 
@@ -265,6 +265,6 @@ jobs:
           TEST_WAREHOUSE: reyden
           DATABRICKS_REYDEN_HTTP_PATH: ${{ secrets.TEST_REYDEN_WAREHOUSE_HTTP_PATH }}
         run: |
-          CGO_ENABLED=1 go test -tags databricks_kernel -count=1 -v -timeout 30m \
+          CGO_ENABLED=1 go test -tags databricks_kernel,e2e -count=1 -v -timeout 30m \
             -run 'TestKernelE2E' \
-            -skip 'TestKernelE2EM2M' .
+            -skip 'TestKernelE2EM2M|^TestKernelE2ETimeResults$' .

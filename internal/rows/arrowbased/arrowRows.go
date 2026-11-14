@@ -657,6 +657,8 @@ func (vcm *arrowValueContainerMaker) makeFieldValueContainer(field arrow.Field, 
 
 	case *arrow.Date32Type:
 		return &dateValueContainer{location: location}, nil
+	case *arrow.Time32Type, *arrow.Time64Type:
+		return &timeValueContainer{}, nil
 
 	case *arrow.TimestampType:
 		// A TIMESTAMP_NTZ carries a wall clock that must not be shifted into the
