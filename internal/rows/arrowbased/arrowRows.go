@@ -15,6 +15,7 @@ import (
 	"github.com/databricks/databricks-sql-go/internal/arrowscan"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/config"
+	"github.com/databricks/databricks-sql-go/internal/decimalfmt"
 	dbsqlerrint "github.com/databricks/databricks-sql-go/internal/errors"
 	"github.com/databricks/databricks-sql-go/internal/rows/rowscanner"
 	dbsqllog "github.com/databricks/databricks-sql-go/logger"
@@ -39,9 +40,10 @@ type SparkArrowRecord interface {
 type timeStampFn func(arrow.Timestamp) time.Time
 
 type colInfo struct {
-	name      string
-	arrowType arrow.DataType
-	dbType    cli_service.TTypeId
+	name         string
+	arrowType    arrow.DataType
+	dbType       cli_service.TTypeId
+	decimalScale *int32
 }
 
 // arrowRowScanner handles extracting values from arrow records
@@ -245,6 +247,13 @@ func (ars *arrowRowScanner) ScanRow(
 			// get the value from the column values holder
 			var err1 error
 			destination[i], err1 = ars.rowValues.Value(i, rowNumber)
+			if value, ok := destination[i].(string); err1 == nil && ok && dbType == cli_service.TTypeId_DECIMAL_TYPE {
+				var formatted string
+				formatted, err1 = decimalfmt.PlainString(value, col.decimalScale)
+				if formatted != value {
+					destination[i] = formatted
+				}
+			}
 			if err1 != nil {
 				err = dbsqlerrint.NewDriverError(ars.ctx, errArrowRowsColumnValue(col.name), err1)
 			}
@@ -545,6 +554,13 @@ func getColumnInfo(arrowSchema *arrow.Schema, schema *cli_service.TTableSchema) 
 		col := schema.Columns[i]
 		field := arrowSchema.Field(i)
 		colInfos[i] = colInfo{name: field.Name, arrowType: field.Type, dbType: rowscanner.GetDBType(col)}
+		if colInfos[i].dbType == cli_service.TTypeId_DECIMAL_TYPE {
+			if qualifiers := rowscanner.GetDBTypeQualifiers(col); qualifiers != nil {
+				if holder := qualifiers.Qualifiers["scale"]; holder != nil {
+					colInfos[i].decimalScale = holder.I32Value
+				}
+			}
+		}
 	}
 
 	return colInfos
