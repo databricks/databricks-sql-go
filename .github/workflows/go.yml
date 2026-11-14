@@ -105,6 +105,13 @@ jobs:
       - name: Build
         run: make linux
 
+      - name: Check tools-tag compatibility
+        run: |
+          go vet -tags tools ./...
+          go build -tags tools ./...
+        env:
+          CGO_ENABLED: 0
+
   build-and-test-kernel:
     name: Test (kernel backend)
     # Exercises the opt-in SEA-via-kernel backend: builds the Rust kernel static

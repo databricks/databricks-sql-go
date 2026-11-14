@@ -2,6 +2,8 @@ module github.com/databricks/databricks-sql-go
 
 go 1.27.3
 
+tool gotest.tools/gotestsum
+
 require (
 	github.com/apache/arrow-go/v18 v18.8.0
 	github.com/apache/thrift v0.24.0
@@ -13,7 +15,6 @@ require (
 	github.com/stretchr/testify v1.12.1
 	golang.org/x/oauth2 v0.36.0
 	golang.org/x/sync v0.22.0
-	gotest.tools/gotestsum v1.8.2
 )
 
 require (
@@ -38,6 +39,7 @@ require (
 	golang.org/x/telemetry v0.0.0-20260811182544-a038080d80e5 // indirect
 	golang.org/x/term v0.45.0 // indirect
 	golang.org/x/tools v0.49.0 // indirect
+	gotest.tools/gotestsum v1.8.2 // indirect
 )
 
 require (
