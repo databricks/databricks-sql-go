@@ -1,6 +1,7 @@
 package arrowscan
 
 import (
+	"fmt"
 	"reflect"
 	"testing"
 	"time"
@@ -56,5 +57,53 @@ func TestTimeNullOnlyMetadata(t *testing.T) {
 			require.Zero(t, metadata.Length)
 			require.False(t, metadata.HasLength)
 		})
+	}
+}
+
+func TestTimeManifestFieldMetadata(t *testing.T) {
+	type metadataCase struct {
+		name       string
+		kernelName string
+		sparkName  string
+		wantTime   bool
+	}
+	cases := []metadataCase{
+		{"manifest", "TIME", "TIME(6)", true},
+		{"kernel only", "TIME", "", true},
+		{"case and whitespace", " time ", "", true},
+		{"blank kernel name", " ", "TIME", true},
+		{"ordinary string", "STRING", "STRING", false},
+		{"no metadata", "", "", false},
+		{"timestamp", "", "TIMESTAMP", false},
+		{"similar name", "", "TIMEZONE", false},
+		{"unsupported precision", "", "TIME(7)", false},
+		{"kernel name takes precedence", "STRING", "TIME(6)", false},
+	}
+	for precision := range 7 {
+		name := fmt.Sprintf("TIME(%d)", precision)
+		cases = append(cases, metadataCase{name, "", name, true})
+	}
+	for _, dataType := range []arrow.DataType{arrow.BinaryTypes.String, arrow.BinaryTypes.LargeString} {
+		for _, test := range cases {
+			t.Run(dataType.String()+"/"+test.name, func(t *testing.T) {
+				metadata := make(map[string]string)
+				if test.kernelName != "" {
+					metadata[databricksTypeNameMetadataKey] = test.kernelName
+				}
+				if test.sparkName != "" {
+					metadata[sparkSQLNameMetadataKey] = test.sparkName
+				}
+				field := arrow.Field{Name: "clock", Type: dataType, Nullable: true, Metadata: arrow.MetadataFrom(metadata)}
+				want := ColumnTypeInfoFor(dataType)
+				if test.wantTime {
+					want = ColumnTypeInfoFor(arrow.FixedWidthTypes.Time64ns)
+				}
+				got := ColumnTypeInfoForField(field)
+				require.Equal(t, want.DatabaseTypeName, got.DatabaseTypeName)
+				require.Equal(t, want.ScanType, got.ScanType)
+				require.Equal(t, want.Length, got.Length)
+				require.Equal(t, want.HasLength, got.HasLength)
+			})
+		}
 	}
 }

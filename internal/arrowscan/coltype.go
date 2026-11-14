@@ -150,11 +150,24 @@ func IsBinaryGeospatialField(field arrow.Field) bool {
 	return geospatial && field.Type.ID() == arrow.STRUCT
 }
 
-// ColumnTypeInfoForField preserves logical timestamp and geospatial types that
+// ColumnTypeInfoForField preserves logical time, timestamp and geospatial types that
 // the kernel's physical Arrow representation alone cannot distinguish.
 func ColumnTypeInfoForField(field arrow.Field) ColumnTypeInfo {
 	if field.Type != nil && field.Type.ID() == arrow.TIMESTAMP {
 		return timestampColumnTypeInfo(field)
+	}
+	if field.Type != nil && (field.Type.ID() == arrow.STRING || field.Type.ID() == arrow.LARGE_STRING) {
+		for _, key := range [...]string{databricksTypeNameMetadataKey, sparkSQLNameMetadataKey} {
+			name, ok := field.Metadata.GetValue(key)
+			if !ok || strings.TrimSpace(name) == "" {
+				continue
+			}
+			switch strings.ToUpper(strings.TrimSpace(name)) {
+			case "TIME", "TIME(0)", "TIME(1)", "TIME(2)", "TIME(3)", "TIME(4)", "TIME(5)", "TIME(6)":
+				return ColumnTypeInfoFor(arrow.FixedWidthTypes.Time64ns)
+			}
+			break
+		}
 	}
 	name, geospatial := LogicalGeospatialType(field)
 	if !geospatial {
