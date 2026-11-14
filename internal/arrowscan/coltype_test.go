@@ -70,6 +70,20 @@ func TestColumnTypeInfoFor(t *testing.T) {
 	}
 }
 
+func TestColumnTypeInfoForDecimalSize(t *testing.T) {
+	decimal := ColumnTypeInfoFor(&arrow.Decimal128Type{Precision: 38, Scale: 18})
+	if decimal.Precision != 38 || decimal.Scale != 18 || !decimal.HasPrecisionScale {
+		t.Errorf("decimal size = (%d,%d,%v), want (38,18,true)",
+			decimal.Precision, decimal.Scale, decimal.HasPrecisionScale)
+	}
+
+	integer := ColumnTypeInfoFor(arrow.PrimitiveTypes.Int64)
+	if integer.Precision != 0 || integer.Scale != 0 || integer.HasPrecisionScale {
+		t.Errorf("integer decimal size = (%d,%d,%v), want (0,0,false)",
+			integer.Precision, integer.Scale, integer.HasPrecisionScale)
+	}
+}
+
 // TestColumnTypeInfoScanTypeCoversScanner is the lockstep guard: every Arrow type
 // ScanCellCached handles must have a non-fallback ColumnTypeInfoFor entry, so a new
 // scanner type without matching metadata is caught here, not at runtime.
