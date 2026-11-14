@@ -18,6 +18,8 @@ import (
 	"fmt"
 	"io"
 	"reflect"
+	"strconv"
+	"strings"
 	"time"
 	"unsafe"
 
@@ -40,6 +42,7 @@ var (
 	_ driver.RowsColumnTypeDatabaseTypeName = (*kernelRows)(nil)
 	_ driver.RowsColumnTypeNullable         = (*kernelRows)(nil)
 	_ driver.RowsColumnTypeLength           = (*kernelRows)(nil)
+	_ driver.RowsColumnTypePrecisionScale   = (*kernelRows)(nil)
 	// Public batch API, matching the Thrift path (rows.rows). GetArrowBatches is
 	// real; GetArrowIPCStreams rejects (kernel C ABI exports C Data, not IPC bytes).
 	_ dbrows.Rows = (*kernelRows)(nil)
@@ -176,6 +179,36 @@ func (r *kernelRows) ColumnTypeDatabaseTypeName(index int) string {
 // the Thrift path — this always returns ok=false (nullability unknown).
 func (r *kernelRows) ColumnTypeNullable(index int) (nullable, ok bool) {
 	return false, false
+}
+
+func (r *kernelRows) ColumnTypePrecisionScale(index int) (precision, scale int64, ok bool) {
+	if r.schema == nil || index < 0 || index >= r.schema.NumFields() {
+		return 0, 0, false
+	}
+	field := r.schema.Field(index)
+	decimalType, native := field.Type.(arrow.DecimalType)
+	name, _ := field.Metadata.GetValue("databricks.type_name")
+	if !native && !strings.EqualFold(strings.TrimSpace(name), "DECIMAL") {
+		return 0, 0, false
+	}
+	hasPrecision, hasScale := native, native
+	if native {
+		precision, scale = int64(decimalType.GetPrecision()), int64(decimalType.GetScale())
+	}
+	if text, present := field.Metadata.GetValue("databricks.type_precision"); present {
+		if value, err := strconv.ParseInt(text, 10, 32); err == nil && value > 0 {
+			precision, hasPrecision = value, true
+		}
+	}
+	if text, present := field.Metadata.GetValue("databricks.type_scale"); present {
+		if value, err := strconv.ParseInt(text, 10, 32); err == nil {
+			scale, hasScale = value, true
+		}
+	}
+	if !hasPrecision || !hasScale {
+		return 0, 0, false
+	}
+	return precision, scale, true
 }
 
 // ColumnTypeLength returns a variable-length column's length (math.MaxInt64,
