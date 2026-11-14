@@ -12,24 +12,34 @@ import (
 )
 
 // NewArrowIPCStreamIterator creates a new iterator for Arrow IPC streams
-func NewArrowIPCStreamIterator(ctx context.Context, rpi rowscanner.ResultPageIterator, ipcIterator IPCStreamIterator, arrowSchemaBytes []byte, cfg config.Config) rows.ArrowIPCStreamIterator {
-	return &arrowIPCStreamIterator{
+func NewArrowIPCStreamIterator(ctx context.Context, rpi rowscanner.ResultPageIterator, ipcIterator IPCStreamIterator, arrowSchemaBytes []byte, cfg config.Config, schemaErrors ...error) rows.ArrowIPCStreamIterator {
+	return newArrowIPCStreamIterator(ctx, rpi, ipcIterator, arrowSchemaBytes, cfg, schemaErrors...)
+}
+
+func newArrowIPCStreamIterator(ctx context.Context, rpi rowscanner.ResultPageIterator, ipcIterator IPCStreamIterator, arrowSchemaBytes []byte, cfg config.Config, schemaErrors ...error) *arrowIPCStreamIterator {
+	iterator := &arrowIPCStreamIterator{
 		cfg:                cfg,
 		ipcStreamIterator:  ipcIterator,
 		resultPageIterator: rpi,
 		ctx:                ctx,
 		arrowSchemaBytes:   arrowSchemaBytes,
 	}
+	if len(schemaErrors) > 0 {
+		iterator.schemaErr = schemaErrors[0]
+	}
+	return iterator
 }
 
 // arrowIPCStreamIterator implements rows.ArrowIPCStreamIterator
 type arrowIPCStreamIterator struct {
-	ctx                context.Context
-	cfg                config.Config
-	ipcStreamIterator  IPCStreamIterator
-	resultPageIterator rowscanner.ResultPageIterator
-	isFinished         bool
-	arrowSchemaBytes   []byte
+	ctx                  context.Context
+	cfg                  config.Config
+	ipcStreamIterator    IPCStreamIterator
+	resultPageIterator   rowscanner.ResultPageIterator
+	isFinished           bool
+	arrowSchemaBytes     []byte
+	schemaErr            error
+	detectEmbeddedSchema bool
 	// err holds a page-fetch error detected while advancing the result page
 	// iterator. It must be surfaced through Next() rather than being masked as
 	// a normal end-of-results (io.EOF). See issue #507. Once reported (or on
@@ -129,7 +139,7 @@ func (ri *arrowIPCStreamIterator) Close() {
 
 // SchemaBytes returns the Arrow schema bytes
 func (ri *arrowIPCStreamIterator) SchemaBytes() ([]byte, error) {
-	return ri.arrowSchemaBytes, nil
+	return ri.arrowSchemaBytes, ri.schemaErr
 }
 
 // fetchNextData loads the next page of data
@@ -191,8 +201,12 @@ func (ri *arrowIPCStreamIterator) fetchNextData() error {
 func (ri *arrowIPCStreamIterator) newIPCStreamIterator(fr *cli_service.TFetchResultsResp) (IPCStreamIterator, error) {
 	rowSet := fr.Results
 	if len(rowSet.ResultLinks) > 0 {
-		return NewCloudIPCStreamIterator(ri.ctx, rowSet.ResultLinks, rowSet.StartRowOffset, &ri.cfg, nil)
+		iterator, err := NewCloudIPCStreamIterator(ri.ctx, rowSet.ResultLinks, rowSet.StartRowOffset, &ri.cfg, nil)
+		if err != nil {
+			return nil, err
+		}
+		return &schemaIPCStreamIterator{source: iterator, schema: ri.arrowSchemaBytes}, nil
 	} else {
-		return NewLocalIPCStreamIterator(ri.ctx, rowSet.ArrowBatches, rowSet.StartRowOffset, ri.arrowSchemaBytes, &ri.cfg)
+		return NewLocalIPCStreamIterator(ri.ctx, rowSet.ArrowBatches, rowSet.StartRowOffset, ri.arrowSchemaBytes, &ri.cfg, ri.detectEmbeddedSchema)
 	}
 }

@@ -119,6 +119,7 @@ func NewLocalIPCStreamIterator(
 	startRowOffset int64,
 	arrowSchemaBytes []byte,
 	cfg *config.Config,
+	detectEmbeddedSchema ...bool,
 ) (IPCStreamIterator, dbsqlerr.DBError) {
 	bi := &localIPCStreamIterator{
 		cfg:              cfg,
@@ -126,6 +127,9 @@ func NewLocalIPCStreamIterator(
 		arrowSchemaBytes: arrowSchemaBytes,
 		batches:          batches,
 		index:            -1,
+	}
+	if len(detectEmbeddedSchema) > 0 {
+		bi.detectEmbeddedSchema = detectEmbeddedSchema[0]
 	}
 
 	return bi, nil
@@ -138,8 +142,9 @@ func NewLocalBatchIterator(
 	startRowOffset int64,
 	arrowSchemaBytes []byte,
 	cfg *config.Config,
+	detectEmbeddedSchema ...bool,
 ) (BatchIterator, dbsqlerr.DBError) {
-	ipcIterator, err := NewLocalIPCStreamIterator(ctx, batches, startRowOffset, arrowSchemaBytes, cfg)
+	ipcIterator, err := NewLocalIPCStreamIterator(ctx, batches, startRowOffset, arrowSchemaBytes, cfg, detectEmbeddedSchema...)
 	if err != nil {
 		return nil, err
 	}
@@ -147,11 +152,12 @@ func NewLocalBatchIterator(
 }
 
 type localIPCStreamIterator struct {
-	cfg              *config.Config
-	startRowOffset   int64
-	arrowSchemaBytes []byte
-	batches          []*cli_service.TSparkArrowBatch
-	index            int
+	cfg                  *config.Config
+	startRowOffset       int64
+	arrowSchemaBytes     []byte
+	batches              []*cli_service.TSparkArrowBatch
+	index                int
+	detectEmbeddedSchema bool
 }
 
 var _ IPCStreamIterator = (*localIPCStreamIterator)(nil)
@@ -161,10 +167,29 @@ func (bi *localIPCStreamIterator) Next() (io.Reader, error) {
 	bi.index++
 	if bi.index < cnt {
 		ab := bi.batches[bi.index]
-
+		schemaBytes := bi.arrowSchemaBytes
+		compressed := bi.cfg != nil && bi.cfg.UseLz4Compression
+		stream := getReader(bytes.NewReader(ab.Batch), compressed)
+		if bi.detectEmbeddedSchema && len(ab.Batch) > 0 {
+			var embedded bool
+			var err error
+			if compressed {
+				var header []byte
+				header, stream, err = peekIPCSchema(stream)
+				embedded = len(header) > 0
+			} else {
+				embedded, err = hasIPCSchema(ab.Batch)
+			}
+			if err != nil {
+				return nil, err
+			}
+			if embedded {
+				schemaBytes = nil
+			}
+		}
 		reader := io.MultiReader(
-			bytes.NewReader(bi.arrowSchemaBytes),
-			getReader(bytes.NewReader(ab.Batch), bi.cfg.UseLz4Compression),
+			bytes.NewReader(schemaBytes),
+			stream,
 		)
 
 		return reader, nil

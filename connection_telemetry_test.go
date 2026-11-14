@@ -320,8 +320,7 @@ func TestConn_QueryContextTelemetryExecutionResult(t *testing.T) {
 		assert.Equal(t, int32(1), atomic.LoadInt32(&metadataCalls), "no metadata RPC beyond the one rows already issue")
 	})
 
-	// The public Arrow iterators consume pages directly and never populate the
-	// rows' own metadata, so the format comes from the fetched pages.
+	// Arrow schema initialization and telemetry reuse FetchResults metadata.
 	for _, api := range []struct {
 		name    string
 		consume func(t *testing.T, r dbsqlrows.Rows)
@@ -354,7 +353,7 @@ func TestConn_QueryContextTelemetryExecutionResult(t *testing.T) {
 			assert.Equal(t, 1, streams)
 		}},
 	} {
-		t.Run(api.name+" reports the fetched page format", func(t *testing.T) {
+		t.Run(api.name+" reports the result format", func(t *testing.T) {
 			t.Parallel()
 			var metadataCalls int32
 			md := &cli_service.TGetResultSetMetadataResp{
@@ -372,7 +371,7 @@ func TestConn_QueryContextTelemetryExecutionResult(t *testing.T) {
 			ev := closeAndAwaitExecuteEvent(t, c, capture)
 			assert.Equal(t, "INLINE_ARROW", ev.SQLOperation.ExecutionResult)
 			assert.Nil(t, ev.ErrorInfo)
-			assert.Zero(t, atomic.LoadInt32(&metadataCalls), "format taken from fetched pages, no metadata RPC")
+			assert.Zero(t, atomic.LoadInt32(&metadataCalls), "FetchResults supplies metadata without another RPC")
 		})
 	}
 
