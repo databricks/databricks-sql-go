@@ -12,7 +12,8 @@
 //   - map         → {"k0":v0,"k1":v1,...}   (keys stringified)
 //   - struct      → {"field0":v0,...}
 //   - nested NULL → null
-//   - time.Time   → quoted .String()  (matches the Thrift marshalScalar special-case)
+//   - DATE/TIMESTAMP → quoted time.Time.String() (matches Thrift)
+//   - TIME → quoted clock-only text, with trailing fractional zeros omitted
 //   - nested decimal → exact scale-applied JSON number literal (never a lossy
 //     float64), matching Thrift's marshalScalar → ValueString
 //   - float32     → native float32 (not widened to float64), so JSON renders
@@ -35,7 +36,7 @@ import (
 
 // ScanCell extracts one cell as a driver.Value. Scalars map to their Go value:
 // bool, all int/uint widths, float (native float32/float64), string, binary,
-// date, timestamp, and top-level decimal (as an exact fixed-point string,
+// date, time, timestamp, and top-level decimal (as an exact fixed-point string,
 // matching the Thrift path — a float64 would lose precision beyond ~17 digits).
 // Nested types (List/Map/Struct, and VARIANT which
 // arrives nested) render to a JSON string byte-identical to the Thrift path.
@@ -631,10 +632,8 @@ func writeScalarJSON(b *strings.Builder, v any) error {
 	return nil
 }
 
-// scalarForJSON returns the Go value used for a nested leaf that is not itself a
-// container — today only a map key (values are written directly by writeJSON).
-// It reuses ScanCell's scalar arm, so a decimal key renders via the exact-string
-// path (writeJSONKey then quotes it), never a lossy float64.
+// scalarForJSON converts nested scalar values and map keys. TIME uses clock-only
+// text; decimals use ScanCell's exact-string path, never a lossy float64.
 func scalarForJSON(col arrow.Array, row int, loc *time.Location) (any, error) {
 	if col.IsNull(row) {
 		return nil, nil

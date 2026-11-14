@@ -111,3 +111,45 @@ func TestTimeColumns(t *testing.T) {
 		})
 	}
 }
+
+func TestNestedTimeFractionalZeros(t *testing.T) {
+	for _, test := range []struct {
+		dataType arrow.DataType
+		clock    string
+		expected string
+	}{
+		{arrow.FixedWidthTypes.Time32s, "10:30:00", "10:30:00"},
+		{arrow.FixedWidthTypes.Time32ms, "09:15:30.500", "09:15:30.5"},
+		{arrow.FixedWidthTypes.Time64us, "06:30:45.887000", "06:30:45.887"},
+		{arrow.FixedWidthTypes.Time64ns, "09:15:30.500000000", "09:15:30.5"},
+	} {
+		t.Run(test.dataType.String(), func(t *testing.T) {
+			pool := memory.NewCheckedAllocator(memory.DefaultAllocator)
+			defer pool.AssertSize(t, 0)
+			for _, nested := range []struct {
+				dataType arrow.DataType
+				input    string
+				expected string
+			}{
+				{arrow.ListOf(test.dataType), fmt.Sprintf(`[[%q]]`, test.clock), fmt.Sprintf(`[%q]`, test.expected)},
+				{arrow.StructOf(arrow.Field{Name: "clock", Type: test.dataType}), fmt.Sprintf(`[{"clock":%q}]`, test.clock), fmt.Sprintf(`{"clock":%q}`, test.expected)},
+			} {
+				builder := array.NewBuilder(pool, nested.dataType)
+				defer builder.Release()
+				require.NoError(t, builder.UnmarshalJSON([]byte(nested.input)))
+				values := builder.NewArray()
+				defer values.Release()
+				holder, err := (&arrowValueContainerMaker{}).makeColumnValueContainer(nested.dataType, time.UTC, nil, nil)
+				require.NoError(t, err)
+				defer holder.Release()
+				require.NoError(t, holder.SetValueArray(values.Data()))
+				thrift, err := holder.Value(0)
+				require.NoError(t, err)
+				require.Equal(t, nested.expected, thrift)
+				kernel, err := arrowscan.ScanCell(values, 0, nil)
+				require.NoError(t, err)
+				require.Equal(t, nested.expected, kernel)
+			}
+		})
+	}
+}

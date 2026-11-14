@@ -1,6 +1,7 @@
 package arrowscan
 
 import (
+	"reflect"
 	"testing"
 	"time"
 
@@ -34,6 +35,26 @@ func TestScanTimeUnits(t *testing.T) {
 			got, err = ScanCell(values, 1, nil)
 			require.NoError(t, err)
 			require.Nil(t, got)
+		})
+	}
+}
+
+func TestTimeNullOnlyMetadata(t *testing.T) {
+	for _, dataType := range []arrow.DataType{arrow.FixedWidthTypes.Time32s, arrow.FixedWidthTypes.Time32ms, arrow.FixedWidthTypes.Time64us, arrow.FixedWidthTypes.Time64ns} {
+		t.Run(dataType.String(), func(t *testing.T) {
+			builder := array.NewBuilder(memory.DefaultAllocator, dataType)
+			defer builder.Release()
+			builder.AppendNull()
+			values := builder.NewArray()
+			defer values.Release()
+			got, err := ScanCell(values, 0, nil)
+			require.NoError(t, err)
+			require.Nil(t, got)
+			metadata := ColumnTypeInfoFor(dataType)
+			require.Equal(t, "TIME", metadata.DatabaseTypeName)
+			require.Equal(t, reflect.TypeOf(time.Time{}), metadata.ScanType)
+			require.Zero(t, metadata.Length)
+			require.False(t, metadata.HasLength)
 		})
 	}
 }

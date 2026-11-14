@@ -374,9 +374,14 @@ SQL TIME values in Arrow results scan into `time.Time` (or `any`) on the referen
 precision. The date and location are carriers only; session time zones do not
 shift the clock. Scanning into `string` uses `database/sql`'s RFC3339Nano format
 (for example, `0001-01-01T09:15:00.123456Z`). NULL scans into `any` as `nil`;
-use `sql.NullTime` for nullable typed values. Column metadata reports `TIME` and
-`time.Time`. Nested TIME values in ARRAY / MAP / STRUCT JSON use clock-only strings
-such as `"09:15:00.123456"`.
+use `sql.NullTime` for nullable typed values. Non-NULL midnight equals `time.Time{}`
+and has `IsZero() == true`, so detect NULL with `sql.NullTime.Valid`, not `IsZero()`;
+JSON fields tagged `omitzero` omit midnight. Do not call `.In(location)` on this
+date-less value: it shifts the clock and may introduce historical timezone offsets.
+Column metadata reports `TIME` and `time.Time` with no length, even for empty or
+NULL-only results. Nested TIME values in ARRAY / MAP / STRUCT JSON use clock-only
+strings with trailing fractional zeros omitted, such as `"09:15:00.5"` rather than
+`"09:15:00.500000"`; their text can differ from server-rendered TIME(p) values.
 On Thrift, TIME column metadata requires a server-supplied Arrow schema;
 without it, the legacy Thrift column metadata is retained.
 

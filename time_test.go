@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"net/url"
 	"reflect"
 	"strconv"
@@ -24,12 +25,15 @@ func TestTimeScanDestinations(t *testing.T) {
 		dataType arrow.DataType
 		clock    string
 		nanos    int
+		empty    bool
 	}{
-		{arrow.FixedWidthTypes.Time32s, "09:15:00", 0},
-		{arrow.FixedWidthTypes.Time32ms, "09:15:00.123", 123000000},
-		{arrow.FixedWidthTypes.Time64us, "09:15:00.123456", 123456000},
-		{arrow.FixedWidthTypes.Time64ns, "09:15:00.123456", 123456000},
-		{arrow.FixedWidthTypes.Time64ns, "09:15:00.123456789", 123456789},
+		{arrow.FixedWidthTypes.Time32s, "09:15:00", 0, false},
+		{arrow.FixedWidthTypes.Time32ms, "09:15:00.123", 123000000, false},
+		{arrow.FixedWidthTypes.Time64us, "09:15:00.123456", 123456000, false},
+		{arrow.FixedWidthTypes.Time64ns, "09:15:00.123456", 123456000, false},
+		{arrow.FixedWidthTypes.Time64ns, "09:15:00.123456789", 123456789, false},
+		{arrow.FixedWidthTypes.Time64ns, "00:00:00", 0, false},
+		{arrow.FixedWidthTypes.Time64ns, "empty", 0, true},
 	} {
 		t.Run(test.dataType.String()+"/"+test.clock, func(t *testing.T) {
 			state := &callState{}
@@ -44,6 +48,7 @@ func TestTimeScanDestinations(t *testing.T) {
 				{Name: "text", Type: test.dataType}, {Name: "missing", Type: test.dataType, Nullable: true},
 				{Name: "sibling", Type: arrow.BinaryTypes.String},
 				{Name: "missing_any", Type: test.dataType, Nullable: true},
+				{Name: "nullable", Type: test.dataType, Nullable: true},
 			}
 			for index, field := range fields {
 				metadata.Schema.Columns = append(metadata.Schema.Columns, &cli_service.TColumnDesc{
@@ -54,12 +59,15 @@ func TestTimeScanDestinations(t *testing.T) {
 			schema := arrow.NewSchema(fields, nil)
 			builder := array.NewRecordBuilder(memory.DefaultAllocator, schema)
 			defer builder.Release()
-			for index := range 3 {
-				require.NoError(t, builder.Field(index).AppendValueFromString(test.clock))
+			if !test.empty {
+				for index := range 3 {
+					require.NoError(t, builder.Field(index).AppendValueFromString(test.clock))
+				}
+				builder.Field(3).AppendNull()
+				require.NoError(t, builder.Field(4).AppendValueFromString("still readable"))
+				builder.Field(5).AppendNull()
+				require.NoError(t, builder.Field(6).AppendValueFromString(test.clock))
 			}
-			builder.Field(3).AppendNull()
-			require.NoError(t, builder.Field(4).AppendValueFromString("still readable"))
-			builder.Field(5).AppendNull()
 			record := builder.NewRecordBatch()
 			defer record.Release()
 			var schemaBytes, stream bytes.Buffer
@@ -73,6 +81,9 @@ func TestTimeScanDestinations(t *testing.T) {
 			metadata.ResultFormat = &format
 			state.executeStatementResp.DirectResults.ResultSet.Results = &cli_service.TRowSet{
 				ArrowBatches: []*cli_service.TSparkArrowBatch{{Batch: stream.Bytes()[len(metadata.ArrowSchema):], RowCount: 1}},
+			}
+			if test.empty {
+				state.executeStatementResp.DirectResults.ResultSet.Results.ArrowBatches = []*cli_service.TSparkArrowBatch{}
 			}
 			server := getServer(state)
 			defer server.Close()
@@ -96,18 +107,34 @@ func TestTimeScanDestinations(t *testing.T) {
 				require.False(t, hasLength)
 			}
 			require.Equal(t, "STRING", columns[4].DatabaseTypeName())
+			if test.empty {
+				require.False(t, rows.Next())
+				require.NoError(t, rows.Err())
+				return
+			}
 			require.True(t, rows.Next(), "%v", rows.Err())
 			var typed time.Time
 			var dynamic any
 			var missingAny any = "not null"
 			var text, sibling string
-			var missing sql.NullTime
-			require.NoError(t, rows.Scan(&typed, &dynamic, &text, &missing, &sibling, &missingAny))
+			var missing, nullable sql.NullTime
+			require.NoError(t, rows.Scan(&typed, &dynamic, &text, &missing, &sibling, &missingAny, &nullable))
 			want := time.Date(1, time.January, 1, 9, 15, 0, test.nanos, time.UTC)
+			if test.clock == "00:00:00" {
+				want = time.Time{}
+				require.True(t, typed.IsZero())
+				encoded, err := json.Marshal(struct {
+					Clock time.Time `json:"clock,omitzero"`
+				}{Clock: typed})
+				require.NoError(t, err)
+				require.JSONEq(t, `{}`, string(encoded))
+			}
 			require.Equal(t, want, typed)
 			require.Equal(t, want, dynamic)
 			require.Equal(t, want.Format(time.RFC3339Nano), text)
 			require.False(t, missing.Valid)
+			require.True(t, nullable.Valid)
+			require.Equal(t, want, nullable.Time)
 			require.Nil(t, missingAny)
 			require.Equal(t, "still readable", sibling)
 			columns, err = rows.ColumnTypes()

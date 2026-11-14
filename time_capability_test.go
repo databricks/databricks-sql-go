@@ -20,6 +20,8 @@ func serverTimeUnavailable(err error) bool {
 	}
 	message := strings.ToUpper(execution.Error())
 	return strings.Contains(message, "[UNSUPPORTED_TYPED_LITERAL]") && strings.Contains(message, `OF THE TYPE "TIME"`) ||
+		strings.Contains(message, "[UNSUPPORTED_DATATYPE]") && strings.Contains(message, `UNSUPPORTED DATA TYPE "TIME"`) ||
+		strings.Contains(message, "[UNSUPPORTED_TIME_TYPE]") && strings.Contains(message, "THE DATA TYPE TIME IS NOT SUPPORTED") ||
 		strings.Contains(message, "TIME TYPE IS DISABLED") || strings.Contains(message, "TIME TYPE IS NOT ENABLED")
 }
 
@@ -32,9 +34,14 @@ func TestServerTimeUnavailable(t *testing.T) {
 		want    bool
 	}{
 		{"TIME literal", "0A000", unsupported, true},
+		{"TIME datatype", "0A000", `[UNSUPPORTED_DATATYPE] Unsupported data type "TIME".`, true},
+		{"TIME construction", "0A000", "[UNSUPPORTED_TIME_TYPE] The data type TIME is not supported.", true},
 		{"TIME disabled", "0A000", "The TIME type is disabled.", true},
 		{"TIME not enabled", "0A000", "The TIME type is not enabled.", true},
 		{"other literal", "0A000", `[UNSUPPORTED_TYPED_LITERAL] Literals of the type "DATE" are not supported. Supported types are "TIME".`, false},
+		{"other datatype", "0A000", `[UNSUPPORTED_DATATYPE] Unsupported data type "DATE". SELECT TIME '09:15:00'`, false},
+		{"other construction", "0A000", "[UNSUPPORTED_TIME_TYPE] The data type DATE is not supported. SELECT TIME '09:15:00'", false},
+		{"unavailable config", "42K0I", "[CONFIG_NOT_AVAILABLE.WITHOUT_SUGGESTION] spark.sql.timeType.enabled is not available", false},
 		{"other feature", "0A000", "Some other feature is disabled. SELECT TIME '09:15:00'", false},
 		{"unauthenticated", "28000", "HTTP 401: " + unsupported, false},
 		{"forbidden", "42501", "HTTP 403: " + unsupported, false},

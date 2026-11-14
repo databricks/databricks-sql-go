@@ -616,7 +616,8 @@ func (tvc *decimal128Container) SetValueArray(colData arrow.ArrayData) error {
 }
 
 // marshalScalar appends a non-complex nested value (a struct field, list
-// element, or map value/key) to dst as its JSON fragment. When the holder is a
+// element, or map value/key) to dst as its JSON fragment. TIME uses clock-only
+// text; other temporal values use time.Time.String(). When the holder is a
 // native decimal128, it emits the exact scale-applied decimal string as a JSON
 // number literal rather than marshaling the lossy float64 returned by
 // holder.Value — otherwise a DECIMAL(5,2) 19.99 would render as

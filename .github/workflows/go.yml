@@ -102,6 +102,9 @@ jobs:
       - name: Test-Race
         run: make test-race
 
+      - name: Vet live e2e tests (compile only)
+        run: CGO_ENABLED=0 go vet -tags e2e .
+
       - name: Build
         run: make linux
 
@@ -249,3 +252,8 @@ jobs:
       # the separate nightly-e2e workflow.
       - name: Build kernel lib + run tagged tests
         run: make test-kernel
+
+      - name: Vet kernel live e2e tests (compile only)
+        env:
+          CGO_LDFLAGS: -L${{ github.workspace }}/internal/backend/kernel/lib/linux_amd64 -l:libdatabricks_sql_kernel.a
+        run: CGO_ENABLED=1 go vet -tags databricks_kernel,e2e .
