@@ -12,4 +12,6 @@ func TestKernelE2ETimeResults(t *testing.T) {
 	db := timeTestDB(t, options...)
 	defer db.Close() //nolint:errcheck
 	assertTimeResults(t, db)
+	t.Run("inline Arrow", func(t *testing.T) { assertTimeArrowResults(t, db, 3) })
+	t.Run("CloudFetch", func(t *testing.T) { assertTimeArrowResults(t, db, 250000) })
 }

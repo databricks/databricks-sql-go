@@ -369,12 +369,16 @@ STRUCT and VARIANT (as JSON) are supported. BINARY is returned as `sql.RawBytes`
 Both backends return GEOMETRY / GEOGRAPHY as WKT / EWKT by default.
 Set `enableGeoSpatialSupport=true` on the kernel path to opt into EWKB.
 
+| SQL type | Go value | NULL detection |
+|---|---|---|
+| `TIME` | `time.Time` on `0001-01-01` UTC | `sql.NullTime.Valid` or a nil `*time.Time`, never `IsZero()`; midnight is the zero time and JSON `omitzero` omits it. |
+
 SQL TIME values in Arrow results scan into `time.Time` (or `any`) on the reference date
 `0001-01-01` in UTC, preserving the Arrow second/millisecond/microsecond/nanosecond
 precision. The date and location are carriers only; session time zones do not
 shift the clock. Scanning into `string` uses `database/sql`'s RFC3339Nano format
 (for example, `0001-01-01T09:15:00.123456Z`). NULL scans into `any` as `nil`;
-use `sql.NullTime` for nullable typed values. Non-NULL midnight equals `time.Time{}`
+use `sql.NullTime` or `*time.Time` for nullable typed values. Non-NULL midnight equals `time.Time{}`
 and has `IsZero() == true`, so detect NULL with `sql.NullTime.Valid`, not `IsZero()`;
 JSON fields tagged `omitzero` omit midnight. Do not call `.In(location)` on this
 date-less value: it shifts the clock and may introduce historical timezone offsets.
@@ -387,9 +391,8 @@ without it, the legacy Thrift column metadata is retained.
 
 Live TIME tests require the `e2e` build tag: `go test -tags e2e -run '^TestE2ETimeResults$' .`
 or `go test -tags databricks_kernel,e2e -run '^TestKernelE2ETimeResults$' .`.
-They require the `DATABRICKS_PECOTESTING_*` credentials and skip only when the server
-reports that TIME is disabled; a workspace with the TIME beta enabled is needed
-to verify live result conversion.
+They require the `DATABRICKS_PECOTESTING_*` credentials and a workspace with the TIME
+beta enabled; missing credentials or unavailable TIME support fail the tests.
 
 On Thrift, TIMESTAMP_NTZ handling requires native timestamp fields in the
 server-supplied Arrow schema. Without that schema, NTZ still reports `TIMESTAMP`
