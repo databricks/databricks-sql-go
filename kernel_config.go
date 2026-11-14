@@ -220,7 +220,7 @@ func buildKernelConfig(cfg *config.Config, kauth kernel.Auth) kernel.Config {
 		// Injected into the kernel backend's own SessionConf ONLY (not via
 		// EffectiveSessionParams, which both backends share) as the client-only key
 		// the kernel reads and strips before the SEA wire — so it never leaks to the
-		// server or the Thrift path. Zero/negative keeps the standard download window.
+		// server or the Thrift path. Zero/negative keeps the standard setting or native default.
 		if ke.MaxChunksInMemory > 0 {
 			// EffectiveSessionParams returned a fresh map, so mutating it is safe.
 			kc.SessionConf[config.KernelMaxChunksInMemoryConfKey] = strconv.Itoa(ke.MaxChunksInMemory)

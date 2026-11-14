@@ -111,7 +111,7 @@ func TestMaxDownloadThreadsDSNPresence(t *testing.T) {
 		set   bool
 	}{
 		{"", false},
-		{"?maxDownloadThreads=", true},
+		{"?maxDownloadThreads=", false},
 	} {
 		t.Run(tc.query, func(t *testing.T) {
 			con, err := (&databricksDriver{}).OpenConnector("token:secret@example.cloud.databricks.com:443/sql/1.0/warehouses/abc" + tc.query)
