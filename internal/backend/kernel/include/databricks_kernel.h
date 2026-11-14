@@ -190,6 +190,12 @@ typedef struct KernelError {
  * last kernel call cleared the buffer.
  */
 bool kernel_get_last_error(KernelError* out);
+/* These accessors preserve the last error. Strings are borrowed until the next
+ * error-clearing kernel call; absent strings are NULL, absent OS code is zero. */
+int32_t kernel_get_last_error_local_os_error(void);
+const char* kernel_get_last_error_code(void);
+const char* kernel_get_last_error_local_kind(void);
+const char* kernel_get_last_error_local_path(void);
 
 /* ─── Opaque handles ──────────────────────────────────────────────────
  *
@@ -595,12 +601,12 @@ KernelStatusCode kernel_session_config_set_u2m_token_cache_config(KernelSessionC
  *
  * Recognised keys (case-insensitive):
  * - "cloudfetch_enabled" = "true"|"false" — false serves every result
- *   inline (SEA disposition = INLINE), mirroring JDBC EnableQueryResultDownload=0.
+ *   through paged inline delivery without cloud-storage downloads.
  * - "cloudfetch_link_prefetch_window" = positive integer.
  * - "cloudfetch_max_chunks_in_memory" = positive integer (bounds peak RSS;
  *   values above the kernel ceiling of 256 are clamped with a warning).
  * - "inline_max_chunks_in_memory" = positive integer (inline-Arrow prefetch
- *   window, used when cloudfetch_enabled = false).
+ *   window for paged inline results).
  * - "complex_types_as_json" = "true"|"false" — render ARRAY / MAP / STRUCT /
  *   VARIANT / GEOMETRY / GEOGRAPHY as JSON text (PySQL
  *   _use_arrow_native_complex_types=False, JDBC complexDatatypeSupport=false).
@@ -966,6 +972,17 @@ KernelStatusCode kernel_executed_async_statement_close(
  */
 KernelStatusCode kernel_result_stream_get_schema(kernel_result_stream_t* stream,
                                                  struct ArrowSchema* out);
+/* Volume completion preserves raw rows. Roots are a JSON array of strings;
+ * out_status is 0=ordinary result, 1=input bytes required, 2=completed.
+ * The detached result-stream canceller can interrupt completion. */
+KernelStatusCode kernel_executed_statement_is_volume_operation(
+    const kernel_executed_statement_t* exec, bool* out);
+KernelStatusCode kernel_result_stream_is_volume_operation(
+    const kernel_result_stream_t* stream, bool* out);
+KernelStatusCode kernel_result_stream_complete_volume_operation(
+    kernel_result_stream_t* stream, const char* allowed_paths_json,
+    bool remove_not_found_is_success, int32_t* out_status);
+
 KernelStatusCode kernel_result_stream_next_batch(kernel_result_stream_t* stream,
                                                  struct ArrowArray* out_array,
                                                  struct ArrowSchema* out_schema);

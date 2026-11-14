@@ -11,6 +11,7 @@ import "C"
 import (
 	"context"
 	"database/sql/driver"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sync"
@@ -35,8 +36,7 @@ import (
 //     client-timeout path, let an in-flight cancel finish in the background so
 //     it cannot extend the client deadline
 //
-// Binds any query parameters (bindParams) before executing; staging statements
-// are rejected up front by Execute, so none reach here.
+// Binds any query parameters (bindParams) before executing.
 func (k *KernelBackend) execute(ctx context.Context, req backend.ExecRequest) (backend.Operation, error) {
 	// Log the SQL length, not the text: query bodies can carry PII/secrets in
 	// WHERE/INSERT/SET, and this goes to stderr. Matches the driver's own
@@ -384,11 +384,70 @@ func (o *kernelOp) Results(ctx context.Context, callbacks *dbsqlrows.TelemetryCa
 	return newKernelRows(ctx, o, stream, callbacks)
 }
 
-// IsStaging reports whether this is a staging (PUT/GET/REMOVE) operation. Always
-// false on the kernel path: staging statements are rejected up front in
-// Execute (isStagingStatement), so no kernelOp is ever produced for one — there
-// is nothing for conn.execStagingOperation to act on here.
-func (o *kernelOp) IsStaging(ctx context.Context) (bool, error) { return false, nil }
+func (o *kernelOp) IsStaging(ctx context.Context) (bool, error) {
+	if o.exec == nil {
+		return false, nil
+	}
+	var marked C.bool
+	err := call(func() C.KernelStatusCode {
+		return C.kernel_executed_statement_is_volume_operation(o.exec, &marked)
+	})
+	return bool(marked), err
+}
+
+func (o *kernelOp) CompleteStaging(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	var stream *C.kernel_result_stream_t
+	if err := call(func() C.KernelStatusCode {
+		return C.kernel_executed_statement_get_result_stream(o.exec, &stream)
+	}); err != nil {
+		return toStatementError(err)
+	}
+	defer C.kernel_result_stream_close(stream)
+	var canceller *C.kernel_result_stream_canceller_t
+	if err := call(func() C.KernelStatusCode {
+		return C.kernel_result_stream_canceller_new(stream, &canceller)
+	}); err != nil {
+		return toStatementError(err)
+	}
+	defer C.kernel_result_stream_canceller_free(canceller)
+	done, stopped := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(stopped)
+		select {
+		case <-ctx.Done():
+			C.kernel_result_stream_canceller_cancel(canceller)
+		case <-done:
+		}
+	}()
+	defer func() { close(done); <-stopped }()
+	encoded, err := json.Marshal(driverctx.StagingPathsFromContext(ctx))
+	if err != nil {
+		return err
+	}
+	paths := newCStr(string(encoded))
+	defer paths.free()
+	var outcome C.int32_t
+	err = call(func() C.KernelStatusCode {
+		return C.kernel_result_stream_complete_volume_operation(stream, paths.c, true, &outcome)
+	})
+	if err != nil {
+		var ke *KernelError
+		if !errors.As(err, &ke) || (ke.ErrorCode != "VOLUME_STORAGE_HTTP_ERROR" && ke.ErrorCode != "VOLUME_STORAGE_NETWORK_ERROR") {
+			o.backend.evictIfSessionFatal(err)
+		}
+		if ctx.Err() != nil {
+			return fmt.Errorf("kernel: volume transfer cancelled: %w (kernel error: %w)", ctx.Err(), toStatementError(err))
+		}
+		return toStatementError(err)
+	}
+	if outcome != 2 {
+		return errors.New("kernel: volume operation requires a local file instruction")
+	}
+	return nil
+}
 
 // Close best-effort closes the executed statement and its statement handle. It is
 // idempotent (a second call, or a call after Rows.Close already tore the
