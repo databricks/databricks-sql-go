@@ -118,9 +118,9 @@ type KernelExperimentalConfig struct {
 	MaxConnections *int
 
 	// MaxChunksInMemory bounds downloading and queued CloudFetch chunks ahead of
-	// consumption, excluding consumer buffers. Zero keeps the standard download
-	// window or an explicit session parameter. A positive value is forwarded as
-	// the client-only
+	// consumption, excluding consumer buffers. Zero keeps an explicit session
+	// parameter, WithMaxDownloadThreads or the kernel default of 16.
+	// A positive value is forwarded as the client-only
 	// "cloudfetch_max_chunks_in_memory" session conf, which the kernel folds into
 	// its result config and strips before the SEA wire; it is kernel-only because
 	// the Thrift path has no such in-memory-chunk knob.
@@ -509,12 +509,12 @@ func ParseDSN(dsn string) (UserConfig, error) {
 		ucfg.UseCloudFetch = useCloudFetch
 	}
 
-	ucfg.MaxDownloadThreadsSet = params.Has("maxDownloadThreads")
 	if numThreads, ok, err := params.extractAsInt("maxDownloadThreads"); ok {
 		if err != nil {
 			return UserConfig{}, err
 		}
 		ucfg.MaxDownloadThreads = numThreads
+		ucfg.MaxDownloadThreadsSet = true
 	}
 
 	// Metric View Metadata parameter

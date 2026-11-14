@@ -131,7 +131,7 @@ Thrift options where available.
 |---|---|:---:|:---:|---|---|
 | `cloudfetch_enabled` | `WithCloudFetch` | ⚠️ | ✅ | `true` | Set `false` to fetch complete results without cloud-storage downloads. Use `WithCloudFetch` for the standard option on either backend. |
 | `cloudfetch_link_prefetch_window` | *(none; use `WithSessionParams`)* | ⚠️ | ✅ | `10` | Number of presigned Cloud Fetch links prefetched ahead of the consumer. |
-| `cloudfetch_max_chunks_in_memory` | `WithKernelMaxChunksInMemory` | ⚠️ | ✅ | standard download window | Downloading and queued chunks ahead of consumption; excludes consumer buffers. Values above 256 are clamped with a warning. |
+| `cloudfetch_max_chunks_in_memory` | `WithKernelMaxChunksInMemory` | ⚠️ | ✅ | `maxDownloadThreads` when set; otherwise `16` | Downloading and queued chunks ahead of consumption; excludes consumer buffers. Values above 256 are clamped with a warning. |
 | `inline_max_chunks_in_memory` | *(none; use `WithSessionParams`)* | ⚠️ | ✅ | `4` | Inline-Arrow prefetch window; `1` disables prefetching. |
 | `complex_types_as_json` | *(none; use `WithSessionParams`)* | ⚠️ | ✅ | `false` | Render ARRAY / MAP / STRUCT / VARIANT / GEOMETRY / GEOGRAPHY as JSON text. |
 | `intervals_as_string` | *(none; use `WithSessionParams`)* | ⚠️ | ✅ | `false` | Render INTERVAL / DURATION values as canonical Databricks text. |
@@ -176,7 +176,7 @@ an internal setting) and non-Arrow values also retain legacy session-location pa
 |---|---|:---:|:---:|---|---|
 | `useCloudFetch` | `WithCloudFetch` | ✅ | ✅ | `true` | Set false to fetch complete results through the SQL connection without direct cloud-storage access. |
 | `maxDownloadThreads` | `WithMaxDownloadThreads` | ✅ | ✅ | Thrift `10`; kernel `16` | CloudFetch download window. On the kernel, bounds downloading and queued chunks ahead of consumption, excluding consumer buffers. Not a byte limit. An explicit value <= 0 warns and uses 10. |
-| | `WithKernelMaxChunksInMemory(n)` | ❌ | ✅ | standard download window | Positive values override the standard setting and raw chunk session parameters. |
+| | `WithKernelMaxChunksInMemory(n)` | ❌ | ✅ | `maxDownloadThreads` when set; otherwise `16` | Positive values override the standard setting and raw chunk session parameters. |
 
 The kernel snapshots these options when connecting. A positive
 `WithKernelMaxChunksInMemory` wins over a case-insensitive

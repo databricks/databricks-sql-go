@@ -329,7 +329,7 @@ parallel via cloud storage
 |---|---|---|---|---|
 | `useCloudFetch` | `WithCloudFetch` | Both | `true` | Enable Cloud Fetch. Set to false to fetch results through the SQL connection without direct cloud-storage access. |
 | `maxDownloadThreads` | `WithMaxDownloadThreads` | Both | Thrift `10`; kernel `16` | CloudFetch download window. On the kernel, bounds downloading and queued chunks ahead of consumption, excluding consumer buffers. Not a byte limit. An explicit value <= 0 warns and uses 10. |
-| | `WithKernelMaxChunksInMemory(n)` | SEA only | standard download window | Positive values override the standard setting and raw chunk session parameters. |
+| | `WithKernelMaxChunksInMemory(n)` | SEA only | `maxDownloadThreads` when set; otherwise `16` | Positive values override the standard setting and raw chunk session parameters. |
 
 The kernel snapshots these options when connecting. A positive
 `WithKernelMaxChunksInMemory` wins over a case-insensitive
