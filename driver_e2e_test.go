@@ -512,6 +512,94 @@ func TestE2EArrowEmptyNativeSchema(t *testing.T) {
 	}
 }
 
+func TestE2EArrowNativeSchemaWithRows(t *testing.T) {
+	host, httpPath, token := pecoTestingCreds(t)
+	for _, omit := range []bool{false, true} {
+		for _, accessor := range []string{"ipc", "batches", "next", "sql"} {
+			t.Run(fmt.Sprintf("%s/fallback=%t", accessor, omit), func(t *testing.T) {
+				driverConnector, err := NewConnector(WithServerHostname(host), WithPort(443), WithHTTPPath(httpPath), WithAccessToken(token))
+				require.NoError(t, err)
+				concrete := driverConnector.(*connector)
+				require.True(t, concrete.cfg.UseArrowNativeComplexTypes)
+				concrete.thriftBackendFactory = func(ctx context.Context, cfg *config.Config, httpClient *http.Client) (backend.Backend, error) {
+					wireClient, err := client.InitThriftClient(cfg, httpClient)
+					if err != nil {
+						return nil, err
+					}
+					return thriftbackend.NewForTest(&schemaMetadataClient{TCLIService: wireClient, noDirectResults: true, omitArrowSchema: omit, omitFetchSchema: omit}, nil, cfg), nil
+				}
+				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+				defer cancel()
+				const query = "SELECT array(1,2) AS items FROM range(1)"
+				checkError := func(err error) {
+					if omit {
+						require.ErrorContains(t, err, "ARRAY require arrow schema")
+					} else {
+						require.NoError(t, err)
+					}
+				}
+				if accessor == "sql" {
+					db := sql.OpenDB(driverConnector)
+					defer func() { require.NoError(t, db.Close()) }()
+					result, err := db.QueryContext(ctx, query)
+					require.NoError(t, err)
+					require.Equal(t, !omit, result.Next())
+					if !omit {
+						require.False(t, result.Next())
+					}
+					checkError(result.Err())
+					require.NoError(t, result.Close())
+					return
+				}
+				connection, err := driverConnector.Connect(ctx)
+				require.NoError(t, err)
+				defer func() { require.NoError(t, connection.Close()) }()
+				result, err := connection.(driver.QueryerContext).QueryContext(ctx, query, nil)
+				require.NoError(t, err)
+				defer func() { require.NoError(t, result.Close()) }()
+				switch accessor {
+				case "ipc":
+					iterator, err := result.(dbsqlrows.Rows).GetArrowIPCStreams(ctx)
+					require.NoError(t, err)
+					defer iterator.Close()
+					_, err = iterator.SchemaBytes()
+					checkError(err)
+					stream, err := iterator.Next()
+					checkError(err)
+					if !omit {
+						reader, err := ipc.NewReader(stream)
+						require.NoError(t, err)
+						defer reader.Release()
+						require.True(t, reader.Next())
+						require.EqualValues(t, 1, reader.RecordBatch().NumRows())
+						require.False(t, reader.Next())
+						require.NoError(t, reader.Err())
+					}
+					_, err = iterator.Next()
+					require.ErrorIs(t, err, io.EOF)
+				case "batches":
+					iterator, err := result.(dbsqlrows.Rows).GetArrowBatches(ctx)
+					require.NoError(t, err)
+					defer iterator.Close()
+					_, err = iterator.Schema()
+					checkError(err)
+					record, err := iterator.Next()
+					checkError(err)
+					if !omit {
+						require.EqualValues(t, 1, record.NumRows())
+						record.Release()
+					}
+					_, err = iterator.Next()
+					require.ErrorIs(t, err, io.EOF)
+				case "next":
+					checkError(result.Next(make([]driver.Value, 1)))
+					require.ErrorIs(t, result.Next(make([]driver.Value, 1)), io.EOF)
+				}
+			})
+		}
+	}
+}
+
 func TestE2EArrowBatchesSurviveQueryContextCancellation(t *testing.T) {
 	host, httpPath, token := pecoTestingCreds(t)
 

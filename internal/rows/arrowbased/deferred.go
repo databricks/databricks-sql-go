@@ -19,6 +19,9 @@ type deferredIterator[T interface {
 }
 
 func (d *deferredIterator[T]) load() error {
+	if d.err != nil {
+		return d.err
+	}
 	if d.loaded {
 		return nil
 	}
@@ -27,6 +30,7 @@ func (d *deferredIterator[T]) load() error {
 	}
 	iterator, err := d.initialize()
 	if err != nil {
+		d.err, d.initialize = err, nil
 		return err
 	}
 	d.iterator, d.loaded, d.initialize = iterator, true, nil

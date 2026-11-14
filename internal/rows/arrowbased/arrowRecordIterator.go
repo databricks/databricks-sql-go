@@ -16,6 +16,10 @@ import (
 )
 
 func NewArrowRecordIterator(ctx context.Context, rpi rowscanner.ResultPageIterator, bi BatchIterator, arrowSchemaBytes []byte, cfg config.Config, schemaErrors ...error) rows.ArrowBatchIterator {
+	return newArrowRecordIterator(ctx, rpi, bi, arrowSchemaBytes, cfg, schemaErrors...)
+}
+
+func newArrowRecordIterator(ctx context.Context, rpi rowscanner.ResultPageIterator, bi BatchIterator, arrowSchemaBytes []byte, cfg config.Config, schemaErrors ...error) *arrowRecordIterator {
 	ari := arrowRecordIterator{
 		cfg:                cfg,
 		batchIterator:      bi,
@@ -33,15 +37,16 @@ func NewArrowRecordIterator(ctx context.Context, rpi rowscanner.ResultPageIterat
 
 // A type implemented DBSQLArrowBatchIterator
 type arrowRecordIterator struct {
-	ctx                context.Context
-	cfg                config.Config
-	batchIterator      BatchIterator
-	resultPageIterator rowscanner.ResultPageIterator
-	currentBatch       SparkArrowBatch
-	isFinished         bool
-	arrowSchemaBytes   []byte
-	arrowSchema        *arrow.Schema
-	schemaErr          error
+	ctx                  context.Context
+	cfg                  config.Config
+	batchIterator        BatchIterator
+	resultPageIterator   rowscanner.ResultPageIterator
+	currentBatch         SparkArrowBatch
+	isFinished           bool
+	arrowSchemaBytes     []byte
+	arrowSchema          *arrow.Schema
+	schemaErr            error
+	detectEmbeddedSchema bool
 	// err holds a page-fetch error detected while advancing the result page
 	// iterator. It must be surfaced through Next() rather than being masked as
 	// a normal end-of-results (io.EOF). See issue #507. Once captured the
@@ -231,7 +236,7 @@ func (ri *arrowRecordIterator) newBatchIterator(fr *cli_service.TFetchResultsRes
 	if len(rowSet.ResultLinks) > 0 {
 		return NewCloudBatchIterator(ri.ctx, rowSet.ResultLinks, rowSet.StartRowOffset, ri.arrowSchemaBytes, &ri.cfg, nil)
 	} else {
-		return NewLocalBatchIterator(ri.ctx, rowSet.ArrowBatches, rowSet.StartRowOffset, ri.arrowSchemaBytes, &ri.cfg)
+		return NewLocalBatchIterator(ri.ctx, rowSet.ArrowBatches, rowSet.StartRowOffset, ri.arrowSchemaBytes, &ri.cfg, ri.detectEmbeddedSchema)
 	}
 }
 

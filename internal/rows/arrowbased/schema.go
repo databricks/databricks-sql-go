@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"fmt"
 	"io"
 
+	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/arrow-go/v18/arrow/ipc"
 	"github.com/apache/arrow-go/v18/arrow/memory"
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
@@ -75,7 +77,10 @@ func peekIPCSchema(stream io.Reader) ([]byte, io.Reader, error) {
 	if _, err := io.CopyN(&prefix, stream, int64(length)); err != nil {
 		return nil, nil, err
 	}
-	isSchema := ipcMetadataIsSchema(prefix.Bytes()[headerSize:])
+	isSchema, err := ipcMetadataIsSchema(prefix.Bytes()[headerSize:])
+	if err != nil {
+		return nil, nil, err
+	}
 	var schema []byte
 	if isSchema {
 		schema = prefix.Bytes()
@@ -83,13 +88,21 @@ func peekIPCSchema(stream io.Reader) ([]byte, io.Reader, error) {
 	return schema, io.MultiReader(bytes.NewReader(prefix.Bytes()), stream), nil
 }
 
-func ipcMetadataIsSchema(metadata []byte) bool {
+func ipcMetadataIsSchema(metadata []byte) (isSchema bool, err error) {
+	if len(metadata) < 4 {
+		return false, io.ErrUnexpectedEOF
+	}
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			isSchema, err = false, fmt.Errorf("arrow/ipc: invalid message metadata: %v", recovered)
+		}
+	}()
 	metaBuffer, bodyBuffer := memory.NewBufferBytes(metadata), memory.NewBufferBytes(nil)
 	defer metaBuffer.Release()
 	defer bodyBuffer.Release()
 	message := ipc.NewMessage(metaBuffer, bodyBuffer)
 	defer message.Release()
-	return message.Type() == ipc.MessageSchema
+	return message.Type() == ipc.MessageSchema, nil
 }
 
 func hasIPCSchema(payload []byte) (bool, error) {
@@ -109,7 +122,7 @@ func hasIPCSchema(payload []byte) (bool, error) {
 	if int64(length) > int64(len(payload)-offset) {
 		return false, io.ErrUnexpectedEOF
 	}
-	return ipcMetadataIsSchema(payload[offset : offset+int(length)]), nil
+	return ipcMetadataIsSchema(payload[offset : offset+int(length)])
 }
 
 type prefetchedIPCStreamIterator struct {
@@ -121,8 +134,9 @@ type prefetchedIPCStreamIterator struct {
 
 // schemaIPCStreamIterator replaces cached IPC headers without decoding record data.
 type schemaIPCStreamIterator struct {
-	source IPCStreamIterator
-	schema []byte
+	source            IPCStreamIterator
+	schema            []byte
+	replacementSchema *arrow.Schema
 }
 
 func (iterator *schemaIPCStreamIterator) Next() (io.Reader, error) {
@@ -130,14 +144,19 @@ func (iterator *schemaIPCStreamIterator) Next() (io.Reader, error) {
 	if err != nil || len(iterator.schema) == 0 {
 		return stream, err
 	}
-	messages := ipc.NewMessageReader(stream)
-	defer messages.Release()
-	message, err := messages.Message()
+	reader, err := ipc.NewReader(stream)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("databricks: invalid CloudFetch Arrow schema: %v", err)
 	}
-	if message.Type() != ipc.MessageSchema {
-		return nil, io.ErrUnexpectedEOF
+	defer reader.Release()
+	if iterator.replacementSchema == nil {
+		iterator.replacementSchema, err = schemaFromIPCBytes(iterator.schema)
+		if err != nil {
+			return nil, fmt.Errorf("databricks: invalid replacement Arrow schema: %w", err)
+		}
+	}
+	if reader.Schema().NumFields() != iterator.replacementSchema.NumFields() {
+		return nil, fmt.Errorf("databricks: CloudFetch Arrow schema field count differs: file=%d metadata=%d", reader.Schema().NumFields(), iterator.replacementSchema.NumFields())
 	}
 	return io.MultiReader(bytes.NewReader(iterator.schema), stream), nil
 }
