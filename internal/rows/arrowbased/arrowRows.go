@@ -78,6 +78,7 @@ type arrowRowScanner struct {
 
 	batchIterator        BatchIterator
 	initialize           func() dbsqlerr.DBError
+	scanInitErr          dbsqlerr.DBError
 	detectEmbeddedSchema bool
 }
 
@@ -129,25 +130,33 @@ func newArrowRowScanner(resultSetMetadata *cli_service.TGetResultSetMetadataResp
 		if err != nil {
 			return nil, err
 		}
-		if prefetched != nil && len(metadata.ArrowSchema) > 0 {
-			// Cached CloudFetch files retain types but may have names from an earlier query.
+		if len(metadata.ArrowSchema) > 0 {
 			schema, err := schemaFromIPCBytes(metadata.ArrowSchema)
 			if err != nil {
-				prefetched.Close()
-				return nil, dbsqlerrint.NewDriverError(ctx, errArrowRowsConvertSchema, err)
+				if prefetched != nil {
+					prefetched.Close()
+				}
+				return nil, dbsqlerrint.NewDriverError(ctx, errArrowRowsConvertSchema, err).WithCategory(dbsqlerrint.CategoryArrowSchemaParsing)
 			}
 			fields := schema.Fields()
-			if len(fields) == len(metadata.Schema.GetColumns()) {
+			if len(fields) != len(metadata.Schema.GetColumns()) {
+				if prefetched != nil {
+					prefetched.Close()
+				}
+				return nil, dbsqlerrint.NewDriverError(ctx, "discovered Arrow schema field count differs from result metadata", nil).WithCategory(dbsqlerrint.CategoryArrowSchemaParsing)
+			}
+			if prefetched != nil {
+				// Cached CloudFetch files may have names from an earlier query.
 				for i, column := range metadata.Schema.GetColumns() {
 					fields[i].Name = column.ColumnName
 				}
 				md := schema.Metadata()
 				schema = arrow.NewSchemaWithEndian(fields, &md, schema.Endianness())
-			}
-			metadata.ArrowSchema, err = getArrowSchemaBytes(schema, ctx)
-			if err != nil {
-				prefetched.Close()
-				return nil, dbsqlerrint.NewDriverError(ctx, errArrowRowsSerializeSchema, err)
+				metadata.ArrowSchema, err = getArrowSchemaBytes(schema, ctx)
+				if err != nil {
+					prefetched.Close()
+					return nil, dbsqlerrint.NewDriverError(ctx, errArrowRowsSerializeSchema, err)
+				}
 			}
 		}
 	}
@@ -325,7 +334,12 @@ func (ars *arrowRowScanner) loadBatchFor(rowNumber int64) dbsqlerr.DBError {
 		return dbsqlerrint.NewDriverError(context.Background(), errArrowRowsNoArrowBatches, nil)
 	}
 	if ars.initialize != nil {
+		if ars.scanInitErr != nil {
+			return ars.scanInitErr
+		}
 		if err := ars.initialize(); err != nil {
+			// Row scans do not retry; a fresh Arrow iterator may retry initialization.
+			ars.scanInitErr = err
 			return err
 		}
 	}

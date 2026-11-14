@@ -320,7 +320,7 @@ func TestConn_QueryContextTelemetryExecutionResult(t *testing.T) {
 		assert.Equal(t, int32(1), atomic.LoadInt32(&metadataCalls), "no metadata RPC beyond the one rows already issue")
 	})
 
-	// Arrow schema initialization fetches metadata once; telemetry reuses it.
+	// Arrow schema initialization and telemetry reuse FetchResults metadata.
 	for _, api := range []struct {
 		name    string
 		consume func(t *testing.T, r dbsqlrows.Rows)

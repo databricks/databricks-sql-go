@@ -87,7 +87,11 @@ func TestArrowSchemaBeforeFetching(t *testing.T) {
 						}
 					}
 					if schemaShape != "nil" && schemaShape != "empty" && (!empty || schemaShape == "server" || schemaShape == "fetch") {
-						metadata.Schema = &cli_service.TTableSchema{Columns: []*cli_service.TColumnDesc{{ColumnName: "unsupported", TypeDesc: &cli_service.TTypeDesc{Types: []*cli_service.TTypeEntry{{PrimitiveEntry: &cli_service.TPrimitiveTypeEntry{Type: cli_service.TTypeId(999)}}}}}}}
+						columns := make([]*cli_service.TColumnDesc, len(metadata.Schema.Columns))
+						for i, column := range metadata.Schema.Columns {
+							columns[i] = &cli_service.TColumnDesc{ColumnName: column.ColumnName, TypeDesc: &cli_service.TTypeDesc{Types: []*cli_service.TTypeEntry{{PrimitiveEntry: &cli_service.TPrimitiveTypeEntry{Type: cli_service.TTypeId(999)}}}}}
+						}
+						metadata.Schema = &cli_service.TTableSchema{Columns: columns}
 					}
 					page.HasMoreRows = new(bool)
 					metadataCalls, fetchCalls := 0, 0

@@ -7,6 +7,8 @@ import (
 	"github.com/apache/arrow-go/v18/arrow"
 )
 
+// Rows exposes Arrow results from a driver.Rows.
+// Callers must serialize Arrow schema access and iteration with driver.Rows.Close.
 type Rows interface {
 	GetArrowBatches(context.Context) (ArrowBatchIterator, error)
 	GetArrowIPCStreams(context.Context) (ArrowIPCStreamIterator, error)
