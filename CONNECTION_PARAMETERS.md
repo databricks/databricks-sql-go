@@ -175,7 +175,7 @@ an internal setting) and non-Arrow values also retain legacy session-location pa
 | DSN parameter | Connector option | Thrift | Kernel | Default | Notes |
 |---|---|:---:|:---:|---|---|
 | `useCloudFetch` | `WithCloudFetch` | ✅ | ✅ | `true` | Set false to fetch complete results through the SQL connection without direct cloud-storage access. |
-| `maxDownloadThreads` | `WithMaxDownloadThreads` | ✅ | ✅ | `10` | CloudFetch download window. On the kernel, bounds downloading and queued chunks ahead of consumption, excluding consumer buffers. Not a byte limit. A value <= 0 warns and uses 10. |
+| `maxDownloadThreads` | `WithMaxDownloadThreads` | ✅ | ✅ | Thrift `10`; kernel `16` | CloudFetch download window. On the kernel, bounds downloading and queued chunks ahead of consumption, excluding consumer buffers. Not a byte limit. An explicit value <= 0 warns and uses 10. |
 | | `WithKernelMaxChunksInMemory(n)` | ❌ | ✅ | standard download window | Positive values override the standard setting and raw chunk session parameters. |
 
 The kernel snapshots these options when connecting. A positive

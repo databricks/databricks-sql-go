@@ -478,6 +478,7 @@ var kernelConfigFieldDisposition = map[string]string{
 	// classified individually so a new CloudFetch option can't slip the guard.
 	"UseCloudFetch":                "forwarded",
 	"MaxDownloadThreads":           "forwarded",
+	"MaxDownloadThreadsSet":        "forwarded",
 	"MaxFilesInMemory":             "inert",
 	"MinTimeToExpiry":              "inert",
 	"CloudFetchSpeedThresholdMbps": "inert",
@@ -717,8 +718,7 @@ func TestBuildKernelConfig(t *testing.T) {
 			} else if kc.CloudFetchEnabled == nil || *kc.CloudFetchEnabled {
 				t.Fatal("disabled mode must forward the client option")
 			}
-			expected := map[string]string{"can_cloud_download": "true", "CLOUDFETCH_ENABLED": "true", "TIMEZONE": "UTC", config.KernelMaxChunksInMemoryConfKey: "10"}
-			if !reflect.DeepEqual(kc.SessionConf, expected) || !reflect.DeepEqual(c.SessionParams, original) {
+			if !reflect.DeepEqual(kc.SessionConf, original) || !reflect.DeepEqual(c.SessionParams, original) {
 				t.Fatal("session parameters must be preserved for the kernel to interpret")
 			}
 		})
@@ -733,6 +733,17 @@ func TestBuildKernelConfig(t *testing.T) {
 		}
 	})
 
+	t.Run("unset download window keeps the kernel default", func(t *testing.T) {
+		c := baseKernelConfig()
+		for _, explicit := range []int{0, -1} {
+			c.KernelExperimental = &config.KernelExperimentalConfig{MaxChunksInMemory: explicit}
+			kc := buildKernelConfig(c, kernel.Auth{Mode: kernel.AuthPAT, Token: "dapi-x"})
+			if _, ok := kc.SessionConf[config.KernelMaxChunksInMemoryConfKey]; ok {
+				t.Fatal("unset download window must leave the native default in effect")
+			}
+		}
+	})
+
 	for _, tc := range []struct {
 		name          string
 		threads       int
@@ -740,7 +751,7 @@ func TestBuildKernelConfig(t *testing.T) {
 		explicit      int
 		wantKey, want string
 	}{
-		{"default", 10, "", 0, config.KernelMaxChunksInMemoryConfKey, "10"},
+		{"explicit ten", 10, "", 0, config.KernelMaxChunksInMemoryConfKey, "10"},
 		{"single", 1, "", 0, config.KernelMaxChunksInMemoryConfKey, "1"},
 		{"parallel", 4, "", 0, config.KernelMaxChunksInMemoryConfKey, "4"},
 		{"above ceiling", 1000, "", 0, config.KernelMaxChunksInMemoryConfKey, "1000"},
@@ -750,7 +761,7 @@ func TestBuildKernelConfig(t *testing.T) {
 	} {
 		t.Run("download window "+tc.name, func(t *testing.T) {
 			c := baseKernelConfig()
-			c.MaxDownloadThreads = tc.threads
+			WithMaxDownloadThreads(tc.threads)(c)
 			if tc.rawKey != "" {
 				c.SessionParams = map[string]string{tc.rawKey: "2"}
 			}

@@ -547,8 +547,9 @@ func WithCloudFetch(useCloudFetch bool) ConnOption {
 	}
 }
 
-// WithMaxDownloadThreads sets up maximum download threads for cloud fetch. Default is 10.
-// A value <= 0 logs a warning and uses the default.
+// WithMaxDownloadThreads sets up maximum download threads for cloud fetch.
+// When unset, Thrift defaults to 10 and the kernel defaults to 16.
+// An explicit value <= 0 logs a warning and uses 10.
 // On the kernel backend it bounds downloading and queued chunks ahead of
 // consumption, excluding consumer buffers; it is not a byte limit. Values above
 // 256 are clamped. Configuration is fixed when connecting. An explicit chunk
@@ -556,6 +557,7 @@ func WithCloudFetch(useCloudFetch bool) ConnOption {
 func WithMaxDownloadThreads(numThreads int) ConnOption {
 	return func(c *config.Config) {
 		c.MaxDownloadThreads = numThreads
+		c.MaxDownloadThreadsSet = true
 	}
 }
 
@@ -844,8 +846,8 @@ func WithKernelMaxConnections(n int) ConnOption {
 // WithKernelMaxChunksInMemory bounds downloading and queued CloudFetch chunks
 // ahead of consumption on the kernel backend. Consumer and application buffers
 // are additional; this is not a byte limit.
-// A value <= 0 (the default) leaves WithMaxDownloadThreads or an explicit
-// cloudfetch_max_chunks_in_memory session parameter in effect.
+// A value <= 0 (the default) leaves WithMaxDownloadThreads, an explicit
+// cloudfetch_max_chunks_in_memory session parameter or the kernel default in effect.
 //
 // It is forwarded as the kernel's client-only "cloudfetch_max_chunks_in_memory"
 // session conf, which the kernel applies to its result config and strips before
