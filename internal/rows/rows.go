@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/arrow-go/v18/arrow/ipc"
 	"github.com/databricks/databricks-sql-go/driverctx"
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
@@ -410,6 +411,10 @@ func (r *rows) ColumnTypeScanType(index int) reflect.Type {
 		return nil
 	}
 
+	r.cacheDatabaseTypeNameOverrides()
+	if r.databaseTypeNameOverrides[index] == "TIME" {
+		return arrowscan.ColumnTypeInfoFor(arrow.FixedWidthTypes.Time64ns).ScanType
+	}
 	scanType := getScanType(column)
 	return scanType
 }
@@ -436,8 +441,8 @@ func (r *rows) ColumnTypeDatabaseTypeName(index int) string {
 	return dbtype
 }
 
-// Thrift shares TIMESTAMP_TYPE between TIMESTAMP and TIMESTAMP_NTZ. Cache the
-// distinction from server metadata so it survives result-page scanner changes.
+// Thrift shares TIMESTAMP_TYPE between TIMESTAMP and TIMESTAMP_NTZ and has no
+// TIME id. Cache the Arrow distinctions so they survive result-page scanner changes.
 // The override is only applied when the result set metadata indicates Arrow
 // decoding: columnar (TColumn) results keep legacy session-location timestamp
 // parsing, so they keep the legacy TIMESTAMP type name too.
@@ -489,6 +494,9 @@ func (r *rows) buildDatabaseTypeNameOverrides() map[int]string {
 		if arrowscan.IsTimestampNTZField(field) {
 			overrides[i] = "TIMESTAMP_NTZ"
 		}
+		if field.Type.ID() == arrow.TIME32 || field.Type.ID() == arrow.TIME64 {
+			overrides[i] = "TIME"
+		}
 	}
 	return overrides
 }
@@ -520,6 +528,10 @@ func (r *rows) ColumnTypePrecisionScale(index int) (precision, scale int64, ok b
 func (r *rows) ColumnTypeLength(index int) (length int64, ok bool) {
 	columnInfo, err := r.getColumnMetadataByIndex(index)
 	if err != nil {
+		return 0, false
+	}
+	r.cacheDatabaseTypeNameOverrides()
+	if r.databaseTypeNameOverrides[index] == "TIME" {
 		return 0, false
 	}
 	return columnTypeLengthForID(rowscanner.GetDBTypeID(columnInfo))

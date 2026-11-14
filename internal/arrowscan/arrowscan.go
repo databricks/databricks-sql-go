@@ -210,6 +210,10 @@ func scanCell(col arrow.Array, row int, loc *time.Location, keys *StructKeyCache
 		return inLocation(c.Value(row).ToTime(), loc), nil
 	case *array.Date64:
 		return inLocation(c.Value(row).ToTime(), loc), nil
+	case *array.Time32:
+		return timeOfDayValue(int64(c.Value(row)), c.DataType().(*arrow.Time32Type).Unit), nil
+	case *array.Time64:
+		return timeOfDayValue(int64(c.Value(row)), c.DataType().(*arrow.Time64Type).Unit), nil
 	case *array.Timestamp:
 		dt, ok := col.DataType().(*arrow.TimestampType)
 		if !ok {
@@ -641,6 +645,10 @@ func scalarForJSON(col arrow.Array, row int, loc *time.Location) (any, error) {
 		return c.Value(row), nil
 	case *array.LargeString:
 		return c.Value(row), nil
+	case *array.Time32:
+		return timeOfDay(int64(c.Value(row)), c.DataType().(*arrow.Time32Type).Unit).Format("15:04:05.999999999"), nil
+	case *array.Time64:
+		return timeOfDay(int64(c.Value(row)), c.DataType().(*arrow.Time64Type).Unit).Format("15:04:05.999999999"), nil
 	}
 	// scanCell, not ScanCell: keyLoc already came from childLocation on the key
 	// Field, so the field-less zone-less fallback must not override it.

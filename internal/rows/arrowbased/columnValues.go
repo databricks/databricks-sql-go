@@ -6,6 +6,7 @@ import (
 
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/arrow-go/v18/arrow/array"
+	"github.com/databricks/databricks-sql-go/internal/arrowscan"
 	"github.com/databricks/databricks-sql-go/internal/decimalfmt"
 	"github.com/databricks/databricks-sql-go/internal/jsonfmt"
 	"github.com/databricks/databricks-sql-go/internal/rows/rowscanner"
@@ -476,6 +477,29 @@ func (dvc *dateValueContainer) SetValueArray(colData arrow.ArrayData) error {
 	return nil
 }
 
+type timeValueContainer struct {
+	timeArray arrow.Array
+}
+
+func (container *timeValueContainer) Value(row int) (any, error) {
+	return arrowscan.ScanCell(container.timeArray, row, nil)
+}
+
+func (container *timeValueContainer) IsNull(row int) bool {
+	return container.timeArray.IsNull(row)
+}
+
+func (container *timeValueContainer) Release() {
+	if container.timeArray != nil {
+		container.timeArray.Release()
+	}
+}
+
+func (container *timeValueContainer) SetValueArray(data arrow.ArrayData) error {
+	container.timeArray = array.MakeFromData(data)
+	return nil
+}
+
 type timestampValueContainer struct {
 	timeArray     *array.Timestamp
 	location      *time.Location
@@ -603,6 +627,9 @@ func marshalScalar(dst []byte, holder columnValues, i int, val any) ([]byte, err
 		return append(dst, d.ValueString(i)...), nil
 	}
 	if t, ok := val.(time.Time); ok {
+		if _, clock := holder.(*timeValueContainer); clock {
+			return jsonfmt.Append(dst, t.Format("15:04:05.999999999"))
+		}
 		dst = append(dst, '"')
 		dst = append(dst, t.String()...)
 		return append(dst, '"'), nil
