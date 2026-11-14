@@ -536,6 +536,10 @@ STRING --> string
 
 DATE --> time.Time
 
+TIME --> time.Time (0001-01-01 UTC). Detect NULL with sql.NullTime.Valid or a nil
+*time.Time, never IsZero(): non-NULL midnight is the zero time and JSON omitzero
+omits it.
+
 TIMESTAMP --> time.Time
 
 DECIMAL(p,s) --> sql.RawBytes
