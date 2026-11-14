@@ -276,10 +276,10 @@ WithKernel* prefix marks them experimental):
     retained per host. The default is 100; n must be positive.
   - WithKernelMaxChunksInMemory(n) bounds downloading and queued CloudFetch chunks
     ahead of consumption, excluding consumer buffers. It is not a byte limit.
-    It is forwarded as the
-    kernel's client-only cloudfetch_max_chunks_in_memory session conf, stripped before
-    the SEA wire so it never reaches the server. A value <= 0 keeps the standard download window
-    or an explicit cloudfetch_max_chunks_in_memory session parameter.
+    It is forwarded as the kernel's client-only cloudfetch_max_chunks_in_memory
+    session conf, stripped before the SEA wire so it never reaches the server.
+    A value <= 0 keeps the standard download window or an explicit
+    cloudfetch_max_chunks_in_memory session parameter.
 
 Setting any of these without WithUseKernel fails Connect with an error wrapping the
 sentinel ErrRequiresKernelBackend, detectable with errors.Is.
