@@ -26,7 +26,11 @@ const decMaxLen = 48
 func PlainString(value string, scale *int32) (string, error) {
 	mantissa := value
 	exponent := int64(0)
-	if marker := strings.IndexAny(value, "eE"); marker >= 0 {
+	marker := strings.IndexByte(value, 'E')
+	if marker < 0 {
+		marker = strings.IndexByte(value, 'e')
+	}
+	if marker >= 0 {
 		mantissa = value[:marker]
 		var err error
 		exponent, err = strconv.ParseInt(value[marker+1:], 10, 32)
@@ -51,6 +55,9 @@ func plainString(mantissa string, encodedScale int64, scale *int32) (string, err
 	}
 	if outputScale < 0 || outputScale > 38 {
 		return "", errors.New("decimal scale outside supported range")
+	}
+	if mantissa == "0" || mantissa == "-0" || mantissa == "+0" {
+		return ExactString(decimal128.Num{}, int32(outputScale)), nil
 	}
 	unscaled, ok := new(big.Int).SetString(strings.Replace(mantissa, ".", "", 1), 10)
 	if !ok {
