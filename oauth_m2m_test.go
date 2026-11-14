@@ -17,6 +17,7 @@ import (
 	"github.com/databricks/databricks-sql-go/internal/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/oauth2"
 )
 
 type m2mRequest struct {
@@ -51,7 +52,8 @@ func newM2MTestEndpoint(t *testing.T, host string, expiresIn int) *m2mTestEndpoi
 		case "/token", "/oidc/oauth2/v2.0/token":
 			clientID, secret, ok := request.BasicAuth()
 			if !ok || clientID != "test-client" || secret != "test-secret" {
-				http.Error(writer, `{"error":"invalid_client"}`, http.StatusUnauthorized)
+				writer.WriteHeader(http.StatusUnauthorized)
+				_, _ = writer.Write([]byte(`{"error":"invalid_client"}`))
 				return
 			}
 			if err := request.ParseForm(); err != nil || request.Form.Get("grant_type") != "client_credentials" {
@@ -101,7 +103,6 @@ func requestWithM2M(t *testing.T, connector *connector) {
 	request, err := http.NewRequestWithContext(context.Background(), http.MethodPost,
 		"https://"+connector.cfg.Host+"/query", nil)
 	require.NoError(t, err)
-	request.Header.Set("User-Agent", client.BuildUserAgent(connector.cfg))
 	response, err := connector.client.Do(request)
 	require.NoError(t, err)
 	require.NoError(t, response.Body.Close())
@@ -152,7 +153,9 @@ func TestM2MConnectorHTTPConfiguration(t *testing.T) {
 					var paths []string
 					for _, request := range endpoint.requests {
 						paths = append(paths, request.path)
-						assert.Equal(t, wantAgent, request.userAgent, request.path)
+						if request.path != "/query" {
+							assert.Equal(t, wantAgent, request.userAgent, request.path)
+						}
 						if strings.Contains(request.path, ".well-known") {
 							assert.Empty(t, request.authorization)
 						}
@@ -191,15 +194,26 @@ func TestM2MSharedAuthenticatorKeepsConnectorConfiguration(t *testing.T) {
 		assert.Equal(t, int32(2), endpoint.tokenHits.Load())
 		endpoint.mutex.Lock()
 		for _, request := range endpoint.requests {
-			assert.Equal(t, client.BuildUserAgent(connector.cfg), request.userAgent)
+			if request.path != "/query" {
+				assert.Equal(t, client.BuildUserAgent(connector.cfg), request.userAgent)
+			}
 		}
 		endpoint.mutex.Unlock()
 	}
 }
 
 func TestM2MPreviouslyUsedAuthenticatorGetsConnectorClient(t *testing.T) {
+	for _, expiresIn := range []int{3600, 1} {
+		t.Run(fmt.Sprintf("expires-%d", expiresIn), func(t *testing.T) {
+			testM2MPreviouslyUsedAuthenticator(t, expiresIn)
+		})
+	}
+}
+
+func testM2MPreviouslyUsedAuthenticator(t *testing.T, expiresIn int) {
+	t.Helper()
 	const host = "adb-test.azuredatabricks.net"
-	original := newM2MTestEndpoint(t, host, 3600)
+	original := newM2MTestEndpoint(t, host, expiresIn)
 	previousClient := http.DefaultClient
 	http.DefaultClient = &http.Client{Transport: original.transport}
 	t.Cleanup(func() { http.DefaultClient = previousClient })
@@ -217,12 +231,72 @@ func TestM2MPreviouslyUsedAuthenticatorGetsConnectorClient(t *testing.T) {
 	connector := created.(*connector)
 	requestWithM2M(t, connector)
 	requestWithM2M(t, connector)
-	require.Equal(t, int32(1), configured.tokenHits.Load())
+	wantTokens := int32(0)
+	if expiresIn == 1 {
+		wantTokens = 1
+	}
+	require.Equal(t, wantTokens, configured.tokenHits.Load())
 	configured.mutex.Lock()
 	defer configured.mutex.Unlock()
 	for _, observed := range configured.requests {
-		assert.Equal(t, client.BuildUserAgent(connector.cfg), observed.userAgent)
+		if observed.path != "/query" {
+			assert.Equal(t, client.BuildUserAgent(connector.cfg), observed.userAgent)
+		}
 	}
 	require.NoError(t, shared.Authenticate(request))
 	require.Equal(t, int32(1), original.tokenHits.Load())
+}
+
+func TestM2MSharedAuthenticatorReusesToken(t *testing.T) {
+	blockM2MDefaultTransport(t)
+	for _, host := range []string{"test.cloud.databricks.com", "adb-test.azuredatabricks.net"} {
+		t.Run(host, func(t *testing.T) {
+			shared := m2m.NewAuthenticator("test-client", "test-secret", host)
+			var tokenHits int32
+			discoveries := 0
+			for index := range 5 {
+				endpoint := newM2MTestEndpoint(t, host, 3600)
+				created, err := NewConnector(WithServerHostname(host), WithAuthenticator(shared),
+					WithUserAgentEntry(fmt.Sprintf("partner/%d", index)), WithTransport(endpoint.transport),
+					WithRetries(0, 0, 0))
+				require.NoError(t, err)
+				for range 3 {
+					requestWithM2M(t, created.(*connector))
+				}
+				tokenHits += endpoint.tokenHits.Load()
+				endpoint.mutex.Lock()
+				for _, request := range endpoint.requests {
+					if strings.Contains(request.path, ".well-known") {
+						discoveries++
+					}
+				}
+				endpoint.mutex.Unlock()
+			}
+			assert.Equal(t, int32(1), tokenHits)
+			wantDiscoveries := 0
+			if strings.Contains(host, "cloud.databricks.com") {
+				wantDiscoveries = 2
+			}
+			assert.Equal(t, wantDiscoveries, discoveries)
+		})
+	}
+}
+
+func TestM2MConfiguredTransportPreservesTokenError(t *testing.T) {
+	blockM2MDefaultTransport(t)
+	const host = "adb-test.azuredatabricks.net"
+	endpoint := newM2MTestEndpoint(t, host, 3600)
+	created, err := NewConnector(WithServerHostname(host), WithClientCredentials("invalid", "invalid"),
+		WithTransport(endpoint.transport), WithRetries(0, 0, 0))
+	require.NoError(t, err)
+	request, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "https://"+host+"/query", nil)
+	require.NoError(t, err)
+	response, err := created.(*connector).client.Do(request)
+	if response != nil {
+		require.NoError(t, response.Body.Close())
+	}
+	var retrieveError *oauth2.RetrieveError
+	require.ErrorAs(t, err, &retrieveError)
+	assert.Equal(t, http.StatusUnauthorized, retrieveError.Response.StatusCode)
+	assert.Equal(t, "invalid_client", retrieveError.ErrorCode)
 }

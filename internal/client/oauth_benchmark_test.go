@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -11,9 +12,12 @@ import (
 	"github.com/databricks/databricks-sql-go/internal/config"
 )
 
-type oauthBenchmarkTransport struct{}
+type oauthBenchmarkTransport struct{ blocked bool }
 
-func (oauthBenchmarkTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+func (transport oauthBenchmarkTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	if transport.blocked {
+		return nil, errors.New("OAuth bypassed connector transport")
+	}
 	return &http.Response{
 		StatusCode: http.StatusOK,
 		Header:     http.Header{"Content-Type": {"application/json"}},
@@ -24,7 +28,7 @@ func (oauthBenchmarkTransport) RoundTrip(request *http.Request) (*http.Response,
 
 func BenchmarkM2MTokenGrant(benchmark *testing.B) {
 	previousClient := http.DefaultClient
-	http.DefaultClient = &http.Client{Transport: oauthBenchmarkTransport{}}
+	http.DefaultClient = &http.Client{Transport: oauthBenchmarkTransport{blocked: true}}
 	benchmark.Cleanup(func() { http.DefaultClient = previousClient })
 	cfg := config.WithDefaults()
 	cfg.Authenticator = m2m.NewAuthenticator("benchmark-client", "benchmark-secret", "adb-test.azuredatabricks.net")
