@@ -54,12 +54,13 @@ func GetEndpoint(ctx context.Context, hostName string) (oauth2.Endpoint, error) 
 	// use their account-rooted endpoint instead of the account-agnostic console login.
 	// For normal workspace hosts this resolves to https://<host>/oidc, identical to
 	// the previous behavior.
-	//
-	// NOTE: this client uses the default transport, matching the existing
-	// oidc.NewProvider discovery below. A connector-supplied transport / TLS config
-	// (WithTransport, WithSkipTLSHostVerify) is not yet threaded into the OAuth
-	// endpoint-resolution path; that is a pre-existing limitation, tracked separately.
 	client := &http.Client{Timeout: hostConfigTimeout}
+	if supplied, ok := ctx.Value(oauth2.HTTPClient).(*http.Client); ok && supplied != nil {
+		*client = *supplied
+		if client.Timeout <= 0 || client.Timeout > hostConfigTimeout {
+			client.Timeout = hostConfigTimeout
+		}
+	}
 	issuerURL := resolveOIDCIssuer(ctx, client, hostName)
 	ctx = oidc.ClientContext(ctx, client)
 	ctx = oidc.InsecureIssuerURLContext(ctx, issuerURL)

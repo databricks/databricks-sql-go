@@ -34,8 +34,19 @@ type authClient struct {
 	clientSecret string
 	hostName     string
 	scopes       []string
+	httpClient   *http.Client
 	tokenSource  oauth2.TokenSource
 	mx           sync.Mutex
+}
+
+func (c *authClient) WithHTTPClient(client *http.Client) auth.Authenticator {
+	return &authClient{
+		clientID:     c.clientID,
+		clientSecret: c.clientSecret,
+		hostName:     c.hostName,
+		scopes:       append([]string(nil), c.scopes...),
+		httpClient:   client,
+	}
 }
 
 // M2MCredentials exposes the raw client-credentials so the SEA-via-kernel backend
@@ -66,12 +77,16 @@ func (c *authClient) Authenticate(r *http.Request) error {
 		return nil
 	}
 
-	config, err := GetConfig(context.Background(), c.hostName, c.clientID, c.clientSecret, c.scopes)
+	ctx := context.Background()
+	if c.httpClient != nil {
+		ctx = context.WithValue(ctx, oauth2.HTTPClient, c.httpClient)
+	}
+	config, err := GetConfig(ctx, c.hostName, c.clientID, c.clientSecret, c.scopes)
 	if err != nil {
 		return fmt.Errorf("unable to generate clientCredentials.Config: %w", err)
 	}
 
-	c.tokenSource = GetTokenSource(config)
+	c.tokenSource = config.TokenSource(ctx)
 	token, err := c.tokenSource.Token()
 	if err != nil {
 		logger.Err(err).Msg("failed to get token")
