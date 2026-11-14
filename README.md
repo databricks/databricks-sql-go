@@ -425,8 +425,9 @@ Runnable examples live in [`examples/`](./examples). Notable ones:
 
 ## Develop
 
-`make tools` builds the development tools. The test runner is pinned by the
-`tool` directive in `go.mod`; it can also be run with `go tool gotestsum`.
+`make tools` builds the development tools. The test runner is declared by the
+`tool` directive in `go.mod`, with its version pinned by the matching `require`
+line; it can also be run with `go tool gotestsum`.
 `golangci-lint` is installed separately at the version pinned in the Makefile and CI.
 
 ### Lint
