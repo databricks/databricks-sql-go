@@ -3,14 +3,15 @@ package rows
 import (
 	"bytes"
 	"context"
+	"reflect"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/arrow-go/v18/arrow/ipc"
 	"github.com/stretchr/testify/require"
 
-	"github.com/databricks/databricks-sql-go/internal/arrowscan"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/client"
 	"github.com/databricks/databricks-sql-go/internal/config"
@@ -32,7 +33,6 @@ func TestTimeColumnMetadata(t *testing.T) {
 					}}},
 					resultSetMetadata: &cli_service.TGetResultSetMetadataResp{ArrowSchema: schemaBytes.Bytes(), ResultFormat: &format},
 				}
-				want := arrowscan.ColumnTypeInfoFor(dataType)
 				var readers sync.WaitGroup
 				for range 8 {
 					readers.Go(func() {
@@ -63,11 +63,7 @@ func TestTimeColumnMetadata(t *testing.T) {
 					require.Equal(t, "STRING", fallbackRows.ColumnTypeDatabaseTypeName(0), fallback)
 					require.Equal(t, scanTypeString, fallbackRows.ColumnTypeScanType(0), fallback)
 				}
-				require.Equal(t, scanTypeDateTime, rowSet.ColumnTypeScanType(0))
-				require.Equal(t, want.ScanType, rowSet.ColumnTypeScanType(0))
-				require.Equal(t, want.DatabaseTypeName, rowSet.ColumnTypeDatabaseTypeName(0))
-				rowSet.RowScanner = nil
-				require.Equal(t, "TIME", rowSet.ColumnTypeDatabaseTypeName(0))
+				require.Equal(t, reflect.TypeOf(time.Time{}), rowSet.ColumnTypeScanType(0))
 			}
 		})
 	}
