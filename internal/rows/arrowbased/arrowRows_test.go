@@ -75,7 +75,7 @@ func TestArrowRowScanner(t *testing.T) {
 		arrowConfig.UseArrowNativeTimestamp = true
 		arrowType, err = tColumnDescToArrowDataType(schema.Columns[8], arrowConfig)
 		assert.Nil(t, err)
-		assert.Equal(t, arrow.FixedWidthTypes.Timestamp_us, arrowType)
+		assert.Equal(t, &arrow.TimestampType{Unit: arrow.Microsecond, TimeZone: "Etc/UTC"}, arrowType)
 
 		arrowType, err = tColumnDescToArrowDataType(schema.Columns[9], arrowConfig)
 		assert.Nil(t, err)
@@ -156,7 +156,7 @@ func TestArrowRowScanner(t *testing.T) {
 		arrowConfig.UseArrowNativeTimestamp = true
 		arrowType, err = tColumnDescToArrowDataType(schema.Columns[8], arrowConfig)
 		assert.Nil(t, err)
-		assert.Equal(t, arrow.FixedWidthTypes.Timestamp_us, arrowType)
+		assert.Equal(t, &arrow.TimestampType{Unit: arrow.Microsecond, TimeZone: "Etc/UTC"}, arrowType)
 
 		arrowConfig.UseArrowNativeComplexTypes = true
 		_, err = tColumnDescToArrowDataType(schema.Columns[10], arrowConfig)

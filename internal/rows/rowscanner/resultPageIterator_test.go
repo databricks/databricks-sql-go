@@ -2,13 +2,44 @@ package rowscanner
 
 import (
 	"context"
+	"io"
 	"testing"
 
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/client"
 	dbsqllog "github.com/databricks/databricks-sql-go/logger"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
+
+func TestEmptyFinalPagePreservesSchema(t *testing.T) {
+	page := &cli_service.TFetchResultsResp{
+		HasMoreRows:       new(bool),
+		Results:           &cli_service.TRowSet{ArrowBatches: []*cli_service.TSparkArrowBatch{{Batch: []byte("schema-only stream")}}},
+		ResultSetMetadata: &cli_service.TGetResultSetMetadataResp{ArrowSchema: []byte("server schema")},
+	}
+	fetches, closes := 0, 0
+	cli := &client.TestClient{
+		FnFetchResults: func(context.Context, *cli_service.TFetchResultsReq) (*cli_service.TFetchResultsResp, error) {
+			fetches++
+			return page, nil
+		},
+		FnCloseOperation: func(context.Context, *cli_service.TCloseOperationReq) (*cli_service.TCloseOperationResp, error) {
+			closes++
+			return &cli_service.TCloseOperationResp{}, nil
+		},
+	}
+	iterator := NewResultPageIterator(context.Background(), NewDelimiter(0, 0), 100, nil, nil, false, cli, dbsqllog.Logger)
+	actual, err := iterator.Next()
+	require.NoError(t, err)
+	require.Same(t, page, actual)
+	require.Same(t, page.ResultSetMetadata, iterator.ResultSetMetadata())
+	_, err = iterator.Next()
+	require.ErrorIs(t, err, io.EOF)
+	require.NoError(t, iterator.Err())
+	require.Equal(t, 1, fetches)
+	require.Equal(t, 1, closes)
+}
 
 func TestFetchResultPageination(t *testing.T) {
 	t.Parallel()

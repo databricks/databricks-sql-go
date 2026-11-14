@@ -1683,6 +1683,9 @@ func getSimpleClient(fetchResults []cli_service.TFetchResultsResp) cli_service.T
 
 	client := &client.TestClient{
 		FnFetchResults: fetchResultsFn,
+		FnGetResultSetMetadata: func(context.Context, *cli_service.TGetResultSetMetadataReq) (*cli_service.TGetResultSetMetadataResp, error) {
+			return fetchResults[0].ResultSetMetadata, nil
+		},
 	}
 
 	return client

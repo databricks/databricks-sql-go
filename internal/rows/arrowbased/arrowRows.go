@@ -100,8 +100,22 @@ func NewArrowRowScanner(resultSetMetadata *cli_service.TGetResultSetMetadataResp
 		arrowConfig = cfg.ArrowConfig
 	}
 
-	schemaBytes, arrowSchema, metadataErr := tGetResultSetMetadataRespToArrowSchema(resultSetMetadata, arrowConfig, ctx, logger)
+	metadata := *resultSetMetadata
+	var prefetched IPCStreamIterator
+	var schemaInFirstBatch bool
+	if len(metadata.ArrowSchema) == 0 {
+		var err dbsqlerr.DBError
+		metadata.ArrowSchema, prefetched, err = schemaFromFirstBatch(ctx, rowSet, cfg, onCloudFetchDownload)
+		if err != nil {
+			return nil, err
+		}
+		schemaInFirstBatch = len(metadata.ArrowSchema) > 0 && prefetched == nil
+	}
+	schemaBytes, arrowSchema, metadataErr := tGetResultSetMetadataRespToArrowSchema(&metadata, arrowConfig, ctx, logger)
 	if metadataErr != nil {
+		if prefetched != nil {
+			prefetched.Close()
+		}
 		return nil, metadataErr
 	}
 
@@ -118,7 +132,9 @@ func NewArrowRowScanner(resultSetMetadata *cli_service.TGetResultSetMetadataResp
 
 	var bi BatchIterator
 	var err2 dbsqlerr.DBError
-	if len(rowSet.ResultLinks) > 0 {
+	if prefetched != nil {
+		bi = NewBatchIterator(prefetched, rowSet.StartRowOffset)
+	} else if len(rowSet.ResultLinks) > 0 {
 		logger.Debug().Msgf("Initialize CloudFetch loader, row set start offset: %d, file list:", rowSet.StartRowOffset)
 		for _, resultLink := range rowSet.ResultLinks {
 			logger.Debug().Msgf("- start row offset: %d, row count: %d", resultLink.StartRowOffset, resultLink.RowCount)
@@ -126,6 +142,9 @@ func NewArrowRowScanner(resultSetMetadata *cli_service.TGetResultSetMetadataResp
 		bi, err2 = NewCloudBatchIterator(context.Background(), rowSet.ResultLinks, rowSet.StartRowOffset, schemaBytes, cfg, onCloudFetchDownload)
 	} else {
 		bi, err2 = NewLocalBatchIterator(context.Background(), rowSet.ArrowBatches, rowSet.StartRowOffset, schemaBytes, cfg)
+		if schemaInFirstBatch {
+			bi.(*batchIterator).ipcIterator.(*localIPCStreamIterator).schemaInFirstBatch = true
+		}
 	}
 	if err2 != nil {
 		return nil, err2
@@ -465,7 +484,7 @@ func tColumnDescToArrowDataType(tColumnDesc *cli_service.TColumnDesc, arrowConfi
 			}
 
 			// timestamp is UTC with microsecond precision
-			return arrow.FixedWidthTypes.Timestamp_us, nil
+			return &arrow.TimestampType{Unit: arrow.Microsecond, TimeZone: "Etc/UTC"}, nil
 		} else if _, ok := complexTypes[tType]; ok {
 			// if not using arrow native complex types thrift server returns strings
 			if !arrowConfig.UseArrowNativeComplexTypes {
@@ -522,8 +541,9 @@ func tColumnDescToArrowField(columnDesc *cli_service.TColumnDesc, arrowConfig *c
 	}
 
 	arrowField := arrow.Field{
-		Name: columnDesc.ColumnName,
-		Type: arrowDataType,
+		Name:     columnDesc.ColumnName,
+		Type:     arrowDataType,
+		Nullable: true,
 	}
 
 	return arrowField, nil
@@ -550,14 +570,20 @@ func getColumnInfo(arrowSchema *arrow.Schema, schema *cli_service.TTableSchema) 
 	return colInfos
 }
 
+// GetArrowSchemaBytes returns the server schema or converts the Thrift schema using the Arrow configuration.
+func GetArrowSchemaBytes(ctx context.Context, metadata *cli_service.TGetResultSetMetadataResp, cfg config.ArrowConfig) ([]byte, dbsqlerr.DBError) {
+	schemaBytes, _, err := tGetResultSetMetadataRespToArrowSchema(metadata, cfg, ctx, dbsqllog.Logger)
+	return schemaBytes, err
+}
+
 // Derive an arrow.Schema object and the corresponding serialized bytes from TGetResultSetMetadataResp
 func tGetResultSetMetadataRespToArrowSchema(resultSetMetadata *cli_service.TGetResultSetMetadataResp, arrowConfig config.ArrowConfig, ctx context.Context, logger *dbsqllog.DBSQLLogger) ([]byte, *arrow.Schema, dbsqlerr.DBError) {
 
 	var arrowSchema *arrow.Schema
 	schemaBytes := resultSetMetadata.ArrowSchema
-	if schemaBytes == nil {
+	if len(schemaBytes) == 0 {
 		var err error
-		// convert the TTableSchema to an arrow Schema
+		// Thrift omits nullability and native complex type details; keep converter limits.
 		arrowSchema, err = tTableSchemaToArrowSchema(resultSetMetadata.Schema, &arrowConfig)
 		if err != nil {
 			logger.Err(err).Msg(errArrowRowsConvertSchema)
