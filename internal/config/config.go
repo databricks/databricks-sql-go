@@ -117,10 +117,10 @@ type KernelExperimentalConfig struct {
 	// host by the kernel. Nil keeps the kernel default (100).
 	MaxConnections *int
 
-	// MaxChunksInMemory bounds how many decompressed CloudFetch chunks the kernel
-	// holds in memory at once (WithKernelMaxChunksInMemory) — the knob that trades
-	// throughput for peak RSS on large result sets. Zero = keep the kernel default
-	// (16). A positive value is forwarded as the client-only
+	// MaxChunksInMemory bounds downloading and queued CloudFetch chunks ahead of
+	// consumption, excluding consumer buffers. Zero keeps the standard download
+	// window or an explicit session parameter. A positive value is forwarded as
+	// the client-only
 	// "cloudfetch_max_chunks_in_memory" session conf, which the kernel folds into
 	// its result config and strips before the SEA wire; it is kernel-only because
 	// the Thrift path has no such in-memory-chunk knob.
