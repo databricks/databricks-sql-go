@@ -6,6 +6,7 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/apache/arrow-go/v18/arrow"
@@ -40,10 +41,11 @@ type SparkArrowRecord interface {
 type timeStampFn func(arrow.Timestamp) time.Time
 
 type colInfo struct {
-	name         string
-	arrowType    arrow.DataType
-	dbType       cli_service.TTypeId
-	decimalScale *int32
+	name             string
+	arrowType        arrow.DataType
+	dbType           cli_service.TTypeId
+	decimalScale     *int32
+	checkDecimalText bool
 }
 
 // arrowRowScanner handles extracting values from arrow records
@@ -219,7 +221,7 @@ func (ars *arrowRowScanner) ScanRow(
 		// is not null we put the value in the destination
 		if !ars.rowValues.IsNull(i, rowNumber) {
 
-			col := ars.colInfo[i]
+			col := &ars.colInfo[i]
 			dbType := col.dbType
 
 			if isIntervalType(dbType) && ars.UseArrowNativeIntervalTypes {
@@ -247,8 +249,8 @@ func (ars *arrowRowScanner) ScanRow(
 			// get the value from the column values holder
 			var err1 error
 			destination[i], err1 = ars.rowValues.Value(i, rowNumber)
-			if err1 == nil && dbType == cli_service.TTypeId_DECIMAL_TYPE {
-				if value, ok := destination[i].(string); ok {
+			if col.checkDecimalText && err1 == nil {
+				if value, ok := destination[i].(string); ok && (strings.IndexByte(value, 'E') >= 0 || strings.IndexByte(value, 'e') >= 0) {
 					var formatted string
 					formatted, err1 = decimalfmt.PlainString(value, col.decimalScale)
 					if formatted != value {
@@ -562,6 +564,11 @@ func getColumnInfo(arrowSchema *arrow.Schema, schema *cli_service.TTableSchema) 
 					colInfos[i].decimalScale = holder.I32Value
 				}
 			}
+			// BigDecimal.toString() is plain at scales 0..6 (adjusted exponent >= -6):
+			// https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/math/BigDecimal.html#toString()
+			// Other server formats retain the prior passthrough at these scales.
+			scale := colInfos[i].decimalScale
+			colInfos[i].checkDecimalText = scale == nil || *scale < 0 || *scale > 6
 		}
 	}
 

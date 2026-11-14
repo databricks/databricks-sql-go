@@ -50,13 +50,12 @@ func TestScanRowDecimalText(t *testing.T) {
 		scale int32
 		want  string
 	}{
-		{"zero", "0E-10", 2, "0.00"},
-		{"sub_one", "0.5", 2, "0.50"},
+		{"zero", "0.00", 2, "0.00"},
+		{"sub_one", "0.50", 2, "0.50"},
 		{"negative_sub_one", "-0.05", 2, "-0.05"},
 		{"small_exponent", "1E-7", 7, "0.0000001"},
-		{"trailing_zeros", "100.0", 2, "100.00"},
+		{"trailing_zeros", "100.00", 2, "100.00"},
 		{"wide", "123456789012345678901234567.89", 2, "123456789012345678901234567.89"},
-		{"wide_exponent", "1.2345678901234567890123456789E+26", 2, "123456789012345678901234567.89"},
 		{"negative_exponent", "-1e-7", 7, "-0.0000001"},
 		{"max_precision", "99999999999999999999999999999999999999", 0, "99999999999999999999999999999999999999"},
 		{"negative_max_precision", "-99999999999999999999999999999999999999", 0, "-99999999999999999999999999999999999999"},
@@ -82,6 +81,7 @@ func TestScanRowDecimalTextWithoutScale(t *testing.T) {
 		{"1.2300E+5", "123000"},
 		{"-1.2300e-2", "-0.012300"},
 		{"100.00", "100.00"},
+		{"1.2345678901234567890123456789E+26", "123456789012345678901234567.89"},
 	} {
 		t.Run(test.value, func(t *testing.T) {
 			scanner := decimalTextScanner(t, test.value, nil, cli_service.TTypeId_DECIMAL_TYPE)
@@ -92,9 +92,32 @@ func TestScanRowDecimalTextWithoutScale(t *testing.T) {
 	}
 }
 
+func TestScanRowDecimalTextScaleGate(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		scale int32
+		value string
+		want  string
+	}{
+		{"scale_zero", 0, "1E+1", "1E+1"},
+		{"scale_six", 6, "1E-6", "1E-6"},
+		{"scale_seven", 7, "1E-7", "0.0000001"},
+		{"scale_thirty_eight", 38, "1E-38", "0.00000000000000000000000000000000000001"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			scanner := decimalTextScanner(t, test.value, &test.scale, cli_service.TTypeId_DECIMAL_TYPE)
+			require.Equal(t, test.scale > 6, scanner.colInfo[0].checkDecimalText)
+			destination := make([]driver.Value, 1)
+			require.NoError(t, scanner.ScanRow(destination, 0))
+			require.Equal(t, test.want, destination[0])
+		})
+	}
+}
+
 func TestScanRowNonDecimalTextUnchanged(t *testing.T) {
 	scale := int32(7)
 	scanner := decimalTextScanner(t, "1E-7", &scale, cli_service.TTypeId_STRING_TYPE)
+	require.False(t, scanner.colInfo[0].checkDecimalText)
 	destination := make([]driver.Value, 1)
 	require.NoError(t, scanner.ScanRow(destination, 0))
 	require.Equal(t, "1E-7", destination[0])
@@ -106,13 +129,13 @@ func TestScanRowNonDecimalTextUnchanged(t *testing.T) {
 }
 
 func TestScanRowDecimalTextReportsConversionError(t *testing.T) {
-	scale := int32(2)
-	scanner := decimalTextScanner(t, "1E-3", &scale, cli_service.TTypeId_DECIMAL_TYPE)
+	scale := int32(7)
+	scanner := decimalTextScanner(t, "1E-8", &scale, cli_service.TTypeId_DECIMAL_TYPE)
 	destination := make([]driver.Value, 1)
 	err := scanner.ScanRow(destination, 0)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "amount")
-	require.NotContains(t, err.Error(), "1E-3")
+	require.NotContains(t, err.Error(), "1E-8")
 }
 
 func TestDecimalScaleQualifiersOptional(t *testing.T) {
@@ -132,6 +155,7 @@ func TestDecimalScaleQualifiersOptional(t *testing.T) {
 		columns := getColumnInfo(arrowSchema, schema)
 		require.Len(t, columns, 1)
 		require.Nil(t, columns[0].decimalScale)
+		require.True(t, columns[0].checkDecimalText)
 	}
 }
 
@@ -141,6 +165,9 @@ func BenchmarkScanRowDecimalText(b *testing.B) {
 		scale int32
 	}{
 		{"19.99", 2},
+		{"19.990000", 6},
+		{"19.9900000", 7},
+		{"0.50000000000000000000000000000000000000", 38},
 		{"1E-7", 7},
 		{"0E-18", 18},
 		{"123456789012345678901234567.89", 2},
