@@ -96,7 +96,7 @@ type DriverConnectionParameters struct {
 	// what a customer actually configured so a hung-connect or large-result-OOM
 	// report can be diagnosed from telemetry, not just a debug log. RetryMaxAttempts
 	// / RetryOverallTimeoutMs zero means the backend default is in effect;
-	// MaxChunksInMemory zero means the kernel default (16).
+	// MaxChunksInMemory zero means the value was not reported.
 	RetryMaxAttempts      int32 `json:"retry_max_attempts,omitempty"`
 	RetryOverallTimeoutMs int64 `json:"retry_overall_timeout_ms,omitempty"`
 	MaxChunksInMemory     int32 `json:"max_chunks_in_memory,omitempty"`

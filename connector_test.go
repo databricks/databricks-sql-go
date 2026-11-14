@@ -165,6 +165,7 @@ func TestNewConnector(t *testing.T) {
 		expectedCloudFetchConfig := config.CloudFetchConfig{
 			UseCloudFetch:                true,
 			MaxDownloadThreads:           15,
+			MaxDownloadThreadsSet:        true,
 			MaxFilesInMemory:             10,
 			MinTimeToExpiry:              0 * time.Second,
 			CloudFetchSpeedThresholdMbps: 0.1,
