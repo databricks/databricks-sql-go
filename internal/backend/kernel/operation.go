@@ -435,12 +435,12 @@ func (o *kernelOp) CompleteStaging(ctx context.Context) error {
 	})
 	if err != nil {
 		if ctx.Err() != nil {
-			return fmt.Errorf("Volume transfer: %w: %w", ctx.Err(), toStatementError(err))
+			return fmt.Errorf("kernel: volume transfer cancelled: %w (kernel error: %w)", ctx.Err(), toStatementError(err))
 		}
 		return toStatementError(err)
 	}
 	if outcome != 2 {
-		return fmt.Errorf("Volume operation requires a local file instruction")
+		return errors.New("kernel: volume operation requires a local file instruction")
 	}
 	return nil
 }
