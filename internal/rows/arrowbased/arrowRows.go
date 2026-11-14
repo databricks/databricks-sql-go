@@ -76,8 +76,9 @@ type arrowRowScanner struct {
 
 	ctx context.Context
 
-	batchIterator BatchIterator
-	initialize    func() dbsqlerr.DBError
+	batchIterator        BatchIterator
+	initialize           func() dbsqlerr.DBError
+	detectEmbeddedSchema bool
 }
 
 // Make sure arrowRowScanner fulfills the RowScanner interface
@@ -98,7 +99,11 @@ func NewArrowRowScanner(resultSetMetadata *cli_service.TGetResultSetMetadataResp
 		}
 		return scanner, nil
 	}
-	return newArrowRowScanner(resultSetMetadata, rowSet, cfg, logger, ctx, onCloudFetchDownload)
+	scanner, err := newArrowRowScanner(resultSetMetadata, rowSet, cfg, logger, ctx, onCloudFetchDownload)
+	if err != nil {
+		return nil, err
+	}
+	return scanner, nil
 }
 
 func newArrowRowScanner(resultSetMetadata *cli_service.TGetResultSetMetadataResp, rowSet *cli_service.TRowSet, cfg *config.Config, logger *dbsqllog.DBSQLLogger, ctx context.Context, onCloudFetchDownload func(downloadMs int64)) (*arrowRowScanner, dbsqlerr.DBError) {
@@ -176,7 +181,7 @@ func newArrowRowScanner(resultSetMetadata *cli_service.TGetResultSetMetadataResp
 		}
 		bi, err2 = NewCloudBatchIterator(context.Background(), rowSet.ResultLinks, rowSet.StartRowOffset, schemaBytes, cfg, onCloudFetchDownload)
 	} else {
-		bi, err2 = NewLocalBatchIterator(context.Background(), rowSet.ArrowBatches, rowSet.StartRowOffset, schemaBytes, cfg)
+		bi, err2 = NewLocalBatchIterator(context.Background(), rowSet.ArrowBatches, rowSet.StartRowOffset, schemaBytes, cfg, len(resultSetMetadata.ArrowSchema) == 0)
 	}
 	if err2 != nil {
 		return nil, err2
@@ -190,17 +195,18 @@ func newArrowRowScanner(resultSetMetadata *cli_service.TGetResultSetMetadataResp
 	}
 
 	rs := &arrowRowScanner{
-		Delimiter:           rowscanner.NewDelimiter(rowSet.StartRowOffset, rowscanner.CountRows(rowSet)),
-		valueContainerMaker: &arrowValueContainerMaker{},
-		ArrowConfig:         arrowConfig,
-		arrowSchemaBytes:    schemaBytes,
-		arrowSchema:         arrowSchema,
-		toTimestampFn:       ttsf,
-		colInfo:             colInfos,
-		DBSQLLogger:         logger,
-		location:            location,
-		batchIterator:       bi,
-		ctx:                 ctx,
+		Delimiter:            rowscanner.NewDelimiter(rowSet.StartRowOffset, rowscanner.CountRows(rowSet)),
+		valueContainerMaker:  &arrowValueContainerMaker{},
+		ArrowConfig:          arrowConfig,
+		arrowSchemaBytes:     schemaBytes,
+		arrowSchema:          arrowSchema,
+		toTimestampFn:        ttsf,
+		colInfo:              colInfos,
+		DBSQLLogger:          logger,
+		location:             location,
+		batchIterator:        bi,
+		ctx:                  ctx,
+		detectEmbeddedSchema: len(resultSetMetadata.ArrowSchema) == 0,
 	}
 
 	return rs, nil
@@ -412,7 +418,8 @@ func (ars *arrowRowScanner) GetArrowBatches(ctx context.Context, cfg config.Conf
 			return ars.GetArrowBatches(ctx, cfg, rpi)
 		}), nil
 	}
-	ri := NewArrowRecordIterator(ctx, rpi, ars.batchIterator, ars.arrowSchemaBytes, cfg)
+	ri := newArrowRecordIterator(ctx, rpi, ars.batchIterator, ars.arrowSchemaBytes, cfg)
+	ri.detectEmbeddedSchema = ars.detectEmbeddedSchema
 	return ri, nil
 }
 
@@ -439,7 +446,8 @@ func (ars *arrowRowScanner) GetArrowIPCStreams(ctx context.Context, cfg config.C
 		}
 	}
 
-	ri := NewArrowIPCStreamIterator(ctx, rpi, ipcIterator, ars.arrowSchemaBytes, cfg)
+	ri := newArrowIPCStreamIterator(ctx, rpi, ipcIterator, ars.arrowSchemaBytes, cfg)
+	ri.detectEmbeddedSchema = ars.detectEmbeddedSchema
 	return ri, nil
 }
 
