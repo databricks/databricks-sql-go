@@ -29,6 +29,10 @@ func kernelTestDB(t *testing.T) *sql.DB {
 	return kernelTestDBWith(t)
 }
 
+func TestKernelE2EDecimalTextRendering(t *testing.T) {
+	assertDecimalTextRendering(t, WithUseKernel(true))
+}
+
 // TestKernelE2ESelect1 is the smallest end-to-end proof: PAT session over the
 // kernel, execute, scan one scalar row.
 func TestKernelE2ESelect1(t *testing.T) {
