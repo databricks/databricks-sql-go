@@ -29,6 +29,24 @@ func kernelTestDB(t *testing.T) *sql.DB {
 	return kernelTestDBWith(t)
 }
 
+func TestDecimalMetadataKernelE2E(t *testing.T) {
+	for _, native := range []bool{false, true} {
+		name := "arrow_native_decimal=false"
+		if native {
+			name = "arrow_native_decimal=true"
+		}
+		t.Run(name, func(t *testing.T) {
+			db := kernelTestDBWith(t, WithArrowNativeDecimal(native))
+			t.Cleanup(func() {
+				if err := db.Close(); err != nil {
+					t.Error(err)
+				}
+			})
+			testDecimalResultMetadata(t, db)
+		})
+	}
+}
+
 // TestKernelE2ESelect1 is the smallest end-to-end proof: PAT session over the
 // kernel, execute, scan one scalar row.
 func TestKernelE2ESelect1(t *testing.T) {
