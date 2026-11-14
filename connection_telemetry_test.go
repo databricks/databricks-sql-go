@@ -371,7 +371,7 @@ func TestConn_QueryContextTelemetryExecutionResult(t *testing.T) {
 			ev := closeAndAwaitExecuteEvent(t, c, capture)
 			assert.Equal(t, "INLINE_ARROW", ev.SQLOperation.ExecutionResult)
 			assert.Nil(t, ev.ErrorInfo)
-			assert.Equal(t, int32(1), atomic.LoadInt32(&metadataCalls), "no metadata RPC beyond schema initialization")
+			assert.Zero(t, atomic.LoadInt32(&metadataCalls), "FetchResults supplies metadata without another RPC")
 		})
 	}
 

@@ -147,12 +147,11 @@ func NewLocalBatchIterator(
 }
 
 type localIPCStreamIterator struct {
-	cfg                *config.Config
-	startRowOffset     int64
-	arrowSchemaBytes   []byte
-	batches            []*cli_service.TSparkArrowBatch
-	index              int
-	schemaInFirstBatch bool
+	cfg              *config.Config
+	startRowOffset   int64
+	arrowSchemaBytes []byte
+	batches          []*cli_service.TSparkArrowBatch
+	index            int
 }
 
 var _ IPCStreamIterator = (*localIPCStreamIterator)(nil)
@@ -163,13 +162,28 @@ func (bi *localIPCStreamIterator) Next() (io.Reader, error) {
 	if bi.index < cnt {
 		ab := bi.batches[bi.index]
 		schemaBytes := bi.arrowSchemaBytes
-		if bi.index == 0 && bi.schemaInFirstBatch {
-			schemaBytes = nil
+		compressed := bi.cfg != nil && bi.cfg.UseLz4Compression
+		stream := getReader(bytes.NewReader(ab.Batch), compressed)
+		if len(ab.Batch) > 0 {
+			var embedded bool
+			var err error
+			if compressed {
+				var header []byte
+				header, stream, err = peekIPCSchema(stream)
+				embedded = len(header) > 0
+			} else {
+				embedded, err = hasIPCSchema(ab.Batch)
+			}
+			if err != nil {
+				return nil, err
+			}
+			if embedded {
+				schemaBytes = nil
+			}
 		}
-
 		reader := io.MultiReader(
 			bytes.NewReader(schemaBytes),
-			getReader(bytes.NewReader(ab.Batch), bi.cfg.UseLz4Compression),
+			stream,
 		)
 
 		return reader, nil

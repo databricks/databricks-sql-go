@@ -86,7 +86,7 @@ func TestArrowSchemaBeforeFetching(t *testing.T) {
 							metadata.ResultFormat = &format
 						}
 					}
-					if schemaShape != "nil" && schemaShape != "empty" {
+					if schemaShape != "nil" && schemaShape != "empty" && (!empty || schemaShape == "server" || schemaShape == "fetch") {
 						metadata.Schema = &cli_service.TTableSchema{Columns: []*cli_service.TColumnDesc{{ColumnName: "unsupported", TypeDesc: &cli_service.TTypeDesc{Types: []*cli_service.TTypeEntry{{PrimitiveEntry: &cli_service.TPrimitiveTypeEntry{Type: cli_service.TTypeId(999)}}}}}}}
 					}
 					page.HasMoreRows = new(bool)
@@ -119,9 +119,6 @@ func TestArrowSchemaBeforeFetching(t *testing.T) {
 						require.NoError(t, err)
 						defer schemaReader.Release()
 						assertArrowSchemaTypes(t, serverReader.Schema(), schemaReader.Schema())
-						if schemaShape == "server" {
-							require.Zero(t, fetchCalls)
-						}
 						for {
 							stream, err := iterator.Next()
 							if err == io.EOF {
@@ -144,9 +141,6 @@ func TestArrowSchemaBeforeFetching(t *testing.T) {
 						schema, err := iterator.Schema()
 						require.NoError(t, err)
 						assertArrowSchemaTypes(t, serverReader.Schema(), schema)
-						if schemaShape == "server" {
-							require.Zero(t, fetchCalls)
-						}
 						for {
 							record, err := iterator.Next()
 							if err == io.EOF {
@@ -158,7 +152,7 @@ func TestArrowSchemaBeforeFetching(t *testing.T) {
 							record.Release()
 						}
 					}
-					require.Equal(t, 1, metadataCalls)
+					require.Zero(t, metadataCalls, "FetchResults metadata avoids another RPC")
 					require.Equal(t, 1, fetchCalls)
 					if empty {
 						require.Zero(t, rowCount)
@@ -166,6 +160,9 @@ func TestArrowSchemaBeforeFetching(t *testing.T) {
 						require.EqualValues(t, 7311, rowCount)
 					}
 					if schemaShape == "cloud" {
+						if empty {
+							expectedDownloads = 0
+						}
 						require.Equal(t, expectedDownloads, downloads.Load(), "schema discovery must reuse the downloaded stream")
 					}
 				})
@@ -193,8 +190,7 @@ func TestArrowSchemaMetadataError(t *testing.T) {
 					return nil, metadataErr
 				},
 				FnFetchResults: func(context.Context, *cli_service.TFetchResultsReq) (*cli_service.TFetchResultsResp, error) {
-					t.Fatal("must not fetch after a metadata failure")
-					return nil, nil
+					return &cli_service.TFetchResultsResp{Results: &cli_service.TRowSet{}, HasMoreRows: new(bool)}, nil
 				},
 				FnCloseOperation: func(context.Context, *cli_service.TCloseOperationReq) (*cli_service.TCloseOperationResp, error) {
 					return &cli_service.TCloseOperationResp{}, nil
@@ -205,11 +201,15 @@ func TestArrowSchemaMetadataError(t *testing.T) {
 			defer func() { require.NoError(t, result.Close()) }()
 			if accessor == "ipc" {
 				iterator, err := result.(dbsqlrows.Rows).GetArrowIPCStreams(context.Background())
-				require.Nil(t, iterator)
+				require.NoError(t, err)
+				defer iterator.Close()
+				_, err = iterator.SchemaBytes()
 				require.ErrorIs(t, err, metadataErr)
 			} else {
 				iterator, err := result.(dbsqlrows.Rows).GetArrowBatches(context.Background())
-				require.Nil(t, iterator)
+				require.NoError(t, err)
+				defer iterator.Close()
+				_, err = iterator.Schema()
 				require.ErrorIs(t, err, metadataErr)
 			}
 		})
@@ -236,11 +236,15 @@ func TestArrowSchemaInitialFetchError(t *testing.T) {
 			defer func() { require.NoError(t, result.Close()) }()
 			if accessor == "ipc" {
 				iterator, err := result.(dbsqlrows.Rows).GetArrowIPCStreams(context.Background())
-				require.Nil(t, iterator)
+				require.NoError(t, err)
+				defer iterator.Close()
+				_, err = iterator.SchemaBytes()
 				require.ErrorIs(t, err, fetchErr)
 			} else {
 				iterator, err := result.(dbsqlrows.Rows).GetArrowBatches(context.Background())
-				require.Nil(t, iterator)
+				require.NoError(t, err)
+				defer iterator.Close()
+				_, err = iterator.Schema()
 				require.ErrorIs(t, err, fetchErr)
 			}
 		})

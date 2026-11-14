@@ -77,6 +77,7 @@ type arrowRowScanner struct {
 	ctx context.Context
 
 	batchIterator BatchIterator
+	initialize    func() dbsqlerr.DBError
 }
 
 // Make sure arrowRowScanner fulfills the RowScanner interface
@@ -86,6 +87,21 @@ var _ rowscanner.RowScanner = (*arrowRowScanner)(nil)
 // onCloudFetchDownload is an optional callback invoked for each CloudFetch S3 file download
 // with the download duration in milliseconds. Pass nil for non-telemetry paths.
 func NewArrowRowScanner(resultSetMetadata *cli_service.TGetResultSetMetadataResp, rowSet *cli_service.TRowSet, cfg *config.Config, logger *dbsqllog.DBSQLLogger, ctx context.Context, onCloudFetchDownload func(downloadMs int64)) (rowscanner.RowScanner, dbsqlerr.DBError) {
+	if len(resultSetMetadata.ArrowSchema) == 0 && len(rowSet.ResultLinks) > 0 {
+		scanner := &arrowRowScanner{Delimiter: rowscanner.NewDelimiter(rowSet.StartRowOffset, rowscanner.CountRows(rowSet))}
+		scanner.initialize = func() dbsqlerr.DBError {
+			initialized, err := newArrowRowScanner(resultSetMetadata, rowSet, cfg, logger, ctx, onCloudFetchDownload)
+			if err == nil {
+				*scanner = *initialized
+			}
+			return err
+		}
+		return scanner, nil
+	}
+	return newArrowRowScanner(resultSetMetadata, rowSet, cfg, logger, ctx, onCloudFetchDownload)
+}
+
+func newArrowRowScanner(resultSetMetadata *cli_service.TGetResultSetMetadataResp, rowSet *cli_service.TRowSet, cfg *config.Config, logger *dbsqllog.DBSQLLogger, ctx context.Context, onCloudFetchDownload func(downloadMs int64)) (*arrowRowScanner, dbsqlerr.DBError) {
 
 	// we take a passed in logger, rather than just using the global from dbsqllog, so that the containing rows
 	// instance can pass in a logger with context such as correlation ID and operation ID
@@ -102,14 +118,33 @@ func NewArrowRowScanner(resultSetMetadata *cli_service.TGetResultSetMetadataResp
 
 	metadata := *resultSetMetadata
 	var prefetched IPCStreamIterator
-	var schemaInFirstBatch bool
 	if len(metadata.ArrowSchema) == 0 {
 		var err dbsqlerr.DBError
 		metadata.ArrowSchema, prefetched, err = schemaFromFirstBatch(ctx, rowSet, cfg, onCloudFetchDownload)
 		if err != nil {
 			return nil, err
 		}
-		schemaInFirstBatch = len(metadata.ArrowSchema) > 0 && prefetched == nil
+		if prefetched != nil && len(metadata.ArrowSchema) > 0 {
+			// Cached CloudFetch files retain types but may have names from an earlier query.
+			schema, err := schemaFromIPCBytes(metadata.ArrowSchema)
+			if err != nil {
+				prefetched.Close()
+				return nil, dbsqlerrint.NewDriverError(ctx, errArrowRowsConvertSchema, err)
+			}
+			fields := schema.Fields()
+			if len(fields) == len(metadata.Schema.GetColumns()) {
+				for i, column := range metadata.Schema.GetColumns() {
+					fields[i].Name = column.ColumnName
+				}
+				md := schema.Metadata()
+				schema = arrow.NewSchemaWithEndian(fields, &md, schema.Endianness())
+			}
+			metadata.ArrowSchema, err = getArrowSchemaBytes(schema, ctx)
+			if err != nil {
+				prefetched.Close()
+				return nil, dbsqlerrint.NewDriverError(ctx, errArrowRowsSerializeSchema, err)
+			}
+		}
 	}
 	schemaBytes, arrowSchema, metadataErr := tGetResultSetMetadataRespToArrowSchema(&metadata, arrowConfig, ctx, logger)
 	if metadataErr != nil {
@@ -133,7 +168,7 @@ func NewArrowRowScanner(resultSetMetadata *cli_service.TGetResultSetMetadataResp
 	var bi BatchIterator
 	var err2 dbsqlerr.DBError
 	if prefetched != nil {
-		bi = NewBatchIterator(prefetched, rowSet.StartRowOffset)
+		bi = &batchIterator{ipcIterator: prefetched, startRowOffset: rowSet.StartRowOffset, overrideSchema: arrowSchema}
 	} else if len(rowSet.ResultLinks) > 0 {
 		logger.Debug().Msgf("Initialize CloudFetch loader, row set start offset: %d, file list:", rowSet.StartRowOffset)
 		for _, resultLink := range rowSet.ResultLinks {
@@ -142,9 +177,6 @@ func NewArrowRowScanner(resultSetMetadata *cli_service.TGetResultSetMetadataResp
 		bi, err2 = NewCloudBatchIterator(context.Background(), rowSet.ResultLinks, rowSet.StartRowOffset, schemaBytes, cfg, onCloudFetchDownload)
 	} else {
 		bi, err2 = NewLocalBatchIterator(context.Background(), rowSet.ArrowBatches, rowSet.StartRowOffset, schemaBytes, cfg)
-		if schemaInFirstBatch {
-			bi.(*batchIterator).ipcIterator.(*localIPCStreamIterator).schemaInFirstBatch = true
-		}
 	}
 	if err2 != nil {
 		return nil, err2
@@ -168,6 +200,7 @@ func NewArrowRowScanner(resultSetMetadata *cli_service.TGetResultSetMetadataResp
 		DBSQLLogger:         logger,
 		location:            location,
 		batchIterator:       bi,
+		ctx:                 ctx,
 	}
 
 	return rs, nil
@@ -175,6 +208,7 @@ func NewArrowRowScanner(resultSetMetadata *cli_service.TGetResultSetMetadataResp
 
 // Close is called when the Rows instance is closed.
 func (ars *arrowRowScanner) Close() {
+	ars.initialize = nil
 	if ars.rowValues != nil {
 		ars.rowValues.Close()
 	}
@@ -284,6 +318,11 @@ func (ars *arrowRowScanner) loadBatchFor(rowNumber int64) dbsqlerr.DBError {
 	if ars == nil {
 		return dbsqlerrint.NewDriverError(context.Background(), errArrowRowsNoArrowBatches, nil)
 	}
+	if ars.initialize != nil {
+		if err := ars.initialize(); err != nil {
+			return err
+		}
+	}
 
 	if ars.batchIterator == nil {
 		return dbsqlerrint.NewDriverError(ars.ctx, errArrowRowsNoArrowBatches, nil)
@@ -363,17 +402,40 @@ func (ars *arrowRowScanner) validateRowNumber(rowNumber int64) dbsqlerr.DBError 
 }
 
 func (ars *arrowRowScanner) GetArrowBatches(ctx context.Context, cfg config.Config, rpi rowscanner.ResultPageIterator) (dbsqlrows.ArrowBatchIterator, error) {
+	if ars.initialize != nil {
+		return DeferArrowBatches(func() (dbsqlrows.ArrowBatchIterator, error) {
+			if ars.initialize != nil {
+				if err := ars.initialize(); err != nil {
+					return nil, err
+				}
+			}
+			return ars.GetArrowBatches(ctx, cfg, rpi)
+		}), nil
+	}
 	ri := NewArrowRecordIterator(ctx, rpi, ars.batchIterator, ars.arrowSchemaBytes, cfg)
 	return ri, nil
 }
 
 func (ars *arrowRowScanner) GetArrowIPCStreams(ctx context.Context, cfg config.Config, rpi rowscanner.ResultPageIterator) (dbsqlrows.ArrowIPCStreamIterator, error) {
+	if ars.initialize != nil {
+		return DeferArrowIPCStreams(func() (dbsqlrows.ArrowIPCStreamIterator, error) {
+			if ars.initialize != nil {
+				if err := ars.initialize(); err != nil {
+					return nil, err
+				}
+			}
+			return ars.GetArrowIPCStreams(ctx, cfg, rpi)
+		}), nil
+	}
 	// Get the underlying IPC stream iterator from the batch iterator
 	var ipcIterator IPCStreamIterator
 	if ars.batchIterator != nil {
 		// If we have a batch iterator, extract its IPC stream iterator
 		if wrapper, ok := ars.batchIterator.(*batchIterator); ok {
 			ipcIterator = wrapper.ipcIterator
+			if _, cloud := ipcIterator.(positionedIPCStreamIterator); cloud {
+				ipcIterator = &schemaIPCStreamIterator{source: ipcIterator, schema: ars.arrowSchemaBytes}
+			}
 		}
 	}
 
@@ -583,7 +645,7 @@ func tGetResultSetMetadataRespToArrowSchema(resultSetMetadata *cli_service.TGetR
 	schemaBytes := resultSetMetadata.ArrowSchema
 	if len(schemaBytes) == 0 {
 		var err error
-		// Thrift omits nullability and native complex type details; keep converter limits.
+		// Thrift omits nullability, TIMESTAMP_NTZ, and native complex/interval details.
 		arrowSchema, err = tTableSchemaToArrowSchema(resultSetMetadata.Schema, &arrowConfig)
 		if err != nil {
 			logger.Err(err).Msg(errArrowRowsConvertSchema)
