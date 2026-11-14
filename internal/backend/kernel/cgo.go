@@ -173,6 +173,7 @@ func lastError(code C.KernelStatusCode) *KernelError {
 		VendorCode: int32(e.vendor_code),
 		HTTPStatus: uint16(e.http_status),
 		Retryable:  bool(e.retryable),
+		ErrorCode:  C.GoString(C.kernel_get_last_error_code()),
 	}
 	if code := C.kernel_get_last_error_local_os_error(); code != 0 {
 		ke.cause = &os.PathError{Op: "file", Path: C.GoString(C.kernel_get_last_error_local_path()), Err: syscall.Errno(code)}

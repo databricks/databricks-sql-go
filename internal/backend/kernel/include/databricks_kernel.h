@@ -193,6 +193,7 @@ bool kernel_get_last_error(KernelError* out);
 /* These accessors preserve the last error. Strings are borrowed until the next
  * error-clearing kernel call; absent strings are NULL, absent OS code is zero. */
 int32_t kernel_get_last_error_local_os_error(void);
+const char* kernel_get_last_error_code(void);
 const char* kernel_get_last_error_local_kind(void);
 const char* kernel_get_last_error_local_path(void);
 
