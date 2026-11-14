@@ -297,6 +297,7 @@ func TestParseConfig(t *testing.T) {
 				CloudFetchConfig: CloudFetchConfig{
 					UseCloudFetch:                true,
 					MaxDownloadThreads:           15,
+					MaxDownloadThreadsSet:        true,
 					MaxFilesInMemory:             10,
 					CloudFetchSpeedThresholdMbps: 0.1,
 				},
@@ -326,6 +327,7 @@ func TestParseConfig(t *testing.T) {
 				CloudFetchConfig: CloudFetchConfig{
 					UseCloudFetch:                true,
 					MaxDownloadThreads:           15,
+					MaxDownloadThreadsSet:        true,
 					MaxFilesInMemory:             10,
 					CloudFetchSpeedThresholdMbps: 0.1,
 				},
@@ -850,6 +852,10 @@ func TestUserConfig_DeepCopy(t *testing.T) {
 			SessionParams:  map[string]string{"a": "32", "b": "4"},
 			UseKernel:      true,
 			WarehouseID:    "wh-abc123",
+			CloudFetchConfig: CloudFetchConfig{
+				MaxDownloadThreads:    10,
+				MaxDownloadThreadsSet: true,
+			},
 		}
 
 		cfg_copy := cfg.DeepCopy()

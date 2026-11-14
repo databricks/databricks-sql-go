@@ -188,7 +188,7 @@ func buildKernelConfig(cfg *config.Config, kauth kernel.Auth) kernel.Config {
 			break
 		}
 	}
-	if !hasChunkLimit {
+	if cfg.MaxDownloadThreadsSet && !hasChunkLimit {
 		kc.SessionConf[config.KernelMaxChunksInMemoryConfKey] = strconv.Itoa(cfg.MaxDownloadThreads)
 	}
 	if !cfg.UseCloudFetch {

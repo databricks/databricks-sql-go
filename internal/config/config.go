@@ -509,6 +509,7 @@ func ParseDSN(dsn string) (UserConfig, error) {
 		ucfg.UseCloudFetch = useCloudFetch
 	}
 
+	ucfg.MaxDownloadThreadsSet = params.Has("maxDownloadThreads")
 	if numThreads, ok, err := params.extractAsInt("maxDownloadThreads"); ok {
 		if err != nil {
 			return UserConfig{}, err
@@ -792,6 +793,7 @@ const DefaultMaxDownloadThreads = 10
 type CloudFetchConfig struct {
 	UseCloudFetch                bool
 	MaxDownloadThreads           int
+	MaxDownloadThreadsSet        bool
 	MaxFilesInMemory             int
 	MinTimeToExpiry              time.Duration
 	CloudFetchSpeedThresholdMbps float64 // Minimum download speed in MBps before WARN logging (default: 0.1)
@@ -824,6 +826,7 @@ func (cfg CloudFetchConfig) DeepCopy() CloudFetchConfig {
 	return CloudFetchConfig{
 		UseCloudFetch:                cfg.UseCloudFetch,
 		MaxDownloadThreads:           cfg.MaxDownloadThreads,
+		MaxDownloadThreadsSet:        cfg.MaxDownloadThreadsSet,
 		MaxFilesInMemory:             cfg.MaxFilesInMemory,
 		MinTimeToExpiry:              cfg.MinTimeToExpiry,
 		CloudFetchSpeedThresholdMbps: cfg.CloudFetchSpeedThresholdMbps,

@@ -18,6 +18,7 @@ import (
 	"github.com/apache/arrow-go/v18/arrow/array"
 	"github.com/apache/arrow-go/v18/arrow/ipc"
 	"github.com/apache/arrow-go/v18/arrow/memory"
+	"github.com/databricks/databricks-sql-go/internal/backend/kernel"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/config"
 	"github.com/databricks/databricks-sql-go/logger"
@@ -61,6 +62,7 @@ func TestMaxDownloadThreadsNonPositiveDegradesToDefault(t *testing.T) {
 		{value: -1, want: config.DefaultMaxDownloadThreads, wantWarn: true},
 		{value: 0, want: config.DefaultMaxDownloadThreads, wantWarn: true},
 		{value: 1, want: 1},
+		{value: 10, want: 10},
 		{value: 15, want: 15},
 		{value: 100000, want: 100000},
 	}
@@ -76,6 +78,9 @@ func TestMaxDownloadThreadsNonPositiveDegradesToDefault(t *testing.T) {
 			)
 			require.NoError(t, err)
 			assert.Equal(t, tc.want, con.(*connector).cfg.MaxDownloadThreads)
+			assert.True(t, con.(*connector).cfg.MaxDownloadThreadsSet)
+			kc := buildKernelConfig(con.(*connector).cfg, kernel.Auth{Mode: kernel.AuthPAT, Token: "token"})
+			assert.Equal(t, strconv.Itoa(tc.want), kc.SessionConf[config.KernelMaxChunksInMemoryConfKey])
 			assertMaxDownloadThreadsWarning(t, logs.String(), tc.value, tc.wantWarn)
 		})
 
@@ -85,6 +90,7 @@ func TestMaxDownloadThreadsNonPositiveDegradesToDefault(t *testing.T) {
 			con, err := (&databricksDriver{}).OpenConnector(dsn)
 			require.NoError(t, err)
 			assert.Equal(t, tc.want, con.(*connector).cfg.MaxDownloadThreads)
+			assert.True(t, con.(*connector).cfg.MaxDownloadThreadsSet)
 			assertMaxDownloadThreadsWarning(t, logs.String(), tc.value, tc.wantWarn)
 		})
 	}
@@ -94,8 +100,32 @@ func TestMaxDownloadThreadsNonPositiveDegradesToDefault(t *testing.T) {
 		con, err := NewConnector(WithServerHostname("example.cloud.databricks.com"))
 		require.NoError(t, err)
 		assert.Equal(t, config.DefaultMaxDownloadThreads, con.(*connector).cfg.MaxDownloadThreads)
+		assert.False(t, con.(*connector).cfg.MaxDownloadThreadsSet)
 		assert.Empty(t, maxDownloadThreadsWarnings(logs.String()))
 	})
+}
+
+func TestMaxDownloadThreadsDSNPresence(t *testing.T) {
+	for _, tc := range []struct {
+		query string
+		set   bool
+	}{
+		{"", false},
+		{"?maxDownloadThreads=", true},
+	} {
+		t.Run(tc.query, func(t *testing.T) {
+			con, err := (&databricksDriver{}).OpenConnector("token:secret@example.cloud.databricks.com:443/sql/1.0/warehouses/abc" + tc.query)
+			require.NoError(t, err)
+			cfg := con.(*connector).cfg.DeepCopy()
+			assert.Equal(t, tc.set, cfg.MaxDownloadThreadsSet)
+			kc := buildKernelConfig(cfg, kernel.Auth{Mode: kernel.AuthPAT, Token: "token"})
+			value, present := kc.SessionConf[config.KernelMaxChunksInMemoryConfKey]
+			assert.Equal(t, tc.set, present)
+			if tc.set {
+				assert.Equal(t, "10", value)
+			}
+		})
+	}
 }
 
 func assertMaxDownloadThreadsWarning(t *testing.T, logs string, value int, wantWarn bool) {
