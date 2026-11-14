@@ -928,6 +928,75 @@ func testDSNQueryTimeout(t *testing.T, host, httpPath, token, params string, acc
 	require.ErrorContains(t, err, "param timeout with value 9223372037")
 }
 
+func TestE2EDecimalTextRendering(t *testing.T) {
+	for _, native := range []bool{false, true} {
+		t.Run(fmt.Sprintf("native=%t", native), func(t *testing.T) {
+			assertDecimalTextRendering(t, WithArrowNativeDecimal(native))
+		})
+	}
+}
+
+func assertDecimalTextRendering(t *testing.T, options ...ConnOption) {
+	t.Helper()
+	host, httpPath, token := pecoTestingCreds(t)
+	options = append([]ConnOption{WithServerHostname(host), WithHTTPPath(httpPath), WithAccessToken(token)}, options...)
+	connector, err := NewConnector(options...)
+	require.NoError(t, err)
+	db := sql.OpenDB(connector)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	const query = `SELECT
+		CAST(0 AS DECIMAL(10,2)), CAST(0.50 AS DECIMAL(10,2)),
+		CAST(-0.05 AS DECIMAL(10,2)), CAST(0.0000001 AS DECIMAL(20,7)),
+		CAST(100.00 AS DECIMAL(10,2)),
+		CAST('123456789012345678901234567.89' AS DECIMAL(38,2)),
+		CAST(-0.0000001 AS DEC(20,7)),
+		CAST('99999999999999999999999999999999999999' AS NUMERIC(38,0)),
+		CAST('-99999999999999999999999999999999999999' AS DECIMAL(38,0)),
+		CAST('0.00000000000000000000000000000000000001' AS DECIMAL(38,38)),
+		CAST(NULL AS DECIMAL(20,7))`
+	want := []string{"0.00", "0.50", "-0.05", "0.0000001", "100.00", "123456789012345678901234567.89",
+		"-0.0000001", "99999999999999999999999999999999999999", "-99999999999999999999999999999999999999",
+		"0.00000000000000000000000000000000000001", ""}
+	for _, surface := range []string{"string", "any", "bytes"} {
+		t.Run(surface, func(t *testing.T) {
+			destinations := make([]any, len(want))
+			text := make([]*string, len(want))
+			values := make([]any, len(want))
+			binary := make([][]byte, len(want))
+			for column := range want {
+				switch surface {
+				case "string":
+					destinations[column] = &text[column]
+				case "any":
+					destinations[column] = &values[column]
+				case "bytes":
+					destinations[column] = &binary[column]
+				}
+			}
+			require.NoError(t, db.QueryRowContext(ctx, query).Scan(destinations...))
+			for column, expected := range want {
+				if column == len(want)-1 {
+					require.Nil(t, text[column])
+					require.Nil(t, values[column])
+					require.Nil(t, binary[column])
+					continue
+				}
+				switch surface {
+				case "string":
+					require.NotNil(t, text[column])
+					require.Equal(t, expected, *text[column])
+				case "any":
+					require.Equal(t, expected, values[column])
+				case "bytes":
+					require.Equal(t, expected, string(binary[column]))
+				}
+			}
+		})
+	}
+}
+
 func TestE2EDSNQueryTimeout(t *testing.T) {
 	host, httpPath, token := pecoTestingCreds(t)
 	testDSNQueryTimeout(t, host, httpPath, token, "", "60", "-1")

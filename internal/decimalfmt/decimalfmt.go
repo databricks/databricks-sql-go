@@ -5,7 +5,10 @@
 package decimalfmt
 
 import (
+	"errors"
 	"math/big"
+	"strconv"
+	"strings"
 
 	"github.com/apache/arrow-go/v18/arrow/decimal128"
 )
@@ -18,6 +21,69 @@ import (
 // (only reachable via a synthetic decimal128 scale the server never sends) still
 // renders correctly, just with one heap growth in Append.
 const decMaxLen = 48
+
+// PlainString expands decimal text exactly, using its encoded scale when scale is nil.
+func PlainString(value string, scale *int32) (string, error) {
+	mantissa := value
+	exponent := int64(0)
+	if marker := strings.IndexAny(value, "eE"); marker >= 0 {
+		mantissa = value[:marker]
+		var err error
+		exponent, err = strconv.ParseInt(value[marker+1:], 10, 32)
+		if err != nil {
+			return "", errors.New("invalid decimal exponent")
+		}
+	}
+	fractional := int64(0)
+	if point := strings.IndexByte(mantissa, '.'); point >= 0 {
+		fractional = int64(len(mantissa) - point - 1)
+	}
+	if mantissa == value && (scale == nil || fractional == int64(*scale)) {
+		return value, nil
+	}
+	return plainString(mantissa, fractional-exponent, scale)
+}
+
+func plainString(mantissa string, encodedScale int64, scale *int32) (string, error) {
+	outputScale := max(encodedScale, 0)
+	if scale != nil {
+		outputScale = int64(*scale)
+	}
+	if outputScale < 0 || outputScale > 38 {
+		return "", errors.New("decimal scale outside supported range")
+	}
+	unscaled, ok := new(big.Int).SetString(strings.Replace(mantissa, ".", "", 1), 10)
+	if !ok {
+		return "", errors.New("invalid decimal text")
+	}
+	shift := outputScale - encodedScale
+	if unscaled.Sign() != 0 && shift != 0 {
+		if shift < -38 || shift > 38 {
+			return "", errors.New("decimal text cannot be represented exactly at column scale")
+		}
+		multiplier := new(big.Int).Exp(big.NewInt(10), big.NewInt(absScale(shift)), nil)
+		if shift > 0 {
+			unscaled.Mul(unscaled, multiplier)
+		} else {
+			var remainder big.Int
+			unscaled.QuoRem(unscaled, multiplier, &remainder)
+			if remainder.Sign() != 0 {
+				return "", errors.New("decimal text cannot be represented exactly at column scale")
+			}
+		}
+	}
+	if unscaled.BitLen() > 127 {
+		return "", errors.New("decimal text cannot be represented exactly at column scale")
+	}
+	return ExactString(decimal128.FromBigInt(unscaled), int32(outputScale)), nil
+}
+
+func absScale(scale int64) int64 {
+	if scale < 0 {
+		return -scale
+	}
+	return scale
+}
 
 // ExactString renders an Arrow decimal128 as an exact fixed-point string,
 // applying scale by digit placement rather than float conversion. This preserves
