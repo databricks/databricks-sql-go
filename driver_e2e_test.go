@@ -33,6 +33,81 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestE2EDecimalMetadata(t *testing.T) {
+	host, httpPath, token := pecoTestingCreds(t)
+	for _, native := range []bool{false, true} {
+		t.Run(fmt.Sprintf("native=%t", native), func(t *testing.T) {
+			connector, err := NewConnector(
+				WithServerHostname(host), WithHTTPPath(httpPath), WithAccessToken(token),
+				WithArrowNativeDecimal(native),
+			)
+			require.NoError(t, err)
+			db := sql.OpenDB(connector)
+			t.Cleanup(func() { require.NoError(t, db.Close()) })
+			testDecimalResultMetadata(t, db)
+		})
+	}
+}
+
+func testDecimalResultMetadata(t *testing.T, db *sql.DB) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	const projection = "SELECT CAST(3.5 AS DECIMAL(10, 2)) AS amount, " +
+		"CAST(1 AS DECIMAL(38, 0)) AS whole, CAST(0.1 AS DECIMAL(38, 38)) AS all_fraction"
+	for _, empty := range []bool{false, true} {
+		t.Run(fmt.Sprintf("empty=%t", empty), func(t *testing.T) {
+			query := projection
+			if empty {
+				query += " WHERE 1 = 0"
+			}
+			result, err := db.QueryContext(ctx, query)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, result.Close()) })
+			columns, err := result.ColumnTypes()
+			require.NoError(t, err)
+			require.Len(t, columns, 3)
+			for index, pair := range [][2]int64{{10, 2}, {38, 0}, {38, 38}} {
+				precision, scale, ok := columns[index].DecimalSize()
+				require.True(t, ok, "%s must report DECIMAL qualifiers", columns[index].Name())
+				require.Equal(t, pair[0], precision)
+				require.Equal(t, pair[1], scale)
+			}
+			count := 0
+			for result.Next() {
+				var amount float64
+				var whole, fraction any
+				require.NoError(t, result.Scan(&amount, &whole, &fraction))
+				require.Equal(t, 3.5, amount)
+				count++
+			}
+			require.NoError(t, result.Err())
+			if empty {
+				require.Zero(t, count)
+			} else {
+				require.Equal(t, 1, count)
+			}
+			require.NoError(t, result.Close())
+		})
+	}
+	result, err := db.QueryContext(ctx, "SELECT CAST(1 AS DEC(10, 2)), CAST(1 AS NUMERIC(38, 0)), 1, 'text', 1.5D")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, result.Close()) })
+	columns, err := result.ColumnTypes()
+	require.NoError(t, err)
+	require.Len(t, columns, 5)
+	for index, column := range columns {
+		precision, scale, ok := column.DecimalSize()
+		if index < 2 {
+			require.True(t, ok)
+			require.Equal(t, [][2]int64{{10, 2}, {38, 0}}[index], [2]int64{precision, scale})
+		} else {
+			require.False(t, ok, "%s is not DECIMAL", column.DatabaseTypeName())
+		}
+	}
+	require.NoError(t, result.Close())
+}
+
 func TestWorkflowExample(t *testing.T) {
 
 	// these are global variables that get changed depending on the the expected response

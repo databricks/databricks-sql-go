@@ -78,7 +78,7 @@ jobs:
       # in the default pure-Go build (CGO_ENABLED=0). -run targets the high-value
       # real-warehouse scenarios: large multi-page CloudFetch drain-past-caller-
       # deadline, exact row count, and a non-positive download-thread count
-      # (issue #439). -count=1 defeats the test cache so a scheduled
+      # (issue #439), and DECIMAL metadata (issue #500). -count=1 defeats the test cache so a scheduled
       # run always re-exercises the warehouse. NOT -short, so
       # TestE2ECloudFetchExactRowCount (guarded by -short) actually runs.
       - name: Run Thrift E2E
@@ -90,7 +90,7 @@ jobs:
           DATABRICKS_PECOTESTING_TOKEN_PERSONAL: ${{ secrets.DATABRICKS_PECOTESTING_TOKEN_PERSONAL }}
         run: |
           go test -count=1 -v -timeout 15m \
-            -run 'TestE2EArrowBatchesSurviveQueryContextCancellation|TestE2ECloudFetchExactRowCount|TestE2ECloudFetchNonPositiveMaxDownloadThreads' .
+            -run 'TestE2EArrowBatchesSurviveQueryContextCancellation|TestE2ECloudFetchExactRowCount|TestE2ECloudFetchNonPositiveMaxDownloadThreads|TestE2EDecimalMetadata' .
 
   kernel-e2e:
     name: E2E (kernel backend)
@@ -244,7 +244,7 @@ jobs:
           DATABRICKS_PECOTESTING_TOKEN_PERSONAL: ${{ secrets.DATABRICKS_PECOTESTING_TOKEN_PERSONAL }}
         run: |
           CGO_ENABLED=1 go test -tags databricks_kernel -count=1 -v -timeout 30m \
-            -run 'TestKernelE2E|TestKernelThriftParity|TestKernelParamsVsThrift' \
+            -run 'TestKernelE2E|TestKernelThriftParity|TestKernelThriftColumnTypeParity|TestKernelParamsVsThrift' \
             -skip 'TestKernelE2EM2M' .
 
       # Non-blocking Reyden reference-engine leg: reruns the TestKernelE2E* funcs against
