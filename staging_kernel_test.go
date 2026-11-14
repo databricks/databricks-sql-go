@@ -24,12 +24,28 @@ import (
 	"github.com/apache/arrow-go/v18/arrow/ipc"
 	"github.com/apache/arrow-go/v18/arrow/memory"
 	"github.com/databricks/databricks-sql-go/driverctx"
+	"github.com/databricks/databricks-sql-go/internal/backend"
 	"github.com/databricks/databricks-sql-go/internal/backend/kernel"
 	"github.com/stretchr/testify/require"
 )
 
+type cancelOnCompletionErrorContext struct {
+	context.Context
+	cancel   context.CancelFunc
+	errCalls int
+}
+
+func (c *cancelOnCompletionErrorContext) Err() error {
+	c.errCalls++
+	// Deliver cancellation after native completion returns to make the error race deterministic.
+	if c.errCalls == 2 {
+		c.cancel()
+	}
+	return c.Context.Err()
+}
+
 func TestKernelVolumeFailureOriginControlsSessionValidity(t *testing.T) {
-	for _, mode := range []string{"instruction401", "storage401", "storageBody"} {
+	for _, mode := range []string{"instruction401", "storage401", "storageBody", "instruction401Cancelled", "storage401Cancelled"} {
 		t.Run(mode, func(t *testing.T) {
 			directory := t.TempDir()
 			destination := filepath.Join(directory, "download.bin")
@@ -50,7 +66,7 @@ func TestKernelVolumeFailureOriginControlsSessionValidity(t *testing.T) {
 					_, _ = io.WriteString(w, `{"error_code":"SESSION_EXPIRED","message":"instruction session expired","sql_state":"08003"}`)
 				case r.URL.Path == "/object":
 					storage.Add(1)
-					if mode == "storage401" {
+					if strings.HasPrefix(mode, "storage401") {
 						w.WriteHeader(401)
 					} else {
 						w.Header().Set("Content-Length", "20")
@@ -83,7 +99,7 @@ func TestKernelVolumeFailureOriginControlsSessionValidity(t *testing.T) {
 			require.NoError(t, writer.Close())
 			chunk := map[string]any{"chunk_index": 0, "row_offset": 0, "row_count": 1, "attachment": base64.StdEncoding.EncodeToString(attachment.Bytes())}
 			chunks := 1
-			if mode == "instruction401" {
+			if strings.HasPrefix(mode, "instruction401") {
 				chunk["next_chunk_index"], chunks = 1, 2
 			}
 			result = map[string]any{
@@ -101,15 +117,36 @@ func TestKernelVolumeFailureOriginControlsSessionValidity(t *testing.T) {
 			connection, err := db.Conn(ctx)
 			require.NoError(t, err)
 			defer connection.Close()
-			_, err = connection.ExecContext(driverctx.NewContextWithStagingInfo(ctx, []string{directory}), "GET instruction")
+			if strings.HasSuffix(mode, "Cancelled") {
+				err = connection.Raw(func(raw any) error {
+					operation, err := raw.(*conn).backend.Execute(ctx, backend.ExecRequest{Query: "GET instruction"})
+					if err != nil {
+						return err
+					}
+					defer operation.Close(ctx)
+					cancelContext, cancelError := context.WithCancel(ctx)
+					defer cancelError()
+					stagingContext := driverctx.NewContextWithStagingInfo(&cancelOnCompletionErrorContext{Context: cancelContext, cancel: cancelError}, []string{directory})
+					return operation.(interface{ CompleteStaging(context.Context) error }).CompleteStaging(stagingContext)
+				})
+				require.ErrorIs(t, err, context.Canceled)
+			} else {
+				_, err = connection.ExecContext(driverctx.NewContextWithStagingInfo(ctx, []string{directory}), "GET instruction")
+			}
 			require.Error(t, err)
 			require.NotErrorIs(t, err, driver.ErrBadConn)
 			var detail *kernel.KernelError
 			require.ErrorAs(t, err, &detail)
-			wantCode := map[string]string{"instruction401": "SESSION_EXPIRED", "storage401": "VOLUME_STORAGE_HTTP_ERROR", "storageBody": "VOLUME_STORAGE_NETWORK_ERROR"}[mode]
+			wantCode := "VOLUME_STORAGE_HTTP_ERROR"
+			if strings.HasPrefix(mode, "instruction401") {
+				wantCode = "SESSION_EXPIRED"
+			}
+			if mode == "storageBody" {
+				wantCode = "VOLUME_STORAGE_NETWORK_ERROR"
+			}
 			require.Equal(t, wantCode, detail.ErrorCode)
 			require.NoError(t, connection.Raw(func(raw any) error {
-				require.Equal(t, mode != "instruction401", raw.(driver.Validator).IsValid())
+				require.Equal(t, !strings.HasPrefix(mode, "instruction401"), raw.(driver.Validator).IsValid())
 				return nil
 			}))
 			data, err := os.ReadFile(destination)
@@ -117,7 +154,7 @@ func TestKernelVolumeFailureOriginControlsSessionValidity(t *testing.T) {
 			require.Equal(t, "old bytes", string(data))
 			require.Equal(t, int64(1), executions.Load())
 			wantStorage := int64(1)
-			if mode == "instruction401" {
+			if strings.HasPrefix(mode, "instruction401") {
 				wantStorage = 0
 			}
 			require.Equal(t, wantStorage, storage.Load())
