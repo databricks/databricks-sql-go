@@ -41,6 +41,7 @@ var (
 	scanTypeFloat64  = reflect.TypeOf(float64(0))
 	scanTypeString   = reflect.TypeOf("")
 	scanTypeDateTime = reflect.TypeOf(time.Time{})
+	scanTypeTime     = reflect.TypeOf(timeOfDayValue(0, arrow.Nanosecond))
 	scanTypeRawBytes = reflect.TypeOf(sql.RawBytes{})
 	scanTypeUnknown  = reflect.TypeOf(new(any)) // *interface{}, as on the Thrift path
 )
@@ -77,6 +78,8 @@ func ColumnTypeInfoFor(dt arrow.DataType) ColumnTypeInfo {
 		return varLen("BINARY", scanTypeRawBytes)
 	case arrow.DATE32, arrow.DATE64:
 		return ColumnTypeInfo{DatabaseTypeName: "DATE", ScanType: scanTypeDateTime}
+	case arrow.TIME32, arrow.TIME64:
+		return ColumnTypeInfo{DatabaseTypeName: "TIME", ScanType: scanTypeTime}
 	case arrow.TIMESTAMP:
 		// TIMESTAMP and TIMESTAMP_NTZ both arrive as Arrow timestamp[us]. NTZ is
 		// decided by IsTimestampNTZField: the field's logical-type metadata first

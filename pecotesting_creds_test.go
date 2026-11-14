@@ -54,6 +54,15 @@ func tokenFromConfigFile(t *testing.T) string {
 // instead of duplicating the read + skip block at each site.
 func pecoTestingCreds(t *testing.T) (host, httpPath, token string) {
 	t.Helper()
+	host, httpPath, token = readPecoTestingCreds(t)
+	if host == "" || httpPath == "" || token == "" {
+		t.Skip("set DATABRICKS_PECOTESTING_SERVER_HOSTNAME, DATABRICKS_PECOTESTING_HTTP_PATH2, and DATABRICKS_PECOTESTING_TOKEN to run")
+	}
+	return host, httpPath, token
+}
+
+func readPecoTestingCreds(t *testing.T) (host, httpPath, token string) {
+	t.Helper()
 	host = os.Getenv("DATABRICKS_PECOTESTING_SERVER_HOSTNAME")
 	httpPath = os.Getenv("DATABRICKS_PECOTESTING_HTTP_PATH2")
 	token = os.Getenv("DATABRICKS_PECOTESTING_TOKEN")
@@ -66,9 +75,6 @@ func pecoTestingCreds(t *testing.T) (host, httpPath, token string) {
 	// unchanged.
 	if token == "" {
 		token = tokenFromConfigFile(t)
-	}
-	if host == "" || httpPath == "" || token == "" {
-		t.Skip("set DATABRICKS_PECOTESTING_SERVER_HOSTNAME, DATABRICKS_PECOTESTING_HTTP_PATH2, and DATABRICKS_PECOTESTING_TOKEN to run")
 	}
 	return host, httpPath, token
 }

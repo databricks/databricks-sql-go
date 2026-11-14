@@ -106,9 +106,9 @@ func TestScanCellScalars(t *testing.T) {
 		// An unhandled arrow type must error, not return a silently wrong value.
 		// Duration/MonthInterval are now handled (see TestScanCellInterval); use a
 		// type with no scan arm.
-		b := array.NewTime32Builder(pool, &arrow.Time32Type{Unit: arrow.Second})
+		b := array.NewFixedSizeBinaryBuilder(pool, &arrow.FixedSizeBinaryType{ByteWidth: 1})
 		defer b.Release()
-		b.Append(1000)
+		b.Append([]byte{1})
 		arr := b.NewArray()
 		defer arr.Release()
 		if _, err := ScanCell(arr, 0, nil); err == nil {

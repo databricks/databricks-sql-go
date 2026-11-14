@@ -369,6 +369,23 @@ STRUCT and VARIANT (as JSON) are supported. BINARY is returned as `sql.RawBytes`
 Both backends return GEOMETRY / GEOGRAPHY as WKT / EWKT by default.
 Set `enableGeoSpatialSupport=true` on the kernel path to opt into EWKB.
 
+SQL TIME values in Arrow results scan into `time.Time` (or `any`) on the reference date
+`0001-01-01` in UTC, preserving the Arrow second/millisecond/microsecond/nanosecond
+precision. The date and location are carriers only; session time zones do not
+shift the clock. Scanning into `string` uses `database/sql`'s RFC3339Nano format
+(for example, `0001-01-01T09:15:00.123456Z`). NULL scans into `any` as `nil`;
+use `sql.NullTime` for nullable typed values. Column metadata reports `TIME` and
+`time.Time`. Nested TIME values in ARRAY / MAP / STRUCT JSON use clock-only strings
+such as `"09:15:00.123456"`.
+On Thrift, TIME column metadata requires a server-supplied Arrow schema;
+without it, the legacy Thrift column metadata is retained.
+
+Live TIME tests require the `e2e` build tag: `go test -tags e2e -run '^TestE2ETimeResults$' .`
+or `go test -tags databricks_kernel,e2e -run '^TestKernelE2ETimeResults$' .`.
+They require the `DATABRICKS_PECOTESTING_*` credentials and skip only when the server
+reports that TIME is disabled; a workspace with the TIME beta enabled is needed
+to verify live result conversion.
+
 On Thrift, TIMESTAMP_NTZ handling requires native timestamp fields in the
 server-supplied Arrow schema. Without that schema, NTZ still reports `TIMESTAMP`
 and uses session-location handling. String timestamps (`UseArrowNativeTimestamp=false`,
