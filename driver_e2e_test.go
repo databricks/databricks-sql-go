@@ -33,7 +33,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestDecimalMetadataThriftE2E(t *testing.T) {
+func TestE2EDecimalMetadata(t *testing.T) {
 	host, httpPath, token := pecoTestingCreds(t)
 	for _, native := range []bool{false, true} {
 		t.Run(fmt.Sprintf("native=%t", native), func(t *testing.T) {

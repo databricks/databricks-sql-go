@@ -29,14 +29,14 @@ func kernelTestDB(t *testing.T) *sql.DB {
 	return kernelTestDBWith(t)
 }
 
-func TestDecimalMetadataKernelE2E(t *testing.T) {
-	for _, native := range []bool{false, true} {
-		name := "arrow_native_decimal=false"
-		if native {
-			name = "arrow_native_decimal=true"
+func TestKernelE2EDecimalMetadata(t *testing.T) {
+	for _, asFloat := range []bool{false, true} {
+		name := "decimal_as_float=false"
+		if asFloat {
+			name = "decimal_as_float=true"
 		}
 		t.Run(name, func(t *testing.T) {
-			db := kernelTestDBWith(t, WithArrowNativeDecimal(native))
+			db := kernelTestDBWith(t, WithKernelDecimalAsFloat(asFloat))
 			t.Cleanup(func() {
 				if err := db.Close(); err != nil {
 					t.Error(err)

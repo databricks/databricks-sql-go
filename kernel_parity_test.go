@@ -95,7 +95,7 @@ func TestKernelE2EInterval(t *testing.T) {
 
 // TestKernelThriftColumnTypeParity is the live guard for PECOBLR-3692: the kernel
 // backend must report the SAME sql.ColumnType metadata (DatabaseTypeName,
-// ScanType, Nullable, Length) as the Thrift backend for every type. The
+// ScanType, Nullable, Length, DecimalSize) as the Thrift backend for every type. The
 // value-parity suites above compare scanned VALUES and so are blind to this — the
 // gap was a Rows.ColumnType* omission (kernelRows implemented only driver.Rows),
 // which surfaces as "" / interface{} metadata, not a wrong value. Named
@@ -139,7 +139,7 @@ func TestKernelThriftColumnTypeParity(t *testing.T) {
 }
 
 // columnTypeStrings renders each column's sql.ColumnType metadata to a stable
-// string (name, DatabaseTypeName, ScanType, Nullable, Length), so the kernel and
+// string (name, DatabaseTypeName, ScanType, Nullable, Length, DecimalSize), so the kernel and
 // Thrift backends can be compared field-for-field. A nil ScanType renders as
 // "<nil>" so the pre-fix interface{} fallback would differ visibly.
 func columnTypeStrings(t *testing.T, db *sql.DB, query string) []string {
@@ -161,8 +161,9 @@ func columnTypeStrings(t *testing.T, db *sql.DB, query string) []string {
 		}
 		nl, nlok := ct.Nullable()
 		ln, lnok := ct.Length()
-		out[i] = fmt.Sprintf("name=%s db=%s scan=%s nullable=%v/%v len=%d/%v",
-			ct.Name(), ct.DatabaseTypeName(), scan, nl, nlok, ln, lnok)
+		precision, scale, hasDecimal := ct.DecimalSize()
+		out[i] = fmt.Sprintf("name=%s db=%s scan=%s nullable=%v/%v len=%d/%v decimal=%d,%d/%v",
+			ct.Name(), ct.DatabaseTypeName(), scan, nl, nlok, ln, lnok, precision, scale, hasDecimal)
 	}
 	return out
 }
