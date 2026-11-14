@@ -79,4 +79,46 @@ func assertTimeResults(t *testing.T, db *sql.DB) {
 			require.Nil(t, missing)
 		})
 	}
+	assertTimeEmptyResults(t, db)
+}
+
+func assertTimeEmptyResults(t *testing.T, db *sql.DB) {
+	t.Helper()
+	for _, test := range []struct {
+		name  string
+		query string
+		rows  int
+	}{
+		{"empty range", "SELECT TIME '09:15:00' AS clock, CAST(NULL AS TIME) AS missing FROM range(0)", 0},
+		{"empty filter", "SELECT TIME '09:15:00' AS clock, CAST(NULL AS TIME) AS missing FROM range(10) WHERE id > 100", 0},
+		{"NULL only", "SELECT CAST(NULL AS TIME) AS clock, CAST(NULL AS TIME) AS missing FROM range(3)", 3},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+			defer cancel()
+			rows, err := db.QueryContext(ctx, test.query)
+			require.NoError(t, err)
+			defer rows.Close() //nolint:errcheck
+			columns, err := rows.ColumnTypes()
+			require.NoError(t, err)
+			require.Len(t, columns, 2)
+			for _, column := range columns {
+				require.Equal(t, "TIME", column.DatabaseTypeName())
+				require.Equal(t, reflect.TypeOf(time.Time{}), column.ScanType())
+				length, hasLength := column.Length()
+				require.Zero(t, length)
+				require.False(t, hasLength)
+			}
+			count := 0
+			for rows.Next() {
+				var clock, missing sql.NullTime
+				require.NoError(t, rows.Scan(&clock, &missing))
+				require.False(t, clock.Valid)
+				require.False(t, missing.Valid)
+				count++
+			}
+			require.NoError(t, rows.Err())
+			require.Equal(t, test.rows, count)
+		})
+	}
 }
