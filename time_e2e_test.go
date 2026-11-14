@@ -60,6 +60,13 @@ func assertTimeResults(t *testing.T, db *sql.DB) {
 	require.False(t, rows.Next())
 	require.NoError(t, rows.Err())
 
+	t.Run("TIME parameter as string", func(testState *testing.T) {
+		var rebound time.Time
+		err := db.QueryRowContext(ctx, "SELECT CAST(? AS TIME)", typed.Format("15:04:05.999999")).Scan(&rebound)
+		require.NoError(testState, err)
+		require.Equal(testState, want, rebound)
+	})
+
 	var list, structure, mapping string
 	err = db.QueryRowContext(ctx, "SELECT array(TIME '09:15:00.123456', CAST(NULL AS TIME)), named_struct('clock', TIME '09:15:00.123456', 'missing', CAST(NULL AS TIME)), map(TIME '09:15:00.123456', TIME '09:15:00.123456')").Scan(&list, &structure, &mapping)
 	require.NoError(t, err)
