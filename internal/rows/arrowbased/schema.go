@@ -94,7 +94,7 @@ func ipcMetadataIsSchema(metadata []byte) (isSchema bool, err error) {
 	}
 	defer func() {
 		if recovered := recover(); recovered != nil {
-			isSchema, err = false, fmt.Errorf("arrow/ipc: invalid message metadata: %v", recovered)
+			isSchema, err = false, fmt.Errorf("databricks: invalid Arrow message metadata: %v", recovered)
 		}
 	}()
 	metaBuffer, bodyBuffer := memory.NewBufferBytes(metadata), memory.NewBufferBytes(nil)
@@ -146,19 +146,29 @@ func (iterator *schemaIPCStreamIterator) Next() (io.Reader, error) {
 	}
 	reader, err := ipc.NewReader(stream)
 	if err != nil {
-		return nil, fmt.Errorf("databricks: invalid CloudFetch Arrow schema: %v", err)
+		return nil, cloudArrowSchemaError(err)
 	}
 	defer reader.Release()
 	if iterator.replacementSchema == nil {
 		iterator.replacementSchema, err = schemaFromIPCBytes(iterator.schema)
 		if err != nil {
-			return nil, fmt.Errorf("databricks: invalid replacement Arrow schema: %w", err)
+			return nil, cloudArrowSchemaError(fmt.Errorf("invalid replacement schema: %w", err))
 		}
 	}
 	if reader.Schema().NumFields() != iterator.replacementSchema.NumFields() {
-		return nil, fmt.Errorf("databricks: CloudFetch Arrow schema field count differs: file=%d metadata=%d", reader.Schema().NumFields(), iterator.replacementSchema.NumFields())
+		return nil, cloudArrowSchemaError(fmt.Errorf("field count differs: file=%d metadata=%d", reader.Schema().NumFields(), iterator.replacementSchema.NumFields()))
+	}
+	for i := range reader.Schema().NumFields() {
+		if !arrow.TypeEqual(reader.Schema().Field(i).Type, iterator.replacementSchema.Field(i).Type) {
+			return nil, cloudArrowSchemaError(fmt.Errorf("field type differs at index %d", i))
+		}
 	}
 	return io.MultiReader(bytes.NewReader(iterator.schema), stream), nil
+}
+
+func cloudArrowSchemaError(cause error) dbsqlerr.DBError {
+	// A malformed header must not expose EOF as iterator exhaustion.
+	return dbsqlerrint.NewDriverError(context.Background(), fmt.Sprintf("invalid CloudFetch Arrow schema: %v", cause), nil).WithCategory(dbsqlerrint.CategoryArrowSchemaParsing)
 }
 
 func (iterator *schemaIPCStreamIterator) HasNext() bool { return iterator.source.HasNext() }

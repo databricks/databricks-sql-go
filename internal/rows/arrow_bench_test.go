@@ -7,8 +7,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/arrow-go/v18/arrow/array"
@@ -48,7 +51,7 @@ func BenchmarkArrowNoDirect(b *testing.B) {
 		require.NoError(b, rowsErr)
 		iterator, err := result.(dbsqlrows.Rows).GetArrowIPCStreams(ctx)
 		require.NoError(b, err)
-		// Fetch before SchemaBytes so main and the fix perform equivalent work.
+		// Consume the result before reading its cached schema.
 		var count int64
 		for {
 			stream, err := iterator.Next()
@@ -183,5 +186,50 @@ func BenchmarkArrowDirectInline(b *testing.B) {
 				})
 			}
 		}
+	}
+}
+
+func BenchmarkArrowCloudIPC(b *testing.B) {
+	data, err := os.ReadFile("testdata/multipleFetch/FetchResults1.json")
+	require.NoError(b, err)
+	var page cli_service.TFetchResultsResp
+	require.NoError(b, json.Unmarshal(data, &page))
+	batch := page.Results.ArrowBatches[0]
+	payload := bytes.Join([][]byte{page.ResultSetMetadata.ArrowSchema, batch.Batch}, nil)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(payload) }))
+	defer server.Close()
+	page.HasMoreRows = new(bool)
+	page.Results = &cli_service.TRowSet{ResultLinks: []*cli_service.TSparkArrowResultLink{{FileLink: server.URL, RowCount: batch.RowCount, ExpiryTime: time.Now().Add(time.Hour).Unix()}}}
+	format := cli_service.TSparkRowSetType_URL_BASED_SET
+	page.ResultSetMetadata.ResultFormat = &format
+	direct := &cli_service.TSparkDirectResults{ResultSetMetadata: page.ResultSetMetadata, ResultSet: &page, CloseOperation: &cli_service.TCloseOperationResp{}}
+	cfg := config.WithDefaults()
+	cfg.MaxDownloadThreads = 1
+	ctx := context.Background()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		result, rowsErr := NewRows(ctx, nil, &client.TestClient{}, cfg, direct, nil)
+		require.NoError(b, rowsErr)
+		iterator, err := result.(dbsqlrows.Rows).GetArrowIPCStreams(ctx)
+		require.NoError(b, err)
+		var count int64
+		for {
+			stream, err := iterator.Next()
+			if err == io.EOF {
+				break
+			}
+			require.NoError(b, err)
+			reader, err := ipc.NewReader(stream)
+			require.NoError(b, err)
+			for reader.Next() {
+				count += reader.RecordBatch().NumRows()
+			}
+			require.NoError(b, reader.Err())
+			reader.Release()
+		}
+		require.Equal(b, batch.RowCount, count)
+		iterator.Close()
+		require.NoError(b, result.Close())
 	}
 }
