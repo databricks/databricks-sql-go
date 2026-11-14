@@ -91,6 +91,8 @@ func TestMaxDownloadThreadsNonPositiveDegradesToDefault(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, tc.want, con.(*connector).cfg.MaxDownloadThreads)
 			assert.True(t, con.(*connector).cfg.MaxDownloadThreadsSet)
+			kc := buildKernelConfig(con.(*connector).cfg, kernel.Auth{Mode: kernel.AuthPAT, Token: "token"})
+			assert.Equal(t, strconv.Itoa(tc.want), kc.SessionConf[config.KernelMaxChunksInMemoryConfKey])
 			assertMaxDownloadThreadsWarning(t, logs.String(), tc.value, tc.wantWarn)
 		})
 	}
@@ -119,11 +121,8 @@ func TestMaxDownloadThreadsDSNPresence(t *testing.T) {
 			cfg := con.(*connector).cfg.DeepCopy()
 			assert.Equal(t, tc.set, cfg.MaxDownloadThreadsSet)
 			kc := buildKernelConfig(cfg, kernel.Auth{Mode: kernel.AuthPAT, Token: "token"})
-			value, present := kc.SessionConf[config.KernelMaxChunksInMemoryConfKey]
+			_, present := kc.SessionConf[config.KernelMaxChunksInMemoryConfKey]
 			assert.Equal(t, tc.set, present)
-			if tc.set {
-				assert.Equal(t, "10", value)
-			}
 		})
 	}
 }
