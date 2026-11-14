@@ -136,13 +136,17 @@ func TestDecimalScaleQualifiersOptional(t *testing.T) {
 }
 
 func BenchmarkScanRowDecimalText(b *testing.B) {
-	for _, value := range []string{"19.99", "1E-7", "123456789012345678901234567.89"} {
-		b.Run(value, func(b *testing.B) {
-			scale := int32(2)
-			if value == "1E-7" {
-				scale = 7
-			}
-			scanner := decimalTextScanner(b, value, &scale, cli_service.TTypeId_DECIMAL_TYPE)
+	for _, test := range []struct {
+		value string
+		scale int32
+	}{
+		{"19.99", 2},
+		{"1E-7", 7},
+		{"0E-18", 18},
+		{"123456789012345678901234567.89", 2},
+	} {
+		b.Run(test.value, func(b *testing.B) {
+			scanner := decimalTextScanner(b, test.value, &test.scale, cli_service.TTypeId_DECIMAL_TYPE)
 			destination := make([]driver.Value, 1)
 			b.ReportAllocs()
 			b.ResetTimer()
@@ -152,5 +156,17 @@ func BenchmarkScanRowDecimalText(b *testing.B) {
 				}
 			}
 		})
+	}
+}
+
+func BenchmarkScanRowNonDecimalText(b *testing.B) {
+	scanner := decimalTextScanner(b, "19.99", nil, cli_service.TTypeId_STRING_TYPE)
+	destination := make([]driver.Value, 1)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		if err := scanner.ScanRow(destination, 0); err != nil {
+			b.Fatal(err)
+		}
 	}
 }

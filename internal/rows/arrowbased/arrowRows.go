@@ -247,11 +247,13 @@ func (ars *arrowRowScanner) ScanRow(
 			// get the value from the column values holder
 			var err1 error
 			destination[i], err1 = ars.rowValues.Value(i, rowNumber)
-			if value, ok := destination[i].(string); err1 == nil && ok && dbType == cli_service.TTypeId_DECIMAL_TYPE {
-				var formatted string
-				formatted, err1 = decimalfmt.PlainString(value, col.decimalScale)
-				if formatted != value {
-					destination[i] = formatted
+			if err1 == nil && dbType == cli_service.TTypeId_DECIMAL_TYPE {
+				if value, ok := destination[i].(string); ok {
+					var formatted string
+					formatted, err1 = decimalfmt.PlainString(value, col.decimalScale)
+					if formatted != value {
+						destination[i] = formatted
+					}
 				}
 			}
 			if err1 != nil {
