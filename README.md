@@ -382,12 +382,16 @@ use `sql.NullTime` or `*time.Time` for nullable typed values. Non-NULL midnight 
 and has `IsZero() == true`, so detect NULL with `sql.NullTime.Valid`, not `IsZero()`;
 JSON fields tagged `omitzero` omit midnight. Do not call `.In(location)` on this
 date-less value: it shifts the clock and may introduce historical timezone offsets.
+To bind TIME in `CAST(? AS TIME)`, pass `value.Format("15:04:05.999999")`, not the
+`time.Time`: `time.Time` binds as `TIMESTAMP` and can shift the clock in non-UTC sessions.
 Column metadata reports `TIME` and `time.Time` with no length, even for empty or
 NULL-only results. Nested TIME values in ARRAY / MAP / STRUCT JSON use clock-only
 strings with trailing fractional zeros omitted, such as `"09:15:00.5"` rather than
 `"09:15:00.500000"`; their text can differ from server-rendered TIME(p) values.
 On Thrift, TIME column metadata requires a server-supplied Arrow schema;
 without it, the legacy Thrift column metadata is retained.
+On SEA, UTF-8 fields tagged TIME describe empty manifest schemas; non-empty TIME
+is assumed to arrive as Arrow time32/time64, not UTF-8.
 
 Live TIME tests require the `e2e` build tag: `go test -tags e2e -run '^TestE2ETimeResults$' .`
 or `go test -tags databricks_kernel,e2e -run '^TestKernelE2ETimeResults$' .`.
