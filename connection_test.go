@@ -989,23 +989,30 @@ func (o *nativeStagingStub) IsStaging(context.Context) (bool, error) { return o.
 func (o *nativeStagingStub) CompleteStaging(context.Context) error   { o.completed = true; return o.err }
 
 func TestConnNativeStagingDispatch(t *testing.T) {
+	completionErr := errors.New("native completion failed")
 	for _, tc := range []struct {
 		name                               string
 		marked, roots, wantCall, wantError bool
+		completionErr                      error
 	}{
-		{"ordinary query", false, true, false, false},
-		{"missing roots", true, false, false, true},
-		{"native completion", true, true, true, false},
+		{"ordinary query", false, true, false, false, nil},
+		{"missing roots", true, false, false, true, nil},
+		{"native completion", true, true, true, false, nil},
+		{"native completion error", true, true, true, true, completionErr},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
 			if tc.roots {
 				ctx = driverctx.NewContextWithStagingInfo(ctx, []string{t.TempDir()})
 			}
-			op := &nativeStagingStub{marked: tc.marked}
+			op := &nativeStagingStub{marked: tc.marked, err: tc.completionErr}
 			err := (&conn{}).execStagingOperation(op, ctx)
 			assert.Equal(t, tc.wantError, err != nil)
 			assert.Equal(t, tc.wantCall, op.completed)
+			if tc.completionErr != nil {
+				assert.ErrorIs(t, err, dbsqlerr.DriverError)
+				assert.ErrorIs(t, err, tc.completionErr)
+			}
 		})
 	}
 }
