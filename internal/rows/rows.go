@@ -723,6 +723,9 @@ func (r *rows) fetchResultPage() error {
 		r.telemetryUpdate(r.chunkCount, r.bytesDownloaded, chunkIndex, effectiveLatencyMs, totalPresent)
 	}
 
+	if r.ResultPageIterator.Count() == 0 {
+		return io.EOF
+	}
 	err1 = r.makeRowScanner(fetchResult)
 	if err1 != nil {
 		return err1
@@ -741,6 +744,9 @@ func (r *rows) fetchResultPage() error {
 // of the returned query results
 func (r *rows) makeRowScanner(fetchResults *cli_service.TFetchResultsResp) dbsqlerr.DBError {
 
+	if fetchResults != nil {
+		r.useServerArrowSchema(fetchResults.ResultSetMetadata)
+	}
 	schema, err1 := r.getResultSetSchema()
 	if err1 != nil {
 		return err1
@@ -814,7 +820,14 @@ func (r *rows) GetArrowBatches(ctx context.Context) (dbsqlrows.ArrowBatchIterato
 		return r.RowScanner.GetArrowBatches(iterCtx, *r.config, r.ResultPageIterator)
 	}
 
-	return arrowbased.NewArrowRecordIterator(iterCtx, r.ResultPageIterator, nil, nil, *r.config), nil
+	schemaBytes, err := r.getArrowSchemaBytes(iterCtx)
+	if err != nil {
+		return nil, err
+	}
+	if r.RowScanner != nil {
+		return r.RowScanner.GetArrowBatches(iterCtx, *r.config, r.ResultPageIterator)
+	}
+	return arrowbased.NewArrowRecordIterator(iterCtx, r.ResultPageIterator, nil, schemaBytes, *r.config), nil
 }
 
 func (r *rows) GetArrowIPCStreams(ctx context.Context) (dbsqlrows.ArrowIPCStreamIterator, error) {
@@ -828,5 +841,53 @@ func (r *rows) GetArrowIPCStreams(ctx context.Context) (dbsqlrows.ArrowIPCStream
 		return r.RowScanner.GetArrowIPCStreams(iterCtx, *r.config, r.ResultPageIterator)
 	}
 
-	return arrowbased.NewArrowIPCStreamIterator(iterCtx, r.ResultPageIterator, nil, nil, *r.config), nil
+	schemaBytes, err := r.getArrowSchemaBytes(iterCtx)
+	if err != nil {
+		return nil, err
+	}
+	if r.RowScanner != nil {
+		return r.RowScanner.GetArrowIPCStreams(iterCtx, *r.config, r.ResultPageIterator)
+	}
+	return arrowbased.NewArrowIPCStreamIterator(iterCtx, r.ResultPageIterator, nil, schemaBytes, *r.config), nil
+}
+
+func (r *rows) getArrowSchemaBytes(ctx context.Context) ([]byte, error) {
+	if _, err := r.getResultSetSchema(); err != nil {
+		return nil, err
+	}
+	if len(r.resultSetMetadata.ArrowSchema) == 0 {
+		if r.ResultPageIterator.HasNext() {
+			page, err := r.ResultPageIterator.Next()
+			if err != nil {
+				return nil, err
+			}
+			r.useServerArrowSchema(page.ResultSetMetadata)
+			if rowscanner.CountRows(page.Results) == 0 && len(page.Results.GetArrowBatches()) == 0 && len(page.Results.GetResultLinks()) == 0 {
+				return arrowbased.GetArrowSchemaBytes(ctx, r.resultSetMetadata, r.config.ArrowConfig)
+			}
+			if err := r.makeRowScanner(page); err != nil {
+				return nil, err
+			}
+			return nil, nil
+		}
+		if err := r.ResultPageIterator.Err(); err != nil {
+			return nil, err
+		}
+		r.useServerArrowSchema(r.ResultPageIterator.ResultSetMetadata())
+	}
+	return arrowbased.GetArrowSchemaBytes(ctx, r.resultSetMetadata, r.config.ArrowConfig)
+}
+
+func (r *rows) useServerArrowSchema(metadata *cli_service.TGetResultSetMetadataResp) {
+	if metadata == nil || len(metadata.ArrowSchema) == 0 || (r.resultSetMetadata != nil && len(r.resultSetMetadata.ArrowSchema) > 0) {
+		return
+	}
+	if r.resultSetMetadata == nil {
+		r.resultSetMetadata = metadata
+		r.schema = metadata.Schema
+		return
+	}
+	merged := *r.resultSetMetadata
+	merged.ArrowSchema = metadata.ArrowSchema
+	r.resultSetMetadata = &merged
 }

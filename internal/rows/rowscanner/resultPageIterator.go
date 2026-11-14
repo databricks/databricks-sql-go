@@ -251,6 +251,10 @@ func (rpf *resultPageIterator) getNextPage() (*cli_service.TFetchResultsResp, er
 			rpf.isFinished = true
 		}
 		rpf.logger.Debug().Msgf("databricks: new result page startRow: %d, nRows: %v, hasMoreRows: %v", rpf.Start(), rpf.Count(), fetchResult.HasMoreRows)
+		if rpf.isFinished && rpf.Count() == 0 && rpf.Start() == nextPageStartRow &&
+			(len(fetchResult.Results.ArrowBatches) > 0 || len(fetchResult.Results.ResultLinks) > 0) {
+			return fetchResult, nil
+		}
 	}
 
 	return fetchResult, nil

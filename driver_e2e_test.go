@@ -20,8 +20,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/apache/arrow-go/v18/arrow"
+	"github.com/apache/arrow-go/v18/arrow/ipc"
 	"github.com/databricks/databricks-sql-go/driverctx"
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
+	"github.com/databricks/databricks-sql-go/internal/backend"
+	thriftbackend "github.com/databricks/databricks-sql-go/internal/backend/thrift"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/client"
 	"github.com/databricks/databricks-sql-go/internal/config"
@@ -262,6 +266,172 @@ func TestWorkflowExample(t *testing.T) {
 				assert.Equal(t, expectedRows[rowIdx], r)
 			}
 			rowIdx++
+		}
+	}
+}
+
+type schemaMetadataClient struct {
+	cli_service.TCLIService
+	noDirectResults  bool
+	omitArrowSchema  bool
+	omitFetchSchema  bool
+	hadDirectResults bool
+	metadataCalls    int
+}
+
+func (c *schemaMetadataClient) ExecuteStatement(ctx context.Context, request *cli_service.TExecuteStatementReq) (*cli_service.TExecuteStatementResp, error) {
+	if c.noDirectResults {
+		request.GetDirectResults = nil
+	}
+	response, err := c.TCLIService.ExecuteStatement(ctx, request)
+	if response != nil {
+		c.hadDirectResults = response.DirectResults != nil
+	}
+	return response, err
+}
+
+func (c *schemaMetadataClient) GetResultSetMetadata(ctx context.Context, request *cli_service.TGetResultSetMetadataReq) (*cli_service.TGetResultSetMetadataResp, error) {
+	c.metadataCalls++
+	response, err := c.TCLIService.GetResultSetMetadata(ctx, request)
+	if response != nil && c.omitArrowSchema {
+		metadata := *response
+		metadata.ArrowSchema = nil
+		response = &metadata
+	}
+	return response, err
+}
+
+func (c *schemaMetadataClient) FetchResults(ctx context.Context, request *cli_service.TFetchResultsReq) (*cli_service.TFetchResultsResp, error) {
+	response, err := c.TCLIService.FetchResults(ctx, request)
+	if response != nil && response.ResultSetMetadata != nil && c.omitFetchSchema {
+		metadata := *response.ResultSetMetadata
+		metadata.ArrowSchema = nil
+		response.ResultSetMetadata = &metadata
+	}
+	return response, err
+}
+
+func TestE2EArrowSchemaBeforeFetching(t *testing.T) {
+	host, httpPath, token := pecoTestingCreds(t)
+	for _, nativeTypes := range []struct{ decimal, timestamp bool }{{false, false}, {false, true}, {true, false}, {true, true}} {
+		nativeDecimal, nativeTimestamp := nativeTypes.decimal, nativeTypes.timestamp
+		for _, rowCount := range []int64{0, 1} {
+			for _, accessor := range []string{"ipc", "batches"} {
+				var expectedSchema *arrow.Schema
+				for _, mode := range []string{"direct", "no-direct", "no-direct-fetch-schema", "no-direct-fallback"} {
+					name := fmt.Sprintf("%s/%s/rows=%d/decimal=%t/timestamp=%t", accessor, mode, rowCount, nativeDecimal, nativeTimestamp)
+					t.Run(name, func(t *testing.T) {
+						driverConnector, err := NewConnector(WithServerHostname(host), WithPort(443), WithHTTPPath(httpPath), WithAccessToken(token), WithArrowNativeDecimal(nativeDecimal))
+						require.NoError(t, err)
+						concrete := driverConnector.(*connector)
+						concrete.cfg.UseArrowNativeComplexTypes = false
+						concrete.cfg.UseArrowNativeTimestamp = nativeTimestamp
+						var capture *schemaMetadataClient
+						concrete.thriftBackendFactory = func(ctx context.Context, cfg *config.Config, httpClient *http.Client) (backend.Backend, error) {
+							wireClient, err := client.InitThriftClient(cfg, httpClient)
+							if err != nil {
+								return nil, err
+							}
+							capture = &schemaMetadataClient{TCLIService: wireClient, noDirectResults: mode != "direct", omitArrowSchema: mode == "no-direct-fallback" || mode == "no-direct-fetch-schema", omitFetchSchema: mode == "no-direct-fallback"}
+							return thriftbackend.NewForTest(capture, nil, cfg), nil
+						}
+						ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+						defer cancel()
+						connection, err := driverConnector.Connect(ctx)
+						require.NoError(t, err)
+						defer func() { require.NoError(t, connection.Close()) }()
+						query := fmt.Sprintf(`SELECT
+							CAST(9007199254740993 AS BIGINT) AS bigint_value,
+							CAST(NULL AS BOOLEAN) AS bool_value,
+							CAST(1 AS TINYINT) AS tinyint_value,
+							CAST(2 AS SMALLINT) AS smallint_value,
+							CAST(3 AS INT) AS int_value,
+							CAST(1.25 AS FLOAT) AS float_value,
+							CAST(2.5 AS DOUBLE) AS double_value,
+							CAST(123.456 AS DECIMAL(38,9)) AS decimal_value,
+							CAST(7.89 AS NUMERIC(12,2)) AS numeric_value,
+							CAST(4.5 AS DEC(10,1)) AS dec_value,
+							CAST("2020-01-02 03:04:05.123456" AS TIMESTAMP) AS timestamp_value,
+							DATE "2020-01-02" AS date_value,
+							"text" AS string_value, unhex("cafe") AS binary_value,
+							NULL AS null_value, array(1,2) AS array_value
+							FROM range(%d)`, rowCount)
+						result, err := connection.(driver.QueryerContext).QueryContext(ctx, query, nil)
+						require.NoError(t, err)
+						defer func() { require.NoError(t, result.Close()) }()
+						var schema *arrow.Schema
+						var fetched int64
+						checkRecord := func(record arrow.RecordBatch) {
+							require.True(t, schema.Equal(record.Schema()), "schema accessor must match returned records")
+							fetched += record.NumRows()
+							if record.NumRows() > 0 {
+								require.Equal(t, "9007199254740993", record.Column(0).ValueStr(0))
+								require.True(t, record.Column(1).IsNull(0))
+							}
+						}
+						if accessor == "ipc" {
+							iterator, err := result.(dbsqlrows.Rows).GetArrowIPCStreams(ctx)
+							require.NoError(t, err)
+							defer iterator.Close()
+							schemaBytes, err := iterator.SchemaBytes()
+							require.NoError(t, err)
+							require.NotEmpty(t, schemaBytes)
+							reader, err := ipc.NewReader(bytes.NewReader(schemaBytes))
+							require.NoError(t, err)
+							schema = reader.Schema()
+							reader.Release()
+							for {
+								stream, err := iterator.Next()
+								if err == io.EOF {
+									break
+								}
+								require.NoError(t, err)
+								reader, err := ipc.NewReader(stream)
+								require.NoError(t, err)
+								for reader.Next() {
+									checkRecord(reader.RecordBatch())
+								}
+								require.NoError(t, reader.Err())
+								reader.Release()
+							}
+						} else {
+							iterator, err := result.(dbsqlrows.Rows).GetArrowBatches(ctx)
+							require.NoError(t, err)
+							defer iterator.Close()
+							schema, err = iterator.Schema()
+							require.NoError(t, err)
+							for {
+								record, err := iterator.Next()
+								if err == io.EOF {
+									break
+								}
+								require.NoError(t, err)
+								checkRecord(record)
+								record.Release()
+							}
+						}
+						if mode == "direct" {
+							require.True(t, capture.hadDirectResults)
+							expectedSchema = schema
+						} else {
+							require.False(t, capture.hadDirectResults)
+							require.Equal(t, 1, capture.metadataCalls)
+							require.NotNil(t, expectedSchema)
+							require.Equal(t, expectedSchema.NumFields(), schema.NumFields())
+							for index, field := range expectedSchema.Fields() {
+								require.Equal(t, field.Name, schema.Field(index).Name)
+								require.True(t, arrow.TypeEqual(field.Type, schema.Field(index).Type), "column %s: server=%s fallback=%s", field.Name, field.Type, schema.Field(index).Type)
+								if mode == "no-direct-fallback" {
+									require.True(t, schema.Field(index).Nullable, "inferred column %s", field.Name)
+								} else {
+									require.Equal(t, field.Nullable, schema.Field(index).Nullable, "column %s", field.Name)
+								}
+							}
+						}
+						require.Equal(t, rowCount, fetched)
+					})
+				}
+			}
 		}
 	}
 }
