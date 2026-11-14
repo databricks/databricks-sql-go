@@ -437,6 +437,10 @@ func (o *kernelOp) CompleteStaging(ctx context.Context) error {
 		if ctx.Err() != nil {
 			return fmt.Errorf("kernel: volume transfer cancelled: %w (kernel error: %w)", ctx.Err(), toStatementError(err))
 		}
+		var ke *KernelError
+		if !errors.As(err, &ke) || (ke.ErrorCode != "VOLUME_STORAGE_HTTP_ERROR" && ke.ErrorCode != "VOLUME_STORAGE_NETWORK_ERROR") {
+			o.backend.evictIfSessionFatal(err)
+		}
 		return toStatementError(err)
 	}
 	if outcome != 2 {

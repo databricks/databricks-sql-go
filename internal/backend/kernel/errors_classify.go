@@ -49,6 +49,7 @@ type KernelError struct {
 	HTTPStatus uint16
 	Retryable  bool
 	QueryID    string
+	ErrorCode  string
 	cause      error
 }
 
