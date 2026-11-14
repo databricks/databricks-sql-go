@@ -268,14 +268,18 @@ func NewRows(
 		d = rowscanner.NewDelimiter(0, 0)
 	}
 
-	// If the entire query result set fits in direct results the server closes
-	// the operations.
+	// CloudFetch may deliver all links without closing the server operation.
 	closedOnServer := directResults != nil && directResults.CloseOperation != nil
+	var hasMoreRows *bool
+	if directResults != nil && directResults.ResultSet != nil {
+		hasMoreRows = directResults.ResultSet.HasMoreRows
+	}
 	r.ResultPageIterator = rowscanner.NewResultPageIterator(
 		resultsCtx,
 		d,
 		pageSize,
 		opHandle,
+		hasMoreRows,
 		closedOnServer,
 		client,
 		r.logger(),

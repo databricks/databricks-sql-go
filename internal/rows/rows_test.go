@@ -230,6 +230,7 @@ func TestRowsFetchResultPageNoDirectResults(t *testing.T) {
 		rowscanner.NewDelimiter(0, 0),
 		1000,
 		nil,
+		nil,
 		false,
 		client,
 		rowSet.logger(),
@@ -325,6 +326,7 @@ func TestRowsFetchResultPageWithDirectResults(t *testing.T) {
 		ctx,
 		rowscanner.NewDelimiter(rowSet.RowScanner.Start(), rowSet.RowScanner.Count()),
 		1000,
+		nil,
 		nil,
 		false,
 		client,
@@ -479,6 +481,7 @@ func TestNextNoDirectResults(t *testing.T) {
 		ctx,
 		rowscanner.NewDelimiter(0, 0),
 		1000,
+		nil,
 		nil,
 		false,
 		client,
@@ -756,7 +759,7 @@ func TestColumnTypeDatabaseTypeNameArrowTimestamps(t *testing.T) {
 				rowSet.resultSetMetadata = metadata
 			}
 			rowSet.ResultPageIterator = rowscanner.NewResultPageIterator(
-				rowSet.ctx, rowscanner.NewDelimiter(0, 0), 1, nil, true, testClient, rowSet.logger())
+				rowSet.ctx, rowscanner.NewDelimiter(0, 0), 1, nil, nil, true, testClient, rowSet.logger())
 
 			checkTypes := func() {
 				t.Helper()
@@ -924,6 +927,7 @@ func TestFetchResultsWithRetries(t *testing.T) {
 		ctx,
 		rowscanner.NewDelimiter(0, 0),
 		1000,
+		nil,
 		nil,
 		false,
 		client,

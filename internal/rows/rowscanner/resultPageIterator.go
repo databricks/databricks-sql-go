@@ -58,17 +58,16 @@ func NewResultPageIterator(
 	delimiter Delimiter,
 	maxPageSize int64,
 	opHandle *cli_service.TOperationHandle,
+	hasMoreRows *bool,
 	closedOnServer bool,
 	client cli_service.TCLIService,
 	logger *dbsqllog.DBSQLLogger,
 ) ResultPageIterator {
 
-	// delimiter and hasMoreRows are used to set up the point in the paginated
-	// result set that this iterator starts from.
 	return &resultPageIterator{
 		ctx:            ctx,
 		Delimiter:      delimiter,
-		isFinished:     closedOnServer,
+		isFinished:     closedOnServer || (hasMoreRows != nil && !*hasMoreRows),
 		maxPageSize:    maxPageSize,
 		opHandle:       opHandle,
 		closedOnServer: closedOnServer,
@@ -149,6 +148,8 @@ func (rpf *resultPageIterator) Err() error {
 // Returns true if there are more pages in the result set.
 func (rpf *resultPageIterator) HasNext() bool {
 	if rpf.isFinished && rpf.nextResultPage == nil {
+		// Preserve best-effort cleanup when direct results skip the final fetch.
+		rpf.Close() //nolint:errcheck,gosec // G104: match cleanup of the final fetched page
 		// There are no more pages to load and there isn't an already fetched
 		// page waiting to retrieved by Next(). Preserve a previously stored
 		// fetch error rather than masking it as a normal end-of-results.
