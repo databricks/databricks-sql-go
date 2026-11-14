@@ -328,8 +328,15 @@ parallel via cloud storage
 | DSN parameter | Connector option | Protocol | Default | Description |
 |---|---|---|---|---|
 | `useCloudFetch` | `WithCloudFetch` | Both | `true` | Enable Cloud Fetch. Set to false to fetch results through the SQL connection without direct cloud-storage access. |
-| `maxDownloadThreads` | `WithMaxDownloadThreads` | Thrift only (inert on kernel) | `10` | Concurrent download goroutines (Thrift). A value <= 0 logs a warning and uses the default. Inert on the kernel path. |
-| | `WithKernelMaxChunksInMemory(n)` | SEA only | kernel default (16) | Bounds decompressed Cloud Fetch chunks held in memory — trades large-result throughput for peak memory. |
+| `maxDownloadThreads` | `WithMaxDownloadThreads` | Both | `10` | CloudFetch download window. On the kernel, bounds downloading and queued chunks ahead of consumption, excluding consumer buffers. Not a byte limit. A value <= 0 warns and uses 10. |
+| | `WithKernelMaxChunksInMemory(n)` | SEA only | standard download window | Positive values override the standard setting and raw chunk session parameters. |
+
+The kernel snapshots these options when connecting. A positive
+`WithKernelMaxChunksInMemory` wins over a case-insensitive
+`cloudfetch_max_chunks_in_memory` session parameter, which wins over
+`WithMaxDownloadThreads`. Values above 256 are clamped. Invalid raw chunk
+parameters warn and retain the kernel default of 16. These settings count
+chunks, not bytes, and do not include consumer or application buffers.
 
 On the Thrift backend:
 

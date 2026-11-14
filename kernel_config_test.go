@@ -477,7 +477,7 @@ var kernelConfigFieldDisposition = map[string]string{
 	// CloudFetch internally (below the C ABI); each option is
 	// classified individually so a new CloudFetch option can't slip the guard.
 	"UseCloudFetch":                "forwarded",
-	"MaxDownloadThreads":           "inert",
+	"MaxDownloadThreads":           "forwarded",
 	"MaxFilesInMemory":             "inert",
 	"MinTimeToExpiry":              "inert",
 	"CloudFetchSpeedThresholdMbps": "inert",
@@ -717,7 +717,8 @@ func TestBuildKernelConfig(t *testing.T) {
 			} else if kc.CloudFetchEnabled == nil || *kc.CloudFetchEnabled {
 				t.Fatal("disabled mode must forward the client option")
 			}
-			if !reflect.DeepEqual(kc.SessionConf, original) || !reflect.DeepEqual(c.SessionParams, original) {
+			expected := map[string]string{"can_cloud_download": "true", "CLOUDFETCH_ENABLED": "true", "TIMEZONE": "UTC", config.KernelMaxChunksInMemoryConfKey: "10"}
+			if !reflect.DeepEqual(kc.SessionConf, expected) || !reflect.DeepEqual(c.SessionParams, original) {
 				t.Fatal("session parameters must be preserved for the kernel to interpret")
 			}
 		})
@@ -732,19 +733,44 @@ func TestBuildKernelConfig(t *testing.T) {
 		}
 	})
 
-	t.Run("MaxChunksInMemory unset leaves the key absent (kernel default)", func(t *testing.T) {
-		c := baseKernelConfig() // KernelExperimental nil
-		kc := buildKernelConfig(c, kernel.Auth{Mode: kernel.AuthPAT, Token: "dapi-x"})
-		if _, ok := kc.SessionConf[config.KernelMaxChunksInMemoryConfKey]; ok {
-			t.Errorf("SessionConf should not carry %q when unset (kernel keeps its default)", config.KernelMaxChunksInMemoryConfKey)
-		}
-		// A zero/negative explicit value is also a no-op.
-		c.KernelExperimental = &config.KernelExperimentalConfig{MaxChunksInMemory: 0}
-		kc = buildKernelConfig(c, kernel.Auth{Mode: kernel.AuthPAT, Token: "dapi-x"})
-		if _, ok := kc.SessionConf[config.KernelMaxChunksInMemoryConfKey]; ok {
-			t.Errorf("SessionConf should not carry %q for a zero value", config.KernelMaxChunksInMemoryConfKey)
-		}
-	})
+	for _, tc := range []struct {
+		name          string
+		threads       int
+		rawKey        string
+		explicit      int
+		wantKey, want string
+	}{
+		{"default", 10, "", 0, config.KernelMaxChunksInMemoryConfKey, "10"},
+		{"single", 1, "", 0, config.KernelMaxChunksInMemoryConfKey, "1"},
+		{"parallel", 4, "", 0, config.KernelMaxChunksInMemoryConfKey, "4"},
+		{"above ceiling", 1000, "", 0, config.KernelMaxChunksInMemoryConfKey, "1000"},
+		{"raw override", 4, config.KernelMaxChunksInMemoryConfKey, 0, config.KernelMaxChunksInMemoryConfKey, "2"},
+		{"uppercase override", 4, "CLOUDFETCH_MAX_CHUNKS_IN_MEMORY", 0, "CLOUDFETCH_MAX_CHUNKS_IN_MEMORY", "2"},
+		{"explicit override", 4, "CLOUDFETCH_MAX_CHUNKS_IN_MEMORY", 3, config.KernelMaxChunksInMemoryConfKey, "3"},
+	} {
+		t.Run("download window "+tc.name, func(t *testing.T) {
+			c := baseKernelConfig()
+			c.MaxDownloadThreads = tc.threads
+			if tc.rawKey != "" {
+				c.SessionParams = map[string]string{tc.rawKey: "2"}
+			}
+			if tc.explicit > 0 {
+				c.KernelExperimental = &config.KernelExperimentalConfig{MaxChunksInMemory: tc.explicit}
+			}
+			kc := buildKernelConfig(c, kernel.Auth{Mode: kernel.AuthPAT, Token: "dapi-x"})
+			if got := kc.SessionConf[tc.wantKey]; got != tc.want {
+				t.Errorf("window=%q, want %q", got, tc.want)
+			}
+			if tc.rawKey != "" && c.SessionParams[tc.rawKey] != "2" {
+				t.Fatal("mutated caller session parameters")
+			}
+			if tc.rawKey == "CLOUDFETCH_MAX_CHUNKS_IN_MEMORY" && tc.explicit == 0 {
+				if _, ok := kc.SessionConf[config.KernelMaxChunksInMemoryConfKey]; ok {
+					t.Fatal("default shadows uppercase override")
+				}
+			}
+		})
+	}
 
 	t.Run("MaxChunksInMemory is not leaked to the shared server params", func(t *testing.T) {
 		// The knob is kernel-only: it must NOT appear in EffectiveSessionParams
