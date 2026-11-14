@@ -31,8 +31,8 @@ func TestEmptyFinalPagePreservesSchema(t *testing.T) {
 	}
 	iterator := NewResultPageIterator(context.Background(), NewDelimiter(0, 0), 100, nil, nil, false, cli, dbsqllog.Logger)
 	actual, err := iterator.Next()
-	require.NoError(t, err)
-	require.Same(t, page, actual)
+	require.ErrorIs(t, err, io.EOF)
+	require.Nil(t, actual)
 	require.Same(t, page.ResultSetMetadata, iterator.ResultSetMetadata())
 	_, err = iterator.Next()
 	require.ErrorIs(t, err, io.EOF)

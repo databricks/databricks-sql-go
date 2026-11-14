@@ -15,13 +15,16 @@ import (
 	"github.com/databricks/databricks-sql-go/rows"
 )
 
-func NewArrowRecordIterator(ctx context.Context, rpi rowscanner.ResultPageIterator, bi BatchIterator, arrowSchemaBytes []byte, cfg config.Config) rows.ArrowBatchIterator {
+func NewArrowRecordIterator(ctx context.Context, rpi rowscanner.ResultPageIterator, bi BatchIterator, arrowSchemaBytes []byte, cfg config.Config, schemaErrors ...error) rows.ArrowBatchIterator {
 	ari := arrowRecordIterator{
 		cfg:                cfg,
 		batchIterator:      bi,
 		resultPageIterator: rpi,
 		ctx:                ctx,
 		arrowSchemaBytes:   arrowSchemaBytes,
+	}
+	if len(schemaErrors) > 0 {
+		ari.schemaErr = schemaErrors[0]
 	}
 
 	return &ari
@@ -38,6 +41,7 @@ type arrowRecordIterator struct {
 	isFinished         bool
 	arrowSchemaBytes   []byte
 	arrowSchema        *arrow.Schema
+	schemaErr          error
 	// err holds a page-fetch error detected while advancing the result page
 	// iterator. It must be surfaced through Next() rather than being masked as
 	// a normal end-of-results (io.EOF). See issue #507. Once captured the
@@ -233,6 +237,9 @@ func (ri *arrowRecordIterator) newBatchIterator(fr *cli_service.TFetchResultsRes
 
 // Return the schema of the records.
 func (ri *arrowRecordIterator) Schema() (*arrow.Schema, error) {
+	if ri.schemaErr != nil {
+		return nil, ri.schemaErr
+	}
 	// Return cached schema if available
 	if ri.arrowSchema != nil {
 		return ri.arrowSchema, nil

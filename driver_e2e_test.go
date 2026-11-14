@@ -277,6 +277,7 @@ type schemaMetadataClient struct {
 	omitFetchSchema  bool
 	hadDirectResults bool
 	metadataCalls    int
+	serverSchema     []byte
 }
 
 func (c *schemaMetadataClient) ExecuteStatement(ctx context.Context, request *cli_service.TExecuteStatementReq) (*cli_service.TExecuteStatementResp, error) {
@@ -286,6 +287,9 @@ func (c *schemaMetadataClient) ExecuteStatement(ctx context.Context, request *cl
 	response, err := c.TCLIService.ExecuteStatement(ctx, request)
 	if response != nil {
 		c.hadDirectResults = response.DirectResults != nil
+		if response.DirectResults != nil && response.DirectResults.ResultSetMetadata != nil {
+			c.serverSchema = response.DirectResults.ResultSetMetadata.ArrowSchema
+		}
 	}
 	return response, err
 }
@@ -293,6 +297,9 @@ func (c *schemaMetadataClient) ExecuteStatement(ctx context.Context, request *cl
 func (c *schemaMetadataClient) GetResultSetMetadata(ctx context.Context, request *cli_service.TGetResultSetMetadataReq) (*cli_service.TGetResultSetMetadataResp, error) {
 	c.metadataCalls++
 	response, err := c.TCLIService.GetResultSetMetadata(ctx, request)
+	if response != nil && len(response.ArrowSchema) > 0 {
+		c.serverSchema = response.ArrowSchema
+	}
 	if response != nil && c.omitArrowSchema {
 		metadata := *response
 		metadata.ArrowSchema = nil
@@ -303,6 +310,9 @@ func (c *schemaMetadataClient) GetResultSetMetadata(ctx context.Context, request
 
 func (c *schemaMetadataClient) FetchResults(ctx context.Context, request *cli_service.TFetchResultsReq) (*cli_service.TFetchResultsResp, error) {
 	response, err := c.TCLIService.FetchResults(ctx, request)
+	if response != nil && response.ResultSetMetadata != nil && len(response.ResultSetMetadata.ArrowSchema) > 0 {
+		c.serverSchema = response.ResultSetMetadata.ArrowSchema
+	}
 	if response != nil && response.ResultSetMetadata != nil && c.omitFetchSchema {
 		metadata := *response.ResultSetMetadata
 		metadata.ArrowSchema = nil
@@ -317,7 +327,6 @@ func TestE2EArrowSchemaBeforeFetching(t *testing.T) {
 		nativeDecimal, nativeTimestamp := nativeTypes.decimal, nativeTypes.timestamp
 		for _, rowCount := range []int64{0, 1} {
 			for _, accessor := range []string{"ipc", "batches"} {
-				var expectedSchema *arrow.Schema
 				for _, mode := range []string{"direct", "no-direct", "no-direct-fetch-schema", "no-direct-fallback"} {
 					name := fmt.Sprintf("%s/%s/rows=%d/decimal=%t/timestamp=%t", accessor, mode, rowCount, nativeDecimal, nativeTimestamp)
 					t.Run(name, func(t *testing.T) {
@@ -354,7 +363,11 @@ func TestE2EArrowSchemaBeforeFetching(t *testing.T) {
 							CAST("2020-01-02 03:04:05.123456" AS TIMESTAMP) AS timestamp_value,
 							DATE "2020-01-02" AS date_value,
 							"text" AS string_value, unhex("cafe") AS binary_value,
-							NULL AS null_value, array(1,2) AS array_value
+							NULL AS null_value, array(1,2) AS array_value,
+							TIMESTAMP_NTZ '2020-01-02 03:04:05.123456' AS timestamp_ntz_value,
+							INTERVAL '1-2' YEAR TO MONTH AS year_month_value,
+							INTERVAL '1 02:03:04' DAY TO SECOND AS day_time_value,
+							parse_json('{"a":1}') AS variant_value
 							FROM range(%d)`, rowCount)
 						result, err := connection.(driver.QueryerContext).QueryContext(ctx, query, nil)
 						require.NoError(t, err)
@@ -412,15 +425,22 @@ func TestE2EArrowSchemaBeforeFetching(t *testing.T) {
 						}
 						if mode == "direct" {
 							require.True(t, capture.hadDirectResults)
-							expectedSchema = schema
 						} else {
 							require.False(t, capture.hadDirectResults)
-							require.Equal(t, 1, capture.metadataCalls)
-							require.NotNil(t, expectedSchema)
+							require.Zero(t, capture.metadataCalls)
+							serverReader, err := ipc.NewReader(bytes.NewReader(capture.serverSchema))
+							require.NoError(t, err)
+							defer serverReader.Release()
+							expectedSchema := serverReader.Schema()
 							require.Equal(t, expectedSchema.NumFields(), schema.NumFields())
 							for index, field := range expectedSchema.Fields() {
 								require.Equal(t, field.Name, schema.Field(index).Name)
-								require.True(t, arrow.TypeEqual(field.Type, schema.Field(index).Type), "column %s: server=%s fallback=%s", field.Name, field.Type, schema.Field(index).Type)
+								if field.Name == "timestamp_ntz_value" && mode == "no-direct-fallback" && nativeTimestamp {
+									require.Equal(t, "", field.Type.(*arrow.TimestampType).TimeZone)
+									require.Equal(t, "Etc/UTC", schema.Field(index).Type.(*arrow.TimestampType).TimeZone, "Thrift cannot distinguish NTZ")
+								} else {
+									require.True(t, arrow.TypeEqual(field.Type, schema.Field(index).Type), "column %s: server=%s fallback=%s", field.Name, field.Type, schema.Field(index).Type)
+								}
 								if mode == "no-direct-fallback" {
 									require.True(t, schema.Field(index).Nullable, "inferred column %s", field.Name)
 								} else {
@@ -432,6 +452,62 @@ func TestE2EArrowSchemaBeforeFetching(t *testing.T) {
 					})
 				}
 			}
+		}
+	}
+}
+
+func TestE2EArrowEmptyNativeSchema(t *testing.T) {
+	host, httpPath, token := pecoTestingCreds(t)
+	for _, omit := range []bool{false, true} {
+		for _, accessor := range []string{"ipc", "batches"} {
+			t.Run(fmt.Sprintf("%s/fallback=%t", accessor, omit), func(t *testing.T) {
+				driverConnector, err := NewConnector(WithServerHostname(host), WithPort(443), WithHTTPPath(httpPath), WithAccessToken(token))
+				require.NoError(t, err)
+				concrete := driverConnector.(*connector)
+				require.True(t, concrete.cfg.UseArrowNativeComplexTypes)
+				concrete.thriftBackendFactory = func(ctx context.Context, cfg *config.Config, httpClient *http.Client) (backend.Backend, error) {
+					wireClient, err := client.InitThriftClient(cfg, httpClient)
+					if err != nil {
+						return nil, err
+					}
+					return thriftbackend.NewForTest(&schemaMetadataClient{TCLIService: wireClient, noDirectResults: true, omitArrowSchema: omit, omitFetchSchema: omit}, nil, cfg), nil
+				}
+				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+				defer cancel()
+				connection, err := driverConnector.Connect(ctx)
+				require.NoError(t, err)
+				defer func() { require.NoError(t, connection.Close()) }()
+				result, err := connection.(driver.QueryerContext).QueryContext(ctx, "SELECT array(1,2) AS items FROM range(0)", nil)
+				require.NoError(t, err)
+				defer func() { require.NoError(t, result.Close()) }()
+				if accessor == "ipc" {
+					iterator, err := result.(dbsqlrows.Rows).GetArrowIPCStreams(ctx)
+					require.NoError(t, err)
+					defer iterator.Close()
+					schema, err := iterator.SchemaBytes()
+					if omit {
+						require.ErrorContains(t, err, "ARRAY require arrow schema")
+					} else {
+						require.NoError(t, err)
+						require.NotEmpty(t, schema)
+					}
+					_, err = iterator.Next()
+					require.ErrorIs(t, err, io.EOF)
+				} else {
+					iterator, err := result.(dbsqlrows.Rows).GetArrowBatches(ctx)
+					require.NoError(t, err)
+					defer iterator.Close()
+					schema, err := iterator.Schema()
+					if omit {
+						require.ErrorContains(t, err, "ARRAY require arrow schema")
+					} else {
+						require.NoError(t, err)
+						require.NotNil(t, schema)
+					}
+					_, err = iterator.Next()
+					require.ErrorIs(t, err, io.EOF)
+				}
+			})
 		}
 	}
 }

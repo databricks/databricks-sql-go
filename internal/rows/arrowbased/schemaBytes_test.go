@@ -3,11 +3,14 @@ package arrowbased
 import (
 	"bytes"
 	"context"
+	"io"
 	"strconv"
 	"testing"
 
 	"github.com/apache/arrow-go/v18/arrow"
+	"github.com/apache/arrow-go/v18/arrow/array"
 	"github.com/apache/arrow-go/v18/arrow/ipc"
+	"github.com/apache/arrow-go/v18/arrow/memory"
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/config"
 	"github.com/stretchr/testify/require"
@@ -111,4 +114,31 @@ func TestSchemaBytesNativeTypeLimitations(t *testing.T) {
 			require.Empty(t, schemaBytes)
 		})
 	}
+}
+
+func TestSchemaPeekLeavesRecordBodyUnread(t *testing.T) {
+	builder := array.NewInt64Builder(memory.DefaultAllocator)
+	defer builder.Release()
+	builder.AppendValues(make([]int64, 10000), nil)
+	values := builder.NewArray()
+	defer values.Release()
+	schema := arrow.NewSchema([]arrow.Field{{Name: "id", Type: arrow.PrimitiveTypes.Int64}}, nil)
+	record := array.NewRecordBatch(schema, []arrow.Array{values}, 10000)
+	defer record.Release()
+	var output bytes.Buffer
+	writer := ipc.NewWriter(&output, ipc.WithSchema(schema))
+	require.NoError(t, writer.Write(record))
+	require.NoError(t, writer.Close())
+	header, _, err := peekIPCSchema(bytes.NewReader(output.Bytes()))
+	require.NoError(t, err)
+	require.NotEmpty(t, header)
+	payload := output.Bytes()[len(header):]
+	source := bytes.NewReader(payload)
+	header, replay, err := peekIPCSchema(source)
+	require.NoError(t, err)
+	require.Empty(t, header)
+	require.Greater(t, source.Len(), 80000, "only message metadata may be read")
+	actual, err := io.ReadAll(replay)
+	require.NoError(t, err)
+	require.Equal(t, payload, actual)
 }
