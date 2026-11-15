@@ -375,6 +375,7 @@ KernelStatusCode kernel_session_config_set_sea_response_compression_enabled(
 /* Configure the total timeout for one HTTP request, from connection start
  * through response-body completion. A separate 30s connection timeout also
  * applies, so connection establishment is bounded by the shorter limit.
+ * Does not bound Volume storage requests or configure their inactivity limit.
  * `request_timeout_ms == 0` keeps the kernel default (120s). */
 KernelStatusCode kernel_session_config_set_request_timeout(KernelSessionConfig* config,
                                                            uint64_t request_timeout_ms);
