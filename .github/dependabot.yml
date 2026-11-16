@@ -2,6 +2,10 @@ version: 2
 updates:
   - package-ecosystem: gomod
     directory: /
+    allow:
+      - dependency-type: direct
+      - dependency-name: gotest.tools/gotestsum
+        dependency-type: indirect
     schedule:
       interval: weekly
   - package-ecosystem: github-actions
