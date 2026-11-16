@@ -33,6 +33,7 @@ import (
 // RowsColumnTypeDatabaseTypeName
 // RowsColumnTypeNullable
 // RowsColumnTypeLength
+// RowsColumnTypePrecisionScale
 type rows struct {
 	// The RowScanner is responsible for handling the different
 	// formats in which the query results can be returned
@@ -102,6 +103,7 @@ var _ driver.RowsColumnTypeScanType = (*rows)(nil)
 var _ driver.RowsColumnTypeDatabaseTypeName = (*rows)(nil)
 var _ driver.RowsColumnTypeNullable = (*rows)(nil)
 var _ driver.RowsColumnTypeLength = (*rows)(nil)
+var _ driver.RowsColumnTypePrecisionScale = (*rows)(nil)
 var _ dbsqlrows.Rows = (*rows)(nil)
 
 // TelemetryCallbacks bundles the optional telemetry hooks passed into NewRows.
@@ -496,6 +498,23 @@ func (r *rows) buildDatabaseTypeNameOverrides() map[int]string {
 // a value of false is returned for ok.
 func (r *rows) ColumnTypeNullable(index int) (nullable, ok bool) {
 	return false, false
+}
+
+func (r *rows) ColumnTypePrecisionScale(index int) (precision, scale int64, ok bool) {
+	column, err := r.getColumnMetadataByIndex(index)
+	if err != nil || rowscanner.GetDBTypeID(column) != cli_service.TTypeId_DECIMAL_TYPE {
+		return 0, 0, false
+	}
+	qualifiers := rowscanner.GetDBTypeQualifiers(column)
+	if qualifiers == nil {
+		return 0, 0, false
+	}
+	precisionValue := qualifiers.Qualifiers[cli_service.PRECISION]
+	scaleValue := qualifiers.Qualifiers[cli_service.SCALE]
+	if precisionValue == nil || !precisionValue.IsSetI32Value() || scaleValue == nil || !scaleValue.IsSetI32Value() {
+		return 0, 0, false
+	}
+	return int64(precisionValue.GetI32Value()), int64(scaleValue.GetI32Value()), true
 }
 
 func (r *rows) ColumnTypeLength(index int) (length int64, ok bool) {

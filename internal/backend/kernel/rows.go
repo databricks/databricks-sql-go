@@ -40,6 +40,7 @@ var (
 	_ driver.RowsColumnTypeDatabaseTypeName = (*kernelRows)(nil)
 	_ driver.RowsColumnTypeNullable         = (*kernelRows)(nil)
 	_ driver.RowsColumnTypeLength           = (*kernelRows)(nil)
+	_ driver.RowsColumnTypePrecisionScale   = (*kernelRows)(nil)
 	// Public batch API, matching the Thrift path (rows.rows). GetArrowBatches is
 	// real; GetArrowIPCStreams rejects (kernel C ABI exports C Data, not IPC bytes).
 	_ dbrows.Rows = (*kernelRows)(nil)
@@ -176,6 +177,17 @@ func (r *kernelRows) ColumnTypeDatabaseTypeName(index int) string {
 // the Thrift path — this always returns ok=false (nullability unknown).
 func (r *kernelRows) ColumnTypeNullable(index int) (nullable, ok bool) {
 	return false, false
+}
+
+func (resultRows *kernelRows) ColumnTypePrecisionScale(index int) (precision, scale int64, ok bool) {
+	if resultRows.schema == nil || index < 0 || index >= resultRows.schema.NumFields() {
+		return 0, 0, false
+	}
+	decimalType, supported := resultRows.schema.Field(index).Type.(*arrow.Decimal128Type)
+	if !supported {
+		return 0, 0, false
+	}
+	return int64(decimalType.Precision), int64(decimalType.Scale), true
 }
 
 // ColumnTypeLength returns a variable-length column's length (math.MaxInt64,
