@@ -38,7 +38,7 @@ Supported optional connection parameters can be specified in param=value and inc
   - timeout: Adds timeout (in seconds) for the server query execution. Default is no timeout
   - userAgentEntry: Used to identify partners. Set as a string with format <isv-name+product-name>
   - useCloudFetch: Used to enable cloud fetch for the query execution. Default is true
-  - maxDownloadThreads: Sets up the max number of concurrent workers for cloud fetch. Default is 10; a value <= 0 logs a warning and uses the default
+  - maxDownloadThreads: Sets the CloudFetch download window on both backends. When unset, defaults to 10 on Thrift and 16 on the kernel; an explicit value <= 0 logs a warning and uses 10
   - useArrowNativeDecimal: Returns DECIMAL columns as native Arrow decimal128 (via GetArrowBatches); when scanned through database/sql they are returned as lossless strings. Default is false
   - authType: Specifies the desired authentication type. Valid values are: Pat, OauthM2M, OauthU2M
   - accessToken: Personal access token. Required if authType set to Pat
@@ -90,7 +90,7 @@ Supported functional options include:
   - WithClientQueryTimeout(<timeout> Duration). Bounds client-side statement execution on the kernel backend. Omitted preserves the legacy 600s ceiling; zero or the maximum Duration is unlimited. Requires WithUseKernel(true). Optional
   - WithUserAgentEntry(<isv-name+product-name> string). Used to identify partners. Optional
   - WithCloudFetch (bool). Used to enable cloud fetch for the query execution. Default is true. Optional
-  - WithMaxDownloadThreads (<num_threads> int). Sets up the max number of concurrent workers for cloud fetch. Default is 10; a value <= 0 logs a warning and uses the default. Optional
+  - WithMaxDownloadThreads (<num_threads> int). Sets the CloudFetch download window on both backends. When unset, defaults to 10 on Thrift and 16 on the kernel; an explicit value <= 0 logs a warning and uses 10. Optional
   - WithAuthenticator (<authenticator> auth.Authenticator). Sets up authentication. Required if neither access token or client credentials are provided.
   - WithClientCredentials(<clientID> string, <clientSecret> string). Sets up Oauth M2M authentication.
   - WithUseKernel(<useKernel> bool). Routes execution through the SEA-via-kernel backend instead of Thrift. Requires a build with -tags databricks_kernel (CGO_ENABLED=1); the default build returns a clear error. Default is false. See the kernel-backend section below. Optional
@@ -274,13 +274,12 @@ WithKernel* prefix marks them experimental):
     kernel's default budget (900s).
   - WithKernelMaxConnections(n) sets the maximum number of idle HTTP connections
     retained per host. The default is 100; n must be positive.
-  - WithKernelMaxChunksInMemory(n) bounds how many decompressed CloudFetch chunks the
-    kernel holds in memory at once — the knob that trades large-result download
-    throughput for peak RSS. Lower it (e.g. 4) to cap memory on wide, row-heavy result
-    sets; raise it for more parallelism at higher memory. It is forwarded as the
-    kernel's client-only cloudfetch_max_chunks_in_memory session conf, stripped before
-    the SEA wire so it never reaches the server. A value <= 0 keeps the kernel's
-    default (16).
+  - WithKernelMaxChunksInMemory(n) bounds downloading and queued CloudFetch chunks
+    ahead of consumption, excluding consumer buffers. It is not a byte limit.
+    It is forwarded as the kernel's client-only cloudfetch_max_chunks_in_memory
+    session conf, stripped before the SEA wire so it never reaches the server.
+    A value <= 0 keeps an explicit cloudfetch_max_chunks_in_memory session
+    parameter, maxDownloadThreads or the kernel default of 16 when unset.
 
 Setting any of these without WithUseKernel fails Connect with an error wrapping the
 sentinel ErrRequiresKernelBackend, detectable with errors.Is.

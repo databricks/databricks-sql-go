@@ -117,10 +117,10 @@ type KernelExperimentalConfig struct {
 	// host by the kernel. Nil keeps the kernel default (100).
 	MaxConnections *int
 
-	// MaxChunksInMemory bounds how many decompressed CloudFetch chunks the kernel
-	// holds in memory at once (WithKernelMaxChunksInMemory) — the knob that trades
-	// throughput for peak RSS on large result sets. Zero = keep the kernel default
-	// (16). A positive value is forwarded as the client-only
+	// MaxChunksInMemory bounds downloading and queued CloudFetch chunks ahead of
+	// consumption, excluding consumer buffers. Zero keeps an explicit session
+	// parameter, WithMaxDownloadThreads or the kernel default of 16.
+	// A positive value is forwarded as the client-only
 	// "cloudfetch_max_chunks_in_memory" session conf, which the kernel folds into
 	// its result config and strips before the SEA wire; it is kernel-only because
 	// the Thrift path has no such in-memory-chunk knob.
@@ -514,6 +514,7 @@ func ParseDSN(dsn string) (UserConfig, error) {
 			return UserConfig{}, err
 		}
 		ucfg.MaxDownloadThreads = numThreads
+		ucfg.MaxDownloadThreadsSet = true
 	}
 
 	// Metric View Metadata parameter
@@ -792,6 +793,7 @@ const DefaultMaxDownloadThreads = 10
 type CloudFetchConfig struct {
 	UseCloudFetch                bool
 	MaxDownloadThreads           int
+	MaxDownloadThreadsSet        bool
 	MaxFilesInMemory             int
 	MinTimeToExpiry              time.Duration
 	CloudFetchSpeedThresholdMbps float64 // Minimum download speed in MBps before WARN logging (default: 0.1)
@@ -824,6 +826,7 @@ func (cfg CloudFetchConfig) DeepCopy() CloudFetchConfig {
 	return CloudFetchConfig{
 		UseCloudFetch:                cfg.UseCloudFetch,
 		MaxDownloadThreads:           cfg.MaxDownloadThreads,
+		MaxDownloadThreadsSet:        cfg.MaxDownloadThreadsSet,
 		MaxFilesInMemory:             cfg.MaxFilesInMemory,
 		MinTimeToExpiry:              cfg.MinTimeToExpiry,
 		CloudFetchSpeedThresholdMbps: cfg.CloudFetchSpeedThresholdMbps,
