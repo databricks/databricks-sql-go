@@ -6,6 +6,10 @@
 .claude/knowledge/*
 !.claude/knowledge/learning-log.md
 !.claude/knowledge/driver-pitfalls.md
+!.claude/knowledge/lessons.md
+!.claude/knowledge/journal/
+.claude/knowledge/journal/*
+!.claude/knowledge/journal/*.md
 
 # Binaries for programs and plugins
 *.exe
