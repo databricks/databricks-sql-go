@@ -3,7 +3,6 @@
 <!-- distilled-through: none -->
 
 ## Configuration and authentication
-
 - L-0001 (1×, #446): Verify kernel session parameters and proxies separately from Thrift: kernel allowlists configuration keys and supports HTTP(S) proxies, while Thrift may accept additional keys/schemes.
 - L-0002 (2×, #449): Kernel U2M uses workspace OIDC uniformly across clouds with its registered client/scopes, not Azure Thrift's Entra app. Preserve stable scope ordering in slice comparisons.
 - L-0003 (1×, #444): External JWTs on the kernel PAT path may undergo mandatory federation exchange; verify pinned-kernel same-issuer/non-JWT exceptions before adding driver-side exchange.
@@ -24,8 +23,8 @@
 - L-0018 (1×, #536): buildKernelConfig also serves Thrift Reyden recovery. Test newly active options through openSessionWithReydenFallback and document changed shared-DSN behavior.
 - L-0019 (1×, #539): Avoid adjacent same-typed boolean parameters controlling ownership; use distinct types/options and derive combined lifecycle state in one place.
 - L-0020 (1×, #556): Check integer duration values against MinInt64/unit and MaxInt64/unit before multiplication; report overflow with the parameter name.
-## Native boundaries and lifecycle
 
+## Native boundaries and lifecycle
 - L-0021 (1×, #450): Never place fabricated Go pointers or cgo.Handle values into C pointer slots. Use NULL with a global sink or a real C allocation.
 - L-0022 (2×, #450): Foreign-thread callbacks should copy borrowed data and nonblockingly enqueue bounded work. Invoke user code and I/O outside internal locks and away from native callback threads.
 - L-0023 (1×, #450): Check retryable preconditions outside sync.Once.Do; an early return inside still consumes the Once.
@@ -40,17 +39,17 @@
 - L-0032 (1×, #496): Shared singleflight fetches need detached, bounded contexts; individual waiters honor their own cancellation without aborting shared work.
 - L-0033 (1×, #295 #371): Result downloads deliberately outlive QueryContext cancellation. Preserve the detached rows-fetch contract and bound downloads with explicit timeouts/client options.
 - L-0034 (1×, #555): Retry non-idempotent RPCs on proven pre-send dial failures only; generic transport failures and redirected attempts may have delivered the request.
-## Arrow results and metadata
 
+## Arrow results and metadata
 - L-0035 (2×, #492): Malformed server rows must return wrapped errors, not panic. Keep ColumnType metadata consistent with produced values and use physical-type fallback when logical conversion is unavailable.
 - L-0036 (2×, #509): Preserve iterator errors separately from EOF, expose them exactly once through shared pending-error logic, and update every sibling iterator. Explicit Close clears pending errors; internal release must preserve them.
 - L-0037 (2×, #510): Derive column metadata from cached result-set Arrow schema, independent of current-page scanner lifetime. Timestamp timezone metadata distinguishes Thrift TIMESTAMP from NTZ.
 - L-0038 (1×, #509): HasNext may fetch remotely. Drain local batches and check finished state first; preserve boolean short-circuit order and assert early Close sends no FetchResults RPC.
-- L-0039 (1×, #443): Duplicate-name support can differ between Arrow schemas, struct/cdata imports and IPC. Test both kernel and Thrift boundaries against the current Arrow version.
+- L-0039 (1×, log:2026-11-12): Duplicate-name support can differ between Arrow schemas, struct/cdata imports and IPC. Test both kernel and Thrift boundaries against the current Arrow version.
 - L-0040 (1×, #550 #535): New Arrow code uses github.com/apache/arrow-go/v18 RecordBatch APIs; avoid copying legacy arrow/go/v12 imports.
 - L-0041 (1×, #563 #567): Derive logical result types from field metadata with ColumnTypeInfoForField, including empty SEA string-backed schemas; test zero-row, NULL-only and populated results on both backends.
-## Verification and dependencies
 
+## Verification and dependencies
 - L-0042 (3×, #458 #510 #567): Compile/vet relevant tagged tests explicitly, including databricks_kernel,e2e where needed, and register E2E names in nightly filters. Default unit tests omit tagged coverage.
 - L-0043 (1×, #458): Test seams must call real production methods; parallel copies of native calls prove signatures without proving production wiring.
 - L-0044 (1×, #457): Telemetry duration units follow receiver schema: bare names are seconds, and _ms/_millis names are milliseconds.
@@ -65,9 +64,9 @@
 - L-0053 (1×, #536): Prove no-storage-egress behavior through a workspace-only CONNECT proxy, asserting complete results and zero blocked attempts.
 - L-0054 (2×, #559 #558 #555): Join test goroutines with bounded cleanup and context cancellation. Synchronize with channels and report callback failures without FailNow/Fatal from foreign goroutines.
 - L-0055 (1×, #561): Root Go files must remain package dbsql/dbsql_test even behind tags; declare developer tools with the go.mod tool directive.
-## Bot workflow
 
+## Bot workflow
 - L-0056 (1×, #442): Use concrete serving-endpoints/model/invocations MODEL_ENDPOINT URLs; anthropic/invocations produces an invalid translated CLI route.
 - L-0057 (1×, #442): Schedule plus workflow_dispatch workflows should declare numeric knobs as strings and parse them downstream.
 - L-0058 (2×, #442): Omit unused prompt-file config keys instead of referencing missing files; explicitly unignore and seed any required tracked file under ignored directories.
-- L-0059 (4×, #443): Reuse completed inspections, report unavailable native/E2E environments promptly, and distinguish skipped coverage or compile failures from assertion-based reproduction. Add runnable unit coverage where possible.
+- L-0059 (4×, log:2026-10-21): Reuse completed inspections, report unavailable native/E2E environments promptly, and distinguish skipped coverage or compile failures from assertion-based reproduction. Add runnable unit coverage where possible.
