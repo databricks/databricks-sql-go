@@ -293,7 +293,7 @@ func (mvc *mapValueContainer) Value(i int) (any, error) {
 				return nil, err
 			}
 
-			key, err := marshalScalar(keyScratch[:0], mvc.keys, int(i+s), k)
+			key, err := marshalScalar(keyScratch[:0], mvc.keys, int(i+s), jsonfmt.MapKey(k))
 			if err != nil {
 				return nil, err
 			}

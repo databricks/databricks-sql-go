@@ -376,6 +376,14 @@ STRUCT and VARIANT (as JSON) are supported. BINARY is returned as `sql.RawBytes`
 Both backends return GEOMETRY / GEOGRAPHY as WKT / EWKT by default.
 Set `enableGeoSpatialSupport=true` on the kernel path to opt into EWKB.
 
+In ARRAY / MAP / STRUCT JSON, non-finite FLOAT and DOUBLE values render as the
+strings `"NaN"`, `"Infinity"`, and `"-Infinity"`, distinct from SQL NULL (`null`).
+Finite values remain JSON numbers. Use `any` or a custom decoder for fields that
+can contain special values; `encoding/json` does not unmarshal these strings into
+plain `float32` or `float64` fields. Top-level FLOAT / DOUBLE values remain numeric.
+Non-finite floating-point MAP keys retain the Go spellings `"NaN"`, `"+Inf"`, and
+`"-Inf"` already used by the kernel backend.
+
 | SQL type | Go value | NULL detection |
 |---|---|---|
 | `TIME` | `time.Time` on `0001-01-01` UTC | `sql.NullTime.Valid` or a nil `*time.Time`, never `IsZero()`; midnight is the zero time and JSON `omitzero` omits it. |

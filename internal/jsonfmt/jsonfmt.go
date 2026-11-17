@@ -1,12 +1,12 @@
-// Package jsonfmt renders scalar values as JSON, byte-identical to
-// encoding/json.Marshal, for the nested-type renderers shared by the Thrift
-// (arrowbased) and kernel (arrowscan) result paths.
+// Package jsonfmt renders scalar values as JSON for the nested-type renderers
+// shared by the Thrift (arrowbased) and kernel (arrowscan) result paths.
+// It matches encoding/json.Marshal except that non-finite floats become the
+// JSON strings "NaN", "Infinity", and "-Infinity" rather than errors.
 //
 // Those renderers marshal one scalar per nested element, so per-call overhead
 // dominates. Go 1.27 routes encoding/json through the json/v2 engine by default,
 // which made that per-call cost markedly higher; formatting the common scalar
-// types directly avoids it. Anything not handled here falls back to json.Marshal,
-// so output never diverges from it.
+// types directly avoids it. Anything not handled here falls back to json.Marshal.
 package jsonfmt
 
 import (
@@ -16,8 +16,8 @@ import (
 	"unicode/utf8"
 )
 
-// Append appends the JSON encoding of v to dst, exactly as json.Marshal(v)
-// would render it, and returns the extended slice.
+// Append appends the JSON encoding of v to dst and returns the extended slice.
+// Unlike json.Marshal, it quotes non-finite floats instead of rejecting them.
 func Append(dst []byte, v any) ([]byte, error) {
 	switch t := v.(type) {
 	case nil:
@@ -43,14 +43,8 @@ func Append(dst []byte, v any) ([]byte, error) {
 	case uint64:
 		return strconv.AppendUint(dst, t, 10), nil
 	case float32:
-		if !isFinite(float64(t)) {
-			break
-		}
 		return appendFloat(dst, float64(t), 32), nil
 	case float64:
-		if !isFinite(t) {
-			break
-		}
 		return appendFloat(dst, t, 64), nil
 	case string:
 		if needsEscape(t) {
@@ -60,8 +54,7 @@ func Append(dst []byte, v any) ([]byte, error) {
 		dst = append(dst, t...)
 		return append(dst, '"'), nil
 	}
-	// NaN/Inf (json.Marshal's error), strings needing escapes, []byte (base64),
-	// and any other type.
+	// Strings needing escapes, []byte (base64), and any other type.
 	b, err := json.Marshal(v)
 	if err != nil {
 		return dst, err
@@ -72,13 +65,42 @@ func Append(dst []byte, v any) ([]byte, error) {
 	return append(dst, b...), nil
 }
 
-func isFinite(f float64) bool {
-	return !math.IsInf(f, 0) && !math.IsNaN(f)
+// MapKey returns the scalar to encode for a MAP key. Non-finite float keys keep
+// the Go spellings used by the kernel renderer before values supported them.
+func MapKey(v any) any {
+	var f float64
+	switch value := v.(type) {
+	case float32:
+		f = float64(value)
+	case float64:
+		f = value
+	default:
+		return v
+	}
+	if math.IsNaN(f) {
+		return "NaN"
+	}
+	if math.IsInf(f, 0) {
+		if f < 0 {
+			return "-Inf"
+		}
+		return "+Inf"
+	}
+	return v
 }
 
-// appendFloat mirrors encoding/json's ES6-style float formatting: plain decimal
-// unless the magnitude is below 1e-6 or at least 1e21, with exponents unpadded.
+// appendFloat quotes non-finite values to keep valid SQL floats distinct from
+// SQL NULL in JSON. Finite values retain encoding/json's ES6-style formatting.
 func appendFloat(dst []byte, f float64, bits int) []byte {
+	if math.IsNaN(f) {
+		return append(dst, `"NaN"`...)
+	}
+	if math.IsInf(f, 0) {
+		if f < 0 {
+			return append(dst, `"-Infinity"`...)
+		}
+		return append(dst, `"Infinity"`...)
+	}
 	abs := math.Abs(f)
 	format := byte('f')
 	// Compare at the value's own width so float32 cutoffs match exactly.
