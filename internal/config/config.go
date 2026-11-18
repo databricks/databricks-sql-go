@@ -290,6 +290,10 @@ type UserConfig struct {
 	Transport                http.RoundTripper
 	UseLz4Compression        bool
 	EnableMetricViewMetadata bool
+	// EnableVariantTypeName reports top-level VARIANT columns as "VARIANT" from
+	// sql.ColumnType.DatabaseTypeName instead of "STRING". Values are unchanged.
+	// Both backends honor it. DSN: enableVariantTypeName=true|false.
+	EnableVariantTypeName bool
 	// UseArrowNativeDecimalDSN is a DSN-only carrier for the useArrowNativeDecimal
 	// parameter. The authoritative setting lives on ArrowConfig; ParseDSN records
 	// the DSN value here (because it can only return a UserConfig) and the
@@ -358,6 +362,7 @@ func (ucfg UserConfig) DeepCopy() UserConfig {
 		Transport:                ucfg.Transport,
 		UseLz4Compression:        ucfg.UseLz4Compression,
 		EnableMetricViewMetadata: ucfg.EnableMetricViewMetadata,
+		EnableVariantTypeName:    ucfg.EnableVariantTypeName,
 		UseArrowNativeDecimalDSN: ucfg.UseArrowNativeDecimalDSN,
 		CloudFetchConfig:         ucfg.CloudFetchConfig,
 		EnableTelemetry:          ucfg.EnableTelemetry,
@@ -523,6 +528,14 @@ func ParseDSN(dsn string) (UserConfig, error) {
 			return UserConfig{}, err
 		}
 		ucfg.EnableMetricViewMetadata = enableMetricViewMetadata
+	}
+
+	// VARIANT type-name reporting is client-side only; it is never sent to the server.
+	if enableVariantTypeName, ok, err := params.extractAsBool("enableVariantTypeName"); ok {
+		if err != nil {
+			return UserConfig{}, err
+		}
+		ucfg.EnableVariantTypeName = enableVariantTypeName
 	}
 
 	// Arrow parameters

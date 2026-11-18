@@ -730,6 +730,41 @@ func TestParseDSNEnableGeoSpatialSupport(t *testing.T) {
 	}
 }
 
+func TestParseDSNEnableVariantTypeName(t *testing.T) {
+	base := "token:supersecret@example.cloud.databricks.com:443/sql/1.0/endpoints/abc"
+	for _, tc := range []struct {
+		name  string
+		query string
+		want  bool
+	}{
+		{name: "omitted", query: "", want: false},
+		{name: "enabled", query: "?enableVariantTypeName=true", want: true},
+		{name: "disabled", query: "?enableVariantTypeName=false", want: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := ParseDSN(base + tc.query)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.EnableVariantTypeName != tc.want {
+				t.Errorf("EnableVariantTypeName = %v, want %v", got.EnableVariantTypeName, tc.want)
+			}
+		})
+	}
+
+	if _, err := ParseDSN(base + "?enableVariantTypeName=notabool"); err == nil {
+		t.Error("malformed enableVariantTypeName should fail DSN parsing")
+	}
+}
+
+func TestUserConfigDeepCopyEnableVariantTypeName(t *testing.T) {
+	orig := UserConfig{EnableVariantTypeName: true}
+	cp := orig.DeepCopy()
+	if !cp.EnableVariantTypeName {
+		t.Fatal("DeepCopy dropped EnableVariantTypeName")
+	}
+}
+
 func TestParseDSNQueryTimeoutRange(t *testing.T) {
 	if strconv.IntSize < 64 {
 		t.Skip("strconv.Atoi rejects these values before the range check on 32-bit platforms")

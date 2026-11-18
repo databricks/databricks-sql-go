@@ -231,6 +231,37 @@ func timestampColumnTypeInfo(field arrow.Field) ColumnTypeInfo {
 	return ColumnTypeInfo{DatabaseTypeName: "TIMESTAMP", ScanType: scanTypeDateTime}
 }
 
+// IsVariantField reports whether field is a top-level VARIANT column. The server sends
+// VARIANT as a string field whose logical type name is in field metadata, so the
+// physical type alone cannot tell it from STRING. Only string physical types qualify,
+// so a reported VARIANT name never describes a value the scanner would not produce.
+// The first non-blank of databricks.type_name / Spark:DataType:SqlName decides, as in
+// IsTimestampNTZField.
+func IsVariantField(field arrow.Field) bool {
+	if field.Type == nil {
+		return false
+	}
+	if id := field.Type.ID(); id != arrow.STRING && id != arrow.LARGE_STRING {
+		return false
+	}
+	for _, key := range [...]string{databricksTypeNameMetadataKey, sparkSQLNameMetadataKey} {
+		if name, ok := field.Metadata.GetValue(key); ok && strings.TrimSpace(name) != "" {
+			return strings.EqualFold(strings.TrimSpace(name), "VARIANT")
+		}
+	}
+	return false
+}
+
+// ApplyVariantTypeName reports a VARIANT field as "VARIANT" and returns info unchanged
+// otherwise. Only the name changes: the scan type and length stay the STRING mapping
+// that the value scanner uses.
+func ApplyVariantTypeName(info ColumnTypeInfo, field arrow.Field) ColumnTypeInfo {
+	if IsVariantField(field) {
+		info.DatabaseTypeName = "VARIANT"
+	}
+	return info
+}
+
 // varLen builds a ColumnTypeInfo for a variable-length type, reporting the
 // unbounded length (math.MaxInt64) the Thrift path uses for such columns.
 func varLen(name string, scan reflect.Type) ColumnTypeInfo {

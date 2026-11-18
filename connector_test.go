@@ -375,6 +375,27 @@ func TestNewConnector(t *testing.T) {
 		assert.False(t, coni.cfg.EnableMetricViewMetadata)
 	})
 
+	t.Run("Connector test WithEnableVariantTypeName default off and on", func(t *testing.T) {
+		base := []ConnOption{WithServerHostname("databricks-host"), WithAccessToken("token"), WithHTTPPath("http-path")}
+		for _, tc := range []struct {
+			name string
+			opts []ConnOption
+			want bool
+		}{
+			{name: "default", opts: nil, want: false},
+			{name: "enabled", opts: []ConnOption{WithEnableVariantTypeName(true)}, want: true},
+			{name: "explicitly disabled", opts: []ConnOption{WithEnableVariantTypeName(false)}, want: false},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				con, err := NewConnector(append(base, tc.opts...)...)
+				require.NoError(t, err)
+				coni, ok := con.(*connector)
+				require.True(t, ok)
+				assert.Equal(t, tc.want, coni.cfg.EnableVariantTypeName)
+			})
+		}
+	})
+
 	t.Run("Connector test WithArrowNativeDecimal enabled", func(t *testing.T) {
 		host := "databricks-host"
 		accessToken := "token"

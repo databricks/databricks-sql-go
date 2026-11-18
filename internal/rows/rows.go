@@ -497,6 +497,11 @@ func (r *rows) buildDatabaseTypeNameOverrides() map[int]string {
 		if field.Type.ID() == arrow.TIME32 || field.Type.ID() == arrow.TIME64 {
 			overrides[i] = "TIME"
 		}
+		// Opt-in: VARIANT arrives as a string column, so the Arrow field metadata is
+		// the only signal. The scan type and length stay the STRING mapping.
+		if r.config != nil && r.config.EnableVariantTypeName && arrowscan.IsVariantField(field) {
+			overrides[i] = "VARIANT"
+		}
 	}
 	return overrides
 }

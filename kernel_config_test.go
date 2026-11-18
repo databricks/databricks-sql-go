@@ -438,6 +438,9 @@ var kernelConfigFieldDisposition = map[string]string{
 	// Folded into SessionConf by config.EffectiveSessionParams (metric-view conf),
 	// sent identically on both backends.
 	"EnableMetricViewMetadata": "forwarded",
+	// Client-side only: sets kernel.Config.EnableVariantTypeName (buildKernelConfig),
+	// which the kernel rows use to report VARIANT columns. Not a session conf.
+	"EnableVariantTypeName": "forwarded",
 	// Applied post-connect via USE CATALOG / USE SCHEMA (no kernel config setter).
 	"Catalog": "forwarded",
 	"Schema":  "forwarded",
@@ -530,6 +533,18 @@ func TestKernelConfigFieldsClassified(t *testing.T) {
 // TestKernelExperimentalFieldsClassified only asserts the disposition map, not the
 // runtime copy). These run in the default CGO_ENABLED=0 build.
 func TestBuildKernelConfig(t *testing.T) {
+	t.Run("variant type name forwarded only when enabled", func(t *testing.T) {
+		c := baseKernelConfig()
+		auth := kernel.Auth{Mode: kernel.AuthPAT, Token: "dapi-x"}
+		if kc := buildKernelConfig(c, auth); kc.EnableVariantTypeName {
+			t.Fatal("EnableVariantTypeName forwarded as true by default")
+		}
+		c.EnableVariantTypeName = true
+		if kc := buildKernelConfig(c, auth); !kc.EnableVariantTypeName {
+			t.Fatal("EnableVariantTypeName = false, want true when the option is on")
+		}
+	})
+
 	t.Run("client query timeout presence and value forwarded without aliasing", func(t *testing.T) {
 		c := baseKernelConfig()
 		kc := buildKernelConfig(c, kernel.Auth{Mode: kernel.AuthPAT, Token: "dapi-x"})

@@ -126,6 +126,9 @@ func newKernelRows(ctx context.Context, op *kernelOp, stream *C.kernel_result_st
 	for i, f := range fields {
 		r.cols[i] = f.Name
 		r.colTypes[i] = arrowscan.ColumnTypeInfoForField(f)
+		if op.variantTypeName {
+			r.colTypes[i] = arrowscan.ApplyVariantTypeName(r.colTypes[i], f)
+		}
 		r.geoBinary[i] = arrowscan.IsBinaryGeospatialField(f)
 	}
 	// Construction succeeded — now arm the close telemetry callback so a normal
