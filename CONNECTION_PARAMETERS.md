@@ -46,6 +46,7 @@ wire. They are listed under [Kernel client-result confs](#kernel-client-result-c
 | `catalog` | `WithInitialNamespace` | ✅ | ✅ | | Initial catalog. Kernel applies it post-connect via `USE CATALOG`. |
 | `schema` | `WithInitialNamespace` | ✅ | ✅ | | Initial schema. Kernel applies it post-connect via `USE SCHEMA`. |
 | `useKernel` | `WithUseKernel` | ✅ | ✅ | `false` | Select the SEA/kernel backend. Requires a `databricks_kernel` build. |
+| `enableHttp2` | `WithEnableHTTP2(b)` | ❌ | ✅ | `true` | Negotiate HTTP/2 for kernel-owned HTTPS with HTTP/1.1 fallback. `false` forces HTTP/1.1. Explicit or environment proxy configuration forces HTTP/1.1 for the entire client, including bypassed hosts. Omission retains the kernel default. |
 
 ## Authentication
 
