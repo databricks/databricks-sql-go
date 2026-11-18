@@ -103,7 +103,7 @@ func TestKernelVolumeFailureOriginControlsSessionValidity(t *testing.T) {
 				chunk["next_chunk_index"], chunks = 1, 2
 			}
 			result = map[string]any{
-				"statement_id": "volume-stmt", "status": map[string]any{"state": "SUCCEEDED"},
+				"statement_id": "volume-stmt", "status": map[string]any{"state": "CLOSED"},
 				"manifest": map[string]any{"format": "ARROW_STREAM", "is_volume_operation": true, "schema": map[string]any{"column_count": 4, "columns": manifestColumns}, "total_row_count": 1, "total_chunk_count": chunks},
 				"result":   chunk,
 			}
