@@ -230,9 +230,10 @@ during setup. Nothing is silently ignored: WithTimeout and token-provider / exte
 static authenticators are rejected at connect. WithMaxRows is accepted but inert (the
 kernel manages fetching below the C ABI).
 
-Kernel HTTP requests inherit the driver's ClientTimeout (900s by default). If
+Kernel SQL HTTP requests inherit the driver's ClientTimeout (900s by default). If
 that value is zero, the kernel uses its own 120s default; zero is neither
-unlimited nor an immediate timeout.
+unlimited nor an immediate timeout. Use a context deadline to bound Volume storage
+transfers; ClientTimeout does not apply to storage requests.
 
 OAuth U2M is interactive: on a cache miss, connecting launches the system browser and
 blocks until login completes or the kernel's ~120s callback timeout expires. Because
