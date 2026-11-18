@@ -472,6 +472,7 @@ var kernelConfigFieldDisposition = map[string]string{
 	"UseArrowNativeDecimalDSN":   "inert", // DSN carrier; kernel renders decimals exactly regardless
 	"TokenCacheEnabledDSN":       "inert", // DSN carrier; forwarded to KernelExperimental.TokenCacheEnabled
 	"EnableGeoSpatialSupportDSN": "inert", // DSN carrier; forwarded to KernelExperimental.EnableGeoSpatialSupport
+	"EnableHTTP2DSN":             "inert",
 
 	// Fields promoted from the embedded CloudFetchConfig. The kernel does
 	// CloudFetch internally (below the C ABI); each option is

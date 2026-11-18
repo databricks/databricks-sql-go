@@ -27,6 +27,7 @@ import (
 // deliberate decision and a setter in KernelBackend.OpenSession so it can't be
 // silently dropped.
 var kernelExperimentalFieldDisposition = map[string]string{
+	"EnableHTTP2":             "forwarded",
 	"TLSTrustedCertsPEM":      "forwarded", // set_tls_trusted_certs
 	"TLSClientCertPEM":        "forwarded", // set_tls_client_certificate (cert)
 	"TLSClientKeyPEM":         "forwarded", // set_tls_client_certificate (key)
@@ -104,6 +105,9 @@ func TestWithKernelTLSOptionsSetExperimental(t *testing.T) {
 		{"disable geospatial support", WithEnableGeoSpatialSupport(false), func(k *config.KernelExperimentalConfig) bool {
 			return k.EnableGeoSpatialSupport != nil && !*k.EnableGeoSpatialSupport
 		}},
+		{"force HTTP/1.1", WithEnableHTTP2(false), func(k *config.KernelExperimentalConfig) bool {
+			return k.EnableHTTP2 != nil && !*k.EnableHTTP2
+		}},
 		{"token cache", WithTokenCache(true), func(k *config.KernelExperimentalConfig) bool {
 			return k.TokenCacheEnabled
 		}},
@@ -143,6 +147,7 @@ func TestWithKernelOptionsRejectedOnThriftPath(t *testing.T) {
 		{"max chunks in memory", WithKernelMaxChunksInMemory(4)},
 		{"decimal as float", WithKernelDecimalAsFloat(true)},
 		{"disable geospatial support", WithEnableGeoSpatialSupport(false)},
+		{"force HTTP/1.1", WithEnableHTTP2(false)},
 		{"token cache", WithTokenCache(true)},
 	}
 	for _, tc := range cases {

@@ -267,6 +267,13 @@ func (k *KernelBackend) OpenSession(ctx context.Context) error {
 	if err := k.applyEnableGeoSpatialSupport(cfg); err != nil {
 		return err
 	}
+	if k.cfg.EnableHTTP2 != nil {
+		if err := call(func() C.KernelStatusCode {
+			return C.kernel_session_config_set_http2_enabled(cfg, C.bool(*k.cfg.EnableHTTP2))
+		}); err != nil {
+			return fmt.Errorf("kernel: set_http2_enabled: %w", toConnError(err))
+		}
+	}
 
 	// Retry / backoff policy (WithRetries). See applyRetry.
 	if err := k.applyRetry(cfg); err != nil {

@@ -144,6 +144,8 @@ type KernelExperimentalConfig struct {
 	// struct<srid,wkb> Arrow value; false requests WKT / EWKT strings. A pointer
 	// distinguishes the omitted value (default false) from an explicit setting.
 	EnableGeoSpatialSupport *bool
+	// EnableHTTP2 is nil when the kernel owns the HTTPS protocol default.
+	EnableHTTP2 *bool
 }
 
 // DeepCopy returns a deep copy of the experimental config, or nil for a nil
@@ -168,6 +170,10 @@ func (k *KernelExperimentalConfig) DeepCopy() *KernelExperimentalConfig {
 	if k.EnableGeoSpatialSupport != nil {
 		enabled := *k.EnableGeoSpatialSupport
 		cp.EnableGeoSpatialSupport = &enabled
+	}
+	if k.EnableHTTP2 != nil {
+		enabled := *k.EnableHTTP2
+		cp.EnableHTTP2 = &enabled
 	}
 	if k.MaxConnections != nil {
 		max := *k.MaxConnections
@@ -317,6 +323,8 @@ type UserConfig struct {
 	// enableGeoSpatialSupport=true|false. Nil means omitted (the default is
 	// false); the connector copies a present value into KernelExperimental.
 	EnableGeoSpatialSupportDSN *bool
+	// EnableHTTP2DSN carries an explicit enableHttp2 DSN setting to the connector.
+	EnableHTTP2DSN *bool
 }
 
 // DeepCopy returns a true deep copy of UserConfig
@@ -370,6 +378,10 @@ func (ucfg UserConfig) DeepCopy() UserConfig {
 	if ucfg.EnableGeoSpatialSupportDSN != nil {
 		enabled := *ucfg.EnableGeoSpatialSupportDSN
 		result.EnableGeoSpatialSupportDSN = &enabled
+	}
+	if ucfg.EnableHTTP2DSN != nil {
+		enabled := *ucfg.EnableHTTP2DSN
+		result.EnableHTTP2DSN = &enabled
 	}
 	return result
 }
@@ -554,6 +566,13 @@ func ParseDSN(dsn string) (UserConfig, error) {
 			return UserConfig{}, err
 		}
 		ucfg.EnableGeoSpatialSupportDSN = &enableGeoSpatialSupport
+	}
+
+	if enabled, ok, err := params.extractAsBool("enableHttp2"); ok {
+		if err != nil {
+			return UserConfig{}, err
+		}
+		ucfg.EnableHTTP2DSN = &enabled
 	}
 
 	// Telemetry parameters
