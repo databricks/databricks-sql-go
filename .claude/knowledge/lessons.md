@@ -1,6 +1,6 @@
 # Lessons
 
-<!-- distilled-through: none -->
+<!-- distilled-through: 2026-11-18 -->
 
 ## Configuration and authentication
 - L-0001 (1×, #446): Verify kernel session parameters and proxies separately from Thrift: kernel allowlists configuration keys and supports HTTP(S) proxies, while Thrift may accept additional keys/schemes.
@@ -15,7 +15,7 @@
 - L-0010 (1×, #479): Validate configuration before cache short-circuits so errors do not depend on global cache state.
 - L-0011 (1×, #485): Match URI schemes case-insensitively with the colon delimiter, then verify the chosen backend accepts the scheme.
 - L-0012 (1×, #484): Functional options storing pointers must allocate a fresh copy inside each application; test reusing one option across two independently mutable objects.
-- L-0013 (2×, #484 #497): Use optional/pointer values when omitted differs from explicit zero/false, including client overrides of server rollout flags.
+- L-0013 (3×, #566 #497 #484): Use optional/pointer values or Set flags (set in every entry point and kept by DeepCopy) when omitted differs from explicit zero/false/default, e.g. server rollout overrides or Thrift-prefilled defaults.
 - L-0014 (1×, #493): Inject broad default OAuth scopes only for an empty caller scope set; never append them to explicit restricted scopes.
 - L-0015 (1×, #493): Check complementary ABI setters before declaring a backend option unsupported because one primary setter lacks the argument.
 - L-0016 (1×, #496): Typed JSON flag getters require stored JSON literals; producers must encode strings/lists and document this representation.
@@ -23,6 +23,8 @@
 - L-0018 (1×, #536): buildKernelConfig also serves Thrift Reyden recovery. Test newly active options through openSessionWithReydenFallback and document changed shared-DSN behavior.
 - L-0019 (1×, #539): Avoid adjacent same-typed boolean parameters controlling ownership; use distinct types/options and derive combined lifecycle state in one place.
 - L-0020 (1×, #556): Check integer duration values against MinInt64/unit and MaxInt64/unit before multiplication; report overflow with the parameter name.
+- L-0060 [phase=review] (1×, #566): Kernel applies case variants of client-only session-conf keys in sorted byte order, so the canonical lowercase key wins; check pinned session.rs before flagging map-order nondeterminism.
+- L-0061 (1×, #566): Forwarding a formerly inert option to a backend is a behavior change: label it so in CHANGELOG, explain the effect of existing tuned values, and test set values, not only unset.
 
 ## Native boundaries and lifecycle
 - L-0021 (1×, #450): Never place fabricated Go pointers or cgo.Handle values into C pointer slots. Use NULL with a global sink or a real C allocation.
