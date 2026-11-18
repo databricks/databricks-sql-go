@@ -65,30 +65,6 @@ func Append(dst []byte, v any) ([]byte, error) {
 	return append(dst, b...), nil
 }
 
-// MapKey returns the scalar to encode for a MAP key. Non-finite float keys keep
-// the Go spellings used by the kernel renderer before values supported them.
-func MapKey(v any) any {
-	var f float64
-	switch value := v.(type) {
-	case float32:
-		f = float64(value)
-	case float64:
-		f = value
-	default:
-		return v
-	}
-	if math.IsNaN(f) {
-		return "NaN"
-	}
-	if math.IsInf(f, 0) {
-		if f < 0 {
-			return "-Inf"
-		}
-		return "+Inf"
-	}
-	return v
-}
-
 // appendFloat quotes non-finite values to keep valid SQL floats distinct from
 // SQL NULL in JSON. Finite values retain encoding/json's ES6-style formatting.
 func appendFloat(dst []byte, f float64, bits int) []byte {

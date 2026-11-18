@@ -111,7 +111,17 @@ func TestNonFiniteFloatRendering(t *testing.T) {
 					}
 					b.ItemBuilder().(*array.StringBuilder).AppendValues(names, nil)
 					return b.NewArray()
-				}, `{"1.5":"finite","NaN":"nan","+Inf":"positive","-Inf":"negative"}`},
+				}, `{"1.5":"finite","NaN":"nan","Infinity":"positive","-Infinity":"negative"}`},
+				{"map_same_key_and_value", func() arrow.Array {
+					b := array.NewMapBuilder(pool, dt, dt, false)
+					defer b.Release()
+					b.Append(true)
+					for _, value := range values[1:4] {
+						appendValue(b.KeyBuilder(), value)
+						appendValue(b.ItemBuilder(), value)
+					}
+					return b.NewArray()
+				}, `{"NaN":"NaN","Infinity":"Infinity","-Infinity":"-Infinity"}`},
 				{"struct", func() arrow.Array {
 					fields := make([]arrow.Field, 0, len(names)+1)
 					for _, name := range append(names, "null") {

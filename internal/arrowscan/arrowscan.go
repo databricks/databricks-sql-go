@@ -587,7 +587,6 @@ func writeStructJSON(b *strings.Builder, s *array.Struct, row int, loc *time.Loc
 // base64 "YWJj", NOT fmt "%v" [97 98 99]), then quote-wrap the result if it is
 // not already a JSON string (numbers/bools become "7"/"true" keys).
 func writeJSONKey(b *strings.Builder, v any) {
-	v = jsonfmt.MapKey(v)
 	// A time.Time key renders as its quoted .String() (same special-case as
 	// writeScalarJSON / the Thrift marshalScalar), not RFC3339.
 	if t, ok := v.(time.Time); ok {

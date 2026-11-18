@@ -381,8 +381,8 @@ strings `"NaN"`, `"Infinity"`, and `"-Infinity"`, distinct from SQL NULL (`null`
 Finite values remain JSON numbers. Use `any` or a custom decoder for fields that
 can contain special values; `encoding/json` does not unmarshal these strings into
 plain `float32` or `float64` fields. Top-level FLOAT / DOUBLE values remain numeric.
-Non-finite floating-point MAP keys retain the Go spellings `"NaN"`, `"+Inf"`, and
-`"-Inf"` already used by the kernel backend.
+Non-finite floating-point MAP keys use the same `"NaN"`, `"Infinity"`, and
+`"-Infinity"` spellings.
 
 | SQL type | Go value | NULL detection |
 |---|---|---|

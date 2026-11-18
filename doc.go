@@ -562,7 +562,7 @@ arrays, maps, and structs. Nested non-finite FLOAT and DOUBLE values are represe
 "NaN", "Infinity", and "-Infinity", distinct from SQL NULL (null). Finite values remain JSON numbers.
 Use any or a custom decoder for fields that can contain special values; encoding/json cannot unmarshal
 these strings into plain float fields. Top-level FLOAT and DOUBLE values remain numeric. Non-finite
-floating-point MAP keys retain the kernel backend's Go spellings "NaN", "+Inf", and "-Inf". For example:
+floating-point MAP keys use the same "NaN", "Infinity", and "-Infinity" spellings. For example:
 
 	type structVal struct {
 			StringField string `json:"string_field"`

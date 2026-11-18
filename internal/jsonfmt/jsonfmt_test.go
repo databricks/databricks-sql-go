@@ -126,21 +126,6 @@ func TestAppendNonFiniteFloats(t *testing.T) {
 	}
 }
 
-func TestMapKeyPreservesEncoding(t *testing.T) {
-	values := []any{nil, true, int32(7), int64(-9), "NaN", "+Inf", "key", float32(1.5),
-		float32(math.Copysign(0, -1)), 1.5, math.Copysign(0, -1), math.MaxFloat64}
-	for _, value := range values {
-		want, err := json.Marshal(value)
-		if err != nil {
-			t.Fatal(err)
-		}
-		got, err := Append(nil, MapKey(value))
-		if err != nil || string(got) != string(want) {
-			t.Errorf("MapKey(%v): got %q, %v; want %s", value, got, err, want)
-		}
-	}
-}
-
 func TestAppendKeepsPrefix(t *testing.T) {
 	got, err := Append([]byte("["), int32(7))
 	if err != nil || string(got) != "[7" {
@@ -168,8 +153,10 @@ func TestAppendFastPathDoesNotAllocate(t *testing.T) {
 // jsonfmt appends into a reused buffer, as both renderers do.
 func BenchmarkAppendScalars(b *testing.B) {
 	// The escaped string and []byte take json.Marshal's fallback.
+	// Non-finite floats are left out: encoding/json rejects them, so including them
+	// would compare a fast-path append against an error path.
 	values := []any{int32(42), int64(-9000), 3.14, 0.30000000000000004, float32(0.5), true, "alpha0", "café crème",
-		`a"b`, []byte("abc"), math.NaN()}
+		`a"b`, []byte("abc")}
 	b.Run("jsonfmt", func(b *testing.B) {
 		b.ReportAllocs()
 		buf := make([]byte, 0, 64)
