@@ -718,7 +718,7 @@ func WithEnableGeoSpatialSupport(enabled bool) ConnOption {
 // WithEnableHTTP2 controls HTTPS protocol negotiation on the kernel backend.
 // The kernel defaults to HTTP/2 with HTTP/1.1 fallback. False forces HTTP/1.1
 // for all kernel-owned HTTPS requests, including authentication and downloads.
-// Configured proxies force HTTP/1.1 for the entire kernel client.
+// Configured proxies, including environment proxy variables, force HTTP/1.1 for the entire kernel client.
 // The Thrift backend rejects this option. DSN: enableHttp2=false.
 func WithEnableHTTP2(enabled bool) ConnOption {
 	return func(c *config.Config) {
