@@ -7,11 +7,28 @@ import (
 	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
+	"strings"
 	"testing"
 	"time"
 )
 
 func TestKernelHTTPSProtocolNegotiation(t *testing.T) {
+	const child = "DATABRICKS_HTTP2_DIRECT_TEST"
+	if os.Getenv(child) != "1" {
+		command := exec.Command(os.Args[0], "-test.run=^TestKernelHTTPSProtocolNegotiation$", "-test.v") //nolint:gosec // Re-executes this test binary only.
+		command.Env = append(os.Environ(), child+"=1",
+			"HTTP_PROXY=", "http_proxy=", "HTTPS_PROXY=", "https_proxy=", "ALL_PROXY=", "all_proxy=")
+		output, err := command.CombinedOutput()
+		if err != nil {
+			t.Fatalf("protocol helper failed: %v\n%s", err, output)
+		}
+		if strings.Count(string(output), "--- PASS: TestKernelHTTPSProtocolNegotiation/") != 4 {
+			t.Fatalf("protocol helper did not pass all four cases:\n%s", output)
+		}
+		return
+	}
 	for _, tc := range []struct {
 		name        string
 		serverHTTP2 bool
