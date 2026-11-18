@@ -120,15 +120,11 @@ func newKernelRows(ctx context.Context, op *kernelOp, stream *C.kernel_result_st
 	// the Databricks type name / scan type / length matching the Thrift path
 	// (PECOBLR-3692) with no per-call work. Kept in lockstep with the value scanner
 	// (ScanCellCached) via the shared arrowscan.ColumnTypeInfoFor mapper.
-	r.colTypes = make([]arrowscan.ColumnTypeInfo, len(fields))
+	r.colTypes = columnTypeInfos(fields, op.variantTypeName)
 	r.geoBinary = make([]bool, len(fields))
 	r.ntz = timestampNTZColumns(fields)
 	for i, f := range fields {
 		r.cols[i] = f.Name
-		r.colTypes[i] = arrowscan.ColumnTypeInfoForField(f)
-		if op.variantTypeName {
-			r.colTypes[i] = arrowscan.ApplyVariantTypeName(r.colTypes[i], f)
-		}
 		r.geoBinary[i] = arrowscan.IsBinaryGeospatialField(f)
 	}
 	// Construction succeeded — now arm the close telemetry callback so a normal
