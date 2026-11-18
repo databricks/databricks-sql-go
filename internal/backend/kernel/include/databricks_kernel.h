@@ -367,7 +367,7 @@ KernelStatusCode kernel_session_config_set_sea_response_compression_enabled(
     KernelSessionConfig* config, bool enabled);
 
 /* Negotiate HTTP/2 over HTTPS with HTTP/1.1 fallback (enabled by default).
- * Set enabled=false to force HTTP/1.1 for all kernel-owned HTTPS requests. */
+ * False or a configured proxy forces HTTP/1.1 for all kernel-owned HTTPS requests. */
 KernelStatusCode kernel_session_config_set_http2_enabled(KernelSessionConfig* config,
                                                          bool enabled);
 
