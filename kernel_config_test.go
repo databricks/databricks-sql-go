@@ -121,7 +121,6 @@ func TestValidateKernelConfig(t *testing.T) {
 	}{
 		{"query timeout", func(c *config.Config) { c.QueryTimeout = 30 * time.Second }},
 		{"non-https protocol", func(c *config.Config) { c.Protocol = "http" }},
-		{"non-default port", func(c *config.Config) { c.Port = 8443 }},
 		{"custom transport", func(c *config.Config) { c.Transport = http.DefaultTransport }},
 	}
 	for _, tc := range rejections {
@@ -443,10 +442,11 @@ var kernelConfigFieldDisposition = map[string]string{
 	"Schema":  "forwarded",
 
 	// Rejected loudly by validateKernelConfig.
-	"QueryTimeout": "rejected", // when > 0 (WithTimeout)
-	"Protocol":     "rejected", // kernel is https-only; non-default rejected
-	"Port":         "rejected", // kernel connects on 443; non-default rejected
-	"Transport":    "rejected", // custom RoundTripper; kernel uses its own HTTP stack, so reject rather than drop
+	"QueryTimeout": "rejected",  // when > 0 (WithTimeout)
+	"Protocol":     "rejected",  // kernel is https-only; non-default rejected
+	"Port":         "forwarded", // folded into the kernel Host by kernelHostWithPort; validated by validateKernelHostPort
+	"PortExplicit": "forwarded", // set by WithPort / the DSN; consumed by validation, not sent to the kernel
+	"Transport":    "rejected",  // custom RoundTripper; kernel uses its own HTTP stack, so reject rather than drop
 
 	// Forwarded to the kernel's HTTP retry config via kernelRetryConfig →
 	// set_retry_config (WithRetries: backoff bounds + max attempts, incl. disable).
@@ -969,6 +969,86 @@ func TestKernelRetryConfig(t *testing.T) {
 		}
 		if r.MaxRetries != 5 {
 			t.Errorf("MaxRetries = %d, want 5 (attempt count preserved)", r.MaxRetries)
+		}
+	})
+}
+
+// TestKernelCustomPort covers WithPort on the kernel backend (AC-P1, AC-P3): a non-default port is
+// folded into the kernel Host, 0 and 443 add nothing, and an out-of-range port, unbalanced IPv6
+// brackets, or a supplied port that disagrees with an embedded port is rejected with
+// ErrInvalidKernelConfig.
+func TestKernelCustomPort(t *testing.T) {
+	cases := []struct {
+		name     string
+		host     string
+		port     int
+		explicit bool
+		wantHost string // kernelHostWithPort result for an accepted pair
+		wantErr  bool
+	}{
+		{"default 443 adds nothing", "h.databricks.com", 443, false, "h.databricks.com", false},
+		{"unset port adds nothing", "h.databricks.com", 0, false, "h.databricks.com", false},
+		{"custom port", "h.databricks.com", 8443, false, "h.databricks.com:8443", false},
+		{"IPv4 literal", "127.0.0.1", 8443, false, "127.0.0.1:8443", false},
+		{"bare IPv6 is bracketed", "::1", 8443, false, "[::1]:8443", false},
+		{"bracketed IPv6", "[::1]", 8443, false, "[::1]:8443", false},
+		{"port 1", "h.databricks.com", 1, false, "h.databricks.com:1", false},
+		{"port 65535", "h.databricks.com", 65535, false, "h.databricks.com:65535", false},
+		{"embedded port equal", "h.databricks.com:8443", 8443, true, "h.databricks.com:8443", false},
+		{"embedded port equal, IPv6", "[::1]:8443", 8443, true, "[::1]:8443", false},
+		{"unset 443 defers to embedded", "h.databricks.com:8443", 443, false, "h.databricks.com:8443", false},
+		{"explicit 443 matches embedded", "h.databricks.com:443", 443, true, "h.databricks.com:443", false},
+		{"explicit 443 conflicts with embedded", "h.databricks.com:8443", 443, true, "", true},
+		{"negative port", "h.databricks.com", -1, false, "", true},
+		{"port above range", "h.databricks.com", 65536, false, "", true},
+		{"embedded port differs", "h.databricks.com:7000", 8443, false, "", true},
+		{"embedded port differs, IPv6", "[::1]:7000", 8443, false, "", true},
+		{"embedded port not a number", "h.databricks.com:notaport", 8443, false, "", true},
+		{"embedded port out of range", "h.databricks.com:70000", 0, false, "", true},
+		{"embedded port zero", "h.databricks.com:0", 0, false, "", true},
+		{"unclosed IPv6 bracket", "[::1", 8443, false, "", true},
+		{"text after IPv6 bracket", "[::1]x", 8443, false, "", true},
+		{"stray closing bracket", "h.databricks.com]", 8443, false, "", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateKernelHostPort(tc.host, tc.port, tc.explicit)
+			if tc.wantErr {
+				if !errors.Is(err, dbsqlerr.ErrInvalidKernelConfig) {
+					t.Errorf("err = %v, want ErrInvalidKernelConfig", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Errorf("unexpected err %v", err)
+			}
+			if got := kernelHostWithPort(tc.host, tc.port); got != tc.wantHost {
+				t.Errorf("kernelHostWithPort(%q, %d) = %q, want %q", tc.host, tc.port, got, tc.wantHost)
+			}
+		})
+	}
+
+	t.Run("explicit WithPort(443) conflicting with an embedded port is rejected", func(t *testing.T) {
+		c := baseKernelConfig()
+		c.Host = "h.databricks.com:8443"
+		WithPort(443)(c)
+		if _, err := validateKernelConfig(c); !errors.Is(err, dbsqlerr.ErrInvalidKernelConfig) {
+			t.Errorf("err = %v, want ErrInvalidKernelConfig", err)
+		}
+	})
+
+	t.Run("kernel Host: unset port keeps the embedded port, custom port folds in", func(t *testing.T) {
+		c := baseKernelConfig()
+		c.Host = "h.databricks.com:8443"
+		kauth, err := validateKernelConfig(c)
+		if err != nil || buildKernelConfig(c, kauth).Host != "h.databricks.com:8443" {
+			t.Errorf("embedded port: err=%v host=%q", err, buildKernelConfig(c, kauth).Host)
+		}
+		c = baseKernelConfig()
+		WithPort(8443)(c)
+		kauth, err = validateKernelConfig(c)
+		if err != nil || buildKernelConfig(c, kauth).Host != "h.databricks.com:8443" {
+			t.Errorf("WithPort(8443): err=%v host=%q", err, buildKernelConfig(c, kauth).Host)
 		}
 	})
 }

@@ -240,7 +240,7 @@ session parameter on both backends.
 |---|---|---|---|---|
 | *(host)* | `WithServerHostname` | Both | *(required)* | Workspace hostname. |
 | *(path)* | `WithHTTPPath` | Both | *(required)* | Warehouse/endpoint HTTP path. |
-| *(port)* | `WithPort` | Thrift only | `443` | Kernel connects on **443 only** and rejects any other port. |
+| *(port)* | `WithPort` | Both | `443` | Kernel folds a non-default port into the host it connects to; an out-of-range or conflicting port is rejected at connect. With OAuth the kernel uses the same `host:port` for its OAuth endpoints; Thrift keeps OAuth on the bare host. |
 | `warehouseId` | `WithWarehouseID` | SEA only | | Bare warehouse id; the kernel routes by it (preferred over the HTTP path). **The Thrift backend ignores it.** |
 | `catalog` | `WithInitialNamespace` | Both | | Initial catalog. Kernel applies it post-connect via `USE CATALOG`. |
 | `schema` | `WithInitialNamespace` | Both | | Initial schema. Kernel applies it post-connect via `USE SCHEMA`. |

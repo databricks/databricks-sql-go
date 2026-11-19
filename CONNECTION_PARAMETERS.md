@@ -40,7 +40,7 @@ wire. They are listed under [Kernel client-result confs](#kernel-client-result-c
 |---|---|:---:|:---:|---|---|
 | *(host)* | `WithServerHostname` | ✅ | ✅ | *(required)* | Workspace hostname. |
 | *(path)* | `WithHTTPPath` | ✅ | ✅ | required on Thrift except localhost; required on kernel unless `warehouseId` is set | Warehouse/endpoint HTTP path. On the kernel path, a bare warehouse id can be used instead. |
-| *(port)* | `WithPort` | ✅ | ⚠️ | `443` for connector options; required in a DSN | Kernel accepts **443 only** and rejects any other port. |
+| *(port)* | `WithPort` | ✅ | ✅ | `443` for connector options; required in a DSN | Kernel folds a non-default port into the host it connects to; an out-of-range or conflicting port (including an explicit `WithPort(443)` against a host port) is rejected at connect. With OAuth the kernel uses the same `host:port` for its OAuth endpoints; Thrift keeps OAuth on the bare host. |
 | *(scheme)* | *(via `WithServerHostname`)* | ✅ | ⚠️ | `https` | Kernel accepts `https` only and rejects `http`. A bare `localhost` passed to `WithServerHostname` selects `http`; a scheme-less DSN, including localhost, is prefixed with `https`. |
 | `warehouseId` | `WithWarehouseID` | ⚠️ | ✅ | | Bare warehouse id. The kernel normally prefers it over the HTTP path; a canonical path carrying `?o=` takes precedence so workspace-org routing is preserved. The Thrift backend **silently ignores** it. |
 | `catalog` | `WithInitialNamespace` | ✅ | ✅ | | Initial catalog. Kernel applies it post-connect via `USE CATALOG`. |

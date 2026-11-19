@@ -265,9 +265,12 @@ func (c *Config) DeepCopy() *Config {
 
 // UserConfig is the set of configurations exposed to users
 type UserConfig struct {
-	Protocol       string
-	Host           string // from databricks UI
-	Port           int    // from databricks UI
+	Protocol string
+	Host     string // from databricks UI
+	Port     int    // from databricks UI
+	// PortExplicit is true once WithPort or the DSN supplied Port (WithDefaults fills 443 otherwise).
+	// Internal only: kernel validation uses it to reject an explicit port that conflicts with a host port.
+	PortExplicit   bool
 	HTTPPath       string // from databricks UI
 	Catalog        string
 	Schema         string
@@ -342,6 +345,7 @@ func (ucfg UserConfig) DeepCopy() UserConfig {
 		Protocol:                 ucfg.Protocol,
 		Host:                     ucfg.Host,
 		Port:                     ucfg.Port,
+		PortExplicit:             ucfg.PortExplicit,
 		HTTPPath:                 ucfg.HTTPPath,
 		Catalog:                  ucfg.Catalog,
 		Schema:                   ucfg.Schema,
@@ -455,6 +459,7 @@ func ParseDSN(dsn string) (UserConfig, error) {
 		return UserConfig{}, dbsqlerrint.NewRequestError(context.TODO(), dbsqlerr.ErrInvalidDSNPort, err)
 	}
 	ucfg.Port = port
+	ucfg.PortExplicit = true
 
 	ucfg.HTTPPath = parsedURL.Path
 

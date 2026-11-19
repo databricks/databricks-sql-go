@@ -21,6 +21,7 @@ func TestOOpenConnector(t *testing.T) {
 		expectedUserConfig := config.UserConfig{
 			Host:          host,
 			Port:          port,
+			PortExplicit:  true,
 			Protocol:      "https",
 			AccessToken:   accessToken,
 			HTTPPath:      "/" + httpPath,

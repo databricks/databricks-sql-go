@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"strconv"
 	"strings"
@@ -73,18 +74,14 @@ func validateKernelConfigContext(ctx context.Context, cfg *config.Config) (kerne
 	// folds its server conf (spark.sql.thriftserver.metadata.metricview.enabled=true)
 	// into SessionConf backend-neutrally, so the kernel path sends the identical conf
 	// the Thrift path does. No per-backend handling needed here.
-	// Port / Protocol: the kernel C ABI takes only a bare host and connects over
-	// https:443; it has no port or scheme setter. The Thrift path honors a custom
-	// port/scheme via ToEndpointURL, so a non-default value here would be silently
-	// ignored on the kernel path (it would just hit 443) — reject it instead, per
-	// the "nothing silently ignored" contract. Defaults (https/443) are fine.
+	// Protocol: the kernel always connects over https, so a non-https value would be ignored.
 	if cfg.Protocol != "" && cfg.Protocol != "https" {
 		return kernel.Auth{}, fmt.Errorf("databricks: a non-https protocol is %w "+
 			"(it connects over https); use the default (Thrift) backend", dbsqlerr.ErrNotSupportedByKernel)
 	}
-	if cfg.Port != 0 && cfg.Port != 443 {
-		return kernel.Auth{}, fmt.Errorf("databricks: a non-default port (WithPort) is %w "+
-			"(it connects on 443); omit it or use the default (Thrift) backend", dbsqlerr.ErrNotSupportedByKernel)
+	// Port: the kernel folds host:port (see kernelHostWithPort); reject a bad port or a conflict here.
+	if err := validateKernelHostPort(cfg.Host, cfg.Port, cfg.PortExplicit); err != nil {
+		return kernel.Auth{}, err
 	}
 	// Transport (WithTransport, a custom http.RoundTripper carrying a custom CA
 	// bundle / mTLS / proxy): the kernel uses its own Rust HTTP stack below the C
@@ -155,7 +152,7 @@ func validateKernelConfigContext(ctx context.Context, cfg *config.Config) (kerne
 // with newKernelBackend's kernel.Config assembly.
 func buildKernelConfig(cfg *config.Config, kauth kernel.Auth) kernel.Config {
 	kc := kernel.Config{
-		Host:        cfg.Host,
+		Host:        kernelHostWithPort(cfg.Host, cfg.Port),
 		HTTPPath:    cfg.HTTPPath,
 		WarehouseID: cfg.WarehouseID,
 		Auth:        kauth,
@@ -237,6 +234,57 @@ func buildKernelConfig(cfg *config.Config, kauth kernel.Auth) kernel.Config {
 	// nil leaves the kernel's own default policy in place.
 	kc.Retry = kernelRetryConfig(cfg)
 	return kc
+}
+
+// unbalancedBrackets reports a host whose IPv6 brackets do not pair up: an unclosed `[`, text
+// after the closing `]` other than a `:port`, or a stray bracket in a plain name.
+func unbalancedBrackets(host string) bool {
+	if !strings.HasPrefix(host, "[") {
+		return strings.ContainsAny(host, "[]")
+	}
+	end := strings.IndexByte(host, ']')
+	return end < 0 || (end+1 < len(host) && host[end+1] != ':')
+}
+
+// validateKernelHostPort rejects an out-of-range port, a host with unbalanced IPv6 brackets, and a
+// supplied port that disagrees with a port embedded in the host. explicit is true when WithPort or
+// the DSN set the port. WithDefaults fills 443 otherwise, so an unset 443 defers to the embedded port.
+func validateKernelHostPort(host string, port int, explicit bool) error {
+	if port < 0 || port > 65535 {
+		return fmt.Errorf("databricks: WithPort %d is out of range (want 1..65535): %w", port, dbsqlerr.ErrInvalidKernelConfig)
+	}
+	if unbalancedBrackets(host) {
+		return fmt.Errorf("databricks: host %q has unbalanced IPv6 brackets: %w", host, dbsqlerr.ErrInvalidKernelConfig)
+	}
+	_, p, err := net.SplitHostPort(host)
+	if err != nil {
+		return nil // no embedded port
+	}
+	embedded, err := strconv.Atoi(p)
+	if err != nil || embedded < 1 || embedded > 65535 {
+		return fmt.Errorf("databricks: host %q carries an invalid port %q (want 1..65535): %w", host, p, dbsqlerr.ErrInvalidKernelConfig)
+	}
+	if supplied := port != 0 && (explicit || port != 443); supplied && port != embedded {
+		return fmt.Errorf("databricks: host %q carries port %d but WithPort is %d: %w", host, embedded, port, dbsqlerr.ErrInvalidKernelConfig)
+	}
+	return nil
+}
+
+// kernelHostWithPort returns the Host the kernel connects to. The kernel has no port setter but
+// keeps a `host:port` authority, so a non-default port is folded in (IPv6-safe). 0 and 443 add
+// nothing, and a host that already carries a port is returned unchanged.
+func kernelHostWithPort(host string, port int) string {
+	if port == 0 || port == 443 {
+		return host
+	}
+	if _, _, err := net.SplitHostPort(host); err == nil {
+		return host
+	}
+	name := host
+	if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
+		name = host[1 : len(host)-1]
+	}
+	return net.JoinHostPort(name, strconv.Itoa(port))
 }
 
 func kernelTelemetryConfig(cfg *config.Config) *kernel.TelemetryConfig {

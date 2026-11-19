@@ -174,6 +174,7 @@ func TestNewConnector(t *testing.T) {
 		expectedUserConfig := config.UserConfig{
 			Host:             host,
 			Port:             port,
+			PortExplicit:     true,
 			Protocol:         "https",
 			AccessToken:      accessToken,
 			Authenticator:    &pat.PATAuth{AccessToken: accessToken},
