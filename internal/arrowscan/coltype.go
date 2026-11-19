@@ -71,8 +71,11 @@ func ColumnTypeInfoFor(dt arrow.DataType) ColumnTypeInfo {
 	case arrow.FLOAT64:
 		return ColumnTypeInfo{DatabaseTypeName: "DOUBLE", ScanType: scanTypeFloat64}
 	case arrow.STRING, arrow.LARGE_STRING:
-		// STRING covers VARCHAR/CHAR/VARIANT/GEOMETRY/GEOGRAPHY too — all arrive as
-		// Arrow Utf8, and the Thrift path collapses them to STRING as well.
+		// STRING covers VARCHAR/CHAR/GEOMETRY/GEOGRAPHY too — all arrive as Arrow
+		// Utf8, and the Thrift path collapses them to STRING as well. VARIANT also
+		// arrives as Utf8, but only its field metadata identifies it, so
+		// ColumnTypeInfoForField (not this DataType-only mapping) reports VARIANT
+		// on both backends.
 		return varLen("STRING", scanTypeString)
 	case arrow.BINARY:
 		return varLen("BINARY", scanTypeRawBytes)

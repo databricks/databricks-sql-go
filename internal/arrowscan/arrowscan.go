@@ -1,10 +1,12 @@
 // Package arrowscan converts Arrow array cells to database/sql driver.Values,
-// with nested types (List/Map/Struct, and VARIANT which arrives nested) rendered
-// to a JSON string byte-identical to the Thrift arrow path
-// (internal/rows/arrowbased). It is pure Go (no cgo), so it is shared by the
-// kernel backend and testable in the default CGO_ENABLED=0 build — the tests here
-// are the regression guard for the exact rendering rules (native float32, exact
-// decimals, time.Time formatting, JSON grammar) both backends must agree on.
+// with nested types (List/Map/Struct) rendered to a JSON string byte-identical
+// to the Thrift arrow path (internal/rows/arrowbased). VARIANT arrives as a
+// string column of JSON text and scans as that string; only its field metadata
+// marks it as VARIANT (see IsVariantField). It is pure Go (no cgo), so it is
+// shared by the kernel backend and testable in the default CGO_ENABLED=0 build —
+// the tests here are the regression guard for the exact rendering rules (native
+// float32, exact decimals, time.Time formatting, JSON grammar) both backends must
+// agree on.
 //
 // Rendering to JSON (not a Go map/slice) is deliberate: it is what the Thrift
 // path returns, so a query's result is identical across backends.
@@ -38,8 +40,8 @@ import (
 // bool, all int/uint widths, float (native float32/float64), string, binary,
 // date, time, timestamp, and top-level decimal (as an exact fixed-point string,
 // matching the Thrift path — a float64 would lose precision beyond ~17 digits).
-// Nested types (List/Map/Struct, and VARIANT which
-// arrives nested) render to a JSON string byte-identical to the Thrift path.
+// Nested types (List/Map/Struct) render to a JSON string byte-identical to the
+// Thrift path. VARIANT arrives as a string column and scans as its JSON text.
 // Top-level binary GEOMETRY / GEOGRAPHY is selected explicitly through
 // ScanOptions and combines its SRID and WKB children into EWKB []byte; string
 // mode is handled by the regular string arm. INTERVAL
@@ -272,8 +274,8 @@ func scanCell(col arrow.Array, row int, loc *time.Location, keys *StructKeyCache
 		// "years-months".
 		return formatYearMonthInterval(int32(c.Value(row))), nil
 	case *array.List, *array.LargeList, *array.FixedSizeList, *array.Map, *array.Struct:
-		// Nested types (and VARIANT, which arrives as a nested value) render to a
-		// JSON string matching the Thrift path.
+		// Nested types render to a JSON string matching the Thrift path. VARIANT is
+		// not among them: it arrives as a string column and takes the string arm.
 		return renderJSONString(col, row, loc, keys)
 	default:
 		return nil, fmt.Errorf("scanning arrow type %s is not supported", col.DataType())
