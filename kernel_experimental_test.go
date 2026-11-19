@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/databricks/databricks-sql-go/internal/backend/kernel"
 	"github.com/databricks/databricks-sql-go/internal/config"
 
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
@@ -27,7 +28,7 @@ import (
 // deliberate decision and a setter in KernelBackend.OpenSession so it can't be
 // silently dropped.
 var kernelExperimentalFieldDisposition = map[string]string{
-	"EnableHTTP2":             "forwarded",
+	"EnableHTTP2":             "forwarded", // set_http2_enabled
 	"TLSTrustedCertsPEM":      "forwarded", // set_tls_trusted_certs
 	"TLSClientCertPEM":        "forwarded", // set_tls_client_certificate (cert)
 	"TLSClientKeyPEM":         "forwarded", // set_tls_client_certificate (key)
@@ -71,6 +72,13 @@ func TestKernelExperimentalFieldsClassified(t *testing.T) {
 // KernelExperimental after applying a WithKernel* option is the signal the Thrift
 // branch keys off).
 func TestWithKernelTLSOptionsSetExperimental(t *testing.T) {
+	dsnOption := func(value string) ConnOption {
+		user, err := config.ParseDSN("token:test-token@example.databricks.com:443/sql/1.0/warehouses/test?enableHttp2=" + value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return withUserConfig(user)
+	}
 	cases := []struct {
 		name   string
 		opt    ConnOption
@@ -105,11 +113,20 @@ func TestWithKernelTLSOptionsSetExperimental(t *testing.T) {
 		{"disable geospatial support", WithEnableGeoSpatialSupport(false), func(k *config.KernelExperimentalConfig) bool {
 			return k.EnableGeoSpatialSupport != nil && !*k.EnableGeoSpatialSupport
 		}},
+		{"enable HTTP/2", WithEnableHTTP2(true), func(k *config.KernelExperimentalConfig) bool {
+			return k.EnableHTTP2 != nil && *k.EnableHTTP2
+		}},
 		{"force HTTP/1.1", WithEnableHTTP2(false), func(k *config.KernelExperimentalConfig) bool {
 			return k.EnableHTTP2 != nil && !*k.EnableHTTP2
 		}},
 		{"token cache", WithTokenCache(true), func(k *config.KernelExperimentalConfig) bool {
 			return k.TokenCacheEnabled
+		}},
+		{"HTTP/2 DSN enabled", dsnOption("true"), func(k *config.KernelExperimentalConfig) bool {
+			return k.EnableHTTP2 != nil && *k.EnableHTTP2
+		}},
+		{"HTTP/2 DSN disabled", dsnOption("false"), func(k *config.KernelExperimentalConfig) bool {
+			return k.EnableHTTP2 != nil && !*k.EnableHTTP2
 		}},
 	}
 	for _, c := range cases {
@@ -119,10 +136,32 @@ func TestWithKernelTLSOptionsSetExperimental(t *testing.T) {
 			if cfg.KernelExperimental == nil {
 				t.Fatalf("%s: KernelExperimental should be non-nil after the option", c.name)
 			}
+			if cfg.KernelExperimental.EnableHTTP2 != nil {
+				got := buildKernelConfig(cfg, kernel.Auth{}).EnableHTTP2
+				if got == nil || *got != *cfg.KernelExperimental.EnableHTTP2 {
+					t.Fatalf("buildKernelConfig lost EnableHTTP2: %v", got)
+				}
+			}
 			if !c.verify(cfg.KernelExperimental) {
 				t.Errorf("%s: option did not set the expected field(s): %+v", c.name, cfg.KernelExperimental)
 			}
 		})
+	}
+}
+
+func TestKernelHTTP2DSNDefaultAndInvalid(t *testing.T) {
+	const dsn = "token:test-token@example.databricks.com:443/sql/1.0/warehouses/test"
+	user, err := config.ParseDSN(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := baseKernelConfig()
+	withUserConfig(user)(cfg)
+	if got := buildKernelConfig(cfg, kernel.Auth{}).EnableHTTP2; got != nil {
+		t.Fatal("omitted setting must leave the kernel default in effect")
+	}
+	if _, err := config.ParseDSN(dsn + "?enableHttp2=invalid"); err == nil {
+		t.Fatal("invalid enableHttp2 must fail parsing")
 	}
 }
 
@@ -185,6 +224,8 @@ func TestWithKernelOptionsRejectedOnThriftPath(t *testing.T) {
 	for _, dsn := range []string{
 		"token:supersecret@example.cloud.databricks.com:443/sql/1.0/endpoints/12346a5b5b0e123a?enableGeoSpatialSupport=true",
 		"token:supersecret@example.cloud.databricks.com:443/sql/1.0/endpoints/12346a5b5b0e123a?enableGeoSpatialSupport=false",
+		"token:supersecret@example.cloud.databricks.com:443/sql/1.0/endpoints/12346a5b5b0e123a?enableHttp2=true",
+		"token:supersecret@example.cloud.databricks.com:443/sql/1.0/endpoints/12346a5b5b0e123a?enableHttp2=false",
 	} {
 		ucfg, err := config.ParseDSN(dsn)
 		if err != nil {
@@ -247,6 +288,7 @@ func TestWithKernelClientCertificateCopiesPEM(t *testing.T) {
 func TestKernelExperimentalDeepCopy(t *testing.T) {
 	maxConnections := 37
 	enableGeoSpatialSupport := false
+	enableHTTP2 := false
 	orig := &config.KernelExperimentalConfig{
 		TLSTrustedCertsPEM:      []byte("ca-bundle"),
 		TLSClientCertPEM:        []byte("client-cert"),
@@ -261,6 +303,7 @@ func TestKernelExperimentalDeepCopy(t *testing.T) {
 		MaxConnections:          &maxConnections,
 		MaxChunksInMemory:       4,
 		EnableGeoSpatialSupport: &enableGeoSpatialSupport,
+		EnableHTTP2:             &enableHTTP2,
 		TokenCacheEnabled:       true,
 	}
 	cp := orig.DeepCopy()
@@ -286,6 +329,22 @@ func TestKernelExperimentalDeepCopy(t *testing.T) {
 		t.Errorf("DeepCopy lost EnableGeoSpatialSupport: %v", cp.EnableGeoSpatialSupport)
 	} else if cp.EnableGeoSpatialSupport == orig.EnableGeoSpatialSupport {
 		t.Error("DeepCopy aliased EnableGeoSpatialSupport pointer")
+	}
+	if cp.EnableHTTP2 == nil || *cp.EnableHTTP2 {
+		t.Fatalf("DeepCopy lost EnableHTTP2: %v", cp.EnableHTTP2)
+	}
+	*cp.EnableHTTP2 = true
+	if *orig.EnableHTTP2 {
+		t.Error("DeepCopy aliased EnableHTTP2 pointer")
+	}
+	user := config.UserConfig{EnableHTTP2DSN: &enableHTTP2}
+	userCopy := user.DeepCopy()
+	if userCopy.EnableHTTP2DSN == nil || *userCopy.EnableHTTP2DSN {
+		t.Fatalf("DeepCopy lost EnableHTTP2DSN: %v", userCopy.EnableHTTP2DSN)
+	}
+	*userCopy.EnableHTTP2DSN = true
+	if *user.EnableHTTP2DSN {
+		t.Error("DeepCopy aliased EnableHTTP2DSN pointer")
 	}
 	if !cp.TokenCacheEnabled {
 		t.Errorf("DeepCopy lost TokenCacheEnabled: %v", cp.TokenCacheEnabled)

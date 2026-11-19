@@ -366,10 +366,10 @@ KernelStatusCode kernel_session_config_set_custom_header(KernelSessionConfig* co
 KernelStatusCode kernel_session_config_set_sea_response_compression_enabled(
     KernelSessionConfig* config, bool enabled);
 
-/* Negotiate HTTP/2 over HTTPS with HTTP/1.1 fallback (enabled by default).
- * False or a configured proxy forces HTTP/1.1 for all kernel-owned HTTPS requests. */
-KernelStatusCode kernel_session_config_set_http2_enabled(KernelSessionConfig* config,
-                                                         bool enabled);
+/* Negotiate HTTP/2 for session HTTPS requests, with HTTP/1.1 fallback.
+ * Enabled by default. False or a configured proxy forces HTTP/1.1. */
+KernelStatusCode kernel_session_config_set_http2_enabled(
+    KernelSessionConfig* config, bool enabled);
 
 /* Configure the total timeout for one HTTP request, from connection start
  * through response-body completion. A separate 30s connection timeout also

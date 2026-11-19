@@ -46,7 +46,7 @@ wire. They are listed under [Kernel client-result confs](#kernel-client-result-c
 | `catalog` | `WithInitialNamespace` | ✅ | ✅ | | Initial catalog. Kernel applies it post-connect via `USE CATALOG`. |
 | `schema` | `WithInitialNamespace` | ✅ | ✅ | | Initial schema. Kernel applies it post-connect via `USE SCHEMA`. |
 | `useKernel` | `WithUseKernel` | ✅ | ✅ | `false` | Select the SEA/kernel backend. Requires a `databricks_kernel` build. |
-| `enableHttp2` | `WithEnableHTTP2(b)` | ❌ | ✅ | `true` | Negotiate HTTP/2 for all kernel HTTPS traffic, with HTTP/1.1 fallback. `false` or an explicit/environment proxy forces HTTP/1.1, including bypassed hosts. |
+| `enableHttp2` | `WithEnableHTTP2(b)` | ❌ | ✅ | `true` | Negotiate HTTP/2 for session HTTPS traffic, with HTTP/1.1 fallback. `false` or an explicit/environment proxy forces HTTP/1.1, including bypassed hosts. Telemetry may reuse an earlier session's HTTP client for the same host. |
 
 ## Authentication
 
