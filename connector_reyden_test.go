@@ -228,7 +228,7 @@ func TestReydenReactiveRecovery(t *testing.T) {
 					"Lakehouse/RT is not supported for Thrift protocol")}, nil
 			},
 			func(ctx context.Context, cfg *config.Config) (backend.Backend, error) {
-				require.NoError(t, validateKernelHostPort(cfg.Host, cfg.Port, cfg.PortExplicit))
+				require.NoError(t, validateKernelHostPort(cfg.Host, cfg.Port))
 				kernelHost = buildKernelConfig(cfg, kernel.Auth{Mode: kernel.AuthPAT, Token: "test-token"}).Host
 				return &fakeKernelBackend{}, nil
 			},

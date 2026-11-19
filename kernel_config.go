@@ -82,7 +82,7 @@ func validateKernelConfigContext(ctx context.Context, cfg *config.Config) (kerne
 	}
 	// Port: the kernel folds host:port (see kernelHostWithPort); reject a bad port or host here. An
 	// embedded host port wins over a differing WithPort, with a warning rather than an error.
-	if err := validateKernelHostPort(cfg.Host, cfg.Port, cfg.PortExplicit); err != nil {
+	if err := validateKernelHostPort(cfg.Host, cfg.Port); err != nil {
 		return kernel.Auth{}, err
 	}
 	warnEmbeddedPortWins(cfg.Host, cfg.Port)
@@ -255,19 +255,24 @@ func normaliseKernelHost(host string) string {
 	return strings.TrimRight(host, "/")
 }
 
-// validateKernelHostPort rejects an out-of-range WithPort, a host with a path, query or fragment,
-// unbalanced IPv6 brackets, and an out-of-range or malformed port embedded in the host. explicit is
-// true when WithPort or the DSN set the port. WithDefaults fills 443 otherwise. A port embedded in
-// the host wins over WithPort (see warnEmbeddedPortWins), so a differing WithPort is not an error.
-func validateKernelHostPort(host string, port int, explicit bool) error {
+// validateKernelHostPort rejects an out-of-range WithPort, a non-default WithPort with a host that has
+// a path, query or fragment, unbalanced IPv6 brackets, and an out-of-range or malformed port embedded
+// in the host. WithDefaults fills 443 when no port is set. A port embedded in the host wins over
+// WithPort (see warnEmbeddedPortWins), so a differing WithPort is not an error.
+func validateKernelHostPort(host string, port int) error {
 	if port < 0 || port > 65535 {
 		return fmt.Errorf("databricks: WithPort %d is out of range (want 1..65535, or 0 for the default): %w", port, dbsqlerr.ErrInvalidKernelConfig)
 	}
 	host = normaliseKernelHost(host)
-	// A path, query or fragment after the host made the kernel URL point at the wrong place
-	// (the kernel appends /api/2.0/sql to the host), so it was never accepted.
+	// A path, query or fragment is checked before the embedded-port parse. With the default port the
+	// host goes to the kernel unchanged, as before (the kernel appends its API paths after it). A
+	// non-default port cannot be folded into such a host, and was rejected before, so reject it.
 	if strings.ContainsAny(host, "/?#") {
-		return fmt.Errorf("databricks: host %q has a path, query or fragment: %w", host, dbsqlerr.ErrInvalidKernelConfig)
+		if port != 0 && port != 443 {
+			return fmt.Errorf("databricks: host %q has a path, query or fragment, so WithPort %d cannot be applied: %w",
+				host, port, dbsqlerr.ErrInvalidKernelConfig)
+		}
+		return nil
 	}
 	if unbalancedBrackets(host) {
 		return fmt.Errorf("databricks: host %q has unbalanced IPv6 brackets: %w", host, dbsqlerr.ErrInvalidKernelConfig)

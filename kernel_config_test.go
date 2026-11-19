@@ -445,7 +445,6 @@ var kernelConfigFieldDisposition = map[string]string{
 	"QueryTimeout": "rejected",  // when > 0 (WithTimeout)
 	"Protocol":     "rejected",  // kernel is https-only; non-default rejected
 	"Port":         "forwarded", // folded into the kernel Host by kernelHostWithPort; validated by validateKernelHostPort
-	"PortExplicit": "validated", // set by WithPort / the DSN; consumed by validation, not sent to the kernel
 	"Transport":    "rejected",  // custom RoundTripper; kernel uses its own HTTP stack, so reject rather than drop
 
 	// Forwarded to the kernel's HTTP retry config via kernelRetryConfig →
@@ -973,59 +972,57 @@ func TestKernelRetryConfig(t *testing.T) {
 	})
 }
 
-// TestKernelCustomPort covers WithPort on the kernel backend (AC-P1, AC-P3): a non-default port is
-// folded into the kernel Host, 0 and 443 add nothing, and an out-of-range port, unbalanced IPv6
-// brackets, or a supplied port that disagrees with an embedded port is rejected with
-// ErrInvalidKernelConfig.
+// TestKernelCustomPort covers WithPort on the kernel backend: a non-default port is folded into the
+// kernel Host, 0 and 443 add nothing, a port embedded in the host wins, a trailing "/" is trimmed,
+// and a host with a path passes through unchanged unless a non-default port would be folded into it.
+// An out-of-range port or unbalanced IPv6 brackets are rejected with ErrInvalidKernelConfig.
 func TestKernelCustomPort(t *testing.T) {
 	cases := []struct {
 		name     string
 		host     string
 		port     int
-		explicit bool
 		wantHost string // kernelHostWithPort result for an accepted pair
 		wantErr  bool
 	}{
-		{"default 443 adds nothing", "h.databricks.com", 443, false, "h.databricks.com", false},
-		{"unset port adds nothing", "h.databricks.com", 0, false, "h.databricks.com", false},
-		{"custom port", "h.databricks.com", 8443, false, "h.databricks.com:8443", false},
-		{"IPv4 literal", "127.0.0.1", 8443, false, "127.0.0.1:8443", false},
-		{"bare IPv6 is bracketed", "::1", 8443, false, "[::1]:8443", false},
-		{"bracketed IPv6", "[::1]", 8443, false, "[::1]:8443", false},
-		{"port 1", "h.databricks.com", 1, false, "h.databricks.com:1", false},
-		{"port 65535", "h.databricks.com", 65535, false, "h.databricks.com:65535", false},
-		{"embedded port equal", "h.databricks.com:8443", 8443, true, "h.databricks.com:8443", false},
-		{"embedded port equal, IPv6", "[::1]:8443", 8443, true, "[::1]:8443", false},
-		{"unset 443 defers to embedded", "h.databricks.com:8443", 443, false, "h.databricks.com:8443", false},
-		{"explicit 443 matches embedded", "h.databricks.com:443", 443, true, "h.databricks.com:443", false},
-		{"explicit 443 differs from embedded: embedded wins", "h.databricks.com:8443", 443, true, "h.databricks.com:8443", false},
-		{"embedded port differs: embedded wins", "h.databricks.com:7000", 8443, false, "h.databricks.com:7000", false},
-		{"embedded port differs, IPv6: embedded wins", "[::1]:7000", 8443, false, "[::1]:7000", false},
-		{"trailing slash on bare host", "h.databricks.com/", 8443, false, "h.databricks.com:8443", false},
-		{"trailing slash on bare host, default port", "h.databricks.com/", 443, false, "h.databricks.com", false},
-		{"trailing slash with embedded port, default port", "h.databricks.com:8443/", 443, false, "h.databricks.com:8443", false},
-		{"trailing slash with embedded port, equal port", "h.databricks.com:8443/", 8443, true, "h.databricks.com:8443", false},
-		{"trailing slash, IPv6", "[::1]/", 8443, false, "[::1]:8443", false},
-		{"path after host", "h.databricks.com/x", 8443, false, "", true},
-		{"path with embedded port and WithPort", "h.io/path:8443", 8443, true, "", true},
-		{"path with embedded port, default port", "h.io/path:8443", 443, false, "", true},
-		{"query before embedded port", "h.io?q=1:8443", 8443, true, "", true},
-		{"explicit 443 with embedded port: embedded wins", "h.io:8443", 443, true, "h.io:8443", false},
-		{"path after host, default port", "h.databricks.com/x", 443, false, "", true},
-		{"query after host", "h.databricks.com?x", 8443, false, "", true},
-		{"fragment after host", "h.databricks.com#x", 8443, false, "", true},
-		{"negative port", "h.databricks.com", -1, false, "", true},
-		{"port above range", "h.databricks.com", 65536, false, "", true},
-		{"embedded port not a number", "h.databricks.com:notaport", 8443, false, "", true},
-		{"embedded port out of range", "h.databricks.com:70000", 0, false, "", true},
-		{"embedded port zero", "h.databricks.com:0", 0, false, "", true},
-		{"unclosed IPv6 bracket", "[::1", 8443, false, "", true},
-		{"text after IPv6 bracket", "[::1]x", 8443, false, "", true},
-		{"stray closing bracket", "h.databricks.com]", 8443, false, "", true},
+		{"default 443 adds nothing", "h.databricks.com", 443, "h.databricks.com", false},
+		{"unset port adds nothing", "h.databricks.com", 0, "h.databricks.com", false},
+		{"custom port", "h.databricks.com", 8443, "h.databricks.com:8443", false},
+		{"IPv4 literal", "127.0.0.1", 8443, "127.0.0.1:8443", false},
+		{"bare IPv6 is bracketed", "::1", 8443, "[::1]:8443", false},
+		{"bracketed IPv6", "[::1]", 8443, "[::1]:8443", false},
+		{"port 1", "h.databricks.com", 1, "h.databricks.com:1", false},
+		{"port 65535", "h.databricks.com", 65535, "h.databricks.com:65535", false},
+		{"embedded port equal", "h.databricks.com:8443", 8443, "h.databricks.com:8443", false},
+		{"embedded port equal, IPv6", "[::1]:8443", 8443, "[::1]:8443", false},
+		{"443 with embedded 443", "h.databricks.com:443", 443, "h.databricks.com:443", false},
+		{"443 with embedded port: embedded wins", "h.databricks.com:8443", 443, "h.databricks.com:8443", false},
+		{"embedded port differs: embedded wins", "h.databricks.com:7000", 8443, "h.databricks.com:7000", false},
+		{"embedded port differs, IPv6: embedded wins", "[::1]:7000", 8443, "[::1]:7000", false},
+		{"trailing slash on bare host", "h.databricks.com/", 8443, "h.databricks.com:8443", false},
+		{"trailing slash on bare host, default port", "h.databricks.com/", 443, "h.databricks.com", false},
+		{"trailing slash with embedded port, default port", "h.databricks.com:8443/", 443, "h.databricks.com:8443", false},
+		{"trailing slash with embedded port, equal port", "h.databricks.com:8443/", 8443, "h.databricks.com:8443", false},
+		{"trailing slash, IPv6", "[::1]/", 8443, "[::1]:8443", false},
+		{"path, default port: unchanged", "h.databricks.com/x", 443, "h.databricks.com/x", false},
+		{"path, unset port: unchanged", "h.databricks.com/x", 0, "h.databricks.com/x", false},
+		{"path with colon, default port: unchanged", "h.io/path:8443", 443, "h.io/path:8443", false},
+		{"path with custom port", "h.databricks.com/x", 8443, "", true},
+		{"path with colon and custom port", "h.io/path:8443", 8443, "", true},
+		{"query with colon and custom port", "h.io?q=1:8443", 8443, "", true},
+		{"query with custom port", "h.databricks.com?x", 8443, "", true},
+		{"fragment with custom port", "h.databricks.com#x", 8443, "", true},
+		{"negative port", "h.databricks.com", -1, "", true},
+		{"port above range", "h.databricks.com", 65536, "", true},
+		{"embedded port not a number", "h.databricks.com:notaport", 8443, "", true},
+		{"embedded port out of range", "h.databricks.com:70000", 0, "", true},
+		{"embedded port zero", "h.databricks.com:0", 0, "", true},
+		{"unclosed IPv6 bracket", "[::1", 8443, "", true},
+		{"text after IPv6 bracket", "[::1]x", 8443, "", true},
+		{"stray closing bracket", "h.databricks.com]", 8443, "", true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := validateKernelHostPort(tc.host, tc.port, tc.explicit)
+			err := validateKernelHostPort(tc.host, tc.port)
 			if tc.wantErr {
 				if !errors.Is(err, dbsqlerr.ErrInvalidKernelConfig) {
 					t.Errorf("err = %v, want ErrInvalidKernelConfig", err)

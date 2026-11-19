@@ -367,7 +367,6 @@ func parseHostName(host string) (protocol, hostname string) {
 func WithPort(port int) ConnOption {
 	return func(c *config.Config) {
 		c.Port = port
-		c.PortExplicit = true
 	}
 }
 
