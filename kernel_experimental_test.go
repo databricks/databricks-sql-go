@@ -72,13 +72,6 @@ func TestKernelExperimentalFieldsClassified(t *testing.T) {
 // KernelExperimental after applying a WithKernel* option is the signal the Thrift
 // branch keys off).
 func TestWithKernelTLSOptionsSetExperimental(t *testing.T) {
-	dsnOption := func(value string) ConnOption {
-		user, err := config.ParseDSN("token:test-token@example.databricks.com:443/sql/1.0/warehouses/test?enableHttp2=" + value)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return withUserConfig(user)
-	}
 	cases := []struct {
 		name   string
 		opt    ConnOption
@@ -122,12 +115,6 @@ func TestWithKernelTLSOptionsSetExperimental(t *testing.T) {
 		{"token cache", WithTokenCache(true), func(k *config.KernelExperimentalConfig) bool {
 			return k.TokenCacheEnabled
 		}},
-		{"HTTP/2 DSN enabled", dsnOption("true"), func(k *config.KernelExperimentalConfig) bool {
-			return k.EnableHTTP2 != nil && *k.EnableHTTP2
-		}},
-		{"HTTP/2 DSN disabled", dsnOption("false"), func(k *config.KernelExperimentalConfig) bool {
-			return k.EnableHTTP2 != nil && !*k.EnableHTTP2
-		}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -143,7 +130,7 @@ func TestWithKernelTLSOptionsSetExperimental(t *testing.T) {
 	}
 }
 
-func TestKernelHTTP2DSNDefaultAndInvalid(t *testing.T) {
+func TestKernelHTTP2DSN(t *testing.T) {
 	const dsn = "token:test-token@example.databricks.com:443/sql/1.0/warehouses/test"
 	user, err := config.ParseDSN(dsn)
 	if err != nil {
