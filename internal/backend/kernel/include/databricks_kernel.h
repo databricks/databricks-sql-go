@@ -986,6 +986,7 @@ KernelStatusCode kernel_executed_statement_is_volume_operation(
 /* The cached marker does not establish whether the executed owner is valid. */
 KernelStatusCode kernel_result_stream_is_volume_operation(
     const kernel_result_stream_t* stream, bool* out);
+/* out_status is written only on success. */
 KernelStatusCode kernel_result_stream_complete_volume_operation(
     kernel_result_stream_t* stream, const char* allowed_paths_json,
     bool remove_not_found_is_success, KernelVolumeCompletion* out_status);
