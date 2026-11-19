@@ -18,6 +18,8 @@
 //     float64), matching Thrift's marshalScalar → ValueString
 //   - float32     → native float32 (not widened to float64), so JSON renders
 //     3.14, not 3.140000104904175
+//   - non-finite float (values and map keys) → quoted "NaN", "Infinity" or
+//     "-Infinity", so it stays distinct from a nested NULL
 package arrowscan
 
 import (
@@ -549,7 +551,9 @@ func writeMapJSON(b *strings.Builder, m *array.Map, row int, loc *time.Location,
 		if err != nil {
 			return err
 		}
-		writeJSONKey(b, kv)
+		if err := writeJSONKey(b, kv); err != nil {
+			return err
+		}
 		b.WriteByte(':')
 		if err := writeJSON(b, items, i, itemLoc, keys); err != nil {
 			return err
@@ -583,30 +587,31 @@ func writeStructJSON(b *strings.Builder, s *array.Struct, row int, loc *time.Loc
 
 // writeJSONKey writes a value as a JSON object key (always a quoted string),
 // matching the Thrift path's mapValueContainer: marshal the value the same way a
-// leaf is marshaled (marshalScalar → json.Marshal, so a []byte key renders as
-// base64 "YWJj", NOT fmt "%v" [97 98 99]), then quote-wrap the result if it is
-// not already a JSON string (numbers/bools become "7"/"true" keys).
-func writeJSONKey(b *strings.Builder, v any) {
+// leaf is marshaled (marshalScalar → jsonfmt.Append, so a []byte key renders as
+// base64 "YWJj" and a non-finite float as "NaN" / "Infinity" / "-Infinity"),
+// then quote-wrap the result if it is not already a JSON string (numbers/bools
+// become "7"/"true" keys). A marshal error is returned, as Thrift does.
+func writeJSONKey(b *strings.Builder, v any) error {
 	// A time.Time key renders as its quoted .String() (same special-case as
 	// writeScalarJSON / the Thrift marshalScalar), not RFC3339.
 	if t, ok := v.(time.Time); ok {
 		kb, _ := json.Marshal(t.String())
 		b.Write(kb)
-		return
+		return nil
 	}
 	var scratch [32]byte
 	kb, err := jsonfmt.Append(scratch[:0], v)
 	if err != nil {
-		// Unmarshalable key value — fall back to its stringified form, quoted.
-		kb, _ = json.Marshal(fmt.Sprintf("%v", v))
+		return err
 	}
 	if len(kb) > 0 && kb[0] == '"' {
-		b.Write(kb) // already a JSON string (string / []byte via marshal)
-		return
+		b.Write(kb) // already a JSON string (string / []byte / non-finite float)
+		return nil
 	}
 	b.WriteByte('"')
 	b.Write(kb)
 	b.WriteByte('"')
+	return nil
 }
 
 // writeScalarJSON writes a scalar leaf, mirroring the Thrift marshalScalar: a
