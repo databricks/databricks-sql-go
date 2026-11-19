@@ -85,7 +85,7 @@ func validateKernelConfigContext(ctx context.Context, cfg *config.Config) (kerne
 	if err := validateKernelHostPort(cfg.Host, cfg.Port, cfg.PortExplicit); err != nil {
 		return kernel.Auth{}, err
 	}
-	warnEmbeddedPortWins(cfg.Host, cfg.Port, cfg.PortExplicit)
+	warnEmbeddedPortWins(cfg.Host, cfg.Port)
 	// Transport (WithTransport, a custom http.RoundTripper carrying a custom CA
 	// bundle / mTLS / proxy): the kernel uses its own Rust HTTP stack below the C
 	// ABI and never sees a Go RoundTripper, so a custom Transport would be silently
@@ -283,10 +283,11 @@ func validateKernelHostPort(host string, port int, explicit bool) error {
 	return nil
 }
 
-// warnEmbeddedPortWins logs when a supplied port (WithPort or the DSN) differs from the port embedded
-// in the host. The embedded port is used, as on the kernel path before WithPort was honored.
-func warnEmbeddedPortWins(host string, port int, explicit bool) {
-	if port == 0 || (!explicit && port == 443) {
+// warnEmbeddedPortWins logs when a non-default port (WithPort or the DSN) differs from the port embedded
+// in the host. The embedded port is used, as on the kernel path before WithPort was honored. An
+// explicit 443 is the default and is not warned about.
+func warnEmbeddedPortWins(host string, port int) {
+	if port == 0 || port == 443 {
 		return
 	}
 	_, p, err := net.SplitHostPort(normaliseKernelHost(host))
