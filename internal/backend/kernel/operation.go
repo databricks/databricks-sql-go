@@ -429,7 +429,7 @@ func (o *kernelOp) CompleteStaging(ctx context.Context) error {
 	}
 	paths := newCStr(string(encoded))
 	defer paths.free()
-	var outcome C.int32_t
+	var outcome C.KernelVolumeCompletion
 	err = call(func() C.KernelStatusCode {
 		return C.kernel_result_stream_complete_volume_operation(stream, paths.c, true, &outcome)
 	})
@@ -443,7 +443,7 @@ func (o *kernelOp) CompleteStaging(ctx context.Context) error {
 		}
 		return toStatementError(err)
 	}
-	if outcome != 2 {
+	if outcome != C.KernelVolumeCompletion_Completed {
 		return errors.New("kernel: volume operation requires a local file instruction")
 	}
 	return nil

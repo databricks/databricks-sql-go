@@ -9,9 +9,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -563,7 +565,8 @@ func TestExecutionErrorContract(t *testing.T) {
 		t.Errorf("ExecutionError(nil) = %v, want nil", got)
 	}
 
-	cause := &KernelError{Code: statusSqlError, Message: "boom", SQLState: "42000", QueryID: "q-123"}
+	cause := &KernelError{Code: statusSqlError, Message: "boom", SQLState: "42000", QueryID: "q-123",
+		cause: &os.PathError{Op: "file", Path: "missing.bin", Err: syscall.ENOENT}}
 	err := o.ExecutionError(context.Background(), cause)
 	if err == nil {
 		t.Fatal("ExecutionError(cause) should not be nil")
@@ -588,6 +591,9 @@ func TestExecutionErrorContract(t *testing.T) {
 	var ke *KernelError
 	if !errors.As(err, &ke) {
 		t.Error("the *KernelError cause should remain reachable via errors.As")
+	}
+	if !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("local file error should match fs.ErrNotExist; got %v", err)
 	}
 }
 

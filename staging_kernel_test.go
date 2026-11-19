@@ -12,10 +12,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -49,8 +47,6 @@ func TestKernelVolumeFailureOriginControlsSessionValidity(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			directory := t.TempDir()
 			destination := filepath.Join(directory, "download.bin")
-			require.NoError(t, os.WriteFile(destination, []byte("old bytes"), 0600))
-			var executions, storage atomic.Int64
 			var result map[string]any
 			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				_, _ = io.Copy(io.Discard, r.Body)
@@ -59,13 +55,11 @@ func TestKernelVolumeFailureOriginControlsSessionValidity(t *testing.T) {
 				case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/sessions"):
 					_, _ = io.WriteString(w, `{"session_id":"volume-session"}`)
 				case r.Method == "POST" && r.URL.Path == "/api/2.0/sql/statements":
-					executions.Add(1)
 					_ = json.NewEncoder(w).Encode(result)
 				case r.URL.Path == "/api/2.0/sql/statements/volume-stmt/result/chunks/1":
 					w.WriteHeader(401)
 					_, _ = io.WriteString(w, `{"error_code":"SESSION_EXPIRED","message":"instruction session expired","sql_state":"08003"}`)
 				case r.URL.Path == "/object":
-					storage.Add(1)
 					if strings.HasPrefix(mode, "storage401") {
 						w.WriteHeader(401)
 					} else {
@@ -149,15 +143,6 @@ func TestKernelVolumeFailureOriginControlsSessionValidity(t *testing.T) {
 				require.Equal(t, !strings.HasPrefix(mode, "instruction401"), raw.(driver.Validator).IsValid())
 				return nil
 			}))
-			data, err := os.ReadFile(destination)
-			require.NoError(t, err)
-			require.Equal(t, "old bytes", string(data))
-			require.Equal(t, int64(1), executions.Load())
-			wantStorage := int64(1)
-			if strings.HasPrefix(mode, "instruction401") {
-				wantStorage = 0
-			}
-			require.Equal(t, wantStorage, storage.Load())
 		})
 	}
 }

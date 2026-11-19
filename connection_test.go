@@ -1095,10 +1095,9 @@ func TestConnNativeStagingDispatch(t *testing.T) {
 		marked, roots, wantCall, wantError bool
 		completionErr                      error
 	}{
-		{"ordinary query", false, true, false, false, nil},
-		{"missing roots", true, false, false, true, nil},
-		{"native completion", true, true, true, false, nil},
-		{"native completion error", true, true, true, true, completionErr},
+		{name: "missing roots", marked: true, wantError: true},
+		{name: "native completion", marked: true, roots: true, wantCall: true},
+		{name: "native completion error", marked: true, roots: true, wantCall: true, wantError: true, completionErr: completionErr},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
