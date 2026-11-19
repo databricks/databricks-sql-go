@@ -258,6 +258,9 @@ WithKernel* prefix marks them experimental):
     intermediates and an unencrypted PKCS#8 private key is recommended.
   - WithKernelSkipHostnameVerify() skips only the hostname check while keeping chain
     validation (finer-grained than WithSkipTLSHostVerify).
+  - WithKernelCertificateRevocation(check, acceptUndetermined) enables the kernel's TLS certificate
+    revocation check: check runs it against the chain's CRLs, and acceptUndetermined also accepts a
+    chain whose status cannot be determined. Both default to false.
   - WithKernelProxy(KernelProxy{URL, Username, Password, BypassHosts}) sets an explicit
     HTTP proxy, overriding the HTTP(S)_PROXY / NO_PROXY environment the kernel path
     otherwise mirrors. The fields are named (not positional) so the four same-typed

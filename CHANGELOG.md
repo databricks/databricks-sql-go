@@ -2,6 +2,8 @@
 
 ## Unreleased (v2.0.0 prototype)
 
+- Add `WithKernelCertificateRevocation(check, acceptUndetermined bool)` for the kernel backend (default off), which enables the kernel's TLS certificate revocation check. It is rejected on the Thrift backend. Requires a kernel build pinning [databricks-sql-kernel#485](https://github.com/databricks/databricks-sql-kernel/pull/485) (see `KERNEL_REV`).
+
 - Fix the module-root package conflict when building, linting, or running Gazelle with the `tools` build tag (databricks/databricks-sql-go#162).
 - **Behavior change:** Report declared DECIMAL precision and scale through `sql.ColumnType.DecimalSize()` on Thrift and SEA, including zero-row results. Tools such as ORM migrators can now act on these qualifiers (databricks/databricks-sql-go#500).
 - **Behavior change:** Support Arrow TIME results on Thrift and SEA as UTC `time.Time` values on `0001-01-01`, preserving precision and using clock-only nested JSON. TIME metadata now reports `TIME`/`time.Time` with no length, including empty and NULL-only results; previously Thrift reported `STRING`/`string` with unbounded length, and SEA reported an empty name with `*interface{}` (databricks/databricks-sql-go#505).

@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/databricks/databricks-sql-go/internal/backend/kernel"
 	"github.com/databricks/databricks-sql-go/internal/config"
 
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
@@ -27,21 +28,23 @@ import (
 // deliberate decision and a setter in KernelBackend.OpenSession so it can't be
 // silently dropped.
 var kernelExperimentalFieldDisposition = map[string]string{
-	"TLSTrustedCertsPEM":      "forwarded", // set_tls_trusted_certs
-	"TLSClientCertPEM":        "forwarded", // set_tls_client_certificate (cert)
-	"TLSClientKeyPEM":         "forwarded", // set_tls_client_certificate (key)
-	"TLSClientCertConfigured": "validated", // distinguishes explicit empty input from unset
-	"TLSSkipHostnameVerify":   "forwarded", // set_tls_skip_hostname_verification
-	"ProxyURL":                "forwarded", // set_proxy (url)
-	"ProxyUsername":           "forwarded", // set_proxy (username)
-	"ProxyPassword":           "forwarded", // set_proxy (password)
-	"ProxyBypassHosts":        "forwarded", // set_proxy (bypass_hosts)
-	"RetryOverallTimeout":     "forwarded", // set_retry_config (overall_timeout_ms, 4th knob)
-	"MaxConnections":          "forwarded", // set_max_connections
-	"MaxChunksInMemory":       "forwarded", // set_session_conf (cloudfetch_max_chunks_in_memory, client-only)
-	"DecimalAsFloat":          "forwarded", // kernel.Config.DecimalAsFloat → kernelOp → arrowscan (client-side scan choice)
-	"EnableGeoSpatialSupport": "forwarded", // set_enable_geospatial_support; false is preserved via pointer
-	"TokenCacheEnabled":       "forwarded", // set_u2m_token_cache_config (enabled, nil passphrase)
+	"TLSTrustedCertsPEM":              "forwarded", // set_tls_trusted_certs
+	"TLSClientCertPEM":                "forwarded", // set_tls_client_certificate (cert)
+	"TLSClientKeyPEM":                 "forwarded", // set_tls_client_certificate (key)
+	"TLSClientCertConfigured":         "validated", // distinguishes explicit empty input from unset
+	"TLSSkipHostnameVerify":           "forwarded", // set_tls_skip_hostname_verification
+	"ProxyURL":                        "forwarded", // set_proxy (url)
+	"ProxyUsername":                   "forwarded", // set_proxy (username)
+	"ProxyPassword":                   "forwarded", // set_proxy (password)
+	"ProxyBypassHosts":                "forwarded", // set_proxy (bypass_hosts)
+	"RetryOverallTimeout":             "forwarded", // set_retry_config (overall_timeout_ms, 4th knob)
+	"MaxConnections":                  "forwarded", // set_max_connections
+	"MaxChunksInMemory":               "forwarded", // set_session_conf (cloudfetch_max_chunks_in_memory, client-only)
+	"DecimalAsFloat":                  "forwarded", // kernel.Config.DecimalAsFloat → kernelOp → arrowscan (client-side scan choice)
+	"EnableGeoSpatialSupport":         "forwarded", // set_enable_geospatial_support; false is preserved via pointer
+	"TokenCacheEnabled":               "forwarded", // set_u2m_token_cache_config (enabled, nil passphrase)
+	"TLSCheckCertificateRevocation":   "forwarded", // set_tls_certificate_revocation (check)
+	"TLSAcceptUndeterminedRevocation": "forwarded", // set_tls_certificate_revocation (accept_undetermined)
 }
 
 func TestKernelExperimentalFieldsClassified(t *testing.T) {
@@ -107,6 +110,9 @@ func TestWithKernelTLSOptionsSetExperimental(t *testing.T) {
 		{"token cache", WithTokenCache(true), func(k *config.KernelExperimentalConfig) bool {
 			return k.TokenCacheEnabled
 		}},
+		{"certificate revocation", WithKernelCertificateRevocation(true, true), func(k *config.KernelExperimentalConfig) bool {
+			return k.TLSCheckCertificateRevocation && k.TLSAcceptUndeterminedRevocation
+		}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -144,6 +150,7 @@ func TestWithKernelOptionsRejectedOnThriftPath(t *testing.T) {
 		{"decimal as float", WithKernelDecimalAsFloat(true)},
 		{"disable geospatial support", WithEnableGeoSpatialSupport(false)},
 		{"token cache", WithTokenCache(true)},
+		{"certificate revocation", WithKernelCertificateRevocation(true, false)},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -300,5 +307,35 @@ func TestKernelExperimentalDeepCopy(t *testing.T) {
 	}
 	if (*config.KernelExperimentalConfig)(nil).DeepCopy() != nil {
 		t.Error("nil.DeepCopy() should be nil")
+	}
+}
+
+// AC-R10: the revocation option reaches kernel.Config only as set. Both flags default to false.
+// A Thrift connection never reaches this mapping: the connector rejects a WithKernel* option
+// without WithUseKernel.
+func TestKernelCertificateRevocationMapping(t *testing.T) {
+	cases := []struct {
+		name       string
+		opts       []ConnOption
+		wantCheck  bool
+		wantAccept bool
+	}{
+		{"unset", nil, false, false},
+		{"check only", []ConnOption{WithKernelCertificateRevocation(true, false)}, true, false},
+		{"check and accept undetermined", []ConnOption{WithKernelCertificateRevocation(true, true)}, true, true},
+		{"accept undetermined without check", []ConnOption{WithKernelCertificateRevocation(false, true)}, false, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := config.WithDefaults()
+			for _, opt := range tc.opts {
+				opt(cfg)
+			}
+			kc := buildKernelConfig(cfg, kernel.Auth{Mode: kernel.AuthPAT, Token: "dapi-x"})
+			if kc.TLSCheckCertificateRevocation != tc.wantCheck || kc.TLSAcceptUndeterminedRevocation != tc.wantAccept {
+				t.Errorf("kernel.Config revocation = (%v, %v), want (%v, %v)",
+					kc.TLSCheckCertificateRevocation, kc.TLSAcceptUndeterminedRevocation, tc.wantCheck, tc.wantAccept)
+			}
+		})
 	}
 }

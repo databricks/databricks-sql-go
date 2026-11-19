@@ -91,6 +91,11 @@ type KernelExperimentalConfig struct {
 	// Maps to kernel_session_config_set_tls_skip_hostname_verification.
 	TLSSkipHostnameVerify bool
 
+	// TLSCheckCertificateRevocation / TLSAcceptUndeterminedRevocation enable the kernel's TLS
+	// revocation policy (WithKernelCertificateRevocation). Kernel-only; off by default.
+	TLSCheckCertificateRevocation   bool
+	TLSAcceptUndeterminedRevocation bool
+
 	// ProxyURL / ProxyUsername / ProxyPassword / ProxyBypassHosts configure an
 	// explicit HTTP proxy on the kernel path (WithKernelProxy), overriding the
 	// HTTP(S)_PROXY / NO_PROXY environment the driver otherwise mirrors. The
@@ -154,16 +159,18 @@ func (k *KernelExperimentalConfig) DeepCopy() *KernelExperimentalConfig {
 		return nil
 	}
 	cp := &KernelExperimentalConfig{
-		TLSClientCertConfigured: k.TLSClientCertConfigured,
-		TLSSkipHostnameVerify:   k.TLSSkipHostnameVerify,
-		ProxyURL:                k.ProxyURL,
-		ProxyUsername:           k.ProxyUsername,
-		ProxyPassword:           k.ProxyPassword,
-		ProxyBypassHosts:        k.ProxyBypassHosts,
-		RetryOverallTimeout:     k.RetryOverallTimeout,
-		MaxChunksInMemory:       k.MaxChunksInMemory,
-		DecimalAsFloat:          k.DecimalAsFloat,
-		TokenCacheEnabled:       k.TokenCacheEnabled,
+		TLSClientCertConfigured:         k.TLSClientCertConfigured,
+		TLSSkipHostnameVerify:           k.TLSSkipHostnameVerify,
+		TLSCheckCertificateRevocation:   k.TLSCheckCertificateRevocation,
+		TLSAcceptUndeterminedRevocation: k.TLSAcceptUndeterminedRevocation,
+		ProxyURL:                        k.ProxyURL,
+		ProxyUsername:                   k.ProxyUsername,
+		ProxyPassword:                   k.ProxyPassword,
+		ProxyBypassHosts:                k.ProxyBypassHosts,
+		RetryOverallTimeout:             k.RetryOverallTimeout,
+		MaxChunksInMemory:               k.MaxChunksInMemory,
+		DecimalAsFloat:                  k.DecimalAsFloat,
+		TokenCacheEnabled:               k.TokenCacheEnabled,
 	}
 	if k.EnableGeoSpatialSupport != nil {
 		enabled := *k.EnableGeoSpatialSupport

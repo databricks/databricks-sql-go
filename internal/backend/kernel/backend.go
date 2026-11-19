@@ -23,6 +23,11 @@ static inline KernelStatusCode go_kernel_set_retry_config(
       config, min_wait_ms, max_wait_ms, max_retries, overall_timeout_ms);
 }
 
+static inline KernelStatusCode go_kernel_set_tls_certificate_revocation(
+    KernelSessionConfig* config, bool check, bool accept) {
+  return kernel_session_config_set_tls_certificate_revocation(config, check, accept);
+}
+
 static inline KernelStatusCode go_kernel_set_max_connections(
     KernelSessionConfig* config, size_t max_connections) {
   return kernel_session_config_set_max_connections(config, max_connections);
@@ -401,6 +406,14 @@ func (k *KernelBackend) applyKernelTLS(cfg *C.KernelSessionConfig) error {
 			return C.kernel_session_config_set_tls_skip_hostname_verification(cfg, C.bool(true))
 		}); err != nil {
 			return fmt.Errorf("kernel: set_tls_skip_hostname_verification: %w", toConnError(err))
+		}
+	}
+	if k.cfg.TLSCheckCertificateRevocation || k.cfg.TLSAcceptUndeterminedRevocation {
+		check, accept := k.cfg.TLSCheckCertificateRevocation, k.cfg.TLSAcceptUndeterminedRevocation
+		if err := call(func() C.KernelStatusCode {
+			return C.go_kernel_set_tls_certificate_revocation(cfg, C.bool(check), C.bool(accept))
+		}); err != nil {
+			return fmt.Errorf("kernel: set_tls_certificate_revocation: %w", toConnError(err))
 		}
 	}
 	return nil

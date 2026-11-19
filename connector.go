@@ -730,6 +730,20 @@ func WithKernelTrustedCerts(pem []byte) ConnOption {
 	}
 }
 
+// WithKernelCertificateRevocation enables the kernel's TLS certificate revocation check on the
+// server chain: check runs it against the chain's CRLs, and acceptUndetermined also accepts a
+// chain whose status cannot be determined (CRL unreachable, no distribution point). Both default
+// to false.
+//
+// EXPERIMENTAL, kernel-only: the default (Thrift) backend rejects this at connect.
+func WithKernelCertificateRevocation(check, acceptUndetermined bool) ConnOption {
+	return func(c *config.Config) {
+		ke := kernelExperimental(c)
+		ke.TLSCheckCertificateRevocation = check
+		ke.TLSAcceptUndeterminedRevocation = acceptUndetermined
+	}
+}
+
 // WithKernelClientCertificate configures the PEM-encoded client certificate and
 // matching private key used when a server requires mutual TLS (mTLS). certPEM
 // contains the leaf certificate followed by any intermediate certificates;

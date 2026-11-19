@@ -63,6 +63,11 @@ type Config struct {
 	TLSClientCertPEM      []byte
 	TLSClientKeyPEM       []byte
 	TLSSkipHostnameVerify bool
+	// TLSCheckCertificateRevocation / TLSAcceptUndeterminedRevocation enable the kernel's
+	// TLS revocation policy. Forwarded through kernel_session_config_set_tls_certificate_revocation
+	// only when set. Off by default.
+	TLSCheckCertificateRevocation   bool
+	TLSAcceptUndeterminedRevocation bool
 
 	// ProxyURL configures an HTTP proxy. It is either resolved for this endpoint
 	// from the same HTTP(S)_PROXY / NO_PROXY environment the Thrift path uses

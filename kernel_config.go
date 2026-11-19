@@ -213,6 +213,8 @@ func buildKernelConfig(cfg *config.Config, kauth kernel.Auth) kernel.Config {
 		kc.TLSClientCertPEM = ke.TLSClientCertPEM
 		kc.TLSClientKeyPEM = ke.TLSClientKeyPEM
 		kc.TLSSkipHostnameVerify = ke.TLSSkipHostnameVerify
+		kc.TLSCheckCertificateRevocation = ke.TLSCheckCertificateRevocation
+		kc.TLSAcceptUndeterminedRevocation = ke.TLSAcceptUndeterminedRevocation
 		if ke.MaxConnections != nil {
 			kc.MaxConnections = *ke.MaxConnections
 		}
