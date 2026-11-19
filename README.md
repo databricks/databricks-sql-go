@@ -418,6 +418,12 @@ server-supplied Arrow schema. Without that schema, NTZ still reports `TIMESTAMP`
 and uses session-location handling. String timestamps (`UseArrowNativeTimestamp=false`,
 an internal setting) and non-Arrow values also retain legacy session-location parsing.
 
+Top-level VARIANT columns report `VARIANT` in `sql.ColumnType.DatabaseTypeName()` on
+both backends. Values stay JSON text, and the scan type (`string`) and length match a
+STRING column. Nested VARIANT (inside ARRAY, MAP or STRUCT) is not reported by name. On
+Thrift, detection reads the server-supplied Arrow schema; without it, VARIANT reports
+`STRING`.
+
 Metadata is reached through SQL (`SHOW`, `DESCRIBE`, `information_schema`) on both
 backends — the driver exposes no `GetCatalogs`/`GetSchemas`/`GetTables`/`GetColumns` API
 (a `database/sql` limitation, not backend-specific).

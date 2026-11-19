@@ -102,10 +102,10 @@ func TestKernelE2EInterval(t *testing.T) {
 // TestKernelThrift* / TestKernel* so the nightly kernel -run picks it up.
 func TestKernelThriftColumnTypeParity(t *testing.T) {
 	// One column per Databricks type the driver scans, mirroring the mixed-type
-	// query used to capture the ground truth. VARCHAR/CHAR/VARIANT/GEOMETRY all
-	// collapse to STRING on both backends in explicit string mode, and both
-	// interval types are server/Go-stringified to STRING — included so the parity
-	// covers those collapses too.
+	// query used to capture the ground truth. VARCHAR/CHAR/GEOMETRY all collapse to
+	// STRING on both backends in explicit string mode, VARIANT reports VARIANT with
+	// the STRING scan type and length, and both interval types are server/Go-stringified
+	// to STRING — included so the parity covers those mappings too.
 	const query = "SELECT " +
 		"CAST(1 AS TINYINT) a_tinyint, CAST(1 AS SMALLINT) a_smallint, " +
 		"CAST(1 AS INT) a_int, CAST(1 AS BIGINT) a_bigint, " +

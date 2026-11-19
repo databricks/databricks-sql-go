@@ -16,6 +16,7 @@
 - Report `statement_type` (`SQL`, as on the kernel backend) and the result delivery format (`INLINE_ARROW`, `EXTERNAL_LINKS` or `COLUMNAR_INLINE`) in Thrift statement telemetry. The format is reported when the driver already has the result metadata (databricks/databricks-sql-go#454).
 - **Behavior change:** The DSN `timeout` param now rejects values outside ±9223372036 seconds with an error naming `timeout`. These values previously overflowed `time.Duration` and silently became a different, often negative, timeout. Negative values within range are still accepted (databricks/databricks-sql-go#490).
 - Avoid redundant Thrift result fetches when direct results specify `hasMoreRows=false` (databricks/databricks-sql-go#539).
+- **Behavior change:** Top-level VARIANT columns report `VARIANT` from `sql.ColumnType.DatabaseTypeName()` on Thrift and SEA instead of `STRING`, matching the Python and JDBC drivers. Values stay JSON text, and the scan type (`string`) and length are unchanged. Nested VARIANT is not reported by name. On Thrift, this requires the server-supplied Arrow result schema; without it, VARIANT still reports `STRING` (databricks/databricks-sql-go#576).
 
 ## v1.19.0 (2026-11-04)
 - Upgrade the SQL kernel bindings to v1.4.0.

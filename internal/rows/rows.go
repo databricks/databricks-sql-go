@@ -454,6 +454,9 @@ func (r *rows) ColumnTypeDatabaseTypeName(index int) string {
 // column would still report TIMESTAMP_NTZ while its values went through the
 // legacy column scanner.
 //
+// VARIANT is the exception: its values are JSON text on every result format, so a
+// column the schema tags as VARIANT reports VARIANT whether or not it is Arrow-decoded.
+//
 // database/sql's Rows.ColumnTypes() only holds a read lock, so this may be
 // reached concurrently. The map is built in a local variable and published
 // exactly once via sync.Once, so readers never observe a partially filled map.
@@ -468,27 +471,30 @@ func (r *rows) buildDatabaseTypeNameOverrides() map[int]string {
 	if r.resultSetMetadata == nil || len(r.resultSetMetadata.ArrowSchema) == 0 {
 		return overrides
 	}
-	if r.config != nil && !r.config.UseArrowBatches {
-		return overrides
-	}
-	if r.resultSetMetadata.IsSetResultFormat() {
-		switch r.resultSetMetadata.GetResultFormat() {
-		case cli_service.TSparkRowSetType_ARROW_BASED_SET, cli_service.TSparkRowSetType_URL_BASED_SET:
-		default:
-			return overrides
-		}
-	}
 
 	reader, err := ipc.NewReader(bytes.NewReader(r.resultSetMetadata.ArrowSchema))
 	if err != nil {
 		// Leave the cache empty (and cached): result set metadata never changes,
-		// so retrying would fail the same way. Columns fall back to the legacy
-		// TIMESTAMP name; the Arrow row scanner surfaces the parse error itself.
+		// so retrying would fail the same way. Columns keep their Thrift type
+		// names: TIMESTAMP rather than TIMESTAMP_NTZ, and STRING rather than
+		// VARIANT on Arrow and column-based results alike. On Arrow results the
+		// row scanner surfaces the parse error itself; column-based values decode
+		// without the schema, so only the VARIANT name is lost.
 		r.logger().Debug().Err(err).Msg("databricks: failed to parse arrow schema for column type name overrides; falling back to thrift type names")
 		return overrides
 	}
 	defer reader.Release()
+	arrowDecoded := r.isArrowDecoded()
 	for i, field := range reader.Schema().Fields() {
+		// VARIANT arrives as a string column, so the Arrow field metadata is the only
+		// signal. The scan type and length stay the STRING mapping.
+		if arrowscan.IsVariantField(field) {
+			overrides[i] = "VARIANT"
+			continue
+		}
+		if !arrowDecoded {
+			continue
+		}
 		// Same check the Arrow value scanner uses (metadata first, then
 		// TimeZone), so the type name and the value handling stay in sync.
 		if arrowscan.IsTimestampNTZField(field) {
@@ -499,6 +505,22 @@ func (r *rows) buildDatabaseTypeNameOverrides() map[int]string {
 		}
 	}
 	return overrides
+}
+
+// isArrowDecoded reports whether the result set metadata indicates Arrow decoding,
+// which the TIMESTAMP_NTZ and TIME type names depend on.
+func (r *rows) isArrowDecoded() bool {
+	if r.config != nil && !r.config.UseArrowBatches {
+		return false
+	}
+	if r.resultSetMetadata.IsSetResultFormat() {
+		switch r.resultSetMetadata.GetResultFormat() {
+		case cli_service.TSparkRowSetType_ARROW_BASED_SET, cli_service.TSparkRowSetType_URL_BASED_SET:
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // ColumnTypeNullable returns a flag indicating whether the column is nullable
