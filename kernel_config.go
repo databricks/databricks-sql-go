@@ -16,6 +16,7 @@ import (
 	"github.com/databricks/databricks-sql-go/internal/backend/kernel"
 	"github.com/databricks/databricks-sql-go/internal/client"
 	"github.com/databricks/databricks-sql-go/internal/config"
+	"github.com/databricks/databricks-sql-go/logger"
 	"github.com/databricks/databricks-sql-go/telemetry"
 )
 
@@ -79,10 +80,12 @@ func validateKernelConfigContext(ctx context.Context, cfg *config.Config) (kerne
 		return kernel.Auth{}, fmt.Errorf("databricks: a non-https protocol is %w "+
 			"(it connects over https); use the default (Thrift) backend", dbsqlerr.ErrNotSupportedByKernel)
 	}
-	// Port: the kernel folds host:port (see kernelHostWithPort); reject a bad port or a conflict here.
+	// Port: the kernel folds host:port (see kernelHostWithPort); reject a bad port or host here. An
+	// embedded host port wins over a differing WithPort, with a warning rather than an error.
 	if err := validateKernelHostPort(cfg.Host, cfg.Port, cfg.PortExplicit); err != nil {
 		return kernel.Auth{}, err
 	}
+	warnEmbeddedPortWins(cfg.Host, cfg.Port, cfg.PortExplicit)
 	// Transport (WithTransport, a custom http.RoundTripper carrying a custom CA
 	// bundle / mTLS / proxy): the kernel uses its own Rust HTTP stack below the C
 	// ABI and never sees a Go RoundTripper, so a custom Transport would be silently
@@ -246,12 +249,25 @@ func unbalancedBrackets(host string) bool {
 	return end < 0 || (end+1 < len(host) && host[end+1] != ':')
 }
 
-// validateKernelHostPort rejects an out-of-range port, a host with unbalanced IPv6 brackets, and a
-// supplied port that disagrees with a port embedded in the host. explicit is true when WithPort or
-// the DSN set the port. WithDefaults fills 443 otherwise, so an unset 443 defers to the embedded port.
+// normaliseKernelHost trims trailing "/" the way the kernel's normalise_host does, so the port
+// logic below sees the same authority the kernel connects to.
+func normaliseKernelHost(host string) string {
+	return strings.TrimRight(host, "/")
+}
+
+// validateKernelHostPort rejects an out-of-range WithPort, a host with a path, query or fragment,
+// unbalanced IPv6 brackets, and an out-of-range or malformed port embedded in the host. explicit is
+// true when WithPort or the DSN set the port. WithDefaults fills 443 otherwise. A port embedded in
+// the host wins over WithPort (see warnEmbeddedPortWins), so a differing WithPort is not an error.
 func validateKernelHostPort(host string, port int, explicit bool) error {
 	if port < 0 || port > 65535 {
 		return fmt.Errorf("databricks: WithPort %d is out of range (want 1..65535, or 0 for the default): %w", port, dbsqlerr.ErrInvalidKernelConfig)
+	}
+	host = normaliseKernelHost(host)
+	// A path, query or fragment after the host made the kernel URL point at the wrong place
+	// (the kernel appends /api/2.0/sql to the host), so it was never accepted.
+	if strings.ContainsAny(host, "/?#") {
+		return fmt.Errorf("databricks: host %q has a path, query or fragment: %w", host, dbsqlerr.ErrInvalidKernelConfig)
 	}
 	if unbalancedBrackets(host) {
 		return fmt.Errorf("databricks: host %q has unbalanced IPv6 brackets: %w", host, dbsqlerr.ErrInvalidKernelConfig)
@@ -264,16 +280,32 @@ func validateKernelHostPort(host string, port int, explicit bool) error {
 	if err != nil || embedded < 1 || embedded > 65535 {
 		return fmt.Errorf("databricks: host %q carries an invalid port %q (want 1..65535): %w", host, p, dbsqlerr.ErrInvalidKernelConfig)
 	}
-	if supplied := port != 0 && (explicit || port != 443); supplied && port != embedded {
-		return fmt.Errorf("databricks: host %q carries port %d but WithPort is %d: %w", host, embedded, port, dbsqlerr.ErrInvalidKernelConfig)
-	}
 	return nil
 }
 
+// warnEmbeddedPortWins logs when a supplied port (WithPort or the DSN) differs from the port embedded
+// in the host. The embedded port is used, as on the kernel path before WithPort was honored.
+func warnEmbeddedPortWins(host string, port int, explicit bool) {
+	if port == 0 || (!explicit && port == 443) {
+		return
+	}
+	_, p, err := net.SplitHostPort(normaliseKernelHost(host))
+	if err != nil {
+		return
+	}
+	embedded, err := strconv.Atoi(p)
+	if err != nil || embedded == port {
+		return
+	}
+	logger.Warn().Msgf("databricks: the host carries port %d, which differs from WithPort %d; connecting to port %d from the host",
+		embedded, port, embedded)
+}
+
 // kernelHostWithPort returns the Host the kernel connects to. The kernel has no port setter but
-// keeps a `host:port` authority, so a non-default port is folded in (IPv6-safe). 0 and 443 add
-// nothing, and a host that already carries a port is returned unchanged.
+// keeps a `host:port` authority, so a non-default port is folded in (IPv6-safe). A trailing "/" is
+// trimmed first. 0 and 443 add nothing, and a host that already carries a port is returned unchanged.
 func kernelHostWithPort(host string, port int) string {
+	host = normaliseKernelHost(host)
 	if port == 0 || port == 443 {
 		return host
 	}

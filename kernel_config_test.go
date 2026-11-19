@@ -998,11 +998,20 @@ func TestKernelCustomPort(t *testing.T) {
 		{"embedded port equal, IPv6", "[::1]:8443", 8443, true, "[::1]:8443", false},
 		{"unset 443 defers to embedded", "h.databricks.com:8443", 443, false, "h.databricks.com:8443", false},
 		{"explicit 443 matches embedded", "h.databricks.com:443", 443, true, "h.databricks.com:443", false},
-		{"explicit 443 conflicts with embedded", "h.databricks.com:8443", 443, true, "", true},
+		{"explicit 443 differs from embedded: embedded wins", "h.databricks.com:8443", 443, true, "h.databricks.com:8443", false},
+		{"embedded port differs: embedded wins", "h.databricks.com:7000", 8443, false, "h.databricks.com:7000", false},
+		{"embedded port differs, IPv6: embedded wins", "[::1]:7000", 8443, false, "[::1]:7000", false},
+		{"trailing slash on bare host", "h.databricks.com/", 8443, false, "h.databricks.com:8443", false},
+		{"trailing slash on bare host, default port", "h.databricks.com/", 443, false, "h.databricks.com", false},
+		{"trailing slash with embedded port, default port", "h.databricks.com:8443/", 443, false, "h.databricks.com:8443", false},
+		{"trailing slash with embedded port, equal port", "h.databricks.com:8443/", 8443, true, "h.databricks.com:8443", false},
+		{"trailing slash, IPv6", "[::1]/", 8443, false, "[::1]:8443", false},
+		{"path after host", "h.databricks.com/x", 8443, false, "", true},
+		{"path after host, default port", "h.databricks.com/x", 443, false, "", true},
+		{"query after host", "h.databricks.com?x", 8443, false, "", true},
+		{"fragment after host", "h.databricks.com#x", 8443, false, "", true},
 		{"negative port", "h.databricks.com", -1, false, "", true},
 		{"port above range", "h.databricks.com", 65536, false, "", true},
-		{"embedded port differs", "h.databricks.com:7000", 8443, false, "", true},
-		{"embedded port differs, IPv6", "[::1]:7000", 8443, false, "", true},
 		{"embedded port not a number", "h.databricks.com:notaport", 8443, false, "", true},
 		{"embedded port out of range", "h.databricks.com:70000", 0, false, "", true},
 		{"embedded port zero", "h.databricks.com:0", 0, false, "", true},
@@ -1028,12 +1037,41 @@ func TestKernelCustomPort(t *testing.T) {
 		})
 	}
 
-	t.Run("explicit WithPort(443) conflicting with an embedded port is rejected", func(t *testing.T) {
+	t.Run("explicit WithPort(443) differing from an embedded port connects to the embedded port", func(t *testing.T) {
 		c := baseKernelConfig()
 		c.Host = "h.databricks.com:8443"
 		WithPort(443)(c)
-		if _, err := validateKernelConfig(c); !errors.Is(err, dbsqlerr.ErrInvalidKernelConfig) {
-			t.Errorf("err = %v, want ErrInvalidKernelConfig", err)
+		kauth, err := validateKernelConfig(c)
+		if err != nil {
+			t.Fatalf("unexpected err %v", err)
+		}
+		if got := buildKernelConfig(c, kauth).Host; got != "h.databricks.com:8443" {
+			t.Errorf("kernel Host = %q, want the embedded port h.databricks.com:8443", got)
+		}
+	})
+
+	t.Run("WithServerHostname with a trailing slash plus WithPort folds to host:port", func(t *testing.T) {
+		c := baseKernelConfig()
+		WithServerHostname("https://h.databricks.com/")(c)
+		WithPort(8443)(c)
+		kauth, err := validateKernelConfig(c)
+		if err != nil {
+			t.Fatalf("unexpected err %v", err)
+		}
+		if got := buildKernelConfig(c, kauth).Host; got != "h.databricks.com:8443" {
+			t.Errorf("kernel Host = %q, want h.databricks.com:8443", got)
+		}
+	})
+
+	t.Run("WithServerHostname with an embedded port and a trailing slash is still accepted", func(t *testing.T) {
+		c := baseKernelConfig()
+		WithServerHostname("https://h.databricks.com:8443/")(c)
+		kauth, err := validateKernelConfig(c)
+		if err != nil {
+			t.Fatalf("unexpected err %v", err)
+		}
+		if got := buildKernelConfig(c, kauth).Host; got != "h.databricks.com:8443" {
+			t.Errorf("kernel Host = %q, want h.databricks.com:8443", got)
 		}
 	})
 

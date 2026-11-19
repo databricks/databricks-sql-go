@@ -111,6 +111,25 @@ func TestProxyForEndpoint(t *testing.T) {
 			},
 			want: "",
 		},
+		{
+			// A trailing "/" (WithServerHostname("https://h/")) is trimmed before the port is
+			// folded, so the endpoint is h:8443, not h/:8443.
+			name: "trailing slash host with Port folds to host:port",
+			cfg: func() *config.Config {
+				c := config.WithDefaults()
+				c.Host = "my-workspace.databricks.com/"
+				c.Port = 8443
+				c.HTTPPath = "/sql/1.0/warehouses/abc"
+				return c
+			}(),
+			resolve: func(req *http.Request) (*url.URL, error) {
+				if req.URL.Host != "my-workspace.databricks.com:8443" {
+					t.Errorf("endpoint host = %q, want %q", req.URL.Host, "my-workspace.databricks.com:8443")
+				}
+				return proxyURL, nil
+			},
+			want: "http://corp-proxy:3128",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
