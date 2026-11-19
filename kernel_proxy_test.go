@@ -56,6 +56,37 @@ func TestProxyForEndpoint(t *testing.T) {
 			want:    "http://corp-proxy:3128",
 		},
 		{
+			name: "embedded port equal to Port is not doubled",
+			cfg: func() *config.Config {
+				c := config.WithDefaults()
+				c.Host = "my-workspace.databricks.com:8443"
+				c.Port = 8443
+				c.HTTPPath = "/sql/1.0/warehouses/abc"
+				return c
+			}(),
+			resolve: func(*http.Request) (*url.URL, error) { return proxyURL, nil },
+			want:    "http://corp-proxy:3128",
+		},
+		{
+			// An unbracketed IPv6 literal with a port must be bracketed in the endpoint,
+			// the same way the kernel Host is built.
+			name: "IPv6 literal with Port is bracketed",
+			cfg: func() *config.Config {
+				c := config.WithDefaults()
+				c.Host = "::1"
+				c.Port = 8443
+				c.HTTPPath = "/sql/1.0/warehouses/abc"
+				return c
+			}(),
+			resolve: func(req *http.Request) (*url.URL, error) {
+				if req.URL.Host != "[::1]:8443" {
+					t.Errorf("endpoint host = %q, want %q", req.URL.Host, "[::1]:8443")
+				}
+				return proxyURL, nil
+			},
+			want: "http://corp-proxy:3128",
+		},
+		{
 			name:    "host excluded by NO_PROXY -> direct",
 			cfg:     validCfg(),
 			resolve: func(*http.Request) (*url.URL, error) { return nil, nil },

@@ -43,10 +43,9 @@ func proxyForEndpointFunc(cfg *config.Config, resolve func(*http.Request) (*url.
 	if scheme == "" {
 		scheme = "https"
 	}
-	endpoint := fmt.Sprintf("%s://%s", scheme, cfg.Host)
-	if cfg.Port != 0 {
-		endpoint = fmt.Sprintf("%s://%s:%d", scheme, cfg.Host, cfg.Port)
-	}
+	// Same authority the kernel connects to: an embedded port is not appended twice
+	// and an IPv6 literal is bracketed (kernelHostWithPort).
+	endpoint := fmt.Sprintf("%s://%s", scheme, kernelHostWithPort(cfg.Host, cfg.Port))
 	req, err := http.NewRequest(http.MethodPost, endpoint, nil)
 	if err != nil {
 		return ""
