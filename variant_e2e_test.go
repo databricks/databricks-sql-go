@@ -94,6 +94,10 @@ func assertVariantColumnTypes(t *testing.T, db *sql.DB) {
 	require.NoError(t, rows.Scan(&v, &s))
 	assert.JSONEq(t, `{"a":1}`, v)
 	assert.Equal(t, "x", s)
+	require.False(t, rows.Next(), "expected exactly one row")
+	require.NoError(t, rows.Err())
+	// Release the connection before the subtests: the Thrift test allows only one.
+	require.NoError(t, rows.Close())
 
 	t.Run("CloudFetch", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
