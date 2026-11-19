@@ -150,8 +150,8 @@ func IsBinaryGeospatialField(field arrow.Field) bool {
 	return geospatial && field.Type.ID() == arrow.STRUCT
 }
 
-// ColumnTypeInfoForField preserves logical time, timestamp and geospatial types that
-// the kernel's physical Arrow representation alone cannot distinguish.
+// ColumnTypeInfoForField preserves logical time, timestamp, VARIANT and geospatial
+// types that the kernel's physical Arrow representation alone cannot distinguish.
 func ColumnTypeInfoForField(field arrow.Field) ColumnTypeInfo {
 	if field.Type != nil && field.Type.ID() == arrow.TIMESTAMP {
 		return timestampColumnTypeInfo(field)
@@ -161,6 +161,12 @@ func ColumnTypeInfoForField(field arrow.Field) ColumnTypeInfo {
 		case "TIME", "TIME(0)", "TIME(1)", "TIME(2)", "TIME(3)", "TIME(4)", "TIME(5)", "TIME(6)":
 			return ColumnTypeInfoFor(arrow.FixedWidthTypes.Time64ns)
 		}
+	}
+	if IsVariantField(field) {
+		// Only the name changes: the value is scanned as the same string.
+		info := ColumnTypeInfoFor(field.Type)
+		info.DatabaseTypeName = "VARIANT"
+		return info
 	}
 	name, geospatial := LogicalGeospatialType(field)
 	if !geospatial {
@@ -247,16 +253,6 @@ func IsVariantField(field arrow.Field) bool {
 		return false
 	}
 	return strings.EqualFold(logicalTypeName(field), "VARIANT")
-}
-
-// ApplyVariantTypeName reports a VARIANT field as "VARIANT" and returns info unchanged
-// otherwise. Only the name changes: the scan type and length stay the STRING mapping
-// that the value scanner uses.
-func ApplyVariantTypeName(info ColumnTypeInfo, field arrow.Field) ColumnTypeInfo {
-	if IsVariantField(field) {
-		info.DatabaseTypeName = "VARIANT"
-	}
-	return info
 }
 
 // varLen builds a ColumnTypeInfo for a variable-length type, reporting the

@@ -197,7 +197,7 @@ func (k *KernelBackend) execute(ctx context.Context, req backend.ExecRequest) (b
 		}
 	})
 
-	op := &kernelOp{backend: k, stmt: stmt, location: k.cfg.Location, decimalAsFloat: k.cfg.DecimalAsFloat, variantTypeName: k.cfg.EnableVariantTypeName}
+	op := &kernelOp{backend: k, stmt: stmt, location: k.cfg.Location, decimalAsFloat: k.cfg.DecimalAsFloat}
 	if execErr != nil {
 		// A session-fatal status (expired token, dropped/unavailable session) means
 		// this conn is unusable: evict it so the pool doesn't hand it out again. This
@@ -347,9 +347,6 @@ type kernelOp struct {
 	// decimalAsFloat scans top-level DECIMAL to lossy float64 instead of exact
 	// string (from Config.DecimalAsFloat). Carried onto the rows.
 	decimalAsFloat bool
-	// variantTypeName reports top-level VARIANT columns as "VARIANT" in the column
-	// type name (from Config.EnableVariantTypeName). Carried onto the rows.
-	variantTypeName bool
 }
 
 var _ backend.Operation = (*kernelOp)(nil)

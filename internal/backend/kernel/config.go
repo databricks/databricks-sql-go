@@ -102,11 +102,6 @@ type Config struct {
 	// the exact string (from WithKernelDecimalAsFloat). Kernel still sends Decimal128.
 	DecimalAsFloat bool
 
-	// EnableVariantTypeName reports top-level VARIANT columns as "VARIANT" instead of
-	// "STRING" in the column type name (from WithEnableVariantTypeName). Client-side
-	// only: the server is not asked for anything different.
-	EnableVariantTypeName bool
-
 	// EnableGeoSpatialSupport selects the local GEOMETRY / GEOGRAPHY result
 	// representation. True requests the canonical struct<srid,wkb> Arrow
 	// representation; false requests WKT / EWKT strings. The connector always

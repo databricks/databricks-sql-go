@@ -569,17 +569,6 @@ func WithEnableMetricViewMetadata(enable bool) ConnOption {
 	}
 }
 
-// WithEnableVariantTypeName makes sql.ColumnType.DatabaseTypeName report "VARIANT"
-// for top-level VARIANT columns instead of "STRING". Values are unchanged (JSON
-// text). Default is false, so existing callers see no change. Both backends honor
-// it. Thrift detection reads the server-supplied Arrow result schema, as TIMESTAMP_NTZ
-// and TIME do. Nested VARIANT (inside arrays, maps or structs) is not reported.
-func WithEnableVariantTypeName(enable bool) ConnOption {
-	return func(c *config.Config) {
-		c.EnableVariantTypeName = enable
-	}
-}
-
 // WithArrowNativeDecimal controls whether DECIMAL columns are returned as native
 // Arrow decimal128 values. Default is false, in which case the server returns
 // DECIMAL columns as strings.

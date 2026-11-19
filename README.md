@@ -258,7 +258,6 @@ session parameter on both backends.
 | *(via session param)* | `WithQueryTags` | Both | | Session-level query tags (serialized into `QUERY_TAGS`). |
 | `timezone` | `WithSessionParams(timezone=…)` | Both | | Session time zone (e.g. `America/Los_Angeles`). |
 | `enableMetricViewMetadata` | `WithEnableMetricViewMetadata` | Both | `false` | Enables metric-view metadata (`spark.sql.thriftserver.metadata.metricview.enabled=true`). |
-| `enableVariantTypeName` | `WithEnableVariantTypeName` | Both | `false` | Report top-level VARIANT columns as `VARIANT` instead of `STRING` in `sql.ColumnType.DatabaseTypeName()`. Values are unchanged. |
 
 ### Retry / backoff
 
@@ -411,11 +410,11 @@ server-supplied Arrow schema. Without that schema, NTZ still reports `TIMESTAMP`
 and uses session-location handling. String timestamps (`UseArrowNativeTimestamp=false`,
 an internal setting) and non-Arrow values also retain legacy session-location parsing.
 
-VARIANT columns report `STRING` by default. With `WithEnableVariantTypeName(true)` or
-`enableVariantTypeName=true`, top-level VARIANT columns report `VARIANT` on both backends.
-Values stay JSON text, and the scan type and length do not change. Nested VARIANT
-(inside ARRAY, MAP or STRUCT) is not reported by name. On Thrift, detection reads the
-server-supplied Arrow schema, as TIMESTAMP_NTZ does.
+Top-level VARIANT columns report `VARIANT` in `sql.ColumnType.DatabaseTypeName()` on
+both backends. Values stay JSON text, and the scan type (`string`) and length match a
+STRING column. Nested VARIANT (inside ARRAY, MAP or STRUCT) is not reported by name. On
+Thrift, detection reads the server-supplied Arrow schema; without it, VARIANT reports
+`STRING`.
 
 Metadata is reached through SQL (`SHOW`, `DESCRIBE`, `information_schema`) on both
 backends — the driver exposes no `GetCatalogs`/`GetSchemas`/`GetTables`/`GetColumns` API

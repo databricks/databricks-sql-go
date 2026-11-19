@@ -233,9 +233,6 @@ func buildKernelConfig(cfg *config.Config, kauth kernel.Auth) kernel.Config {
 		// U2M token-cache control (WithTokenCache / tokenCache DSN param): forward to kernel.
 		kc.TokenCacheEnabled = ke.TokenCacheEnabled
 	}
-	// Client-side VARIANT type name (WithEnableVariantTypeName). Not a session conf, so
-	// it is read from the driver config here rather than through EffectiveSessionParams.
-	kc.EnableVariantTypeName = cfg.EnableVariantTypeName
 	// Retry / backoff policy from WithRetries (+ the kernel-only overall budget).
 	// nil leaves the kernel's own default policy in place.
 	kc.Retry = kernelRetryConfig(cfg)

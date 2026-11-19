@@ -301,10 +301,9 @@ Arrow schema. Without that schema, NTZ still reports TIMESTAMP and uses
 session-location handling. String timestamps (internal UseArrowNativeTimestamp=false)
 and non-Arrow values also retain legacy session-location parsing.
 
-VARIANT columns report STRING unless WithEnableVariantTypeName(true) or
-enableVariantTypeName=true is set, in which case top-level VARIANT columns report
-VARIANT on both backends. Values stay JSON text. On Thrift, detection reads the
-server-supplied Arrow schema.
+Top-level VARIANT columns report VARIANT as the database type name on both backends.
+Values stay JSON text with the STRING scan type and length. On Thrift, detection reads
+the server-supplied Arrow schema; without it, VARIANT reports STRING.
 
 On the read path, context cancellation is honored at result-batch boundaries, not
 mid-fetch: an in-flight CloudFetch batch runs to completion before the cancel takes

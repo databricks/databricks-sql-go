@@ -38,24 +38,40 @@ func TestIsVariantField(t *testing.T) {
 	}
 }
 
-// TestApplyVariantTypeName checks the kernel wiring helper: a VARIANT field reports
-// "VARIANT" while the scan type and length stay exactly what the STRING mapping gives,
-// so the reported type still matches the scanned value.
-func TestApplyVariantTypeName(t *testing.T) {
-	variant := arrow.Field{Name: "v", Type: arrow.BinaryTypes.String,
-		Metadata: arrow.MetadataFrom(map[string]string{sparkSQLNameMetadataKey: "VARIANT"})}
-	plain := arrow.Field{Name: "s", Type: arrow.BinaryTypes.String}
-
-	base := ColumnTypeInfoForField(variant)
-	got := ApplyVariantTypeName(base, variant)
-	if got.DatabaseTypeName != "VARIANT" {
-		t.Errorf("DatabaseTypeName = %q, want %q", got.DatabaseTypeName, "VARIANT")
+// TestColumnTypeInfoForFieldVariant pins the kernel column mapping. A VARIANT field
+// reports "VARIANT" while its scan type and length stay exactly what the physical
+// string mapping gives, so the reported type still matches the scanned value. Other
+// string-backed logical types keep their existing names.
+func TestColumnTypeInfoForFieldVariant(t *testing.T) {
+	field := func(dt arrow.DataType, meta map[string]string) arrow.Field {
+		return arrow.Field{Name: "c", Type: dt, Metadata: arrow.MetadataFrom(meta)}
 	}
-	if got.ScanType != base.ScanType || got.Length != base.Length || got.HasLength != base.HasLength {
-		t.Errorf("ApplyVariantTypeName changed ScanType/Length: got %+v, base %+v", got, base)
-	}
-
-	if got := ApplyVariantTypeName(ColumnTypeInfoForField(plain), plain); got.DatabaseTypeName != "STRING" {
-		t.Errorf("plain string DatabaseTypeName = %q, want %q", got.DatabaseTypeName, "STRING")
+	for _, tc := range []struct {
+		name  string
+		field arrow.Field
+		want  string
+	}{
+		{"kernel VARIANT on string", field(arrow.BinaryTypes.String, map[string]string{databricksTypeNameMetadataKey: "VARIANT"}), "VARIANT"},
+		{"thrift VARIANT on string", field(arrow.BinaryTypes.String, map[string]string{sparkSQLNameMetadataKey: "VARIANT"}), "VARIANT"},
+		{"VARIANT on large string", field(arrow.BinaryTypes.LargeString, map[string]string{databricksTypeNameMetadataKey: "VARIANT"}), "VARIANT"},
+		{"plain string", field(arrow.BinaryTypes.String, nil), "STRING"},
+		{"STRING type name", field(arrow.BinaryTypes.String, map[string]string{databricksTypeNameMetadataKey: "STRING"}), "STRING"},
+		{"VARCHAR type name", field(arrow.BinaryTypes.String, map[string]string{databricksTypeNameMetadataKey: "VARCHAR(10)"}), "STRING"},
+		{"GEOMETRY text", field(arrow.BinaryTypes.String, map[string]string{databricksTypeNameMetadataKey: "GEOMETRY"}), "STRING"},
+		{"TIME text", field(arrow.BinaryTypes.String, map[string]string{databricksTypeNameMetadataKey: "TIME"}), "TIME"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ColumnTypeInfoForField(tc.field)
+			if got.DatabaseTypeName != tc.want {
+				t.Errorf("DatabaseTypeName = %q, want %q", got.DatabaseTypeName, tc.want)
+			}
+			if tc.want != "VARIANT" {
+				return
+			}
+			physical := ColumnTypeInfoFor(tc.field.Type)
+			if got.ScanType != physical.ScanType || got.Length != physical.Length || got.HasLength != physical.HasLength {
+				t.Errorf("VARIANT changed ScanType/Length: got %+v, string mapping %+v", got, physical)
+			}
+		})
 	}
 }

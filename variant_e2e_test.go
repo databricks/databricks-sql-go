@@ -11,49 +11,46 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestE2EVariantTypeName runs against the live warehouse on the Thrift backend. With
-// WithEnableVariantTypeName the VARIANT column reports "VARIANT"; by default it reports
-// "STRING". The value is JSON text either way.
+// TestE2EVariantTypeName runs against the live warehouse on the Thrift backend: the
+// VARIANT column reports "VARIANT" while its value stays JSON text with the STRING scan
+// type and length.
 func TestE2EVariantTypeName(t *testing.T) {
 	host, httpPath, token := pecoTestingCreds(t)
-	const query = `SELECT parse_json('{"a":1}') AS v, 'x' AS s`
+	connector, err := NewConnector(
+		WithServerHostname(host),
+		WithPort(443),
+		WithHTTPPath(httpPath),
+		WithAccessToken(token),
+	)
+	require.NoError(t, err)
+	db := sql.OpenDB(connector)
+	defer db.Close() //nolint:errcheck
 
-	for _, tc := range []struct {
-		name     string
-		opts     []ConnOption
-		wantType string
-	}{
-		{name: "default", opts: nil, wantType: "STRING"},
-		{name: "enabled", opts: []ConnOption{WithEnableVariantTypeName(true)}, wantType: "VARIANT"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			opts := append([]ConnOption{
-				WithServerHostname(host),
-				WithPort(443),
-				WithHTTPPath(httpPath),
-				WithAccessToken(token),
-			}, tc.opts...)
-			connector, err := NewConnector(opts...)
-			require.NoError(t, err)
+	assertVariantColumnTypes(t, db)
+}
 
-			db := sql.OpenDB(connector)
-			defer db.Close() //nolint:errcheck
+// assertVariantColumnTypes checks a VARIANT column against a plain STRING column in
+// the same result; the kernel e2e test shares it.
+func assertVariantColumnTypes(t *testing.T, db *sql.DB) {
+	t.Helper()
+	rows, err := db.QueryContext(context.Background(), `SELECT parse_json('{"a":1}') AS v, 'x' AS s`)
+	require.NoError(t, err)
+	defer rows.Close() //nolint:errcheck
 
-			rows, err := db.QueryContext(context.Background(), query)
-			require.NoError(t, err)
-			defer rows.Close() //nolint:errcheck
+	cts, err := rows.ColumnTypes()
+	require.NoError(t, err)
+	require.Len(t, cts, 2)
+	assert.Equal(t, "VARIANT", cts[0].DatabaseTypeName(), "VARIANT column")
+	assert.Equal(t, "STRING", cts[1].DatabaseTypeName(), "plain string column")
+	assert.Equal(t, cts[1].ScanType(), cts[0].ScanType(), "VARIANT scan type")
+	variantLen, variantHasLen := cts[0].Length()
+	stringLen, stringHasLen := cts[1].Length()
+	assert.Equal(t, stringLen, variantLen, "VARIANT length")
+	assert.Equal(t, stringHasLen, variantHasLen, "VARIANT length presence")
 
-			cts, err := rows.ColumnTypes()
-			require.NoError(t, err)
-			require.Len(t, cts, 2)
-			assert.Equal(t, tc.wantType, cts[0].DatabaseTypeName(), "VARIANT column")
-			assert.Equal(t, "STRING", cts[1].DatabaseTypeName(), "plain string column")
-
-			require.True(t, rows.Next(), "expected one row")
-			var v, s string
-			require.NoError(t, rows.Scan(&v, &s))
-			assert.JSONEq(t, `{"a":1}`, v)
-			assert.Equal(t, "x", s)
-		})
-	}
+	require.True(t, rows.Next(), "expected one row")
+	var v, s string
+	require.NoError(t, rows.Scan(&v, &s))
+	assert.JSONEq(t, `{"a":1}`, v)
+	assert.Equal(t, "x", s)
 }

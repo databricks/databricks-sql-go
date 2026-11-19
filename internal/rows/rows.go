@@ -454,6 +454,9 @@ func (r *rows) ColumnTypeDatabaseTypeName(index int) string {
 // column would still report TIMESTAMP_NTZ while its values went through the
 // legacy column scanner.
 //
+// VARIANT is the exception: its values are JSON text on every result format, so a
+// column the schema tags as VARIANT reports VARIANT whether or not it is Arrow-decoded.
+//
 // database/sql's Rows.ColumnTypes() only holds a read lock, so this may be
 // reached concurrently. The map is built in a local variable and published
 // exactly once via sync.Once, so readers never observe a partially filled map.
@@ -468,16 +471,6 @@ func (r *rows) buildDatabaseTypeNameOverrides() map[int]string {
 	if r.resultSetMetadata == nil || len(r.resultSetMetadata.ArrowSchema) == 0 {
 		return overrides
 	}
-	if r.config != nil && !r.config.UseArrowBatches {
-		return overrides
-	}
-	if r.resultSetMetadata.IsSetResultFormat() {
-		switch r.resultSetMetadata.GetResultFormat() {
-		case cli_service.TSparkRowSetType_ARROW_BASED_SET, cli_service.TSparkRowSetType_URL_BASED_SET:
-		default:
-			return overrides
-		}
-	}
 
 	reader, err := ipc.NewReader(bytes.NewReader(r.resultSetMetadata.ArrowSchema))
 	if err != nil {
@@ -488,7 +481,17 @@ func (r *rows) buildDatabaseTypeNameOverrides() map[int]string {
 		return overrides
 	}
 	defer reader.Release()
+	arrowDecoded := r.isArrowDecoded()
 	for i, field := range reader.Schema().Fields() {
+		// VARIANT arrives as a string column, so the Arrow field metadata is the only
+		// signal. The scan type and length stay the STRING mapping.
+		if arrowscan.IsVariantField(field) {
+			overrides[i] = "VARIANT"
+			continue
+		}
+		if !arrowDecoded {
+			continue
+		}
 		// Same check the Arrow value scanner uses (metadata first, then
 		// TimeZone), so the type name and the value handling stay in sync.
 		if arrowscan.IsTimestampNTZField(field) {
@@ -497,13 +500,24 @@ func (r *rows) buildDatabaseTypeNameOverrides() map[int]string {
 		if field.Type.ID() == arrow.TIME32 || field.Type.ID() == arrow.TIME64 {
 			overrides[i] = "TIME"
 		}
-		// Opt-in: VARIANT arrives as a string column, so the Arrow field metadata is
-		// the only signal. The scan type and length stay the STRING mapping.
-		if r.config != nil && r.config.EnableVariantTypeName && arrowscan.IsVariantField(field) {
-			overrides[i] = "VARIANT"
-		}
 	}
 	return overrides
+}
+
+// isArrowDecoded reports whether the result set metadata indicates Arrow decoding,
+// which the TIMESTAMP_NTZ and TIME type names depend on.
+func (r *rows) isArrowDecoded() bool {
+	if r.config != nil && !r.config.UseArrowBatches {
+		return false
+	}
+	if r.resultSetMetadata.IsSetResultFormat() {
+		switch r.resultSetMetadata.GetResultFormat() {
+		case cli_service.TSparkRowSetType_ARROW_BASED_SET, cli_service.TSparkRowSetType_URL_BASED_SET:
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // ColumnTypeNullable returns a flag indicating whether the column is nullable
