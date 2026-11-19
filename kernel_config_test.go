@@ -445,7 +445,7 @@ var kernelConfigFieldDisposition = map[string]string{
 	"QueryTimeout": "rejected",  // when > 0 (WithTimeout)
 	"Protocol":     "rejected",  // kernel is https-only; non-default rejected
 	"Port":         "forwarded", // folded into the kernel Host by kernelHostWithPort; validated by validateKernelHostPort
-	"PortExplicit": "forwarded", // set by WithPort / the DSN; consumed by validation, not sent to the kernel
+	"PortExplicit": "validated", // set by WithPort / the DSN; consumed by validation, not sent to the kernel
 	"Transport":    "rejected",  // custom RoundTripper; kernel uses its own HTTP stack, so reject rather than drop
 
 	// Forwarded to the kernel's HTTP retry config via kernelRetryConfig →

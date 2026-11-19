@@ -2,7 +2,7 @@
 
 ## Unreleased (v2.0.0 prototype)
 
-- Honor `WithPort` / DSN port on the kernel backend: a non-default port is folded into the host (`host:port`, IPv6-safe) instead of being rejected, and a port that conflicts with one embedded in the host, or is out of range, is rejected with `ErrInvalidKernelConfig`. With OAuth and a non-default port, the kernel uses the same `host:port` for OAuth; Thrift keeps OAuth on the bare host (documented, not guarded).
+- Honor `WithPort` / DSN port on the kernel backend, including the automatic Reyden recovery onto the kernel: a non-default port is folded into the host (`host:port`, IPv6-safe) instead of being rejected, and a port that conflicts with one embedded in the host, or is out of range, is rejected with `ErrInvalidKernelConfig`. With OAuth and a non-default port, the kernel uses the same `host:port` for OAuth; Thrift keeps OAuth on the bare host (documented, not guarded).
 
 - Fix the module-root package conflict when building, linting, or running Gazelle with the `tools` build tag (databricks/databricks-sql-go#162).
 - **Behavior change:** Report declared DECIMAL precision and scale through `sql.ColumnType.DecimalSize()` on Thrift and SEA, including zero-row results. Tools such as ORM migrators can now act on these qualifiers (databricks/databricks-sql-go#500).

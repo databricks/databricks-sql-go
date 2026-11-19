@@ -251,7 +251,7 @@ func unbalancedBrackets(host string) bool {
 // the DSN set the port. WithDefaults fills 443 otherwise, so an unset 443 defers to the embedded port.
 func validateKernelHostPort(host string, port int, explicit bool) error {
 	if port < 0 || port > 65535 {
-		return fmt.Errorf("databricks: WithPort %d is out of range (want 1..65535): %w", port, dbsqlerr.ErrInvalidKernelConfig)
+		return fmt.Errorf("databricks: WithPort %d is out of range (want 1..65535, or 0 for the default): %w", port, dbsqlerr.ErrInvalidKernelConfig)
 	}
 	if unbalancedBrackets(host) {
 		return fmt.Errorf("databricks: host %q has unbalanced IPv6 brackets: %w", host, dbsqlerr.ErrInvalidKernelConfig)
