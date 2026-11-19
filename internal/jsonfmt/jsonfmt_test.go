@@ -33,7 +33,6 @@ func TestMarshalMatchesEncodingJSON(t *testing.T) {
 		math.MaxFloat64, math.SmallestNonzeroFloat64, -math.MaxFloat64,
 		float32(0), float32(math.Copysign(0, -1)), float32(3.14), float32(0.1), float32(1e21), float32(1e-6), float32(1e-7),
 		float32(math.MaxFloat32), float32(math.SmallestNonzeroFloat32),
-		math.NaN(), math.Inf(1), math.Inf(-1), float32(math.NaN()), float32(math.Inf(-1)),
 		"", "alpha", "with space", "a\"b", `back\slash`, "<tag>", "a&b", "tab\there", "nl\n", "\x00", "\x7f",
 		"héllo", "日本語", "  ", "\xff\xfe", "emoji 😀",
 		[]byte("abc"), []byte(nil),
@@ -89,10 +88,41 @@ func TestMarshalRandomUnicodeStrings(t *testing.T) {
 func TestMarshalRandomFloats(t *testing.T) {
 	r := rand.New(rand.NewSource(1)) //nolint:gosec // G404: deterministic test inputs, not security
 	for i := 0; i < 200000; i++ {
-		assertParity(t, math.Float64frombits(r.Uint64()))
-		assertParity(t, math.Float32frombits(r.Uint32()))
+		f64 := math.Float64frombits(r.Uint64())
+		if !math.IsNaN(f64) && !math.IsInf(f64, 0) {
+			assertParity(t, f64)
+		}
+		f32 := math.Float32frombits(r.Uint32())
+		if !math.IsNaN(float64(f32)) && !math.IsInf(float64(f32), 0) {
+			assertParity(t, f32)
+		}
 		assertParity(t, r.NormFloat64()*math.Pow(10, float64(r.Intn(50)-25)))
 		assertParity(t, float32(r.NormFloat64()*math.Pow(10, float64(r.Intn(30)-15))))
+	}
+}
+
+func TestAppendNonFiniteFloats(t *testing.T) {
+	cases := []struct {
+		name  string
+		value any
+		want  string
+	}{
+		{"float32_nan", float32(math.NaN()), `"NaN"`},
+		{"float32_infinity", float32(math.Inf(1)), `"Infinity"`},
+		{"float32_negative_infinity", float32(math.Inf(-1)), `"-Infinity"`},
+		{"float64_nan", math.NaN(), `"NaN"`},
+		{"float64_infinity", math.Inf(1), `"Infinity"`},
+		{"float64_negative_infinity", math.Inf(-1), `"-Infinity"`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, prefix := range []string{"", "[1.5,"} {
+				got, err := Append([]byte(prefix), tc.value)
+				if err != nil || string(got) != prefix+tc.want {
+					t.Fatalf("Append(%q, %v) = %q, %v; want %q", prefix, tc.value, got, err, prefix+tc.want)
+				}
+			}
+		})
 	}
 }
 
@@ -112,6 +142,7 @@ func TestAppendKeepsPrefix(t *testing.T) {
 func TestAppendFastPathDoesNotAllocate(t *testing.T) {
 	buf := make([]byte, 0, 64)
 	for _, v := range []any{int64(-9000), int32(42), uint64(7), 3.14, 0.30000000000000004, 1e-7, float32(0.5), true,
+		math.NaN(), math.Inf(1), math.Inf(-1), float32(math.NaN()), float32(math.Inf(1)), float32(math.Inf(-1)),
 		"alpha", "café 日本語 😀"} {
 		if n := testing.AllocsPerRun(100, func() { buf, _ = Append(buf[:0], v) }); n != 0 {
 			t.Errorf("Append(%#v) allocated %v times per run, want 0", v, n)
@@ -121,9 +152,11 @@ func TestAppendFastPathDoesNotAllocate(t *testing.T) {
 
 // jsonfmt appends into a reused buffer, as both renderers do.
 func BenchmarkAppendScalars(b *testing.B) {
-	// The last three take json.Marshal's fallback.
+	// The escaped string and []byte take json.Marshal's fallback.
+	// Non-finite floats are left out: encoding/json rejects them, so including them
+	// would compare a fast-path append against an error path.
 	values := []any{int32(42), int64(-9000), 3.14, 0.30000000000000004, float32(0.5), true, "alpha0", "café crème",
-		`a"b`, []byte("abc"), math.NaN()}
+		`a"b`, []byte("abc")}
 	b.Run("jsonfmt", func(b *testing.B) {
 		b.ReportAllocs()
 		buf := make([]byte, 0, 64)

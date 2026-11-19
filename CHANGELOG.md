@@ -2,6 +2,8 @@
 
 ## Unreleased (v2.0.0 prototype)
 
+- Render non-finite FLOAT / DOUBLE values inside ARRAY / MAP / STRUCT results as the JSON strings `"NaN"`, `"Infinity"`, and `"-Infinity"` on both backends instead of failing row iteration. SQL NULL remains `null`; top-level floats remain numeric (databricks/databricks-sql-go#573).
+- **Behavior change:** Non-finite floating-point MAP keys use the same spellings as values on both backends. On the kernel backend, keys previously rendered as `"+Inf"` and `"-Inf"` now render as `"Infinity"` and `"-Infinity"`; `"NaN"` is unchanged. On Thrift, these keys previously failed row iteration (databricks/databricks-sql-go#573).
 - Fix the module-root package conflict when building, linting, or running Gazelle with the `tools` build tag (databricks/databricks-sql-go#162).
 - **Behavior change:** Report declared DECIMAL precision and scale through `sql.ColumnType.DecimalSize()` on Thrift and SEA, including zero-row results. Tools such as ORM migrators can now act on these qualifiers (databricks/databricks-sql-go#500).
 - **Behavior change:** Support Arrow TIME results on Thrift and SEA as UTC `time.Time` values on `0001-01-01`, preserving precision and using clock-only nested JSON. TIME metadata now reports `TIME`/`time.Time` with no length, including empty and NULL-only results; previously Thrift reported `STRING`/`string` with unbounded length, and SEA reported an empty name with `*interface{}` (databricks/databricks-sql-go#505).
