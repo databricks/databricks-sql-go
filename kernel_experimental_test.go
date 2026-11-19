@@ -136,12 +136,6 @@ func TestWithKernelTLSOptionsSetExperimental(t *testing.T) {
 			if cfg.KernelExperimental == nil {
 				t.Fatalf("%s: KernelExperimental should be non-nil after the option", c.name)
 			}
-			if cfg.KernelExperimental.EnableHTTP2 != nil {
-				got := buildKernelConfig(cfg, kernel.Auth{}).EnableHTTP2
-				if got == nil || *got != *cfg.KernelExperimental.EnableHTTP2 {
-					t.Fatalf("buildKernelConfig lost EnableHTTP2: %v", got)
-				}
-			}
 			if !c.verify(cfg.KernelExperimental) {
 				t.Errorf("%s: option did not set the expected field(s): %+v", c.name, cfg.KernelExperimental)
 			}
@@ -159,6 +153,14 @@ func TestKernelHTTP2DSNDefaultAndInvalid(t *testing.T) {
 	withUserConfig(user)(cfg)
 	if got := buildKernelConfig(cfg, kernel.Auth{}).EnableHTTP2; got != nil {
 		t.Fatal("omitted setting must leave the kernel default in effect")
+	}
+	user, err = config.ParseDSN(dsn + "?enableHttp2=false")
+	if err != nil {
+		t.Fatal(err)
+	}
+	withUserConfig(user)(cfg)
+	if got := buildKernelConfig(cfg, kernel.Auth{}).EnableHTTP2; got == nil || *got {
+		t.Fatalf("explicit false was not forwarded to the kernel: %v", got)
 	}
 	if _, err := config.ParseDSN(dsn + "?enableHttp2=invalid"); err == nil {
 		t.Fatal("invalid enableHttp2 must fail parsing")

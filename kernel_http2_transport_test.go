@@ -7,11 +7,17 @@ import (
 	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 	"time"
 )
 
 func TestKernelHTTP2OptOut(t *testing.T) {
+	for _, name := range []string{"HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy"} {
+		if os.Getenv(name) != "" {
+			t.Skipf("unset %s to test direct HTTP/2 negotiation", name)
+		}
+	}
 	versions := make(chan int, 4)
 	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		versions <- r.ProtoMajor
