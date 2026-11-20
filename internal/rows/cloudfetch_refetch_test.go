@@ -32,8 +32,12 @@ type cloudFetchFixture struct {
 	server   *httptest.Server
 }
 
-func newCloudFetchFixture(t testing.TB) *cloudFetchFixture {
+func newCloudFetchFixture(t testing.TB, dimensions ...int) *cloudFetchFixture {
 	t.Helper()
+	fileCount, rowsPerFile := 6, 3
+	if len(dimensions) == 2 {
+		fileCount, rowsPerFile = dimensions[0], dimensions[1]
+	}
 	schema := arrow.NewSchema([]arrow.Field{{Name: "id", Type: arrow.PrimitiveTypes.Int64}}, nil)
 	var schemaBytes bytes.Buffer
 	writer := ipc.NewWriter(&schemaBytes, ipc.WithSchema(schema))
@@ -47,12 +51,14 @@ func newCloudFetchFixture(t testing.TB) *cloudFetchFixture {
 		}}},
 	}}
 	files := make(map[string][]byte)
-	for start := int64(0); start < 18; start += 3 {
+	for start := int64(0); start < int64(fileCount*rowsPerFile); start += int64(rowsPerFile) {
 		builder := array.NewInt64Builder(memory.DefaultAllocator)
-		builder.AppendValues([]int64{start, start + 1, start + 2}, nil)
+		for value := start; value < start+int64(rowsPerFile); value++ {
+			builder.Append(value)
+		}
 		values := builder.NewArray()
 		builder.Release()
-		record := array.NewRecordBatch(schema, []arrow.Array{values}, 3)
+		record := array.NewRecordBatch(schema, []arrow.Array{values}, int64(rowsPerFile))
 		values.Release()
 		var data bytes.Buffer
 		writer := ipc.NewWriter(&data, ipc.WithSchema(schema))
@@ -62,7 +68,7 @@ func newCloudFetchFixture(t testing.TB) *cloudFetchFixture {
 		path := "/" + strconv.FormatInt(start, 10)
 		files[path] = data.Bytes()
 		fixture.links = append(fixture.links, &cli_service.TSparkArrowResultLink{
-			FileLink: path, StartRowOffset: start, RowCount: 3, ExpiryTime: time.Now().Add(-time.Hour).UnixMilli(),
+			FileLink: path, StartRowOffset: start, RowCount: int64(rowsPerFile), ExpiryTime: time.Now().Add(-time.Hour).UnixMilli(),
 		})
 	}
 	fixture.server = httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
@@ -173,7 +179,7 @@ func TestCloudFetchRefetch(t *testing.T) {
 						if closed {
 							return nil, errors.New("fetch after operation close")
 						}
-						if request.MaxRows == 3 && request.StartRowOffset != nil {
+						if request.StartRowOffset != nil && !request.GetIncludeResultSetMetadata() {
 							start := *request.StartRowOffset
 							refreshed = append(refreshed, start)
 							response := page(start, 3)
@@ -228,6 +234,13 @@ func TestCloudFetchRefetchFailures(t *testing.T) {
 	for _, scenario := range []string{"expired", "rpc failure", "wrong range", "wrong subsequent range", "missing requested range", "duplicate range", "empty response", "closed operation"} {
 		t.Run(scenario, func(t *testing.T) {
 			fixture := newCloudFetchFixture(t)
+			rejected := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+				writer.WriteHeader(http.StatusForbidden)
+			}))
+			defer rejected.Close()
+			for _, link := range fixture.links {
+				link.FileLink = rejected.URL
+			}
 			calls := 0
 			cli := &client.TestClient{FnFetchResults: func(context.Context, *cli_service.TFetchResultsReq) (*cli_service.TFetchResultsResp, error) {
 				calls++
@@ -271,7 +284,11 @@ func TestCloudFetchRefetchFailures(t *testing.T) {
 			require.NoError(t, newRowsErr)
 			defer func() { require.NoError(t, result.Close()) }()
 			_, err := consumeCloudFetch(t, result, "rows")
-			require.ErrorContains(t, err, dbsqlerr.ErrLinkExpired)
+			if scenario == "closed operation" {
+				require.ErrorContains(t, err, "HTTP error 403")
+			} else {
+				require.ErrorContains(t, err, dbsqlerr.ErrLinkExpired)
+			}
 			want := 1
 			switch scenario {
 			case "expired":

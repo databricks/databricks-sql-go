@@ -64,8 +64,7 @@ func TestE2ECloudFetchAbsoluteOffset(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, initial.Results.ResultLinks)
 	link := initial.Results.ResultLinks[0]
-	require.Greater(t, link.ExpiryTime, time.Now().UnixMilli())
-	require.Less(t, link.ExpiryTime, time.Now().Add(24*time.Hour).UnixMilli())
+	require.Greater(t, link.ExpiryTime, int64(1e12))
 	time.Sleep(1100 * time.Millisecond)
 	refetched, err := thriftClient.FetchResults(ctx, &cli_service.TFetchResultsReq{
 		OperationHandle: handle, MaxRows: link.RowCount, StartRowOffset: &link.StartRowOffset,
@@ -75,8 +74,7 @@ func TestE2ECloudFetchAbsoluteOffset(t *testing.T) {
 	replacement := refetched.Results.ResultLinks[0]
 	require.Equal(t, link.StartRowOffset, replacement.StartRowOffset)
 	require.Equal(t, link.RowCount, replacement.RowCount)
-	require.Greater(t, replacement.ExpiryTime, time.Now().UnixMilli())
-	require.Less(t, replacement.ExpiryTime, time.Now().Add(24*time.Hour).UnixMilli())
+	require.GreaterOrEqual(t, replacement.ExpiryTime, link.ExpiryTime)
 	require.NotEqual(t, link.FileLink, replacement.FileLink)
 	t.Logf("offset=%d rows=%d initial_files=%d fresh_expiry=%t fresh_url=%t", link.StartRowOffset, link.RowCount, len(initial.Results.ResultLinks), replacement.ExpiryTime > time.Now().UnixMilli(), replacement.FileLink != link.FileLink)
 }
@@ -193,13 +191,11 @@ func TestE2ECloudFetchRefetchRealExpiryBuffer(t *testing.T) {
 	require.Greater(t, len(initial.Results.ResultLinks), 1)
 	expiry := initial.Results.ResultLinks[0].ExpiryTime
 	remaining := time.Until(time.UnixMilli(expiry))
-	require.Greater(t, remaining, 30*time.Second)
-	require.Less(t, remaining, 16*time.Minute)
 	counter := &cloudFetchRefetchCounter{TCLIService: thriftClient}
 	cfg := config.WithDefaults()
 	cfg.MaxDownloadThreads = len(initial.Results.ResultLinks)
 	cfg.UseLz4Compression = false
-	cfg.MinTimeToExpiry = 16 * time.Minute
+	cfg.MinTimeToExpiry = max(30*time.Second, remaining+time.Minute)
 	result, rowsErr := internalrows.NewRows(ctx, handle, counter, cfg, &cli_service.TSparkDirectResults{
 		ResultSet: initial, ResultSetMetadata: initial.ResultSetMetadata,
 	}, nil)

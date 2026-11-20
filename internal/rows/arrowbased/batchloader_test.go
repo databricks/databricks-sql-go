@@ -143,7 +143,7 @@ func TestCloudFetchIterator(t *testing.T) {
 		assert.False(t, bi.HasNext())
 	})
 
-	t.Run("should fail on expired link", func(t *testing.T) {
+	t.Run("should download locally expired links when storage accepts them", func(t *testing.T) {
 		handler = func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
 			_, err := w.Write(generateMockArrowBytes(generateArrowRecord()))
@@ -205,10 +205,9 @@ func TestCloudFetchIterator(t *testing.T) {
 		assert.Equal(t, cbi.downloadTasks.Len(), 0)
 		assert.Equal(t, sab1.Start(), startRowOffset)
 
-		// get second link - should fail
-		_, err3 := bi.Next()
-		assert.NotNil(t, err3)
-		assert.ErrorContains(t, err3, dbsqlerr.ErrLinkExpired)
+		sab2, err3 := bi.Next()
+		assert.Nil(t, err3)
+		assert.Equal(t, startRowOffset+1, sab2.Start())
 	})
 
 	t.Run("should fail on HTTP errors", func(t *testing.T) {
@@ -624,7 +623,7 @@ func TestCloudFetchIterator(t *testing.T) {
 		cfg := config.WithDefaults()
 		cfg.UseLz4Compression = false
 		cfg.MaxDownloadThreads = 1
-		cfg.RetryMax = 5
+		cfg.RetryMax = 1
 		cfg.RetryWaitMin = 1 * time.Millisecond
 		cfg.RetryWaitMax = 3 * time.Second
 		expiryTime := time.Now().Add(2 * time.Second).UnixMilli()
@@ -647,8 +646,7 @@ func TestCloudFetchIterator(t *testing.T) {
 		_, nextErr := bi.Next()
 		assert.NotNil(t, nextErr)
 		assert.ErrorContains(t, nextErr, dbsqlerr.ErrLinkExpired)
-		// The retry sleeps past expiry, then short-circuits before another GET.
-		assert.Equal(t, int32(1), atomic.LoadInt32(&attempts))
+		assert.Equal(t, int32(2), atomic.LoadInt32(&attempts))
 	})
 
 	t.Run("should respect context cancellation during backoff", func(t *testing.T) {

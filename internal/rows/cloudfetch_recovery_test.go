@@ -19,7 +19,7 @@ import (
 
 func TestCloudFetchServerShapedExpiry(t *testing.T) {
 	for _, api := range []string{"rows", "batches", "ipc"} {
-		for _, mode := range []string{"whole page", "one link", "closed near expiry", "open near expiry", "403 during download"} {
+		for _, mode := range []string{"whole page", "one link", "honors max rows", "closed near expiry", "open near expiry", "403 during download", "clock skew", "closed clock skew"} {
 			t.Run(api+"/"+mode, func(t *testing.T) {
 				fixture := newCloudFetchFixture(t)
 				payloads := make(map[string][]byte)
@@ -38,7 +38,7 @@ func TestCloudFetchServerShapedExpiry(t *testing.T) {
 						if mode == "403 during download" {
 							time.Sleep(1200 * time.Millisecond)
 						}
-						if mode != "closed near expiry" {
+						if mode != "closed near expiry" && mode != "clock skew" && mode != "closed clock skew" {
 							writer.WriteHeader(http.StatusForbidden)
 							return
 						}
@@ -63,6 +63,9 @@ func TestCloudFetchServerShapedExpiry(t *testing.T) {
 					if mode == "403 during download" {
 						remaining = 31 * time.Second
 					}
+					if mode == "clock skew" || mode == "closed clock skew" {
+						remaining = 15*time.Minute - 20*time.Minute
+					}
 					link.ExpiryTime = time.Now().Add(remaining).UnixMilli()
 				}
 				calls, closes := 0, 0
@@ -70,6 +73,7 @@ func TestCloudFetchServerShapedExpiry(t *testing.T) {
 					FnFetchResults: func(_ context.Context, request *cli_service.TFetchResultsReq) (*cli_service.TFetchResultsResp, error) {
 						calls++
 						var fresh []*cli_service.TSparkArrowResultLink
+						var returnedRows int64
 						for _, original := range fixture.links {
 							if original.StartRowOffset < *request.StartRowOffset {
 								continue
@@ -77,8 +81,12 @@ func TestCloudFetchServerShapedExpiry(t *testing.T) {
 							link := *original
 							link.FileLink = fmt.Sprintf("%s/%d?fresh", server.URL, link.StartRowOffset)
 							link.ExpiryTime = time.Now().Add(15 * time.Minute).UnixMilli()
+							if mode == "clock skew" || mode == "closed clock skew" {
+								link.ExpiryTime = time.Now().Add(15*time.Minute - 20*time.Minute).UnixMilli()
+							}
 							fresh = append(fresh, &link)
-							if mode == "one link" {
+							returnedRows += link.RowCount
+							if mode == "one link" || (mode == "honors max rows" && returnedRows >= request.MaxRows) {
 								break
 							}
 						}
@@ -92,7 +100,7 @@ func TestCloudFetchServerShapedExpiry(t *testing.T) {
 				more := false
 				direct := &cli_service.TSparkDirectResults{ResultSetMetadata: fixture.metadata,
 					ResultSet: &cli_service.TFetchResultsResp{HasMoreRows: &more, Results: &cli_service.TRowSet{ResultLinks: fixture.links}}}
-				if mode == "closed near expiry" {
+				if mode == "closed near expiry" || mode == "closed clock skew" {
 					direct.CloseOperation = &cli_service.TCloseOperationResp{}
 				}
 				cfg := config.WithDefaults()
@@ -113,11 +121,11 @@ func TestCloudFetchServerShapedExpiry(t *testing.T) {
 				if mode == "one link" {
 					wantCalls = 6
 				}
-				if mode == "closed near expiry" {
+				if mode == "closed near expiry" || mode == "closed clock skew" {
 					wantCalls = 0
 				}
 				require.Equal(t, wantCalls, calls)
-				if mode == "whole page" {
+				if mode == "whole page" || mode == "honors max rows" {
 					require.Equal(t, int64(6), peak.Load(), "renewed queued links must download in parallel")
 					require.Zero(t, oldGETs.Load())
 				}
@@ -125,7 +133,7 @@ func TestCloudFetchServerShapedExpiry(t *testing.T) {
 					require.Positive(t, oldGETs.Load())
 				}
 				require.NoError(t, result.Close())
-				if mode == "closed near expiry" {
+				if mode == "closed near expiry" || mode == "closed clock skew" {
 					require.Zero(t, closes)
 				} else {
 					require.Equal(t, 1, closes)

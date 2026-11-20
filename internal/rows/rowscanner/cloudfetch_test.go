@@ -22,6 +22,7 @@ func TestCloudFetchRefetchRestoresFetchPosition(t *testing.T) {
 				switch calls {
 				case 1:
 					require.Equal(t, int64(0), *request.StartRowOffset)
+					require.Equal(t, int64(9), request.MaxRows)
 					if outcome == "rpc failure" {
 						return nil, errors.New("refetch failed")
 					}

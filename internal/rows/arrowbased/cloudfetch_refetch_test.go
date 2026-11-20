@@ -19,12 +19,13 @@ import (
 )
 
 func TestExpiredLinkStackAtFailure(t *testing.T) {
-	_, err := fetchBatchBytes(context.Background(), &cli_service.TSparkArrowResultLink{ExpiryTime: time.Now().Add(-time.Minute).UnixMilli()}, 0, 0, 0, http.DefaultClient, 0, 0, 0)
+	_, err := fetchBatchBytes(context.Background(), &cli_service.TSparkArrowResultLink{ExpiryTime: time.Now().Add(-time.Minute).UnixMilli()}, time.Minute, time.Minute, 0, http.DefaultClient, 0, 0, 0)
 	require.ErrorIs(t, err, errLinkExpired)
 	wrapped := dbsqlerrint.NewDriverError(context.Background(), "download failed", err)
 	require.NotEmpty(t, wrapped.StackTrace())
 	frame := fmt.Sprintf("%+v", wrapped.StackTrace()[0])
-	require.Contains(t, frame, "fetchBatchBytes")
+	require.Contains(t, frame, "newCloudFetchExpiryError")
+	require.Contains(t, fmt.Sprintf("%+v", wrapped.StackTrace()[1]), "fetchBatchBytes")
 	require.NotContains(t, frame, "arrowbased.init")
 }
 

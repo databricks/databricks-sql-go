@@ -60,7 +60,7 @@ func (rpf *resultPageIterator) RefetchLinks(ctx context.Context, expired *cli_se
 	response, err := rpf.client.FetchResults(ctx, &cli_service.TFetchResultsReq{
 		OperationHandle: rpf.opHandle,
 		StartRowOffset:  &expired.StartRowOffset,
-		MaxRows:         expired.RowCount,
+		MaxRows:         max(expired.RowCount, rpf.Start()+rpf.Count()-expired.StartRowOffset),
 	})
 	if err != nil {
 		return nil, dbsqlerrint.NewRequestError(ctx, dbsqlerr.ErrLinkExpired, err)

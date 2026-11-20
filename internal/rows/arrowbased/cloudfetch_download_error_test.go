@@ -31,21 +31,25 @@ func TestCloudFetchExpiryMilliseconds(t *testing.T) {
 }
 
 func TestCloudFetchNoRefresherIgnoresBuffer(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
-		_, _ = writer.Write([]byte("downloaded"))
-	}))
-	defer server.Close()
-	cfg := config.WithDefaults()
-	cfg.UseLz4Compression = false
-	cfg.MinTimeToExpiry = time.Hour
-	iterator, err := NewCloudIPCStreamIterator(context.Background(), []*cli_service.TSparkArrowResultLink{{FileLink: server.URL, ExpiryTime: time.Now().Add(20 * time.Second).UnixMilli(), RowCount: 3}}, 0, cfg, nil)
-	require.NoError(t, err)
-	defer iterator.Close()
-	stream, streamErr := iterator.Next()
-	require.NoError(t, streamErr)
-	data, readErr := io.ReadAll(stream)
-	require.NoError(t, readErr)
-	require.Equal(t, "downloaded", string(data))
+	for _, remaining := range []time.Duration{20 * time.Second, 15*time.Minute - 20*time.Minute} {
+		t.Run(remaining.String(), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+				_, _ = writer.Write([]byte("downloaded"))
+			}))
+			defer server.Close()
+			cfg := config.WithDefaults()
+			cfg.UseLz4Compression = false
+			cfg.MinTimeToExpiry = time.Hour
+			iterator, err := NewCloudIPCStreamIterator(context.Background(), []*cli_service.TSparkArrowResultLink{{FileLink: server.URL, ExpiryTime: time.Now().Add(remaining).UnixMilli(), RowCount: 3}}, 0, cfg, nil)
+			require.NoError(t, err)
+			defer iterator.Close()
+			stream, streamErr := iterator.Next()
+			require.NoError(t, streamErr)
+			data, readErr := io.ReadAll(stream)
+			require.NoError(t, readErr)
+			require.Equal(t, "downloaded", string(data))
+		})
+	}
 }
 
 func TestCloudFetchNearExpiryRPCFailureFallsBack(t *testing.T) {
