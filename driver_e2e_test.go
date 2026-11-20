@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -424,6 +425,10 @@ func TestE2EArrowSchemaBeforeFetching(t *testing.T) {
 						connection, err := driverConnector.Connect(ctx)
 						require.NoError(t, err)
 						defer func() { require.NoError(t, connection.Close()) }()
+						clockColumn := ""
+						if mode != "no-direct-fallback" {
+							clockColumn = ", TIME '12:34:56.123456' AS clock_value"
+						}
 						query := fmt.Sprintf(`SELECT
 							CAST(9007199254740993 AS BIGINT) AS bigint_value,
 							CAST(NULL AS BOOLEAN) AS bool_value,
@@ -442,8 +447,8 @@ func TestE2EArrowSchemaBeforeFetching(t *testing.T) {
 							TIMESTAMP_NTZ '2020-01-02 03:04:05.123456' AS timestamp_ntz_value,
 							INTERVAL '1-2' YEAR TO MONTH AS year_month_value,
 							INTERVAL '1 02:03:04' DAY TO SECOND AS day_time_value,
-							parse_json('{"a":1}') AS variant_value
-							FROM range(%d)`, rowCount)
+							parse_json('{"a":1}') AS variant_value%s
+							FROM range(%d)`, clockColumn, rowCount)
 						result, err := connection.(driver.QueryerContext).QueryContext(ctx, query, nil)
 						require.NoError(t, err)
 						defer func() { require.NoError(t, result.Close()) }()
@@ -524,6 +529,20 @@ func TestE2EArrowSchemaBeforeFetching(t *testing.T) {
 							}
 						}
 						require.Equal(t, rowCount, fetched)
+						for offset, pair := range [][2]int64{{38, 9}, {12, 2}, {10, 1}} {
+							precision, scale, ok := result.(driver.RowsColumnTypePrecisionScale).ColumnTypePrecisionScale(7 + offset)
+							require.True(t, ok)
+							require.Equal(t, pair[0], precision)
+							require.Equal(t, pair[1], scale)
+						}
+						if mode != "no-direct-fallback" {
+							typeNames := result.(driver.RowsColumnTypeDatabaseTypeName)
+							require.Equal(t, "VARIANT", typeNames.ColumnTypeDatabaseTypeName(19))
+							require.Equal(t, "TIME", typeNames.ColumnTypeDatabaseTypeName(20))
+							require.Equal(t, reflect.TypeOf(time.Time{}), result.(driver.RowsColumnTypeScanType).ColumnTypeScanType(20))
+							_, hasLength := result.(driver.RowsColumnTypeLength).ColumnTypeLength(20)
+							require.False(t, hasLength)
+						}
 					})
 				}
 			}

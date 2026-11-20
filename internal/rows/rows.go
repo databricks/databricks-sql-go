@@ -754,6 +754,9 @@ func (r *rows) fetchResultPage() error {
 	}
 	chunkLatencyMs := time.Since(fetchStart).Milliseconds()
 	if err1 != nil {
+		if err1 == io.EOF {
+			r.useServerArrowSchema(r.ResultPageIterator.ResultSetMetadata())
+		}
 		return err1
 	}
 
