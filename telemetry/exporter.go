@@ -135,10 +135,8 @@ func (e *telemetryExporter) doExport(ctx context.Context, metrics []*telemetryMe
 		req.Header.Set("User-Agent", e.userAgent)
 	}
 
-	// With SkipTransientRetries set, retryablehttp returns (resp, err)
-	// for a 429/503: a wrapped error AND the actual response. Inspect
-	// the response before short-circuiting on err so we can read
-	// Retry-After.
+	// With SkipTransientRetries set, a 429/503 comes back as a normal
+	// response (nil error), so read Retry-After from it.
 	resp, doErr := e.httpClient.Do(req)
 	if resp != nil {
 		_, _ = io.ReadAll(resp.Body)

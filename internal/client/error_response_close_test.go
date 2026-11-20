@@ -72,18 +72,34 @@ func newStatusServer(t *testing.T, status int, body string) (*httptest.Server, *
 	return srv, &open
 }
 
+// lockedBuffer is safe for concurrent log writes and reads.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
 // captureStdLog redirects the standard logger, where net/http reports a
-// RoundTripper that returned both a response and an error.
-func captureStdLog(t *testing.T) *bytes.Buffer {
+// RoundTripper that returned both a response and an error. It swaps a
+// process-wide logger, so its callers must not use t.Parallel.
+func captureStdLog(t *testing.T) *lockedBuffer {
 	t.Helper()
-	var buf bytes.Buffer
-	prev, flags := log.Writer(), log.Flags()
-	log.SetOutput(&buf)
-	t.Cleanup(func() {
-		log.SetOutput(prev)
-		log.SetFlags(flags)
-	})
-	return &buf
+	buf := &lockedBuffer{}
+	prev := log.Writer()
+	log.SetOutput(buf)
+	t.Cleanup(func() { log.SetOutput(prev) })
+	return buf
 }
 
 func failingClientConfig() *config.Config {
@@ -105,7 +121,10 @@ func TestRetryableClientClosesFailedResponse(t *testing.T) {
 		body   string
 	}{
 		{"503 retries exhausted", http.StatusServiceUnavailable, "service unavailable"},
-		{"429 retries exhausted, empty body", http.StatusTooManyRequests, ""},
+		{"429 retries exhausted", http.StatusTooManyRequests, "too many requests"},
+		// An empty body doesn't pin the connection, so only the body tracker
+		// and the log check can catch a leak here.
+		{"503 retries exhausted, empty body", http.StatusServiceUnavailable, ""},
 		{"500 not retried", http.StatusInternalServerError, "internal error"},
 		{"401 not retried", http.StatusUnauthorized, "unauthorized"},
 		{"503 with 64 KiB body", http.StatusServiceUnavailable, strings.Repeat("x", 64<<10)},
@@ -122,8 +141,7 @@ func TestRetryableClientClosesFailedResponse(t *testing.T) {
 			for i := 0; i < failedRequests; i++ {
 				req, err := http.NewRequest(http.MethodPost, srv.URL, strings.NewReader("payload"))
 				require.NoError(t, err)
-				resp, err := c.Do(req) //nolint:bodyclose // asserting resp is nil
-				require.Nil(t, resp)
+				_, err = c.Do(req) //nolint:bodyclose // net/http returns no response with an error
 				require.ErrorContains(t, err, "reason-from-server")
 				if tc.status == http.StatusTooManyRequests {
 					require.Equal(t, dbsqlerrint.CategoryRateLimitExceeded, dbsqlerrint.CategoryFromError(err))
@@ -155,13 +173,59 @@ const failedRequests = 25
 
 // assertFailedResponsesReleased checks that every body was closed, only
 // pooled idle connections remain, and net/http logged no dropped response.
-func assertFailedResponsesReleased(t *testing.T, tracker *bodyTracker, serverOpen *atomic.Int32, stdlog *bytes.Buffer) {
+func assertFailedResponsesReleased(t *testing.T, tracker *bodyTracker, serverOpen *atomic.Int32, stdlog *lockedBuffer) {
 	t.Helper()
 	maxIdle := PooledTransport(config.WithDefaults()).MaxIdleConnsPerHost
 	assert.Zero(t, tracker.open.Load(), "failed responses left unclosed")
 	assert.Eventually(t, func() bool { return int(serverOpen.Load()) <= maxIdle }, 5*time.Second, 10*time.Millisecond,
 		"server connections still open after %d failed requests", failedRequests)
 	t.Logf("server connections open after %d failed requests: %d", failedRequests, serverOpen.Load())
-	assert.Zero(t, strings.Count(stdlog.String(), "RoundTripper returned a response & error"),
-		"net/http log lines about a dropped response")
+	logs := stdlog.String()
+	if !assert.Zero(t, strings.Count(logs, "RoundTripper returned a response & error"),
+		"net/http log lines about a dropped response") {
+		t.Log(logs)
+	}
+}
+
+// errorHandler itself returns no response, closes the one it gets, and keeps
+// the server's error detail and the status text in the error.
+func TestErrorHandlerClosesResponse(t *testing.T) {
+	for _, header := range []string{"X-Databricks-Reason-Phrase", "X-Thriftserver-Error-Message"} {
+		t.Run(header, func(t *testing.T) {
+			tracker := &bodyTracker{}
+			tracker.open.Add(1)
+			resp := &http.Response{
+				Status:     "503 Service Unavailable",
+				StatusCode: http.StatusServiceUnavailable,
+				Header:     http.Header{header: []string{"detail-from-server"}},
+				Body:       &trackedBody{ReadCloser: io.NopCloser(strings.NewReader("unavailable")), t: tracker},
+			}
+			_, checkErr := RetryPolicy(context.Background(), resp, nil)
+
+			got, err := errorHandler(resp, checkErr, 2) //nolint:bodyclose // asserting no response
+			assert.Nil(t, got)
+			assert.Zero(t, tracker.open.Load(), "response left unclosed")
+			assert.ErrorContains(t, err, "detail-from-server")
+			assert.ErrorContains(t, err, "unexpected HTTP status 503 Service Unavailable")
+			assert.ErrorContains(t, err, "after 2 attempt(s)")
+		})
+	}
+}
+
+// On a redirect-limit error net/http has already closed the response it
+// hands errorHandler; closing it again must be harmless.
+func TestRetryableClientRedirectLimitError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/again", http.StatusFound)
+	}))
+	t.Cleanup(srv.Close)
+	cfg := failingClientConfig()
+	tracker := &bodyTracker{base: PooledTransport(cfg)}
+	cfg.Transport = tracker
+
+	req, err := http.NewRequest(http.MethodGet, srv.URL, nil)
+	require.NoError(t, err)
+	_, err = RetryableClient(cfg).Do(req) //nolint:bodyclose // net/http returns no response with an error
+	assert.ErrorContains(t, err, "stopped after 10 redirects")
+	assert.Zero(t, tracker.open.Load(), "responses left unclosed")
 }
