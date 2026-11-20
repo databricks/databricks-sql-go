@@ -375,10 +375,15 @@ KernelStatusCode kernel_session_config_set_sea_response_compression_enabled(
 /* Configure the total timeout for one HTTP request, from connection start
  * through response-body completion. A separate 30s connection timeout also
  * applies, so connection establishment is bounded by the shorter limit.
- * Does not bound Volume storage requests or configure their inactivity limit.
+ * Volume storage inactivity uses the separate storage-read-timeout setter.
  * `request_timeout_ms == 0` keeps the kernel default (120s). */
 KernelStatusCode kernel_session_config_set_request_timeout(KernelSessionConfig* config,
                                                            uint64_t request_timeout_ms);
+
+/* Configure Volume storage idle time for reads, upload progress and PUT response
+ * waits. Zero disables it. Redirected stream PUT resends have no idle bound. */
+KernelStatusCode kernel_session_config_set_storage_read_timeout(KernelSessionConfig* config,
+                                                                uint64_t timeout_ms);
 
 /* Configure the maximum number of idle HTTP connections retained per host.
  * `max_connections` must be greater than zero. Omitting this setter keeps the
@@ -979,14 +984,17 @@ typedef enum KernelVolumeCompletion {
   KernelVolumeCompletion_Completed = 2
 } KernelVolumeCompletion;
 
-/* Volume completion preserves raw rows. Roots are a JSON array of strings.
- * The detached result-stream canceller can interrupt completion. */
+/* out is written only on success. */
 KernelStatusCode kernel_executed_statement_is_volume_operation(
     const kernel_executed_statement_t* exec, bool* out);
-/* The cached marker does not establish whether the executed owner is valid. */
+/* The cached marker does not establish whether the executed owner is valid.
+ * out is written only on success. */
 KernelStatusCode kernel_result_stream_is_volume_operation(
     const kernel_result_stream_t* stream, bool* out);
-/* out_status is written only on success. */
+/* Complete a server-marked Volume operation while retaining its instruction rows.
+ * Roots are a JSON array of strings.
+ * The detached result-stream canceller can interrupt completion.
+ * out_status is written only on success. */
 KernelStatusCode kernel_result_stream_complete_volume_operation(
     kernel_result_stream_t* stream, const char* allowed_paths_json,
     bool remove_not_found_is_success, KernelVolumeCompletion* out_status);

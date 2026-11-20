@@ -140,7 +140,12 @@ func TestKernelVolumeCompletionControlsSessionValidity(t *testing.T) {
 			defer cancel()
 			connection, err := db.Conn(ctx)
 			require.NoError(t, err)
-			defer connection.Close()
+			defer func() {
+				cancel()
+				server.CloseClientConnections()
+				go connection.Close()
+			}()
+			var execResult sql.Result
 			if tc.cancelAfterError {
 				err = connection.Raw(func(raw any) error {
 					operation, err := raw.(*conn).backend.Execute(ctx, backend.ExecRequest{Query: "GET instruction"})
@@ -162,11 +167,28 @@ func TestKernelVolumeCompletionControlsSessionValidity(t *testing.T) {
 				if tc.inFlight {
 					go func() { <-storageStarted; cancel() }()
 				}
-				_, err = connection.ExecContext(driverctx.NewContextWithStagingInfo(ctx, roots), "Volume instruction")
+				type executionResult struct {
+					result sql.Result
+					err    error
+				}
+				done := make(chan executionResult, 1)
+				go func() {
+					result, err := connection.ExecContext(driverctx.NewContextWithStagingInfo(ctx, roots), "Volume instruction")
+					done <- executionResult{result, err}
+				}()
+				select {
+				case completed := <-done:
+					execResult, err = completed.result, completed.err
+				case <-time.After(10 * time.Second):
+					cancel()
+					t.Fatal("ExecContext did not return")
+				}
 			}
 			if tc.success {
 				require.NoError(t, err)
 				if tc.operation != "REMOVE" {
+					n, _ := execResult.RowsAffected()
+					require.Zero(t, n)
 					content, readErr := fs.ReadFile(os.DirFS(directory), "download.bin")
 					require.NoError(t, readErr)
 					require.Equal(t, "downloaded", string(content))
