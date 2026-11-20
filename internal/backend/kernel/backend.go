@@ -267,12 +267,8 @@ func (k *KernelBackend) OpenSession(ctx context.Context) error {
 	if err := k.applyEnableGeoSpatialSupport(cfg); err != nil {
 		return err
 	}
-	if k.cfg.EnableHTTP2 != nil {
-		if err := call(func() C.KernelStatusCode {
-			return C.kernel_session_config_set_http2_enabled(cfg, C.bool(*k.cfg.EnableHTTP2))
-		}); err != nil {
-			return fmt.Errorf("kernel: set_http2_enabled: %w", toConnError(err))
-		}
+	if err := k.applyEnableHTTP2(cfg); err != nil {
+		return err
 	}
 
 	// Retry / backoff policy (WithRetries). See applyRetry.
@@ -471,6 +467,18 @@ func (k *KernelBackend) applyEnableGeoSpatialSupport(cfg *C.KernelSessionConfig)
 		return C.go_kernel_set_enable_geospatial_support(cfg, C.bool(k.cfg.EnableGeoSpatialSupport))
 	}); err != nil {
 		return fmt.Errorf("kernel: set_enable_geospatial_support: %w", toConnError(err))
+	}
+	return nil
+}
+
+func (k *KernelBackend) applyEnableHTTP2(cfg *C.KernelSessionConfig) error {
+	if k.cfg.EnableHTTP2 == nil {
+		return nil
+	}
+	if err := call(func() C.KernelStatusCode {
+		return C.kernel_session_config_set_http2_enabled(cfg, C.bool(*k.cfg.EnableHTTP2))
+	}); err != nil {
+		return fmt.Errorf("kernel: set_http2_enabled: %w", toConnError(err))
 	}
 	return nil
 }

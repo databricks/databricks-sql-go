@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/databricks/databricks-sql-go/internal/backend/kernel"
 	"github.com/databricks/databricks-sql-go/internal/config"
 
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
@@ -106,9 +105,6 @@ func TestWithKernelTLSOptionsSetExperimental(t *testing.T) {
 		{"disable geospatial support", WithEnableGeoSpatialSupport(false), func(k *config.KernelExperimentalConfig) bool {
 			return k.EnableGeoSpatialSupport != nil && !*k.EnableGeoSpatialSupport
 		}},
-		{"enable HTTP/2", WithEnableHTTP2(true), func(k *config.KernelExperimentalConfig) bool {
-			return k.EnableHTTP2 != nil && *k.EnableHTTP2
-		}},
 		{"force HTTP/1.1", WithEnableHTTP2(false), func(k *config.KernelExperimentalConfig) bool {
 			return k.EnableHTTP2 != nil && !*k.EnableHTTP2
 		}},
@@ -127,30 +123,6 @@ func TestWithKernelTLSOptionsSetExperimental(t *testing.T) {
 				t.Errorf("%s: option did not set the expected field(s): %+v", c.name, cfg.KernelExperimental)
 			}
 		})
-	}
-}
-
-func TestKernelHTTP2DSN(t *testing.T) {
-	const dsn = "token:test-token@example.databricks.com:443/sql/1.0/warehouses/test"
-	user, err := config.ParseDSN(dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	cfg := baseKernelConfig()
-	withUserConfig(user)(cfg)
-	if got := buildKernelConfig(cfg, kernel.Auth{}).EnableHTTP2; got != nil {
-		t.Fatal("omitted setting must leave the kernel default in effect")
-	}
-	user, err = config.ParseDSN(dsn + "?enableHttp2=false")
-	if err != nil {
-		t.Fatal(err)
-	}
-	withUserConfig(user)(cfg)
-	if got := buildKernelConfig(cfg, kernel.Auth{}).EnableHTTP2; got == nil || *got {
-		t.Fatalf("explicit false was not forwarded to the kernel: %v", got)
-	}
-	if _, err := config.ParseDSN(dsn + "?enableHttp2=invalid"); err == nil {
-		t.Fatal("invalid enableHttp2 must fail parsing")
 	}
 }
 
@@ -325,15 +297,6 @@ func TestKernelExperimentalDeepCopy(t *testing.T) {
 	*cp.EnableHTTP2 = true
 	if *orig.EnableHTTP2 {
 		t.Error("DeepCopy aliased EnableHTTP2 pointer")
-	}
-	user := config.UserConfig{EnableHTTP2DSN: &enableHTTP2}
-	userCopy := user.DeepCopy()
-	if userCopy.EnableHTTP2DSN == nil || *userCopy.EnableHTTP2DSN {
-		t.Fatalf("DeepCopy lost EnableHTTP2DSN: %v", userCopy.EnableHTTP2DSN)
-	}
-	*userCopy.EnableHTTP2DSN = true
-	if *user.EnableHTTP2DSN {
-		t.Error("DeepCopy aliased EnableHTTP2DSN pointer")
 	}
 	if !cp.TokenCacheEnabled {
 		t.Errorf("DeepCopy lost TokenCacheEnabled: %v", cp.TokenCacheEnabled)
