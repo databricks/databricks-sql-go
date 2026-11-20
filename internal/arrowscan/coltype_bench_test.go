@@ -14,6 +14,12 @@ func BenchmarkColumnTypeInfoForField(benchmark *testing.B) {
 		{Name: "TIME manifest", Type: arrow.BinaryTypes.String, Metadata: arrow.MetadataFrom(map[string]string{
 			databricksTypeNameMetadataKey: "TIME", sparkSQLNameMetadataKey: "TIME(6)",
 		})},
+		{Name: "geometry Thrift", Type: arrow.BinaryTypes.String, Metadata: arrow.MetadataFrom(map[string]string{
+			sparkSQLNameMetadataKey: "GEOMETRY(3857)",
+		})},
+		{Name: "geography kernel", Type: arrow.BinaryTypes.String, Metadata: arrow.MetadataFrom(map[string]string{
+			databricksTypeNameMetadataKey: "GEOGRAPHY", "databricks.type_text": "GEOGRAPHY(4326)",
+		})},
 	} {
 		benchmark.Run(field.Name, func(benchmark *testing.B) {
 			benchmark.ReportAllocs()

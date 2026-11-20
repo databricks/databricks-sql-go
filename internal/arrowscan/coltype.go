@@ -126,23 +126,20 @@ func ColumnTypeInfoFor(dt arrow.DataType) ColumnTypeInfo {
 	}
 }
 
-// LogicalGeospatialType returns the top-level Databricks geospatial family
-// recorded by the kernel on an Arrow field. The physical value is UTF-8 in
+// LogicalGeospatialType returns the top-level Databricks geospatial SQL name,
+// including its declared SRID when present in Arrow field metadata. The value is UTF-8 in
 // string mode and a struct in binary mode, so DataType alone cannot preserve
 // this database type name.
 func LogicalGeospatialType(field arrow.Field) (string, bool) {
-	name, ok := field.Metadata.GetValue(databricksTypeNameMetadataKey)
-	if !ok {
-		return "", false
+	for _, key := range [...]string{"databricks.type_text", sparkSQLNameMetadataKey, databricksTypeNameMetadataKey} {
+		name, _ := field.Metadata.GetValue(key)
+		name = strings.ToUpper(strings.TrimSpace(name))
+		family, _, _ := strings.Cut(name, "(")
+		if family == "GEOMETRY" || family == "GEOGRAPHY" {
+			return name, true
+		}
 	}
-	switch strings.ToUpper(strings.TrimSpace(name)) {
-	case "GEOMETRY":
-		return "GEOMETRY", true
-	case "GEOGRAPHY":
-		return "GEOGRAPHY", true
-	default:
-		return "", false
-	}
+	return "", false
 }
 
 // IsBinaryGeospatialField reports whether field is a logical top-level
@@ -179,7 +176,7 @@ func ColumnTypeInfoForField(field arrow.Field) ColumnTypeInfo {
 		return varLen(name, scanTypeRawBytes)
 	}
 	if field.Type.ID() == arrow.STRING || field.Type.ID() == arrow.LARGE_STRING {
-		return varLen("STRING", scanTypeString)
+		return varLen(name, scanTypeString)
 	}
 	info := ColumnTypeInfoFor(field.Type)
 	info.DatabaseTypeName = name

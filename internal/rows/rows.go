@@ -454,8 +454,8 @@ func (r *rows) ColumnTypeDatabaseTypeName(index int) string {
 // column would still report TIMESTAMP_NTZ while its values went through the
 // legacy column scanner.
 //
-// VARIANT is the exception: its values are JSON text on every result format, so a
-// column the schema tags as VARIANT reports VARIANT whether or not it is Arrow-decoded.
+// VARIANT and geospatial names follow the Arrow schema on every result format;
+// their string values, scan types and lengths are unchanged by the logical name.
 //
 // database/sql's Rows.ColumnTypes() only holds a read lock, so this may be
 // reached concurrently. The map is built in a local variable and published
@@ -490,6 +490,10 @@ func (r *rows) buildDatabaseTypeNameOverrides() map[int]string {
 		// signal. The scan type and length stay the STRING mapping.
 		if arrowscan.IsVariantField(field) {
 			overrides[i] = "VARIANT"
+			continue
+		}
+		if name, geospatial := arrowscan.LogicalGeospatialType(field); geospatial {
+			overrides[i] = name
 			continue
 		}
 		if !arrowDecoded {
