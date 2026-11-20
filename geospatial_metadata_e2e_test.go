@@ -7,6 +7,7 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"encoding/hex"
 	"fmt"
 	"net/http"
 	"reflect"
@@ -65,17 +66,35 @@ func assertGeospatialColumnTypes(t *testing.T, db *sql.DB, native bool) {
 	const projection = `st_geomfromtext('POINT(1 2)',0) AS geom,
 		st_geogfromtext('POINT(1 2)') AS geog,
 		st_geomfromtext('POINT(1 2)',3857) AS projected,
-		CAST(st_geomfromtext('POINT(1 2)',0) AS GEOMETRY(ANY)) AS mixed,
+		CASE WHEN id % 2 = 0 THEN CAST(st_geomfromtext('POINT(1 2)',4326) AS GEOMETRY(ANY))
+			ELSE CAST(st_geomfromtext('POINT(3 4)',3857) AS GEOMETRY(ANY)) END AS mixed,
 		sha2(CAST(id AS STRING),512) AS plain,
 		named_struct('g',st_geomfromtext('POINT(1 2)',0)) AS nested`
 	wantNames := []string{"GEOMETRY(0)", "GEOGRAPHY(4326)", "GEOMETRY(3857)", "GEOMETRY(ANY)", "STRING", "STRUCT"}
+	wantValues := []any{"POINT(1 2)", "SRID=4326;POINT(1 2)", "SRID=3857;POINT(1 2)", "SRID=4326;POINT(1 2)"}
+	var alternateMixed any = "SRID=3857;POINT(3 4)"
+	if native {
+		for index, encoded := range []string{
+			"010100002000000000000000000000f03f0000000000000040",
+			"0101000020e6100000000000000000f03f0000000000000040",
+			"0101000020110f0000000000000000f03f0000000000000040",
+			"0101000020e6100000000000000000f03f0000000000000040",
+		} {
+			decoded, err := hex.DecodeString(encoded)
+			require.NoError(t, err)
+			wantValues[index] = decoded
+		}
+		decoded, err := hex.DecodeString("0101000020110f000000000000000008400000000000001040")
+		require.NoError(t, err)
+		alternateMixed = decoded
+	}
 	for _, test := range []struct {
 		name       string
 		projection string
 		count      int
 		null       bool
 	}{
-		{"inline", projection, 1, false},
+		{"inline", projection, 2, false},
 		{"empty", projection, 0, false},
 		{"NULL only", `CAST(NULL AS GEOMETRY(0)), CAST(NULL AS GEOGRAPHY(4326)),
 			CAST(NULL AS GEOMETRY(3857)), CAST(NULL AS GEOMETRY(ANY)),
@@ -83,7 +102,7 @@ func assertGeospatialColumnTypes(t *testing.T, db *sql.DB, native bool) {
 		{"CloudFetch", projection, 100000, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			result, err := db.QueryContext(ctx, fmt.Sprintf("SELECT %s FROM range(%d)", test.projection, test.count))
+			result, err := db.QueryContext(ctx, fmt.Sprintf("SELECT %s FROM range(%d) ORDER BY id", test.projection, test.count))
 			require.NoError(t, err)
 			defer result.Close() //nolint:errcheck
 			columns, err := result.ColumnTypes()
@@ -111,13 +130,12 @@ func assertGeospatialColumnTypes(t *testing.T, db *sql.DB, native bool) {
 					for _, value := range values {
 						require.Nil(t, value)
 					}
-				} else if !native {
-					for index, want := range []string{"POINT(1 2)", "SRID=4326;POINT(1 2)", "SRID=3857;POINT(1 2)", "POINT(1 2)"} {
-						require.Equal(t, want, values[index])
-					}
 				} else {
-					for _, value := range values[:4] {
-						require.IsType(t, []byte{}, value)
+					for index, want := range wantValues {
+						if index == 3 && count%2 != 0 {
+							want = alternateMixed
+						}
+						require.Equal(t, want, values[index], "row %d column %d", count, index)
 					}
 				}
 				count++
