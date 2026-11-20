@@ -157,6 +157,57 @@ func TestM2MTransportCanReauthenticateSharedAuthenticator(t *testing.T) {
 	}
 }
 
+func TestM2MConnectorTimeoutBoundsDiscoveryAndRefresh(t *testing.T) {
+	blockM2MDefaultTransport(t)
+	for _, host := range []string{"test.cloud.databricks.com", "test.gcp.databricks.com", "adb-test.azuredatabricks.net"} {
+		for _, timeout := range []time.Duration{0, 15 * time.Minute, 2 * time.Second} {
+			t.Run(host+"/"+timeout.String(), func(t *testing.T) {
+				shared := m2m.NewAuthenticator("test-client", "test-secret", host)
+				endpoint := newM2MTestEndpoint(t, host, 1)
+				var discoveries, grants atomic.Int32
+				transport := m2mRoundTripper(func(request *http.Request) (*http.Response, error) {
+					if request.URL.Path != "/query" {
+						wantTimeout := time.Minute
+						if strings.Contains(request.URL.Path, ".well-known") {
+							discoveries.Add(1)
+							wantTimeout = 10 * time.Second
+						} else {
+							grants.Add(1)
+						}
+						if timeout > 0 && timeout < wantTimeout {
+							wantTimeout = timeout
+						}
+						deadline, ok := request.Context().Deadline()
+						assert.True(t, ok)
+						assert.InDelta(t, wantTimeout.Seconds(), time.Until(deadline).Seconds(), 0.5)
+						assert.Contains(t, request.UserAgent(), "Issue413/composed")
+						authorization := request.Header.Get("Authorization")
+						require.NoError(t, shared.Authenticate(request))
+						assert.Equal(t, authorization, request.Header.Get("Authorization"))
+					}
+					return endpoint.transport.RoundTrip(request)
+				})
+				for range 2 {
+					created, err := NewConnector(WithServerHostname(host), WithAuthenticator(shared),
+						WithUserAgentEntry("Issue413/composed"), WithTransport(transport), WithRetries(0, 0, 0),
+						func(cfg *config.Config) { cfg.ClientTimeout = timeout })
+					require.NoError(t, err)
+					connector := created.(*connector)
+					requestWithM2M(t, connector)
+					assert.Equal(t, timeout, connector.cfg.ClientTimeout)
+				}
+				assert.Equal(t, int32(2), grants.Load())
+				assert.Equal(t, int32(2), endpoint.tokenHits.Load())
+				wantDiscoveries := int32(2)
+				if strings.Contains(host, "azuredatabricks.net") {
+					wantDiscoveries = 0
+				}
+				assert.Equal(t, wantDiscoveries, discoveries.Load())
+			})
+		}
+	}
+}
+
 func TestM2MConnectorHTTPConfiguration(t *testing.T) {
 	blockM2MDefaultTransport(t)
 	for _, host := range []string{"test.cloud.databricks.com", "test.gcp.databricks.com", "adb-test.azuredatabricks.net"} {
