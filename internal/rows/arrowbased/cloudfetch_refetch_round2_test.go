@@ -165,3 +165,27 @@ func TestCloudFetchUnexpired403IsTerminal(t *testing.T) {
 	require.Equal(t, int64(1), requests.Load())
 	require.Zero(t, renewals)
 }
+
+func TestCloudFetchRenewalCallerDeadlineIsNotChunkError(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	cli := &client.TestClient{
+		FnFetchResults: func(ctx context.Context, _ *cli_service.TFetchResultsReq) (*cli_service.TFetchResultsResp, error) {
+			<-ctx.Done()
+			return nil, ctx.Err()
+		},
+		FnCloseOperation: func(context.Context, *cli_service.TCloseOperationReq) (*cli_service.TCloseOperationResp, error) {
+			return &cli_service.TCloseOperationResp{}, nil
+		},
+	}
+	pages := rowscanner.NewResultPageIterator(ctx, rowscanner.NewDelimiter(0, 3), 10, nil, nil, false, cli, dbsqllog.Logger)
+	defer func() { require.NoError(t, pages.Close()) }()
+	cfg := config.WithDefaults()
+	cfg.UseLz4Compression = false
+	iterator, err := NewCloudIPCStreamIterator(rowscanner.WithCloudFetchLinkRefresher(ctx, pages), []*cli_service.TSparkArrowResultLink{{ExpiryTime: time.Now().Add(-time.Minute).UnixMilli(), RowCount: 3}}, 0, cfg, nil)
+	require.NoError(t, err)
+	defer iterator.Close()
+	_, downloadErr := iterator.Next()
+	require.ErrorIs(t, downloadErr, context.DeadlineExceeded)
+	require.Empty(t, dbsqlerrint.CategoryFromError(downloadErr))
+}

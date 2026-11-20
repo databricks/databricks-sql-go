@@ -303,6 +303,9 @@ func (bi *cloudIPCStreamIterator) recoverExpiredDownload(task *cloudFetchDownloa
 		task = bi.newDownloadTask(link, true)
 		data, downloadMs, err = task.GetResult()
 	}
+	if err != nil && bi.ctx.Err() != nil {
+		return task, nil, 0, bi.ctx.Err()
+	}
 	if err != nil && !errors.Is(err, context.Canceled) && (renewalFailed || errors.Is(err, errLinkExpired)) {
 		var expired *cloudFetchLinkExpiredError
 		if errors.As(err, &expired) && (expired.cause != nil || expired.status != 0) {
