@@ -19,8 +19,14 @@ func BenchmarkColumnTypeInfoForField(benchmark *testing.B) {
 		})},
 		{Name: "geography kernel", Type: arrow.BinaryTypes.String, Metadata: arrow.MetadataFrom(map[string]string{
 			databricksTypeNameMetadataKey: "GEOGRAPHY", "databricks.type_text": "GEOGRAPHY(4326)",
+			sparkSQLNameMetadataKey: "GEOGRAPHY(4326)",
 		})},
 	} {
+		if typeText, ok := field.Metadata.GetValue("databricks.type_text"); ok {
+			if sqlName, ok := field.Metadata.GetValue(sparkSQLNameMetadataKey); !ok || sqlName != typeText {
+				benchmark.Fatalf("%s: kernel type_text %q must match SqlName %q", field.Name, typeText, sqlName)
+			}
+		}
 		benchmark.Run(field.Name, func(benchmark *testing.B) {
 			benchmark.ReportAllocs()
 			var info ColumnTypeInfo
