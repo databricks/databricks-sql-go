@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"reflect"
 	"sync"
 	"time"
 
@@ -44,8 +43,7 @@ type authClient struct {
 }
 
 type tokenCaches struct {
-	mutex       sync.Mutex
-	byTransport map[http.RoundTripper]*tokenCache
+	builtIn tokenCache
 }
 
 type tokenCache struct {
@@ -57,31 +55,18 @@ type tokenCache struct {
 type tokenRequestContextKey struct{}
 
 func (c *authClient) WithHTTPClient(client *http.Client) auth.Authenticator {
-	base := client
-	if base == nil {
-		base = http.DefaultClient
-	}
-	transport := base.Transport
-	if transport == nil {
-		transport = http.DefaultTransport
-	}
-	return c.WithHTTPClientForTransport(client, transport)
+	return c.withHTTPClient(client, &tokenCache{})
 }
 
 func (c *authClient) WithHTTPClientForTransport(client *http.Client, transport http.RoundTripper) auth.Authenticator {
-	cache := &tokenCache{}
-	if transport == nil || reflect.ValueOf(transport).Comparable() {
-		c.caches.mutex.Lock()
-		if c.caches.byTransport == nil {
-			c.caches.byTransport = make(map[http.RoundTripper]*tokenCache)
-		}
-		if existing := c.caches.byTransport[transport]; existing != nil {
-			cache = existing
-		} else {
-			c.caches.byTransport[transport] = cache
-		}
-		c.caches.mutex.Unlock()
+	cache := &c.caches.builtIn
+	if transport != nil {
+		cache = &tokenCache{}
 	}
+	return c.withHTTPClient(client, cache)
+}
+
+func (c *authClient) withHTTPClient(client *http.Client, cache *tokenCache) auth.Authenticator {
 	return &authClient{
 		clientID:     c.clientID,
 		clientSecret: c.clientSecret,

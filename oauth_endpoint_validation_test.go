@@ -75,11 +75,16 @@ func TestM2MRejectsDiscoveredEndpointsWithoutCaching(t *testing.T) {
 						assert.NotContains(t, err.Error(), "/secret")
 						assert.Zero(t, grants.Load())
 						bad.Store(false)
-						response, err = second.(*connector).client.Do(request)
+						response, err = first.(*connector).client.Do(request)
 						require.NoError(t, err)
 						require.NoError(t, response.Body.Close())
 						assert.Equal(t, int32(2), discoveries.Load())
 						assert.Equal(t, int32(1), grants.Load())
+						response, err = second.(*connector).client.Do(request)
+						require.NoError(t, err)
+						require.NoError(t, response.Body.Close())
+						assert.Equal(t, int32(3), discoveries.Load())
+						assert.Equal(t, int32(2), grants.Load())
 					})
 				}
 			}

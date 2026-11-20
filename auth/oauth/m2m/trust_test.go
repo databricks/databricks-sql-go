@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestTokenCachesPartitionByTransport(t *testing.T) {
+func TestOnlyDefaultBuiltInCacheIsShared(t *testing.T) {
 	server, hits := tokenServer(t, 100)
 	useTokenEndpoint(t, server.URL, time.Second)
 	shared := NewAuthenticator("id", "secret", "adb-test.azuredatabricks.net").(*authClient)
@@ -32,18 +32,21 @@ func TestTokenCachesPartitionByTransport(t *testing.T) {
 	assert.NotSame(t, first.cache.config, builtIn.cache.config)
 	assert.NotSame(t, first.cache.token, builtIn.cache.token)
 	assert.NotSame(t, second.cache, builtIn.cache)
-	for _, authenticator := range []*authClient{
-		second.WithHTTPClientForTransport(firstClient, firstTransport).(*authClient),
-		first.WithHTTPClientForTransport(firstClient, nil).(*authClient),
-		shared.WithHTTPClient(secondClient).(*authClient),
+	for _, test := range []struct {
+		authenticator *authClient
+		wantHits      int32
+	}{
+		{second.WithHTTPClientForTransport(firstClient, firstTransport).(*authClient), 4},
+		{first.WithHTTPClientForTransport(firstClient, nil).(*authClient), 4},
+		{shared.WithHTTPClient(secondClient).(*authClient), 5},
 	} {
-		_, err := authenticate(t, authenticator, 5*time.Second)
+		_, err := authenticate(t, test.authenticator, 5*time.Second)
 		require.NoError(t, err)
-		assert.Equal(t, int32(3), hits.Load())
+		assert.Equal(t, test.wantHits, hits.Load())
 	}
 	_, err := authenticate(t, shared, 5*time.Second)
 	require.NoError(t, err)
-	assert.Equal(t, int32(4), hits.Load())
+	assert.Equal(t, int32(6), hits.Load())
 	results := make(chan *authClient, 20)
 	for range 20 {
 		go func() { results <- shared.WithHTTPClientForTransport(firstClient, nil).(*authClient) }()
@@ -53,10 +56,10 @@ func TestTokenCachesPartitionByTransport(t *testing.T) {
 	}
 }
 
-func TestNonComparableTransportsDoNotShareCaches(t *testing.T) {
+func TestCallerTransportsDoNotShareCaches(t *testing.T) {
 	shared := NewAuthenticator("id", "secret", "adb-test.azuredatabricks.net").(*authClient)
 	transport := m2mCacheRoundTripper(func(*http.Request) (*http.Response, error) { return nil, nil })
-	for _, candidate := range []http.RoundTripper{transport, struct{ http.RoundTripper }{transport}} {
+	for _, candidate := range []http.RoundTripper{&http.Transport{}, transport, struct{ http.RoundTripper }{transport}} {
 		first := shared.WithHTTPClientForTransport(&http.Client{Transport: candidate}, candidate).(*authClient)
 		second := shared.WithHTTPClientForTransport(&http.Client{Transport: candidate}, candidate).(*authClient)
 		assert.NotSame(t, first.cache, second.cache)

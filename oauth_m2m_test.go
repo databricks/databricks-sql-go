@@ -18,6 +18,7 @@ import (
 	"github.com/databricks/databricks-sql-go/auth/oauth/m2m"
 	"github.com/databricks/databricks-sql-go/internal/client"
 	"github.com/databricks/databricks-sql-go/internal/config"
+	"github.com/hashicorp/go-retryablehttp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/oauth2"
@@ -151,7 +152,8 @@ func TestM2MTransportCanReauthenticateSharedAuthenticator(t *testing.T) {
 			created, err := NewConnector(WithServerHostname(host), WithHTTPPath("/query"),
 				WithAuthenticator(shared), WithTransport(transport), WithRetries(0, 0, 0))
 			require.NoError(t, err)
-			active = client.PooledClient(created.(*connector).cfg).Transport.(*client.Transport).Authr
+			retryable := created.(*connector).client.Transport.(*retryablehttp.RoundTripper).Client
+			active = retryable.HTTPClient.Transport.(*client.Transport).Authr
 			requestWithM2M(t, created.(*connector))
 			requestWithM2M(t, created.(*connector))
 			require.Equal(t, int32(1), endpoint.tokenHits.Load())
@@ -208,7 +210,7 @@ func TestM2MConnectorTimeoutBoundsDiscoveryAndRefresh(t *testing.T) {
 				}
 				assert.Equal(t, int32(2), grants.Load())
 				assert.Equal(t, int32(2), endpoint.tokenHits.Load())
-				wantDiscoveries := int32(2)
+				wantDiscoveries := int32(4)
 				if strings.Contains(host, "azuredatabricks.net") {
 					wantDiscoveries = 0
 				}
@@ -355,7 +357,7 @@ func testM2MPreviouslyUsedAuthenticator(t *testing.T, expiresIn int) {
 	require.Equal(t, int32(1), original.tokenHits.Load())
 }
 
-func TestM2MSharedAuthenticatorReusesToken(t *testing.T) {
+func TestM2MCustomConnectorCachesAreLocal(t *testing.T) {
 	blockM2MDefaultTransport(t)
 	for _, host := range []string{"test.cloud.databricks.com", "adb-test.azuredatabricks.net"} {
 		t.Run(host, func(t *testing.T) {
@@ -370,7 +372,7 @@ func TestM2MSharedAuthenticatorReusesToken(t *testing.T) {
 					requestWithM2M(t, created.(*connector))
 				}
 			}
-			assert.Equal(t, int32(1), endpoint.tokenHits.Load())
+			assert.Equal(t, int32(5), endpoint.tokenHits.Load())
 			discoveries := 0
 			for _, request := range endpoint.requests {
 				if strings.Contains(request.path, ".well-known") {
@@ -379,11 +381,28 @@ func TestM2MSharedAuthenticatorReusesToken(t *testing.T) {
 			}
 			wantDiscoveries := 0
 			if strings.Contains(host, "cloud.databricks.com") {
-				wantDiscoveries = 2
+				wantDiscoveries = 10
 			}
 			assert.Equal(t, wantDiscoveries, discoveries)
 		})
 	}
+}
+
+func TestM2MCustomConnectorsDoNotGrowSharedState(t *testing.T) {
+	blockM2MDefaultTransport(t)
+	const host = "adb-test.azuredatabricks.net"
+	const connectorCount = 256
+	shared := m2m.NewAuthenticator("test-client", "test-secret", host)
+	expected := m2m.NewAuthenticator("test-client", "test-secret", host)
+	endpoint := newM2MTestEndpoint(t, host, 3600)
+	for range connectorCount {
+		created, err := NewConnector(WithServerHostname(host), WithAuthenticator(shared),
+			WithTransport(&m2mIdentityTransport{endpoint.transport}), WithRetries(0, 0, 0))
+		require.NoError(t, err)
+		requestWithM2M(t, created.(*connector))
+	}
+	assert.Equal(t, int32(connectorCount), endpoint.tokenHits.Load())
+	require.True(t, assert.ObjectsAreEqual(expected, shared), "custom connectors must not retain any state on the original authenticator")
 }
 
 func TestM2MConfiguredTransportPreservesTokenError(t *testing.T) {
