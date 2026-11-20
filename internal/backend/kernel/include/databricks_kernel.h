@@ -984,11 +984,13 @@ typedef enum KernelVolumeCompletion {
   KernelVolumeCompletion_Completed = 2
 } KernelVolumeCompletion;
 
-/* Whether the statement is a Volume PUT, GET or REMOVE. */
+/* Whether the statement is a Volume PUT, GET or REMOVE.
+ * out is written only on success. */
 KernelStatusCode kernel_executed_statement_is_volume_operation(
     const kernel_executed_statement_t* exec, bool* out);
 /* Same flag, read from the stream. Still succeeds after the executed statement
- * is closed. */
+ * is closed.
+ * out is written only on success. */
 KernelStatusCode kernel_result_stream_is_volume_operation(
     const kernel_result_stream_t* stream, bool* out);
 /* Runs the file transfer for a Volume PUT, GET or REMOVE result. Call before
@@ -996,7 +998,8 @@ KernelStatusCode kernel_result_stream_is_volume_operation(
  * allowed_paths_json: JSON array of local directories the transfer may use.
  * remove_not_found_is_success: report success when the remote file is missing.
  * Returns NeedsInputStream for a stream upload, which this API cannot perform.
- * kernel_result_stream_canceller_cancel interrupts it from another thread. */
+ * kernel_result_stream_canceller_cancel interrupts it from another thread.
+ * out_status is written only on success. */
 KernelStatusCode kernel_result_stream_complete_volume_operation(
     kernel_result_stream_t* stream, const char* allowed_paths_json,
     bool remove_not_found_is_success, KernelVolumeCompletion* out_status);
