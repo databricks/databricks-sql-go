@@ -11,6 +11,7 @@ import (
 
 type cloudFetchRefresher interface {
 	RefetchLinks(context.Context, *cli_service.TSparkArrowResultLink) ([]*cli_service.TSparkArrowResultLink, error)
+	CanRefetchLinks() bool
 }
 
 type cloudFetchRefresherKey struct{}
@@ -23,10 +24,21 @@ func WithCloudFetchLinkRefresher(ctx context.Context, pages ResultPageIterator) 
 }
 
 func CloudFetchLinkRefresherFromContext(ctx context.Context) func(context.Context, *cli_service.TSparkArrowResultLink) ([]*cli_service.TSparkArrowResultLink, error) {
-	if refresher, ok := ctx.Value(cloudFetchRefresherKey{}).(cloudFetchRefresher); ok {
+	if refresher, ok := ctx.Value(cloudFetchRefresherKey{}).(cloudFetchRefresher); ok && refresher.CanRefetchLinks() {
 		return refresher.RefetchLinks
 	}
 	return nil
+}
+
+func CanRefetchCloudFetchLinks(ctx context.Context) bool {
+	refresher, ok := ctx.Value(cloudFetchRefresherKey{}).(cloudFetchRefresher)
+	return ok && refresher.CanRefetchLinks()
+}
+
+func (rpf *resultPageIterator) CanRefetchLinks() bool {
+	rpf.operationMu.Lock()
+	defer rpf.operationMu.Unlock()
+	return !rpf.closedOnServer && rpf.fetchContext().Err() == nil
 }
 
 func (rpf *resultPageIterator) RefetchLinks(ctx context.Context, expired *cli_service.TSparkArrowResultLink) ([]*cli_service.TSparkArrowResultLink, error) {

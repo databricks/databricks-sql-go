@@ -19,7 +19,7 @@ import (
 )
 
 func TestExpiredLinkStackAtFailure(t *testing.T) {
-	_, err := fetchBatchBytes(context.Background(), &cli_service.TSparkArrowResultLink{ExpiryTime: time.Now().Add(-time.Minute).Unix()}, 0, 0, http.DefaultClient, 0, 0, 0)
+	_, err := fetchBatchBytes(context.Background(), &cli_service.TSparkArrowResultLink{ExpiryTime: time.Now().Add(-time.Minute).UnixMilli()}, 0, 0, 0, http.DefaultClient, 0, 0, 0)
 	require.ErrorIs(t, err, errLinkExpired)
 	wrapped := dbsqlerrint.NewDriverError(context.Background(), "download failed", err)
 	require.NotEmpty(t, wrapped.StackTrace())
@@ -29,9 +29,9 @@ func TestExpiredLinkStackAtFailure(t *testing.T) {
 }
 
 func TestLinkExpiryMinimumBuffer(t *testing.T) {
-	require.True(t, isLinkExpired(time.Now().Add(30*time.Second).Unix(), 0))
-	require.False(t, isLinkExpired(time.Now().Add(time.Minute).Unix(), 0))
-	require.True(t, isLinkExpired(time.Now().Add(time.Minute).Unix(), 90*time.Second))
+	require.True(t, isLinkExpired(time.Now().Add(30*time.Second).UnixMilli(), 30*time.Second))
+	require.False(t, isLinkExpired(time.Now().Add(time.Minute).UnixMilli(), 0))
+	require.True(t, isLinkExpired(time.Now().Add(time.Minute).UnixMilli(), 90*time.Second))
 }
 
 func TestCloudFetchDownloadTimingExcludesRenewal(t *testing.T) {
@@ -40,8 +40,8 @@ func TestCloudFetchDownloadTimingExcludesRenewal(t *testing.T) {
 	}))
 	defer server.Close()
 	expired := []*cli_service.TSparkArrowResultLink{
-		{StartRowOffset: 0, RowCount: 3, FileLink: server.URL, ExpiryTime: time.Now().Add(-time.Hour).Unix()},
-		{StartRowOffset: 3, RowCount: 3, FileLink: server.URL, ExpiryTime: time.Now().Add(-time.Hour).Unix()},
+		{StartRowOffset: 0, RowCount: 3, FileLink: server.URL, ExpiryTime: time.Now().Add(-time.Hour).UnixMilli()},
+		{StartRowOffset: 3, RowCount: 3, FileLink: server.URL, ExpiryTime: time.Now().Add(-time.Hour).UnixMilli()},
 	}
 	calls := 0
 	cli := &client.TestClient{
@@ -51,7 +51,7 @@ func TestCloudFetchDownloadTimingExcludesRenewal(t *testing.T) {
 			var fresh []*cli_service.TSparkArrowResultLink
 			for _, original := range expired {
 				link := *original
-				link.ExpiryTime = time.Now().Add(time.Hour).Unix()
+				link.ExpiryTime = time.Now().Add(time.Hour).UnixMilli()
 				fresh = append(fresh, &link)
 			}
 			return &cli_service.TFetchResultsResp{Results: &cli_service.TRowSet{ResultLinks: fresh}}, nil

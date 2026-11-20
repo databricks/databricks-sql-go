@@ -26,7 +26,7 @@ func TestCloudFetchDownloadErrorCarriesCategory(t *testing.T) {
 	links := []*cli_service.TSparkArrowResultLink{
 		{
 			FileLink:       server.URL,
-			ExpiryTime:     time.Now().Add(10 * time.Minute).Unix(),
+			ExpiryTime:     time.Now().Add(10 * time.Minute).UnixMilli(),
 			StartRowOffset: startRowOffset,
 			RowCount:       1,
 		},
@@ -52,7 +52,7 @@ func TestCloudFetchDownloadErrorCarriesCategory_RetryBranches(t *testing.T) {
 	link := func(url string) []*cli_service.TSparkArrowResultLink {
 		return []*cli_service.TSparkArrowResultLink{{
 			FileLink:       url,
-			ExpiryTime:     time.Now().Add(10 * time.Minute).Unix(),
+			ExpiryTime:     time.Now().Add(10 * time.Minute).UnixMilli(),
 			StartRowOffset: 0,
 			RowCount:       1,
 		}}
@@ -105,7 +105,7 @@ func TestCloudFetchDecompressionErrorCarriesCategory(t *testing.T) {
 	links := []*cli_service.TSparkArrowResultLink{
 		{
 			FileLink:       server.URL,
-			ExpiryTime:     time.Now().Add(10 * time.Minute).Unix(),
+			ExpiryTime:     time.Now().Add(10 * time.Minute).UnixMilli(),
 			StartRowOffset: startRowOffset,
 			RowCount:       1,
 		},

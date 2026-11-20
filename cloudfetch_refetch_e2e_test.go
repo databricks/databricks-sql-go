@@ -64,6 +64,8 @@ func TestE2ECloudFetchAbsoluteOffset(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, initial.Results.ResultLinks)
 	link := initial.Results.ResultLinks[0]
+	require.Greater(t, link.ExpiryTime, time.Now().UnixMilli())
+	require.Less(t, link.ExpiryTime, time.Now().Add(24*time.Hour).UnixMilli())
 	time.Sleep(1100 * time.Millisecond)
 	refetched, err := thriftClient.FetchResults(ctx, &cli_service.TFetchResultsReq{
 		OperationHandle: handle, MaxRows: link.RowCount, StartRowOffset: &link.StartRowOffset,
@@ -73,9 +75,10 @@ func TestE2ECloudFetchAbsoluteOffset(t *testing.T) {
 	replacement := refetched.Results.ResultLinks[0]
 	require.Equal(t, link.StartRowOffset, replacement.StartRowOffset)
 	require.Equal(t, link.RowCount, replacement.RowCount)
-	require.Greater(t, replacement.ExpiryTime, time.Now().Unix())
+	require.Greater(t, replacement.ExpiryTime, time.Now().UnixMilli())
+	require.Less(t, replacement.ExpiryTime, time.Now().Add(24*time.Hour).UnixMilli())
 	require.NotEqual(t, link.FileLink, replacement.FileLink)
-	t.Logf("offset=%d rows=%d initial_files=%d fresh_expiry=%t fresh_url=%t", link.StartRowOffset, link.RowCount, len(initial.Results.ResultLinks), replacement.ExpiryTime > time.Now().Unix(), replacement.FileLink != link.FileLink)
+	t.Logf("offset=%d rows=%d initial_files=%d fresh_expiry=%t fresh_url=%t", link.StartRowOffset, link.RowCount, len(initial.Results.ResultLinks), replacement.ExpiryTime > time.Now().UnixMilli(), replacement.FileLink != link.FileLink)
 }
 
 type cloudFetchRefetchCounter struct {
@@ -118,7 +121,7 @@ func TestE2ECloudFetchRefetchExpiredLinks(t *testing.T) {
 				require.Greater(t, len(initial.Results.ResultLinks), 1)
 				if expire {
 					for _, link := range initial.Results.ResultLinks {
-						link.ExpiryTime = time.Now().Add(-time.Second).Unix()
+						link.ExpiryTime = time.Now().Add(-time.Second).UnixMilli()
 					}
 				}
 				counter := &cloudFetchRefetchCounter{TCLIService: thriftClient}
@@ -158,7 +161,7 @@ func TestE2ECloudFetchRefetchMultiplePages(t *testing.T) {
 	require.True(t, initial.GetHasMoreRows(), "the regression must exercise cursor restoration across pages")
 	require.Greater(t, len(initial.Results.ResultLinks), 1)
 	for _, link := range initial.Results.ResultLinks {
-		link.ExpiryTime = time.Now().Add(20 * time.Second).Unix()
+		link.ExpiryTime = time.Now().Add(20 * time.Second).UnixMilli()
 	}
 	counter := &cloudFetchRefetchCounter{TCLIService: thriftClient}
 	cfg := config.WithDefaults()
@@ -178,6 +181,38 @@ func TestE2ECloudFetchRefetchMultiplePages(t *testing.T) {
 	require.GreaterOrEqual(t, counter.plainFetches.Load(), int64(1))
 	require.Equal(t, int64(1), counter.closes.Load())
 	t.Logf("rows=%d checksum=%d initial_files=%d renewals=%d restores=%d plain_fetches=%d closes=%d (shared warehouse)", count, checksum, len(initial.Results.ResultLinks), counter.refetches.Load(), counter.restores.Load(), counter.plainFetches.Load(), counter.closes.Load())
+}
+
+func TestE2ECloudFetchRefetchRealExpiryBuffer(t *testing.T) {
+	ctx, thriftClient, handle := openCloudFetchOperation(t)
+	metadata := true
+	initial, err := thriftClient.FetchResults(ctx, &cli_service.TFetchResultsReq{
+		OperationHandle: handle, MaxRows: 500000, IncludeResultSetMetadata: &metadata,
+	})
+	require.NoError(t, err)
+	require.Greater(t, len(initial.Results.ResultLinks), 1)
+	expiry := initial.Results.ResultLinks[0].ExpiryTime
+	remaining := time.Until(time.UnixMilli(expiry))
+	require.Greater(t, remaining, 30*time.Second)
+	require.Less(t, remaining, 16*time.Minute)
+	counter := &cloudFetchRefetchCounter{TCLIService: thriftClient}
+	cfg := config.WithDefaults()
+	cfg.MaxDownloadThreads = len(initial.Results.ResultLinks)
+	cfg.UseLz4Compression = false
+	cfg.MinTimeToExpiry = 16 * time.Minute
+	result, rowsErr := internalrows.NewRows(ctx, handle, counter, cfg, &cli_service.TSparkDirectResults{
+		ResultSet: initial, ResultSetMetadata: initial.ResultSetMetadata,
+	}, nil)
+	require.NoError(t, rowsErr)
+	t.Cleanup(func() { require.NoError(t, result.Close()) })
+	count, checksum := drainCloudFetchLive(t, result, "ipc")
+	require.NoError(t, result.Close())
+	require.Equal(t, expiry, initial.Results.ResultLinks[0].ExpiryTime, "use the server's expiry unchanged")
+	require.Equal(t, int64(2000000), count)
+	require.Equal(t, int64(1999999000000), checksum)
+	require.Equal(t, int64(1), counter.refetches.Load())
+	require.Equal(t, int64(1), counter.closes.Load())
+	t.Logf("server_expiry_ms=%d remaining=%s buffer=%s rows=%d checksum=%d renewals=%d (shared warehouse)", expiry, remaining, cfg.MinTimeToExpiry, count, checksum, counter.refetches.Load())
 }
 
 func drainCloudFetchLive(t *testing.T, result driver.Rows, api string) (int64, int64) {

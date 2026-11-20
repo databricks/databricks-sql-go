@@ -271,7 +271,7 @@ func cloudFetchExecuteResponse(schemaBytes []byte, fileURL string, rowCount int6
 				Results: &cli_service.TRowSet{
 					ResultLinks: []*cli_service.TSparkArrowResultLink{{
 						FileLink:   fileURL,
-						ExpiryTime: time.Now().Add(time.Hour).Unix(),
+						ExpiryTime: time.Now().Add(time.Hour).UnixMilli(),
 						RowCount:   rowCount,
 					}},
 				},

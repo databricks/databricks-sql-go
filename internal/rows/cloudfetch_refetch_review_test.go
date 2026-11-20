@@ -54,7 +54,7 @@ func TestCloudFetchOperationClosesOnce(t *testing.T) {
 			t.Run(api+"/"+finish, func(t *testing.T) {
 				fixture := newCloudFetchFixture(t)
 				for _, link := range fixture.links {
-					link.ExpiryTime = time.Now().Add(time.Hour).Unix()
+					link.ExpiryTime = time.Now().Add(time.Hour).UnixMilli()
 				}
 				closes := 0
 				cli := &client.TestClient{FnCloseOperation: func(context.Context, *cli_service.TCloseOperationReq) (*cli_service.TCloseOperationResp, error) {
@@ -101,7 +101,7 @@ func TestCloudFetchOperationClosesOnce(t *testing.T) {
 
 func TestCloudFetchRefetchNPlusOneSameThriftClient(t *testing.T) {
 	fixture := newCloudFetchFixture(t)
-	fixture.links[0].ExpiryTime = time.Now().Add(time.Hour).Unix()
+	fixture.links[0].ExpiryTime = time.Now().Add(time.Hour).UnixMilli()
 	var inDriverCall atomic.Bool
 	var backgroundRPCs atomic.Int64
 	var renewals atomic.Int64
@@ -124,7 +124,7 @@ func TestCloudFetchRefetchNPlusOneSameThriftClient(t *testing.T) {
 			for _, original := range fixture.links {
 				if request.StartRowOffset == nil || original.StartRowOffset >= *request.StartRowOffset {
 					fresh := *original
-					fresh.ExpiryTime = time.Now().Add(time.Hour).Unix()
+					fresh.ExpiryTime = time.Now().Add(time.Hour).UnixMilli()
 					links = append(links, &fresh)
 				}
 			}

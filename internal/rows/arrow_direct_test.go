@@ -51,7 +51,7 @@ func TestArrowAPIsCompleteDirectResults(t *testing.T) {
 						files[path] = bytes.Join([][]byte{direct.ResultSetMetadata.ArrowSchema, batch.Batch}, nil)
 						direct.ResultSet.Results.ResultLinks = append(direct.ResultSet.Results.ResultLinks, &cli_service.TSparkArrowResultLink{
 							FileLink: server.URL + path, StartRowOffset: start, RowCount: batch.RowCount,
-							ExpiryTime: time.Now().Add(time.Hour).Unix(),
+							ExpiryTime: time.Now().Add(time.Hour).UnixMilli(),
 						})
 						start += batch.RowCount
 					}

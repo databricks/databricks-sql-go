@@ -62,7 +62,7 @@ func newCloudFetchFixture(t testing.TB) *cloudFetchFixture {
 		path := "/" + strconv.FormatInt(start, 10)
 		files[path] = data.Bytes()
 		fixture.links = append(fixture.links, &cli_service.TSparkArrowResultLink{
-			FileLink: path, StartRowOffset: start, RowCount: 3, ExpiryTime: time.Now().Add(-time.Hour).Unix(),
+			FileLink: path, StartRowOffset: start, RowCount: 3, ExpiryTime: time.Now().Add(-time.Hour).UnixMilli(),
 		})
 	}
 	fixture.server = httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
@@ -180,7 +180,7 @@ func TestCloudFetchRefetch(t *testing.T) {
 							response.Results.ResultLinks = append([]*cli_service.TSparkArrowResultLink(nil), response.Results.ResultLinks...)
 							for index, expired := range response.Results.ResultLinks {
 								fresh := *expired
-								fresh.ExpiryTime = time.Now().Add(time.Hour).Unix()
+								fresh.ExpiryTime = time.Now().Add(time.Hour).UnixMilli()
 								response.Results.ResultLinks[index] = &fresh
 							}
 							return response, nil
@@ -225,7 +225,7 @@ func TestCloudFetchRefetch(t *testing.T) {
 }
 
 func TestCloudFetchRefetchFailures(t *testing.T) {
-	for _, scenario := range []string{"expired", "rpc failure", "wrong range", "wrong subsequent range", "missing pending range", "duplicate range", "empty response", "closed operation"} {
+	for _, scenario := range []string{"expired", "rpc failure", "wrong range", "wrong subsequent range", "missing requested range", "duplicate range", "empty response", "closed operation"} {
 		t.Run(scenario, func(t *testing.T) {
 			fixture := newCloudFetchFixture(t)
 			calls := 0
@@ -247,8 +247,8 @@ func TestCloudFetchRefetchFailures(t *testing.T) {
 					link := *links[index]
 					link.RowCount++
 					links[index] = &link
-				case "missing pending range":
-					links = links[:2]
+				case "missing requested range":
+					links = links[1:]
 				case "duplicate range":
 					links = append(links, links[0])
 				}
@@ -351,13 +351,13 @@ func TestCloudFetchRefetchExpiryBuffer(t *testing.T) {
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			fixture := newCloudFetchFixture(t)
-			fixture.links[0].ExpiryTime = time.Now().Add(scenario.remaining).Unix()
+			fixture.links[0].ExpiryTime = time.Now().Add(scenario.remaining).UnixMilli()
 			calls := 0
 			cli := &client.TestClient{
 				FnFetchResults: func(context.Context, *cli_service.TFetchResultsReq) (*cli_service.TFetchResultsResp, error) {
 					calls++
 					fresh := *fixture.links[0]
-					fresh.ExpiryTime = time.Now().Add(time.Hour).Unix()
+					fresh.ExpiryTime = time.Now().Add(time.Hour).UnixMilli()
 					return &cli_service.TFetchResultsResp{Results: &cli_service.TRowSet{ResultLinks: []*cli_service.TSparkArrowResultLink{&fresh}}}, nil
 				},
 				FnCloseOperation: func(context.Context, *cli_service.TCloseOperationReq) (*cli_service.TCloseOperationResp, error) {
@@ -386,7 +386,7 @@ func TestCloudFetchRefetchExpiryBuffer(t *testing.T) {
 func BenchmarkCloudFetchNoExpiry(benchmark *testing.B) {
 	fixture := newCloudFetchFixture(benchmark)
 	for _, link := range fixture.links {
-		link.ExpiryTime = time.Now().Add(time.Hour).Unix()
+		link.ExpiryTime = time.Now().Add(time.Hour).UnixMilli()
 	}
 	cfg := config.WithDefaults()
 	cfg.UseLz4Compression = false

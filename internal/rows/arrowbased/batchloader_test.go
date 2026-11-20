@@ -79,14 +79,14 @@ func TestCloudFetchIterator(t *testing.T) {
 		links := []*cli_service.TSparkArrowResultLink{
 			{
 				FileLink:       server.URL,
-				ExpiryTime:     time.Now().Add(10 * time.Minute).Unix(),
+				ExpiryTime:     time.Now().Add(10 * time.Minute).UnixMilli(),
 				StartRowOffset: startRowOffset,
 				RowCount:       1,
 				HttpHeaders:    cloudFetchHeaders,
 			},
 			{
 				FileLink:       server.URL,
-				ExpiryTime:     time.Now().Add(10 * time.Minute).Unix(),
+				ExpiryTime:     time.Now().Add(10 * time.Minute).UnixMilli(),
 				StartRowOffset: startRowOffset + 1,
 				RowCount:       1,
 				HttpHeaders:    cloudFetchHeaders,
@@ -157,13 +157,13 @@ func TestCloudFetchIterator(t *testing.T) {
 		links := []*cli_service.TSparkArrowResultLink{
 			{
 				FileLink:       server.URL,
-				ExpiryTime:     time.Now().Add(10 * time.Minute).Unix(),
+				ExpiryTime:     time.Now().Add(10 * time.Minute).UnixMilli(),
 				StartRowOffset: startRowOffset,
 				RowCount:       1,
 			},
 			{
 				FileLink:       server.URL,
-				ExpiryTime:     time.Now().Add(-10 * time.Minute).Unix(), // expired link
+				ExpiryTime:     time.Now().Add(-10 * time.Minute).UnixMilli(), // expired link
 				StartRowOffset: startRowOffset + 1,
 				RowCount:       1,
 			},
@@ -217,13 +217,13 @@ func TestCloudFetchIterator(t *testing.T) {
 		links := []*cli_service.TSparkArrowResultLink{
 			{
 				FileLink:       server.URL,
-				ExpiryTime:     time.Now().Add(10 * time.Minute).Unix(),
+				ExpiryTime:     time.Now().Add(10 * time.Minute).UnixMilli(),
 				StartRowOffset: startRowOffset,
 				RowCount:       1,
 			},
 			{
 				FileLink:       server.URL,
-				ExpiryTime:     time.Now().Add(10 * time.Minute).Unix(),
+				ExpiryTime:     time.Now().Add(10 * time.Minute).UnixMilli(),
 				StartRowOffset: startRowOffset + 1,
 				RowCount:       1,
 			},
@@ -308,7 +308,7 @@ func TestCloudFetchIterator(t *testing.T) {
 			context.Background(),
 			[]*cli_service.TSparkArrowResultLink{{
 				FileLink:       server.URL,
-				ExpiryTime:     time.Now().Add(10 * time.Minute).Unix(),
+				ExpiryTime:     time.Now().Add(10 * time.Minute).UnixMilli(),
 				StartRowOffset: startRowOffset,
 				RowCount:       1,
 			}},
@@ -348,7 +348,7 @@ func TestCloudFetchIterator(t *testing.T) {
 			context.Background(),
 			[]*cli_service.TSparkArrowResultLink{{
 				FileLink:       server.URL,
-				ExpiryTime:     time.Now().Add(10 * time.Minute).Unix(),
+				ExpiryTime:     time.Now().Add(10 * time.Minute).UnixMilli(),
 				StartRowOffset: startRowOffset,
 				RowCount:       1,
 			}},
@@ -395,7 +395,7 @@ func TestCloudFetchIterator(t *testing.T) {
 			context.Background(),
 			[]*cli_service.TSparkArrowResultLink{{
 				FileLink:       server.URL,
-				ExpiryTime:     time.Now().Add(10 * time.Minute).Unix(),
+				ExpiryTime:     time.Now().Add(10 * time.Minute).UnixMilli(),
 				StartRowOffset: startRowOffset,
 				RowCount:       1,
 			}},
@@ -439,7 +439,7 @@ func TestCloudFetchIterator(t *testing.T) {
 			context.Background(),
 			[]*cli_service.TSparkArrowResultLink{{
 				FileLink:       server.URL,
-				ExpiryTime:     time.Now().Add(10 * time.Minute).Unix(),
+				ExpiryTime:     time.Now().Add(10 * time.Minute).UnixMilli(),
 				StartRowOffset: startRowOffset,
 				RowCount:       1,
 			}},
@@ -475,7 +475,7 @@ func TestCloudFetchIterator(t *testing.T) {
 			context.Background(),
 			[]*cli_service.TSparkArrowResultLink{{
 				FileLink:       server.URL,
-				ExpiryTime:     time.Now().Add(10 * time.Minute).Unix(),
+				ExpiryTime:     time.Now().Add(10 * time.Minute).UnixMilli(),
 				StartRowOffset: startRowOffset,
 				RowCount:       1,
 			}},
@@ -520,7 +520,7 @@ func TestCloudFetchIterator(t *testing.T) {
 			context.Background(),
 			[]*cli_service.TSparkArrowResultLink{{
 				FileLink:       server.URL,
-				ExpiryTime:     time.Now().Add(10 * time.Minute).Unix(),
+				ExpiryTime:     time.Now().Add(10 * time.Minute).UnixMilli(),
 				StartRowOffset: startRowOffset,
 				RowCount:       1,
 			}},
@@ -556,7 +556,7 @@ func TestCloudFetchIterator(t *testing.T) {
 			context.Background(),
 			[]*cli_service.TSparkArrowResultLink{{
 				FileLink:       server.URL,
-				ExpiryTime:     time.Now().Add(10 * time.Minute).Unix(),
+				ExpiryTime:     time.Now().Add(10 * time.Minute).UnixMilli(),
 				StartRowOffset: startRowOffset,
 				RowCount:       1,
 			}},
@@ -594,7 +594,7 @@ func TestCloudFetchIterator(t *testing.T) {
 			context.Background(),
 			[]*cli_service.TSparkArrowResultLink{{
 				FileLink:       server.URL,
-				ExpiryTime:     time.Now().Add(10 * time.Minute).Unix(),
+				ExpiryTime:     time.Now().Add(10 * time.Minute).UnixMilli(),
 				StartRowOffset: startRowOffset,
 				RowCount:       1,
 			}},
@@ -627,7 +627,7 @@ func TestCloudFetchIterator(t *testing.T) {
 		cfg.RetryMax = 5
 		cfg.RetryWaitMin = 1 * time.Millisecond
 		cfg.RetryWaitMax = 3 * time.Second
-		expiryTime := time.Now().Unix() + 32
+		expiryTime := time.Now().Add(2 * time.Second).UnixMilli()
 
 		bi, err := NewCloudBatchIterator(
 			context.Background(),
@@ -676,7 +676,7 @@ func TestCloudFetchIterator(t *testing.T) {
 			ctx,
 			[]*cli_service.TSparkArrowResultLink{{
 				FileLink:       server.URL,
-				ExpiryTime:     time.Now().Add(10 * time.Minute).Unix(),
+				ExpiryTime:     time.Now().Add(10 * time.Minute).UnixMilli(),
 				StartRowOffset: startRowOffset,
 				RowCount:       1,
 			}},
@@ -734,7 +734,7 @@ func TestCloudFetchSchemaOverride(t *testing.T) {
 		links := []*cli_service.TSparkArrowResultLink{
 			{
 				FileLink:       server.URL,
-				ExpiryTime:     time.Now().Add(10 * time.Minute).Unix(),
+				ExpiryTime:     time.Now().Add(10 * time.Minute).UnixMilli(),
 				StartRowOffset: 0,
 				RowCount:       3,
 			},
@@ -777,7 +777,7 @@ func TestCloudFetchSchemaOverride(t *testing.T) {
 		links := []*cli_service.TSparkArrowResultLink{
 			{
 				FileLink:       server.URL,
-				ExpiryTime:     time.Now().Add(10 * time.Minute).Unix(),
+				ExpiryTime:     time.Now().Add(10 * time.Minute).UnixMilli(),
 				StartRowOffset: 0,
 				RowCount:       3,
 			},
@@ -834,13 +834,13 @@ func TestCloudFetchIterator_OnFileDownloaded_CallbackInvokedWithPositiveDuration
 	links := []*cli_service.TSparkArrowResultLink{
 		{
 			FileLink:       server.URL,
-			ExpiryTime:     time.Now().Add(10 * time.Minute).Unix(),
+			ExpiryTime:     time.Now().Add(10 * time.Minute).UnixMilli(),
 			StartRowOffset: startRowOffset,
 			RowCount:       1,
 		},
 		{
 			FileLink:       server.URL,
-			ExpiryTime:     time.Now().Add(10 * time.Minute).Unix(),
+			ExpiryTime:     time.Now().Add(10 * time.Minute).UnixMilli(),
 			StartRowOffset: startRowOffset + 1,
 			RowCount:       1,
 		},
@@ -899,7 +899,7 @@ func TestCloudFetchIterator_OnFileDownloaded_NilCallbackDoesNotPanic(t *testing.
 	links := []*cli_service.TSparkArrowResultLink{
 		{
 			FileLink:       server.URL,
-			ExpiryTime:     time.Now().Add(10 * time.Minute).Unix(),
+			ExpiryTime:     time.Now().Add(10 * time.Minute).UnixMilli(),
 			StartRowOffset: startRowOffset,
 			RowCount:       1,
 		},
@@ -989,7 +989,7 @@ func TestCloudFetchIterator_CloseReleasesInFlightDownloads(t *testing.T) {
 	for i := range links {
 		links[i] = &cli_service.TSparkArrowResultLink{
 			FileLink:       server.URL,
-			ExpiryTime:     time.Now().Add(10 * time.Minute).Unix(),
+			ExpiryTime:     time.Now().Add(10 * time.Minute).UnixMilli(),
 			StartRowOffset: int64(i),
 			RowCount:       1,
 		}
@@ -1104,7 +1104,7 @@ func TestCloudFetchIterator_CloseReleasesAfterRetry(t *testing.T) {
 			// Unique query string per link so the server's per-link
 			// attempt counter doesn't conflate parallel requests.
 			FileLink:       fmt.Sprintf("%s/?id=%d", server.URL, i),
-			ExpiryTime:     time.Now().Add(10 * time.Minute).Unix(),
+			ExpiryTime:     time.Now().Add(10 * time.Minute).UnixMilli(),
 			StartRowOffset: int64(i),
 			RowCount:       1,
 		}
