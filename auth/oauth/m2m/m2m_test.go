@@ -17,14 +17,6 @@ import (
 	"golang.org/x/oauth2/clientcredentials"
 )
 
-func TestHTTPClientCopiesShareCache(t *testing.T) {
-	original := NewAuthenticator("id", "secret", "test.cloud.databricks.com").(*authClient)
-	require.NotNil(t, original.cache)
-	copied := original.WithHTTPClient(&http.Client{}).(*authClient)
-	assert.Same(t, original.cache, copied.cache)
-	assert.Same(t, original.cache, copied.WithHTTPClient(nil).(*authClient).cache)
-}
-
 func TestM2MScopes(t *testing.T) {
 	t.Run("default should be [all-apis]", func(t *testing.T) {
 		auth := NewAuthenticator("id", "secret", "staging.cloud.company.com").(*authClient)

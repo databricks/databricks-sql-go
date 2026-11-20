@@ -134,6 +134,7 @@ func GetTokenSource(config clientcredentials.Config) oauth2.TokenSource {
 	return tokenSource
 }
 
+// GetConfig uses the oauth2.HTTPClient from ctx for discovery when set.
 func GetConfig(ctx context.Context, issuerURL, clientID, clientSecret string, scopes []string) (clientcredentials.Config, error) {
 	// Get the endpoint based on the host name
 	endpoint, err := oauth.GetEndpoint(ctx, issuerURL)

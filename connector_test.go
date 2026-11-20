@@ -1,11 +1,14 @@
 package dbsql
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
 
+	"github.com/databricks/databricks-sql-go/auth"
 	"github.com/databricks/databricks-sql-go/auth/pat"
 	"github.com/databricks/databricks-sql-go/auth/tokenprovider"
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
@@ -57,38 +60,49 @@ func TestFederatedTokenAuthenticatorPreservesThriftTokenExchange(t *testing.T) {
 	assert.Equal(t, subjectToken, exchange.subjectToken)
 }
 
+type connectorOAuthRecorder struct {
+	auth.Authenticator
+	client *http.Client
+}
+
+func (recorder *connectorOAuthRecorder) WithHTTPClient(client *http.Client) auth.Authenticator {
+	recorder.client = client
+	return recorder.Authenticator.(interface {
+		WithHTTPClient(*http.Client) auth.Authenticator
+	}).WithHTTPClient(client)
+}
+
 func TestM2MConnectorHTTPConfiguration(t *testing.T) {
-	const host = "test.cloud.databricks.com"
-	for _, order := range []string{"auth-first", "auth-last", "dsn", "dsn-inferred-auth"} {
-		t.Run(order, func(t *testing.T) {
-			transport := &http.Transport{}
-			t.Cleanup(transport.CloseIdleConnections)
-			options := []ConnOption{WithServerHostname(host), WithPort(443), WithHTTPPath("/query")}
-			httpOptions := []ConnOption{WithUserAgentEntry("Issue413/partner"), WithTransport(transport)}
-			switch order {
-			case "auth-first":
-				options = append(options, WithClientCredentials("test-client", "test-secret"))
-				options = append(options, httpOptions...)
-			case "auth-last":
-				options = append(options, httpOptions...)
-				options = append(options, WithClientCredentials("test-client", "test-secret"))
-			default:
-				dsn := host + ":443/query?clientID=test-client&clientSecret=test-secret&userAgentEntry=Issue413%2Fpartner"
-				if order == "dsn" {
-					dsn = "https://" + dsn + "&authType=OauthM2M"
-				}
-				userConfig, err := config.ParseDSN(dsn)
+	agents := make(chan string, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		agents <- request.UserAgent()
+		writer.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(server.Close)
+	for _, dsn := range []bool{false, true} {
+		t.Run(fmt.Sprintf("dsn=%t", dsn), func(t *testing.T) {
+			caller := &http.Transport{Proxy: func(*http.Request) (*url.URL, error) {
+				return nil, fmt.Errorf("OAuth must not use the caller transport")
+			}}
+			t.Cleanup(caller.CloseIdleConnections)
+			options := []ConnOption{WithServerHostname("test.cloud.databricks.com"), WithHTTPPath("/query"),
+				WithClientCredentials("id", "secret"), WithUserAgentEntry("Issue413/partner")}
+			if dsn {
+				cfg, err := config.ParseDSN("https://test.cloud.databricks.com:443/query?authType=OauthM2M&clientID=id&clientSecret=secret&userAgentEntry=Issue413%2Fpartner")
 				require.NoError(t, err)
-				options = []ConnOption{withUserConfig(userConfig), WithTransport(transport)}
+				options = []ConnOption{withUserConfig(cfg)}
 			}
-			created, err := NewConnector(options...)
+			recorder := &connectorOAuthRecorder{}
+			options = append(options, WithTransport(caller), func(cfg *config.Config) {
+				recorder.Authenticator, cfg.Authenticator = cfg.Authenticator, recorder
+			})
+			_, err := NewConnector(options...)
 			require.NoError(t, err)
-			connector := created.(*connector)
-			pooled := connector.client.Transport.(*retryablehttp.RoundTripper).Client.HTTPClient
-			bound := pooled.Transport.(*client.Transport)
-			assert.NotSame(t, connector.cfg.Authenticator, bound.Authr)
-			assert.Same(t, transport, bound.Base)
-			assert.Contains(t, client.BuildUserAgent(connector.cfg), "Issue413/partner")
+			require.NotNil(t, recorder.client)
+			response, err := recorder.client.Get(server.URL)
+			require.NoError(t, err, "bound OAuth base must bypass the caller transport")
+			require.NoError(t, response.Body.Close())
+			assert.Contains(t, <-agents, "Issue413/partner")
 		})
 	}
 }

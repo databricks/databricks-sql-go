@@ -17,6 +17,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -639,6 +640,8 @@ func PooledTransport(cfg *config.Config) *http.Transport {
 	return transport
 }
 
+var oauthTransport = sync.OnceValue(func() *http.Transport { return PooledTransport(&config.Config{}) })
+
 func PooledClient(cfg *config.Config) *http.Client {
 	if cfg.Authenticator == nil {
 		return nil
@@ -652,12 +655,8 @@ func PooledClient(cfg *config.Config) *http.Client {
 	if configurable, ok := authenticator.(interface {
 		WithHTTPClient(*http.Client) auth.Authenticator
 	}); ok {
-		oauthBase := base
-		if cfg.Transport != nil || (cfg.TLSConfig != nil && cfg.TLSConfig.InsecureSkipVerify) {
-			oauthBase = PooledTransport(&config.Config{})
-		}
 		httpClient := &http.Client{
-			Transport: &userAgentTransport{base: oauthBase, userAgent: BuildUserAgent(cfg)},
+			Transport: &userAgentTransport{base: oauthTransport(), userAgent: BuildUserAgent(cfg)},
 			Timeout:   cfg.ClientTimeout,
 		}
 		authenticator = configurable.WithHTTPClient(httpClient)

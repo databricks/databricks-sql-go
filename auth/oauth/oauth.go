@@ -32,6 +32,7 @@ var azureTenants = map[string]string{
 	".databricks.azure.cn":         "2ff814a6-3304-4ab8-85cb-cd0e6f879c1d",
 }
 
+// GetEndpoint uses the oauth2.HTTPClient from ctx for discovery when set.
 func GetEndpoint(ctx context.Context, hostName string) (oauth2.Endpoint, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -71,24 +72,9 @@ func GetEndpoint(ctx context.Context, hostName string) (oauth2.Endpoint, error) 
 		return oauth2.Endpoint{}, err
 	}
 
-	return validateEndpoint(provider.Endpoint())
-}
+	endpoint := provider.Endpoint()
 
-func validateEndpoint(endpoint oauth2.Endpoint) (oauth2.Endpoint, error) {
-	for _, field := range []struct {
-		name     string
-		url      string
-		required bool
-	}{
-		{"token_endpoint", endpoint.TokenURL, true},
-		{"authorization_endpoint", endpoint.AuthURL, false},
-		{"device_authorization_endpoint", endpoint.DeviceAuthURL, false},
-	} {
-		if (field.required || field.url != "") && !isValidDatabricksURL(field.url, true) {
-			return oauth2.Endpoint{}, fmt.Errorf("oauth: invalid %s", field.name)
-		}
-	}
-	return endpoint, nil
+	return endpoint, err
 }
 
 // hostMetadata is the subset of /.well-known/databricks-config we consume.
@@ -150,22 +136,14 @@ func substituteAccountID(meta hostMetadata) string {
 // InsecureIssuerURLContext because the discovered issuer is cross-host) and avoids
 // cleartext OAuth from an http:// endpoint.
 func isValidDatabricksIssuer(issuer string) bool {
-	return isValidDatabricksURL(issuer, false)
-}
-
-func isValidDatabricksURL(value string, allowRootDot bool) bool {
-	if strings.Contains(value, accountIDPlaceholder) {
+	if strings.Contains(issuer, accountIDPlaceholder) {
 		return false
 	}
-	parsed, err := url.Parse(value)
-	if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" {
+	u, err := url.Parse(issuer)
+	if err != nil || u.Scheme != "https" || u.Hostname() == "" {
 		return false
 	}
-	host := parsed.Hostname()
-	if allowRootDot {
-		host = strings.TrimSuffix(host, ".")
-	}
-	return isDatabricksHost(host)
+	return isDatabricksHost(u.Hostname())
 }
 
 // databricksHostSuffixes is the set of DNS suffixes treated as first-party

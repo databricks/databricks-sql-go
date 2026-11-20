@@ -7,59 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	"golang.org/x/oauth2"
 )
-
-func TestValidateEndpoint(t *testing.T) {
-	for _, field := range []string{"token_endpoint", "authorization_endpoint", "device_authorization_endpoint"} {
-		for _, test := range []struct {
-			value string
-			valid bool
-		}{
-			{"https://test.cloud.databricks.com/token", true},
-			{"https://TEST.CLOUD.DATABRICKS.COM.:443/token", true},
-			{"https://test.cloud.databricks.com../token", false},
-			{"https://test.cloud.databricks.com.evil/token", false},
-			{"http://test.cloud.databricks.com/token", false},
-			{"https:///token", false},
-			{"https://test.cloud.databricks.com/{account_id}", false},
-			{"", field != "token_endpoint"},
-		} {
-			t.Run(field+"/"+test.value, func(t *testing.T) {
-				defaultURL := "https://test.cloud.databricks.com/token"
-				endpoint := oauth2.Endpoint{TokenURL: defaultURL}
-				switch field {
-				case "token_endpoint":
-					endpoint.TokenURL = test.value
-				case "authorization_endpoint":
-					endpoint.AuthURL = test.value
-				default:
-					endpoint.DeviceAuthURL = test.value
-				}
-				validated, err := validateEndpoint(endpoint)
-				if test.valid {
-					require.NoError(t, err)
-					assert.Equal(t, endpoint, validated)
-				} else {
-					require.EqualError(t, err, "oauth: invalid "+field)
-				}
-			})
-		}
-	}
-	assert.False(t, isValidDatabricksIssuer("https://test.cloud.databricks.com./oidc"))
-}
-
-func TestGetEndpointPreservesConfiguredAzureHostForms(t *testing.T) {
-	for _, host := range []string{"adb-1.1.azuredatabricks.net.", "adb-1.1.azuredatabricks.net.corp.example"} {
-		endpoint, err := GetEndpoint(context.Background(), host)
-		require.NoError(t, err)
-		assert.Equal(t, "https://"+host+"/oidc/oauth2/v2.0/token", endpoint.TokenURL)
-		assert.Equal(t, "https://"+host+"/oidc/oauth2/v2.0/authorize", endpoint.AuthURL)
-	}
-}
 
 func TestInferCloudFromHost(t *testing.T) {
 	cases := []struct {

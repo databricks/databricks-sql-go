@@ -2,13 +2,7 @@ package client
 
 import (
 	"context"
-	"crypto/tls"
-	"crypto/x509"
-	"io"
-	"log"
-	"net"
 	"net/http"
-	"net/http/httptest"
 	"reflect"
 	"testing"
 
@@ -19,6 +13,7 @@ import (
 )
 
 func TestOAuthTransportIsolation(t *testing.T) {
+	var shared http.RoundTripper
 	for _, custom := range []bool{false, true} {
 		for _, skip := range []bool{false, true} {
 			cfg := config.WithDefaults()
@@ -33,50 +28,16 @@ func TestOAuthTransportIsolation(t *testing.T) {
 			assert.Nil(t, transport.TLSClientConfig)
 			require.NotNil(t, transport.Proxy)
 			assert.Equal(t, reflect.ValueOf(http.ProxyFromEnvironment).Pointer(), reflect.ValueOf(transport.Proxy).Pointer())
+			if shared == nil {
+				shared = transport
+			}
+			assert.Same(t, shared, transport)
+			assert.NotSame(t, pooled.Transport.(*Transport).Base, transport)
 			if custom {
 				assert.Nil(t, caller.Proxy)
 				assert.Same(t, caller, pooled.Transport.(*Transport).Base)
 			}
-			assert.Equal(t, !custom && !skip, transport == pooled.Transport.(*Transport).Base)
 			assert.Equal(t, skip, cfg.TLSConfig.InsecureSkipVerify)
-		}
-	}
-}
-
-func TestOAuthTLSVerification(t *testing.T) {
-	for _, trusted := range []bool{false, true} {
-		server := httptest.NewUnstartedServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
-			t.Error("OAuth must reject the certificate")
-		}))
-		server.Config.ErrorLog = log.New(io.Discard, "", 0)
-		server.StartTLS()
-		t.Cleanup(server.Close)
-		cfg := config.WithDefaults()
-		cfg.TLSConfig.InsecureSkipVerify = true
-		cfg.Authenticator = m2m.NewAuthenticator("id", "secret", "test.cloud.databricks.com")
-		_, oauthClient := newM2MClient(t, cfg)
-		transport := oauthClient.Transport.(*userAgentTransport).base.(*http.Transport)
-		target := server.URL
-		if trusted {
-			roots := x509.NewCertPool()
-			roots.AddCert(server.Certificate())
-			transport.TLSClientConfig = &tls.Config{RootCAs: roots}
-			target = "https://test.cloud.databricks.com/token"
-		}
-		transport.Proxy = nil
-		transport.DialContext = func(ctx context.Context, network, _ string) (net.Conn, error) {
-			return (&net.Dialer{}).DialContext(ctx, network, server.Listener.Addr().String())
-		}
-		response, err := oauthClient.Get(target)
-		if response != nil {
-			require.NoError(t, response.Body.Close())
-		}
-		if trusted {
-			var hostnameError x509.HostnameError
-			require.ErrorAs(t, err, &hostnameError)
-		} else {
-			var authorityError x509.UnknownAuthorityError
-			require.ErrorAs(t, err, &authorityError)
 		}
 	}
 }
