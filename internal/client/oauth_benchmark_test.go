@@ -31,10 +31,14 @@ func BenchmarkM2MTokenGrant(benchmark *testing.B) {
 	http.DefaultClient = &http.Client{Transport: oauthBenchmarkTransport{blocked: true}}
 	benchmark.Cleanup(func() { http.DefaultClient = previousClient })
 	cfg := config.WithDefaults()
-	cfg.Authenticator = m2m.NewAuthenticator("benchmark-client", "benchmark-secret", "adb-test.azuredatabricks.net")
+	recorder := &oauthClientRecorder{Authenticator: m2m.NewAuthenticator("benchmark-client", "benchmark-secret", "adb-test.azuredatabricks.net")}
+	cfg.Authenticator = recorder
 	cfg.Transport = oauthBenchmarkTransport{}
 	cfg.UserAgentEntry = "Issue413/benchmark"
 	authenticator := PooledClient(cfg).Transport.(*Transport).Authr
+	decorator := recorder.client.Transport.(*userAgentTransport)
+	benchmark.Cleanup(decorator.base.(*http.Transport).CloseIdleConnections)
+	decorator.base = oauthBenchmarkTransport{}
 	request, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "https://adb-test.azuredatabricks.net/query", nil)
 	if err != nil {
 		benchmark.Fatal(err)

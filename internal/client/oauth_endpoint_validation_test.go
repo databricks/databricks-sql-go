@@ -1,4 +1,4 @@
-package dbsql
+package client
 
 import (
 	"context"
@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/databricks/databricks-sql-go/auth/oauth/m2m"
+	"github.com/databricks/databricks-sql-go/internal/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -37,7 +38,7 @@ func TestM2MRejectsDiscoveredEndpointsWithoutCaching(t *testing.T) {
 						var bad atomic.Bool
 						bad.Store(true)
 						transport := func() http.RoundTripper {
-							return m2mRoundTripper(func(request *http.Request) (*http.Response, error) {
+							return oauthTestRoundTripper(func(request *http.Request) (*http.Response, error) {
 								body := metadata
 								switch {
 								case strings.HasSuffix(request.URL.Path, "/.well-known/openid-configuration"):
@@ -59,15 +60,17 @@ func TestM2MRejectsDiscoveredEndpointsWithoutCaching(t *testing.T) {
 								return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(body)), Request: request}, nil
 							})
 						}
-						sharedTransport := &m2mIdentityTransport{transport()}
+						sharedTransport := transport()
 						shared := m2m.NewAuthenticator("id", "secret", host)
-						first, err := NewConnector(WithServerHostname(host), WithHTTPPath("/sql"), WithAuthenticator(shared), WithSkipTLSHostVerify(), WithTransport(sharedTransport))
-						require.NoError(t, err)
-						second, err := NewConnector(WithServerHostname(host), WithHTTPPath("/sql"), WithAuthenticator(shared), WithTransport(sharedTransport))
-						require.NoError(t, err)
+						cfg := config.WithDefaults()
+						cfg.Authenticator, cfg.Transport = shared, sharedTransport
+						cfg.TLSConfig.InsecureSkipVerify = true
+						first := m2mTestClient(t, cfg, transport())
+						cfg.TLSConfig.InsecureSkipVerify = false
+						second := m2mTestClient(t, cfg, transport())
 						request, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "https://"+host+"/query", nil)
 						require.NoError(t, err)
-						response, err := first.(*connector).client.Do(request)
+						response, err := first.Do(request)
 						if response != nil {
 							require.NoError(t, response.Body.Close())
 						}
@@ -75,16 +78,16 @@ func TestM2MRejectsDiscoveredEndpointsWithoutCaching(t *testing.T) {
 						assert.NotContains(t, err.Error(), "/secret")
 						assert.Zero(t, grants.Load())
 						bad.Store(false)
-						response, err = first.(*connector).client.Do(request)
+						response, err = first.Do(request)
 						require.NoError(t, err)
 						require.NoError(t, response.Body.Close())
 						assert.Equal(t, int32(2), discoveries.Load())
 						assert.Equal(t, int32(1), grants.Load())
-						response, err = second.(*connector).client.Do(request)
+						response, err = second.Do(request)
 						require.NoError(t, err)
 						require.NoError(t, response.Body.Close())
-						assert.Equal(t, int32(3), discoveries.Load())
-						assert.Equal(t, int32(2), grants.Load())
+						assert.Equal(t, int32(2), discoveries.Load())
+						assert.Equal(t, int32(1), grants.Load())
 					})
 				}
 			}

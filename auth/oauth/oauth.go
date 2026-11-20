@@ -54,6 +54,8 @@ func GetEndpoint(ctx context.Context, hostName string) (oauth2.Endpoint, error) 
 	// use their account-rooted endpoint instead of the account-agnostic console login.
 	// For normal workspace hosts this resolves to https://<host>/oidc, identical to
 	// the previous behavior.
+	// NOTE: M2M connectors supply the driver's verified transport, not the
+	// caller's SQL transport or WithSkipTLSHostVerify settings.
 	client := &http.Client{Timeout: hostConfigTimeout}
 	if supplied, ok := ctx.Value(oauth2.HTTPClient).(*http.Client); ok && supplied != nil {
 		*client = *supplied

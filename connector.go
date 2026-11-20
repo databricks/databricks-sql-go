@@ -530,9 +530,9 @@ func WithAuthenticator(authr auth.Authenticator) ConnOption {
 	}
 }
 
-// WithTransport sets up the transport configuration to be used by the httpclient.
-// OAuth M2M discovery and credential exchange, including the client secret, also use this transport.
-// The caller owns TLS verification; previously OAuth used the fully verified default transport.
+// WithTransport supplies the transport for SQL and CloudFetch traffic.
+// OAuth uses the driver's verified transport with HTTPS_PROXY/NO_PROXY and
+// system roots, including SSL_CERT_FILE, independently of this option.
 func WithTransport(t http.RoundTripper) ConnOption {
 	return func(c *config.Config) {
 		c.Transport = t

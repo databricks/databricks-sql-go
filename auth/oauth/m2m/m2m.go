@@ -28,7 +28,6 @@ func NewAuthenticatorWithScopes(clientID, clientSecret, hostName string, scopes 
 		hostName:     hostName,
 		scopes:       scopes,
 		cache:        &tokenCache{},
-		caches:       &tokenCaches{},
 	}
 }
 
@@ -39,11 +38,6 @@ type authClient struct {
 	scopes       []string
 	httpClient   *http.Client
 	cache        *tokenCache
-	caches       *tokenCaches
-}
-
-type tokenCaches struct {
-	builtIn tokenCache
 }
 
 type tokenCache struct {
@@ -52,29 +46,14 @@ type tokenCache struct {
 	config *clientcredentials.Config
 }
 
-type tokenRequestContextKey struct{}
-
 func (c *authClient) WithHTTPClient(client *http.Client) auth.Authenticator {
-	return c.withHTTPClient(client, &tokenCache{})
-}
-
-func (c *authClient) WithHTTPClientForTransport(client *http.Client, transport http.RoundTripper) auth.Authenticator {
-	cache := &c.caches.builtIn
-	if transport != nil {
-		cache = &tokenCache{}
-	}
-	return c.withHTTPClient(client, cache)
-}
-
-func (c *authClient) withHTTPClient(client *http.Client, cache *tokenCache) auth.Authenticator {
 	return &authClient{
 		clientID:     c.clientID,
 		clientSecret: c.clientSecret,
 		hostName:     c.hostName,
 		scopes:       append([]string(nil), c.scopes...),
 		httpClient:   client,
-		cache:        cache,
-		caches:       c.caches,
+		cache:        c.cache,
 	}
 }
 
@@ -95,9 +74,6 @@ func (c *authClient) M2MScopes() []string {
 // Auth will start the OAuth Authorization Flow to authenticate the cli client
 // using the users credentials in the browser. Compatible with SSO.
 func (c *authClient) Authenticate(r *http.Request) error {
-	if r.Context().Value(tokenRequestContextKey{}) == c.caches {
-		return nil
-	}
 	c.cache.mutex.Lock()
 	defer c.cache.mutex.Unlock()
 	if c.cache.token.Valid() {
@@ -105,7 +81,7 @@ func (c *authClient) Authenticate(r *http.Request) error {
 		return nil
 	}
 
-	ctx := context.WithValue(context.Background(), tokenRequestContextKey{}, c.caches)
+	ctx := context.Background()
 	if c.httpClient != nil {
 		ctx = context.WithValue(ctx, oauth2.HTTPClient, c.httpClient)
 	}

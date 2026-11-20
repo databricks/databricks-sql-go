@@ -63,6 +63,10 @@ func TestOAuthTLSHostVerification(t *testing.T) {
 					t.Cleanup(queryTransport.CloseIdleConnections)
 					tokenTransport := authenticator.client.Transport.(*userAgentTransport).base.(*http.Transport)
 					t.Cleanup(tokenTransport.CloseIdleConnections)
+					assert.Nil(t, tokenTransport.TLSClientConfig)
+					if scenario.trusted {
+						tokenTransport.TLSClientConfig = &tls.Config{RootCAs: cfg.TLSConfig.RootCAs}
+					}
 					tokenTransport.Proxy = nil
 					tokenTransport.DialContext = func(ctx context.Context, network, _ string) (net.Conn, error) {
 						return (&net.Dialer{}).DialContext(ctx, network, server.Listener.Addr().String())
@@ -76,7 +80,9 @@ func TestOAuthTLSHostVerification(t *testing.T) {
 						_, err = grant.Token(ctx)
 					}
 					require.ErrorContains(t, err, "certificate")
-					assert.False(t, tokenTransport.TLSClientConfig.InsecureSkipVerify)
+					if tokenTransport.TLSClientConfig != nil {
+						assert.False(t, tokenTransport.TLSClientConfig.InsecureSkipVerify)
+					}
 					assert.Equal(t, skipVerify, cfg.TLSConfig.InsecureSkipVerify)
 					assert.Nil(t, cfg.TLSConfig.VerifyConnection)
 					if skipVerify {
@@ -109,6 +115,8 @@ func TestOAuthVerifiesHTTPSProxyByIP(t *testing.T) {
 	t.Cleanup(pooled.Transport.(*Transport).Base.(*http.Transport).CloseIdleConnections)
 	transport := authenticator.client.Transport.(*userAgentTransport).base.(*http.Transport)
 	t.Cleanup(transport.CloseIdleConnections)
+	assert.Nil(t, transport.TLSClientConfig)
+	transport.TLSClientConfig = &tls.Config{RootCAs: cfg.TLSConfig.RootCAs}
 	proxyURL, err := url.Parse(server.URL)
 	require.NoError(t, err)
 	transport.Proxy = http.ProxyURL(proxyURL)
@@ -118,5 +126,5 @@ func TestOAuthVerifiesHTTPSProxyByIP(t *testing.T) {
 	}
 	require.ErrorContains(t, err, "Bad Gateway")
 	assert.Equal(t, int32(1), connects.Load())
-	assert.Equal(t, int32(1), verified.Load())
+	assert.Zero(t, verified.Load())
 }

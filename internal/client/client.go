@@ -653,33 +653,14 @@ func PooledClient(cfg *config.Config) *http.Client {
 		WithHTTPClient(*http.Client) auth.Authenticator
 	}); ok {
 		oauthBase := base
-		if cfg.Transport == nil && cfg.TLSConfig != nil {
-			oauthTransport := base.(*http.Transport).Clone()
-			oauthTransport.TLSClientConfig = cfg.TLSConfig.Clone()
-			oauthTransport.TLSClientConfig.InsecureSkipVerify = false
-			oauthBase = oauthTransport
+		if cfg.Transport != nil || (cfg.TLSConfig != nil && cfg.TLSConfig.InsecureSkipVerify) {
+			oauthBase = PooledTransport(&config.Config{})
 		}
 		httpClient := &http.Client{
 			Transport: &userAgentTransport{base: oauthBase, userAgent: BuildUserAgent(cfg)},
 			Timeout:   cfg.ClientTimeout,
 		}
-		var configured auth.Authenticator
-		if partitioned, ok := authenticator.(interface {
-			WithHTTPClientForTransport(*http.Client, http.RoundTripper) auth.Authenticator
-		}); ok {
-			cacheTransport := cfg.Transport
-			if cacheTransport == nil && cfg.TLSConfig != nil {
-				tlsConfig := cfg.TLSConfig
-				if tlsConfig.RootCAs != nil || tlsConfig.ServerName != "" || tlsConfig.Time != nil ||
-					tlsConfig.VerifyConnection != nil || tlsConfig.VerifyPeerCertificate != nil ||
-					len(tlsConfig.Certificates) > 0 || tlsConfig.GetClientCertificate != nil {
-					cacheTransport = oauthBase
-				}
-			}
-			configured = partitioned.WithHTTPClientForTransport(httpClient, cacheTransport)
-		} else {
-			configured = configurable.WithHTTPClient(httpClient)
-		}
+		configured := configurable.WithHTTPClient(httpClient)
 		if configured != nil {
 			authenticator = configured
 		}

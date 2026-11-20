@@ -43,7 +43,7 @@ func TestOAuthClientPreservesAuthenticatorWhenHookReturnsNil(t *testing.T) {
 	require.NoError(t, response.Body.Close())
 }
 
-func TestOAuthClientUsesConnectorBaseTransport(t *testing.T) {
+func TestOAuthClientUsesDriverTransport(t *testing.T) {
 	for _, customTransport := range []bool{false, true} {
 		t.Run(map[bool]string{false: "pooled-tls", true: "custom"}[customTransport], func(t *testing.T) {
 			authenticator := &oauthHTTPClientAuthenticator{}
@@ -58,23 +58,31 @@ func TestOAuthClientUsesConnectorBaseTransport(t *testing.T) {
 			require.NotNil(t, authenticator.client)
 			tokenTransport := authenticator.client.Transport.(*userAgentTransport)
 			queryTransport := pooled.Transport.(*Transport)
-			if customTransport {
-				assert.Same(t, queryTransport.Base, tokenTransport.base)
-			} else {
-				assert.NotSame(t, queryTransport.Base, tokenTransport.base)
-			}
+			assert.NotSame(t, queryTransport.Base, tokenTransport.base)
 			assert.Equal(t, BuildUserAgent(cfg), tokenTransport.userAgent)
 			assert.Equal(t, cfg.ClientTimeout, authenticator.client.Timeout)
-			if !customTransport {
-				assert.NotSame(t, cfg.TLSConfig, tokenTransport.base.(*http.Transport).TLSClientConfig)
-				assert.False(t, tokenTransport.base.(*http.Transport).TLSClientConfig.InsecureSkipVerify)
-				assert.Nil(t, tokenTransport.base.(*http.Transport).TLSClientConfig.VerifyConnection)
+			transport := tokenTransport.base.(*http.Transport)
+			assert.Nil(t, transport.TLSClientConfig)
+			assert.NotNil(t, transport.Proxy)
+			t.Cleanup(transport.CloseIdleConnections)
+			if sqlTransport, ok := queryTransport.Base.(*http.Transport); ok {
+				t.Cleanup(sqlTransport.CloseIdleConnections)
 			}
 		})
 	}
 }
 
 type oauthTestRoundTripper func(*http.Request) (*http.Response, error)
+
+func TestOAuthSharesDefaultSQLPool(t *testing.T) {
+	cfg := config.WithDefaults()
+	authenticator := &oauthHTTPClientAuthenticator{}
+	cfg.Authenticator = authenticator
+	pooled := PooledClient(cfg)
+	transport := pooled.Transport.(*Transport).Base.(*http.Transport)
+	t.Cleanup(transport.CloseIdleConnections)
+	assert.Same(t, transport, authenticator.client.Transport.(*userAgentTransport).base)
+}
 
 func (transport oauthTestRoundTripper) RoundTrip(request *http.Request) (*http.Response, error) {
 	return transport(request)

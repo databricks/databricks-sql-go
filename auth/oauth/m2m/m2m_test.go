@@ -33,9 +33,6 @@ func TestConnectorClientTokenTimeoutComposition(t *testing.T) {
 				localCalls.Add(1)
 				cloned := request.Clone(request.Context())
 				cloned.Header.Set("User-Agent", "connector-local-client")
-				if err := shared.Authenticate(cloned); err != nil {
-					return nil, err
-				}
 				return base.RoundTrip(cloned)
 			})}
 			authenticator := shared.WithHTTPClient(client)
@@ -56,37 +53,6 @@ func (transport m2mCacheRoundTripper) RoundTrip(request *http.Request) (*http.Re
 	return transport(request)
 }
 
-func TestTokenRequestContextSkipsOnlySharedAuthenticator(t *testing.T) {
-	shared := NewAuthenticator("id", "secret", "adb-test.azuredatabricks.net").(*authClient)
-	shared.cache.token = &oauth2.Token{AccessToken: "shared", TokenType: "Bearer"}
-	unrelated := NewAuthenticator("other", "secret", "adb-test.azuredatabricks.net").(*authClient)
-	unrelated.cache.token = &oauth2.Token{AccessToken: "unrelated", TokenType: "Bearer"}
-	request, err := http.NewRequestWithContext(context.Background(), http.MethodPost, "https://example.com/token", nil)
-	require.NoError(t, err)
-	request.SetBasicAuth("id", "secret")
-	for _, test := range []struct {
-		name              string
-		authenticator     *authClient
-		marked            bool
-		wantAuthorization string
-	}{
-		{"original", shared, true, request.Header.Get("Authorization")},
-		{"connector-copy", shared.WithHTTPClient(nil).(*authClient), true, request.Header.Get("Authorization")},
-		{"unrelated", unrelated, true, "Bearer unrelated"},
-		{"unmarked", shared, false, "Bearer shared"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			ctx := context.Background()
-			if test.marked {
-				ctx = context.WithValue(ctx, tokenRequestContextKey{}, shared.caches)
-			}
-			cloned := request.Clone(ctx)
-			require.NoError(t, test.authenticator.Authenticate(cloned))
-			assert.Equal(t, test.wantAuthorization, cloned.Header.Get("Authorization"))
-		})
-	}
-}
-
 func TestSharedTokenRefreshUsesCallingClient(t *testing.T) {
 	var tokenHits atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
@@ -105,16 +71,13 @@ func TestSharedTokenRefreshUsesCallingClient(t *testing.T) {
 	t.Cleanup(base.CloseIdleConnections)
 	var authenticators []*authClient
 	for _, partner := range []string{"first", "second"} {
-		configured := shared.WithHTTPClientForTransport(&http.Client{
+		configured := shared.WithHTTPClient(&http.Client{
 			Transport: m2mCacheRoundTripper(func(request *http.Request) (*http.Response, error) {
 				cloned := request.Clone(request.Context())
 				cloned.Header.Set("User-Agent", partner)
-				if err := shared.Authenticate(cloned); err != nil {
-					return nil, err
-				}
 				return base.RoundTrip(cloned)
 			}),
-		}, nil).(*authClient)
+		}).(*authClient)
 		configured.cache.config = &config
 		authenticators = append(authenticators, configured)
 	}
