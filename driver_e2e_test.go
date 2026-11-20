@@ -1181,3 +1181,59 @@ func TestE2ETelemetryReportsExecutionResult(t *testing.T) {
 		})
 	}
 }
+
+// unclosedBodyCounter counts responses whose body was never closed.
+type unclosedBodyCounter struct {
+	base      http.RoundTripper
+	responses atomic.Int32
+	open      atomic.Int32
+}
+
+func (c *unclosedBodyCounter) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := c.base.RoundTrip(req)
+	if resp != nil && resp.Body != nil {
+		c.responses.Add(1)
+		c.open.Add(1)
+		resp.Body = &countedBody{ReadCloser: resp.Body, c: c}
+	}
+	return resp, err
+}
+
+type countedBody struct {
+	io.ReadCloser
+	c    *unclosedBodyCounter
+	once sync.Once
+}
+
+func (b *countedBody) Close() error {
+	b.once.Do(func() { b.c.open.Add(-1) })
+	return b.ReadCloser.Close()
+}
+
+// TestE2ERejectedRequestClosesResponse checks that a response the warehouse
+// rejects (403 for an invalid token) is closed rather than leaked with its
+// connection.
+func TestE2ERejectedRequestClosesResponse(t *testing.T) {
+	host, httpPath, _ := pecoTestingCreds(t)
+	counter := &unclosedBodyCounter{base: client.PooledTransport(config.WithDefaults())}
+	connector, err := NewConnector(
+		WithServerHostname(host),
+		WithPort(443),
+		WithHTTPPath(httpPath),
+		WithAccessToken("dapi-invalid-token-for-e2e"),
+		WithTransport(counter),
+		WithRetries(1, 10*time.Millisecond, 20*time.Millisecond),
+	)
+	require.NoError(t, err)
+	db := sql.OpenDB(connector)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+
+	for i := 0; i < 3; i++ {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		err := db.PingContext(ctx)
+		cancel()
+		require.ErrorContains(t, err, "open session request error")
+	}
+	require.Positive(t, counter.responses.Load())
+	assert.Zero(t, counter.open.Load(), "rejected responses left unclosed")
+}
