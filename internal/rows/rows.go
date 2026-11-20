@@ -930,19 +930,22 @@ func (r *rows) GetArrowIPCStreams(ctx context.Context) (dbsqlrows.ArrowIPCStream
 }
 
 func (r *rows) getArrowSchemaBytes(ctx context.Context) ([]byte, error) {
+	if r.pendingArrowPage != nil {
+		if err := r.makeRowScanner(r.pendingArrowPage); err != nil {
+			return nil, err
+		}
+		r.pendingArrowPage = nil
+		return nil, nil
+	}
 	metadata := r.metadataSnapshot()
 	if metadata == nil || len(metadata.ArrowSchema) == 0 {
-		if r.pendingArrowPage != nil || r.ResultPageIterator.HasNext() {
+		if r.ResultPageIterator.HasNext() {
 			r.useServerArrowSchema(r.ResultPageIterator.ResultSetMetadata())
 			metadata = r.metadataSnapshot()
 			if metadata != nil && len(metadata.ArrowSchema) > 0 {
 				return metadata.ArrowSchema, nil
 			}
-			page := r.pendingArrowPage
-			var err error
-			if page == nil {
-				page, err = r.ResultPageIterator.Next()
-			}
+			page, err := r.ResultPageIterator.Next()
 			if err != nil {
 				return nil, err
 			}

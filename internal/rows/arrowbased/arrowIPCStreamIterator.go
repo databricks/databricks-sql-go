@@ -23,6 +23,7 @@ func newArrowIPCStreamIterator(ctx context.Context, rpi rowscanner.ResultPageIte
 		resultPageIterator: rpi,
 		ctx:                ctx,
 		arrowSchemaBytes:   arrowSchemaBytes,
+		cloudStreams:       schemaIPCStreamIterator{ctx: ctx},
 	}
 	if len(schemaErrors) > 0 {
 		iterator.schemaErr = schemaErrors[0]
@@ -40,6 +41,7 @@ type arrowIPCStreamIterator struct {
 	arrowSchemaBytes     []byte
 	schemaErr            error
 	detectEmbeddedSchema bool
+	cloudStreams         schemaIPCStreamIterator
 	// err holds a page-fetch error detected while advancing the result page
 	// iterator. It must be surfaced through Next() rather than being masked as
 	// a normal end-of-results (io.EOF). See issue #507. Once reported (or on
@@ -205,8 +207,14 @@ func (ri *arrowIPCStreamIterator) newIPCStreamIterator(fr *cli_service.TFetchRes
 		if err != nil {
 			return nil, err
 		}
-		return &schemaIPCStreamIterator{source: iterator, schema: ri.arrowSchemaBytes}, nil
+		return ri.withCloudSchema(iterator), nil
 	} else {
 		return NewLocalIPCStreamIterator(ri.ctx, rowSet.ArrowBatches, rowSet.StartRowOffset, ri.arrowSchemaBytes, &ri.cfg, ri.detectEmbeddedSchema)
 	}
+}
+
+func (ri *arrowIPCStreamIterator) withCloudSchema(source IPCStreamIterator) IPCStreamIterator {
+	ri.cloudStreams.source = source
+	ri.cloudStreams.schema = ri.arrowSchemaBytes
+	return &ri.cloudStreams
 }

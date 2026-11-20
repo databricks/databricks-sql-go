@@ -454,13 +454,14 @@ func (ars *arrowRowScanner) GetArrowIPCStreams(ctx context.Context, cfg config.C
 		// If we have a batch iterator, extract its IPC stream iterator
 		if wrapper, ok := ars.batchIterator.(*batchIterator); ok {
 			ipcIterator = wrapper.ipcIterator
-			if _, cloud := ipcIterator.(positionedIPCStreamIterator); cloud {
-				ipcIterator = &schemaIPCStreamIterator{source: ipcIterator, schema: ars.arrowSchemaBytes}
-			}
 		}
 	}
 
 	ri := newArrowIPCStreamIterator(ctx, rpi, ipcIterator, ars.arrowSchemaBytes, cfg)
+	ri.cloudStreams.replacementSchema = ars.arrowSchema
+	if _, cloud := ipcIterator.(positionedIPCStreamIterator); cloud {
+		ri.ipcStreamIterator = ri.withCloudSchema(ipcIterator)
+	}
 	ri.detectEmbeddedSchema = ars.detectEmbeddedSchema
 	return ri, nil
 }

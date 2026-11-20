@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 
@@ -135,8 +136,10 @@ type prefetchedIPCStreamIterator struct {
 // schemaIPCStreamIterator replaces cached IPC headers without decoding record data.
 type schemaIPCStreamIterator struct {
 	source            IPCStreamIterator
+	ctx               context.Context
 	schema            []byte
 	replacementSchema *arrow.Schema
+	validatedHeader   []byte
 }
 
 func (iterator *schemaIPCStreamIterator) Next() (io.Reader, error) {
@@ -144,31 +147,105 @@ func (iterator *schemaIPCStreamIterator) Next() (io.Reader, error) {
 	if err != nil || len(iterator.schema) == 0 {
 		return stream, err
 	}
-	reader, err := ipc.NewReader(stream)
+	replacement, err := ipcSchemaMessage(iterator.schema)
 	if err != nil {
-		return nil, cloudArrowSchemaError(err)
+		return nil, iterator.schemaError(fmt.Errorf("invalid replacement schema: %w", err))
 	}
-	defer reader.Release()
-	if iterator.replacementSchema == nil {
-		iterator.replacementSchema, err = schemaFromIPCBytes(iterator.schema)
-		if err != nil {
-			return nil, cloudArrowSchemaError(fmt.Errorf("invalid replacement schema: %w", err))
+	var header []byte
+	if downloaded, ok := stream.(*cloudIPCReader); ok {
+		header, err = ipcSchemaMessage(downloaded.payload)
+	} else {
+		header, _, err = peekIPCSchema(stream)
+	}
+	if err != nil {
+		return nil, iterator.schemaError(err)
+	}
+	if len(header) == 0 {
+		return nil, iterator.schemaError(io.ErrUnexpectedEOF)
+	}
+	matchesReplacement := bytes.Equal(header, replacement)
+	if !matchesReplacement && !bytes.Equal(header, iterator.validatedHeader) {
+		if err := iterator.validateHeader(header, replacement); err != nil {
+			return nil, iterator.schemaError(err)
 		}
+		iterator.validatedHeader = append(iterator.validatedHeader[:0], header...)
 	}
-	if reader.Schema().NumFields() != iterator.replacementSchema.NumFields() {
-		return nil, cloudArrowSchemaError(fmt.Errorf("field count differs: file=%d metadata=%d", reader.Schema().NumFields(), iterator.replacementSchema.NumFields()))
-	}
-	for i := range reader.Schema().NumFields() {
-		if !arrow.TypeEqual(reader.Schema().Field(i).Type, iterator.replacementSchema.Field(i).Type) {
-			return nil, cloudArrowSchemaError(fmt.Errorf("field type differs at index %d", i))
+	if downloaded, ok := stream.(*cloudIPCReader); ok {
+		if !matchesReplacement {
+			downloaded.prefix = replacement
+			downloaded.payload = downloaded.payload[len(header):]
 		}
+		return downloaded, nil
 	}
-	return io.MultiReader(bytes.NewReader(iterator.schema), stream), nil
+	return io.MultiReader(bytes.NewReader(replacement), stream), nil
 }
 
-func cloudArrowSchemaError(cause error) dbsqlerr.DBError {
-	// A malformed header must not expose EOF as iterator exhaustion.
-	return dbsqlerrint.NewDriverError(context.Background(), fmt.Sprintf("invalid CloudFetch Arrow schema: %v", cause), nil).WithCategory(dbsqlerrint.CategoryArrowSchemaParsing)
+func (iterator *schemaIPCStreamIterator) validateHeader(header, replacement []byte) error {
+	fileSchema, err := schemaFromIPCBytes(header)
+	if err != nil {
+		return err
+	}
+	if iterator.replacementSchema == nil {
+		iterator.replacementSchema, err = schemaFromIPCBytes(replacement)
+		if err != nil {
+			return fmt.Errorf("invalid replacement schema: %w", err)
+		}
+	}
+	if fileSchema.NumFields() != iterator.replacementSchema.NumFields() {
+		return fmt.Errorf("field count differs: file=%d metadata=%d", fileSchema.NumFields(), iterator.replacementSchema.NumFields())
+	}
+	for index := range fileSchema.NumFields() {
+		if !arrow.TypeEqual(fileSchema.Field(index).Type, iterator.replacementSchema.Field(index).Type) {
+			return fmt.Errorf("field type differs at index %d", index)
+		}
+	}
+	return nil
+}
+
+func (iterator *schemaIPCStreamIterator) schemaError(cause error) dbsqlerr.DBError {
+	iterator.Close()
+	if errors.Is(cause, io.EOF) {
+		cause = io.ErrUnexpectedEOF
+	}
+	return dbsqlerrint.NewDriverError(iterator.ctx, "invalid CloudFetch Arrow schema", cause).WithCategory(dbsqlerrint.CategoryArrowSchemaParsing)
+}
+
+func ipcSchemaMessage(payload []byte) ([]byte, error) {
+	if len(payload) < 4 {
+		return nil, io.ErrUnexpectedEOF
+	}
+	length, offset := binary.LittleEndian.Uint32(payload[:4]), 4
+	if length == 0xffffffff {
+		if len(payload) < 8 {
+			return nil, io.ErrUnexpectedEOF
+		}
+		length, offset = binary.LittleEndian.Uint32(payload[4:8]), 8
+	}
+	if length == 0 || int64(length) > int64(len(payload)-offset) {
+		return nil, io.ErrUnexpectedEOF
+	}
+	return payload[:offset+int(length)], nil
+}
+
+type cloudIPCReader struct {
+	prefix  []byte
+	payload []byte
+}
+
+func (reader *cloudIPCReader) Read(destination []byte) (int, error) {
+	if len(destination) == 0 {
+		return 0, nil
+	}
+	count := copy(destination, reader.prefix)
+	reader.prefix = reader.prefix[count:]
+	if count == 0 {
+		count = copy(destination, reader.payload)
+		reader.payload = reader.payload[count:]
+		if count == 0 {
+			return 0, io.EOF
+		}
+	}
+	return count, nil
 }
 
 func (iterator *schemaIPCStreamIterator) HasNext() bool { return iterator.source.HasNext() }

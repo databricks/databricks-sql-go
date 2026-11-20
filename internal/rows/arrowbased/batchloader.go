@@ -390,7 +390,7 @@ func (cft *cloudFetchDownloadTask) Run() {
 			cft.link.RowCount,
 		)
 
-		cft.sendResult(cloudFetchDownloadTaskResult{data: bytes.NewReader(buf), err: nil, downloadMs: downloadMs})
+		cft.sendResult(cloudFetchDownloadTaskResult{data: &cloudIPCReader{payload: buf}, err: nil, downloadMs: downloadMs})
 	}()
 }
 

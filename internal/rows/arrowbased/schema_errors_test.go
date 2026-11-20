@@ -66,20 +66,17 @@ func TestCloudIPCHeaderValidation(t *testing.T) {
 	for _, payload := range [][]byte{{0xff, 0xff, 0xff, 0xff, 0, 0, 0, 0}, serialize(nil)} {
 		source, sourceErr := NewLocalIPCStreamIterator(context.Background(), []*cli_service.TSparkArrowBatch{{Batch: payload}, {Batch: schema}}, 0, nil, config.WithDefaults())
 		require.NoError(t, sourceErr)
-		iterator := &schemaIPCStreamIterator{source: source, schema: schema}
+		iterator := &schemaIPCStreamIterator{source: source, schema: schema, ctx: context.Background()}
 		defer iterator.Close()
 		_, err := iterator.Next()
 		require.Error(t, err)
 		require.False(t, errors.Is(err, io.EOF), "invalid files must not look like end of results")
 		require.Contains(t, err.Error(), "CloudFetch Arrow schema")
 		require.Equal(t, dbsqlerrint.CategoryArrowSchemaParsing, dbsqlerrint.CategoryFromError(err))
-		require.True(t, iterator.HasNext())
-		stream, err := iterator.Next()
-		require.NoError(t, err)
-		reader, err := ipc.NewReader(stream)
-		require.NoError(t, err)
-		require.Equal(t, "id", reader.Schema().Field(0).Name)
-		reader.Release()
+		require.False(t, source.HasNext(), "invalid headers must close the page's remaining streams")
+		require.False(t, iterator.HasNext())
+		_, err = iterator.Next()
+		require.ErrorIs(t, err, io.EOF)
 	}
 }
 
@@ -92,7 +89,7 @@ func TestCloudIPCHeaderTypeMismatch(t *testing.T) {
 	}
 	source, err := NewLocalIPCStreamIterator(context.Background(), []*cli_service.TSparkArrowBatch{{Batch: serialize(arrow.PrimitiveTypes.Int64)}}, 0, nil, config.WithDefaults())
 	require.NoError(t, err)
-	iterator := &schemaIPCStreamIterator{source: source, schema: serialize(arrow.PrimitiveTypes.Float64)}
+	iterator := &schemaIPCStreamIterator{source: source, schema: serialize(arrow.PrimitiveTypes.Float64), ctx: context.Background()}
 	defer iterator.Close()
 	_, streamErr := iterator.Next()
 	require.ErrorContains(t, streamErr, "field type")

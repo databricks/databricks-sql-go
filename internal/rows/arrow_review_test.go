@@ -255,50 +255,56 @@ func TestArrowLateNTZMetadata(t *testing.T) {
 
 func TestArrowMetadataRetryKeepsFirstPage(t *testing.T) {
 	for _, accessor := range []string{"ipc", "batches"} {
-		t.Run(accessor, func(t *testing.T) {
-			var page cli_service.TFetchResultsResp
-			loadTestData(t, "multipleFetch/FetchResults1.json", &page)
-			metadata := page.ResultSetMetadata
-			page.ResultSetMetadata, page.HasMoreRows = nil, new(bool)
-			fetches, metadataCalls := 0, 0
-			unavailable := errors.New("metadata temporarily unavailable")
-			cli := &client.TestClient{
-				FnFetchResults: func(context.Context, *cli_service.TFetchResultsReq) (*cli_service.TFetchResultsResp, error) {
-					fetches++
-					return &page, nil
-				},
-				FnGetResultSetMetadata: func(context.Context, *cli_service.TGetResultSetMetadataReq) (*cli_service.TGetResultSetMetadataResp, error) {
-					metadataCalls++
-					if metadataCalls == 1 {
-						return nil, unavailable
-					}
-					return metadata, nil
-				},
-				FnCloseOperation: func(context.Context, *cli_service.TCloseOperationReq) (*cli_service.TCloseOperationResp, error) {
-					return &cli_service.TCloseOperationResp{}, nil
-				},
-			}
-			result, err := NewRows(context.Background(), nil, cli, config.WithDefaults(), nil, nil)
-			require.NoError(t, err)
-			defer func() { require.NoError(t, result.Close()) }()
-			if accessor == "ipc" {
-				iterator, err := result.(dbsqlrows.Rows).GetArrowIPCStreams(context.Background())
+		for _, columnsBeforeRetry := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/columnsBeforeRetry=%t", accessor, columnsBeforeRetry), func(t *testing.T) {
+				var page cli_service.TFetchResultsResp
+				loadTestData(t, "multipleFetch/FetchResults1.json", &page)
+				metadata := page.ResultSetMetadata
+				page.ResultSetMetadata, page.HasMoreRows = nil, new(bool)
+				fetches, metadataCalls := 0, 0
+				unavailable := errors.New("metadata temporarily unavailable")
+				cli := &client.TestClient{
+					FnFetchResults: func(context.Context, *cli_service.TFetchResultsReq) (*cli_service.TFetchResultsResp, error) {
+						fetches++
+						return &page, nil
+					},
+					FnGetResultSetMetadata: func(context.Context, *cli_service.TGetResultSetMetadataReq) (*cli_service.TGetResultSetMetadataResp, error) {
+						metadataCalls++
+						if metadataCalls == 1 {
+							return nil, unavailable
+						}
+						return metadata, nil
+					},
+					FnCloseOperation: func(context.Context, *cli_service.TCloseOperationReq) (*cli_service.TCloseOperationResp, error) {
+						return &cli_service.TCloseOperationResp{}, nil
+					},
+				}
+				result, err := NewRows(context.Background(), nil, cli, config.WithDefaults(), nil, nil)
 				require.NoError(t, err)
-				_, err = iterator.SchemaBytes()
-				require.ErrorIs(t, err, unavailable)
-				iterator.Close()
-			} else {
-				iterator, err := result.(dbsqlrows.Rows).GetArrowBatches(context.Background())
-				require.NoError(t, err)
-				_, err = iterator.Schema()
-				require.ErrorIs(t, err, unavailable)
-				iterator.Close()
-			}
-			_, count := readReviewArrowResults(t, result.(dbsqlrows.Rows), accessor, func(*arrow.Schema) {})
-			require.EqualValues(t, 7311, count)
-			require.Equal(t, 1, fetches)
-			require.Equal(t, 2, metadataCalls)
-		})
+				defer func() { require.NoError(t, result.Close()) }()
+				if accessor == "ipc" {
+					iterator, err := result.(dbsqlrows.Rows).GetArrowIPCStreams(context.Background())
+					require.NoError(t, err)
+					_, err = iterator.SchemaBytes()
+					require.ErrorIs(t, err, unavailable)
+					iterator.Close()
+				} else {
+					iterator, err := result.(dbsqlrows.Rows).GetArrowBatches(context.Background())
+					require.NoError(t, err)
+					_, err = iterator.Schema()
+					require.ErrorIs(t, err, unavailable)
+					iterator.Close()
+				}
+				if columnsBeforeRetry {
+					require.NotEmpty(t, result.Columns())
+					require.Equal(t, 2, metadataCalls)
+				}
+				_, count := readReviewArrowResults(t, result.(dbsqlrows.Rows), accessor, func(*arrow.Schema) {})
+				require.EqualValues(t, 7311, count)
+				require.Equal(t, 1, fetches)
+				require.Equal(t, 2, metadataCalls)
+			})
+		}
 	}
 }
 

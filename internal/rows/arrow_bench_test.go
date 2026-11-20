@@ -233,3 +233,85 @@ func BenchmarkArrowCloudIPC(b *testing.B) {
 		require.NoError(b, result.Close())
 	}
 }
+
+func BenchmarkArrowCloudIPCMultiPage(benchmark *testing.B) {
+	for _, pages := range []int{1, 3} {
+		for _, cachedHeader := range []bool{false, true} {
+			benchmark.Run(fmt.Sprintf("pages=%d/filesPerPage=3/cachedHeader=%t", pages, cachedHeader), func(benchmark *testing.B) {
+				data, err := os.ReadFile("testdata/multipleFetch/FetchResults1.json")
+				require.NoError(benchmark, err)
+				var template cli_service.TFetchResultsResp
+				require.NoError(benchmark, json.Unmarshal(data, &template))
+				batch := template.Results.ArrowBatches[0]
+				fileSchema := template.ResultSetMetadata.ArrowSchema
+				if cachedHeader {
+					reader, err := ipc.NewReader(bytes.NewReader(fileSchema))
+					require.NoError(benchmark, err)
+					fields := reader.Schema().Fields()
+					fields[0].Name = "cached_name"
+					var output bytes.Buffer
+					writer := ipc.NewWriter(&output, ipc.WithSchema(arrow.NewSchema(fields, nil)))
+					require.NoError(benchmark, writer.Close())
+					reader.Release()
+					fileSchema = output.Bytes()[:output.Len()-8]
+				}
+				payload := bytes.Join([][]byte{fileSchema, batch.Batch}, nil)
+				server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) { _, _ = response.Write(payload) }))
+				defer server.Close()
+				format := cli_service.TSparkRowSetType_URL_BASED_SET
+				template.ResultSetMetadata.ResultFormat = &format
+				results := make([]*cli_service.TFetchResultsResp, pages)
+				for pageNumber := range pages {
+					links := make([]*cli_service.TSparkArrowResultLink, 3)
+					for fileNumber := range links {
+						links[fileNumber] = &cli_service.TSparkArrowResultLink{FileLink: server.URL, RowCount: batch.RowCount, StartRowOffset: int64(pageNumber*3+fileNumber) * batch.RowCount, ExpiryTime: time.Now().Add(time.Hour).Unix()}
+					}
+					hasMore := pageNumber+1 < pages
+					results[pageNumber] = &cli_service.TFetchResultsResp{Results: &cli_service.TRowSet{ResultLinks: links, StartRowOffset: int64(pageNumber*3) * batch.RowCount}, HasMoreRows: &hasMore, ResultSetMetadata: template.ResultSetMetadata}
+				}
+				pageIndex := 1
+				cli := &client.TestClient{
+					FnFetchResults: func(context.Context, *cli_service.TFetchResultsReq) (*cli_service.TFetchResultsResp, error) {
+						page := results[pageIndex]
+						pageIndex++
+						return page, nil
+					},
+					FnCloseOperation: func(context.Context, *cli_service.TCloseOperationReq) (*cli_service.TCloseOperationResp, error) {
+						return &cli_service.TCloseOperationResp{}, nil
+					},
+				}
+				direct := &cli_service.TSparkDirectResults{ResultSetMetadata: template.ResultSetMetadata, ResultSet: results[0]}
+				cfg := config.WithDefaults()
+				cfg.MaxDownloadThreads = 1
+				ctx := context.Background()
+				benchmark.ReportAllocs()
+				benchmark.ResetTimer()
+				for benchmark.Loop() {
+					pageIndex = 1
+					result, rowsErr := NewRows(ctx, nil, cli, cfg, direct, nil)
+					require.NoError(benchmark, rowsErr)
+					iterator, err := result.(dbsqlrows.Rows).GetArrowIPCStreams(ctx)
+					require.NoError(benchmark, err)
+					var count int64
+					for {
+						stream, err := iterator.Next()
+						if err == io.EOF {
+							break
+						}
+						require.NoError(benchmark, err)
+						reader, err := ipc.NewReader(stream)
+						require.NoError(benchmark, err)
+						for reader.Next() {
+							count += reader.RecordBatch().NumRows()
+						}
+						require.NoError(benchmark, reader.Err())
+						reader.Release()
+					}
+					require.Equal(benchmark, int64(pages*3)*batch.RowCount, count)
+					iterator.Close()
+					require.NoError(benchmark, result.Close())
+				}
+			})
+		}
+	}
+}
