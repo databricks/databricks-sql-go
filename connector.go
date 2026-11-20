@@ -569,6 +569,21 @@ func WithEnableMetricViewMetadata(enable bool) ConnOption {
 	}
 }
 
+// WithReportUnknownRowsAffected controls what Result.RowsAffected() returns when
+// the server reports no modified-row count for a statement (for example DDL such
+// as CREATE VIEW, or a SELECT run through ExecContext). Default is false, which
+// returns 0 in that case, so "no count reported" cannot be told apart from "zero
+// rows modified". When enabled, RowsAffected() returns -1 for an unreported count;
+// a reported count, including 0, is returned unchanged. Applies to both the
+// default (Thrift) and the kernel backends. DSN: reportUnknownRowsAffected=true.
+//
+// See https://github.com/databricks/databricks-sql-go/issues/588.
+func WithReportUnknownRowsAffected(enable bool) ConnOption {
+	return func(c *config.Config) {
+		c.ReportUnknownRowsAffected = enable
+	}
+}
+
 // WithArrowNativeDecimal controls whether DECIMAL columns are returned as native
 // Arrow decimal128 values. Default is false, in which case the server returns
 // DECIMAL columns as strings.

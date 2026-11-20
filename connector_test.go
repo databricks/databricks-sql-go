@@ -374,6 +374,40 @@ func TestNewConnector(t *testing.T) {
 		assert.False(t, coni.cfg.EnableMetricViewMetadata)
 	})
 
+	t.Run("Connector test WithReportUnknownRowsAffected", func(t *testing.T) {
+		for _, tc := range []struct {
+			name string
+			opts []ConnOption
+			want bool
+		}{
+			{"disabled by default", nil, false},
+			{"enabled", []ConnOption{WithReportUnknownRowsAffected(true)}, true},
+			{"explicitly disabled", []ConnOption{WithReportUnknownRowsAffected(false)}, false},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				opts := append([]ConnOption{
+					WithServerHostname("databricks-host"),
+					WithAccessToken("token"),
+					WithHTTPPath("http-path"),
+				}, tc.opts...)
+				con, err := NewConnector(opts...)
+				require.NoError(t, err)
+				coni, ok := con.(*connector)
+				require.True(t, ok)
+				assert.Equal(t, tc.want, coni.cfg.ReportUnknownRowsAffected)
+			})
+		}
+	})
+
+	t.Run("Connector test reportUnknownRowsAffected DSN parameter", func(t *testing.T) {
+		d := &databricksDriver{}
+		con, err := d.OpenConnector("token:supersecret@databricks-host:443/http-path?reportUnknownRowsAffected=true")
+		require.NoError(t, err)
+		coni, ok := con.(*connector)
+		require.True(t, ok)
+		assert.True(t, coni.cfg.ReportUnknownRowsAffected)
+	})
+
 	t.Run("Connector test WithArrowNativeDecimal enabled", func(t *testing.T) {
 		host := "databricks-host"
 		accessToken := "token"

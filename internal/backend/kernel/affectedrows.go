@@ -12,9 +12,14 @@ package kernel
 // that doesn't surface the counter (the kernel's num_modified_rows Option<i64> is
 // None). The Thrift path reports 0 in exactly those cases (TGetOperationStatusResp
 // defaults NumModifiedRows to 0), so the -1 sentinel is folded to 0 for parity.
-// A real DML count (>= 0) passes through unchanged.
-func normalizeAffectedRows(n int64) int64 {
+// With reportUnknown (WithReportUnknownRowsAffected) it is reported as -1
+// instead, matching the Thrift path under the same option. A real DML count
+// (>= 0) passes through unchanged either way.
+func normalizeAffectedRows(n int64, reportUnknown bool) int64 {
 	if n < 0 {
+		if reportUnknown {
+			return -1
+		}
 		return 0
 	}
 	return n
