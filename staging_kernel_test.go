@@ -10,8 +10,10 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -43,7 +45,7 @@ func (c *cancelOnCompletionErrorContext) Err() error {
 	return c.Context.Err()
 }
 
-func TestKernelVolumeFailureOriginControlsSessionValidity(t *testing.T) {
+func TestKernelVolumeCompletionControlsSessionValidity(t *testing.T) {
 	for _, tc := range []struct {
 		name, operation, local, errorCode                             string
 		status                                                        int
@@ -165,7 +167,9 @@ func TestKernelVolumeFailureOriginControlsSessionValidity(t *testing.T) {
 			if tc.success {
 				require.NoError(t, err)
 				if tc.operation != "REMOVE" {
-					require.FileExists(t, destination)
+					content, readErr := fs.ReadFile(os.DirFS(directory), "download.bin")
+					require.NoError(t, readErr)
+					require.Equal(t, "downloaded", string(content))
 				}
 			} else if tc.errorCode == "" {
 				require.ErrorIs(t, err, dbsqlerr.DriverError)
