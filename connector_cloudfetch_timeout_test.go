@@ -14,6 +14,7 @@ import (
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/client"
 	"github.com/databricks/databricks-sql-go/internal/config"
+	dbsqlerrint "github.com/databricks/databricks-sql-go/internal/errors"
 	driverrows "github.com/databricks/databricks-sql-go/internal/rows"
 	dbsqlrows "github.com/databricks/databricks-sql-go/rows"
 	"github.com/stretchr/testify/assert"
@@ -22,7 +23,7 @@ import (
 
 func TestCloudFetchClientTimeout(t *testing.T) {
 	for _, transport := range []string{"default", "WithTransport"} {
-		for _, stall := range []string{"headers", "body"} {
+		for _, stall := range []string{"headers", "body", "expired-link"} {
 			for _, api := range []string{"rows", "batches", "streams"} {
 				t.Run(transport+"/"+stall+"/"+api, func(t *testing.T) {
 					release := make(chan struct{})
@@ -45,6 +46,12 @@ func TestCloudFetchClientTimeout(t *testing.T) {
 					options := []ConnOption{func(cfg *config.Config) {
 						cfg.ClientTimeout = 100 * time.Millisecond
 						cfg.RetryMax = 0
+						if stall == "expired-link" {
+							cfg.ClientTimeout = 2200 * time.Millisecond
+							cfg.RetryMax = config.WithDefaults().RetryMax
+							cfg.RetryWaitMin = time.Millisecond
+							cfg.RetryWaitMax = time.Millisecond
+						}
 						cfg.UseLz4Compression = false
 						cfg.MaxDownloadThreads = 2
 					}}
@@ -60,9 +67,13 @@ func TestCloudFetchClientTimeout(t *testing.T) {
 					require.NoError(t, json.Unmarshal(fixture, &execute))
 					direct := execute.DirectResults
 					direct.ResultSet.Results.ArrowBatches = nil
+					expiry := time.Now().Add(time.Hour).Unix()
+					if stall == "expired-link" {
+						expiry = time.Now().Add(time.Second).Unix()
+					}
 					direct.ResultSet.Results.ResultLinks = []*cli_service.TSparkArrowResultLink{
-						{FileLink: server.URL, ExpiryTime: time.Now().Add(time.Hour).Unix(), RowCount: 1},
-						{FileLink: server.URL, ExpiryTime: time.Now().Add(time.Hour).Unix(), RowCount: 1, StartRowOffset: 1},
+						{FileLink: server.URL + "/file?sig=SECRET_SIGNATURE", ExpiryTime: expiry, RowCount: 1},
+						{FileLink: server.URL + "/file?sig=SECRET_SIGNATURE", ExpiryTime: expiry, RowCount: 1, StartRowOffset: 1},
 					}
 					format := cli_service.TSparkRowSetType_URL_BASED_SET
 					direct.ResultSetMetadata.ResultFormat = &format
@@ -102,10 +113,16 @@ func TestCloudFetchClientTimeout(t *testing.T) {
 					go func() { result <- next() }()
 					select {
 					case nextErr := <-result:
+						require.Error(t, nextErr)
 						assert.ErrorIs(t, nextErr, dbsqlerr.DriverError)
 						assert.ErrorIs(t, nextErr, context.DeadlineExceeded)
+						assert.Equal(t, dbsqlerrint.CategoryChunkDownload, dbsqlerrint.CategoryFromError(nextErr))
+						assert.NotContains(t, nextErr.Error(), "SECRET_SIGNATURE")
+						if stall == "expired-link" {
+							assert.ErrorContains(t, nextErr, dbsqlerr.ErrLinkExpired)
+						}
 						assert.GreaterOrEqual(t, time.Since(start), cfg.ClientTimeout)
-					case <-time.After(2 * time.Second):
+					case <-time.After(cfg.ClientTimeout + 2*time.Second):
 						server.CloseClientConnections()
 						select {
 						case nextErr := <-result:
@@ -130,12 +147,36 @@ func TestCloudFetchClientTimeout(t *testing.T) {
 
 func TestCloudFetchWithTransportPreservesHTTPClient(t *testing.T) {
 	for _, timeout := range []time.Duration{0, 5 * time.Second} {
-		t.Run(timeout.String(), func(t *testing.T) {
-			customClient := &http.Client{Timeout: timeout}
-			con, err := NewConnector(func(cfg *config.Config) { cfg.HTTPClient = customClient }, WithTransport(http.DefaultTransport))
-			require.NoError(t, err)
-			assert.Same(t, customClient, con.(*connector).cfg.HTTPClient)
-			assert.Equal(t, timeout, customClient.Timeout)
-		})
+		for _, order := range []string{"before", "after"} {
+			t.Run(timeout.String()+"/"+order, func(t *testing.T) {
+				customClient := &http.Client{Timeout: timeout}
+				options := []ConnOption{func(cfg *config.Config) { cfg.HTTPClient = customClient }, WithTransport(http.DefaultTransport)}
+				if order == "after" {
+					options[0], options[1] = options[1], options[0]
+				}
+				con, err := NewConnector(options...)
+				require.NoError(t, err)
+				assert.Same(t, customClient, con.(*connector).cfg.HTTPClient)
+				assert.Equal(t, timeout, customClient.Timeout)
+			})
+		}
+	}
+}
+
+func TestCloudFetchWithTransportClientTimeoutOptionOrder(t *testing.T) {
+	for _, timeout := range []time.Duration{0, 100 * time.Millisecond, 5 * time.Second} {
+		for _, order := range []string{"before", "after"} {
+			t.Run(timeout.String()+"/"+order, func(t *testing.T) {
+				options := []ConnOption{func(cfg *config.Config) { cfg.ClientTimeout = timeout }, WithTransport(http.DefaultTransport)}
+				if order == "after" {
+					options[0], options[1] = options[1], options[0]
+				}
+				con, err := NewConnector(options...)
+				require.NoError(t, err)
+				require.NotNil(t, con.(*connector).cfg.HTTPClient)
+				assert.Equal(t, timeout, con.(*connector).cfg.HTTPClient.Timeout)
+				assert.Same(t, http.DefaultTransport, con.(*connector).cfg.HTTPClient.Transport)
+			})
+		}
 	}
 }

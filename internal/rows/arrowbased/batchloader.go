@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/url"
 	"strings"
 	"time"
 
@@ -61,7 +62,11 @@ func NewCloudIPCStreamIterator(
 ) (IPCStreamIterator, dbsqlerr.DBError) {
 	httpClient := cfg.HTTPClient
 	if httpClient == nil {
-		httpClient = &http.Client{Timeout: cfg.ClientTimeout}
+		client := *http.DefaultClient
+		if cfg.ClientTimeout > 0 && (client.Timeout <= 0 || client.Timeout > cfg.ClientTimeout) {
+			client.Timeout = cfg.ClientTimeout
+		}
+		httpClient = &client
 	}
 
 	bi := &cloudIPCStreamIterator{
@@ -399,6 +404,17 @@ func logCloudFetchSpeed(fullURL string, contentLength int64, duration time.Durat
 	}
 }
 
+func redactCloudFetchError(err error) error {
+	var urlErr *url.Error
+	if !errors.As(err, &urlErr) {
+		return err
+	}
+	redacted := *urlErr
+	redacted.URL, _, _ = strings.Cut(urlErr.URL, "?")
+	redacted.Err = redactCloudFetchError(urlErr.Err)
+	return &redacted
+}
+
 // fetchBatchBytes downloads a single CloudFetch result link and returns the
 // raw response body, still compressed if the server used LZ4. Connection-time
 // failures, retryable HTTP statuses, and mid-stream body read failures are
@@ -450,12 +466,16 @@ func fetchBatchBytes(
 		// presigned URL, and there's no point spending another HTTP attempt
 		// (or another retry) on a link we know will be rejected.
 		if isLinkExpired(link.ExpiryTime, minTimeToExpiry) {
+			if lastErr != nil {
+				msg := fmt.Sprintf("%s: %s", errArrowRowsCloudFetchDownloadFailure, dbsqlerr.ErrLinkExpired)
+				return nil, dbsqlerrint.NewDriverError(ctx, msg, lastErr).WithCategory(dbsqlerrint.CategoryChunkDownload)
+			}
 			return nil, errors.New(dbsqlerr.ErrLinkExpired)
 		}
 
 		req, err := http.NewRequestWithContext(ctx, "GET", link.FileLink, nil)
 		if err != nil {
-			return nil, err
+			return nil, redactCloudFetchError(err)
 		}
 		if link.HttpHeaders != nil {
 			for key, value := range link.HttpHeaders {
@@ -471,7 +491,7 @@ func fetchBatchBytes(
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
 			}
-			lastErr = err
+			lastErr = redactCloudFetchError(err)
 			lastStatus = 0
 			lastRetryAfter = ""
 			continue
@@ -486,7 +506,7 @@ func fetchBatchBytes(
 				if ctx.Err() != nil {
 					return nil, ctx.Err()
 				}
-				lastErr = readErr
+				lastErr = redactCloudFetchError(readErr)
 				lastStatus = 0
 				lastRetryAfter = ""
 				continue
@@ -515,7 +535,7 @@ func fetchBatchBytes(
 		// in msg, so there's no underlying error to wrap.
 		return nil, dbsqlerrint.NewDriverError(ctx, fmt.Sprintf("%s: %s %d (after %d retries)", errArrowRowsCloudFetchDownloadFailure, "HTTP error", lastStatus, retryMax), nil).WithCategory(dbsqlerrint.CategoryChunkDownload)
 	}
-	msg := fmt.Sprintf("%s: %v (after %d retries)", errArrowRowsCloudFetchDownloadFailure, lastErr, retryMax)
+	msg := fmt.Sprintf("%s (after %d retries)", errArrowRowsCloudFetchDownloadFailure, retryMax)
 	return nil, dbsqlerrint.NewDriverError(ctx, msg, lastErr).WithCategory(dbsqlerrint.CategoryChunkDownload)
 }
 

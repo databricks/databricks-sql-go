@@ -362,7 +362,7 @@ func TestCloudFetchIterator(t *testing.T) {
 		cbi := bi.(*batchIterator).ipcIterator.(*cloudIPCStreamIterator)
 		assert.NotSame(t, http.DefaultClient, cbi.httpClient)
 		assert.Equal(t, cfg.ClientTimeout, cbi.httpClient.Timeout)
-		assert.Nil(t, cbi.httpClient.Transport)
+		assert.Equal(t, http.DefaultClient.Transport, cbi.httpClient.Transport)
 
 		// Verify fetch works with default client
 		sab, nextErr := bi.Next()

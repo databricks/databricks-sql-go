@@ -1,7 +1,7 @@
 # Release History
 
 ## Unreleased (v2.0.0 prototype)
-- **Behavior change:** Thrift CloudFetch downloads are bounded by the driver's 900s request deadline instead of waiting forever (databricks/databricks-sql-go#475).
+- **Behavior change:** Each Thrift CloudFetch download attempt, including clients built for `WithTransport`, is bounded by the driver's 900s `ClientTimeout` across the whole transfer, not just inactivity; failed attempts are retried per `WithRetries`. Shorter `http.DefaultClient` timeouts and explicitly supplied HTTP clients are preserved (databricks/databricks-sql-go#475).
 
 - Fix OAuth M2M token requests hanging indefinitely when the token endpoint stops responding. Each request now uses a copy of `http.DefaultClient` with a timeout of at most 60s; `WithRetries` repeats failed fetches (databricks/databricks-sql-go#475).
 - Render non-finite FLOAT / DOUBLE values inside ARRAY / MAP / STRUCT results as the JSON strings `"NaN"`, `"Infinity"`, and `"-Infinity"` on both backends instead of failing row iteration. SQL NULL remains `null`; top-level floats remain numeric (databricks/databricks-sql-go#573).
