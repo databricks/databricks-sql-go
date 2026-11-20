@@ -285,7 +285,7 @@ func TestConn_QueryContextTelemetryExecutionResult(t *testing.T) {
 			ResultFormat: rowSetType(cli_service.TSparkRowSetType_URL_BASED_SET),
 		}
 		rs := &cli_service.TRowSet{ResultLinks: []*cli_service.TSparkArrowResultLink{{
-			FileLink: cf.URL, ExpiryTime: time.Now().Add(10 * time.Minute).Unix(), RowCount: 1,
+			FileLink: cf.URL, ExpiryTime: time.Now().Add(10 * time.Minute).UnixMilli(), RowCount: 1,
 		}}}
 		c, capture := newTelemetryTestConn(t, directResultsClient(md, rs, &metadataCalls))
 

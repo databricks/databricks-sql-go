@@ -2,6 +2,7 @@
 
 ## Unreleased (v2.0.0 prototype)
 
+- **Behavior change:** Interpret Thrift CloudFetch expiry as epoch milliseconds (previously seconds) and renew expiry-related failures on the caller's goroutine in bounded parallel-preserving page batches; the client clock is only a renewal hint, and a GET still lets storage decide when clock skew makes fresh links look expired. Apply the 30-second minimum buffer only when renewal is possible (larger internal buffers honored), keep operations open until EOF/Close including Arrow iterators, and report redacted renewal failures while preserving download causes/status (databricks/databricks-sql-go#475, part 3).
 - Fix OAuth M2M token requests hanging indefinitely when the token endpoint stops responding. Each request now uses a copy of `http.DefaultClient` with a timeout of at most 60s; `WithRetries` repeats failed fetches (databricks/databricks-sql-go#475).
 - Render non-finite FLOAT / DOUBLE values inside ARRAY / MAP / STRUCT results as the JSON strings `"NaN"`, `"Infinity"`, and `"-Infinity"` on both backends instead of failing row iteration. SQL NULL remains `null`; top-level floats remain numeric (databricks/databricks-sql-go#573).
 - **Behavior change:** Non-finite floating-point MAP keys use the same spellings as values on both backends. On the kernel backend, keys previously rendered as `"+Inf"` and `"-Inf"` now render as `"Infinity"` and `"-Infinity"`; `"NaN"` is unchanged. On Thrift, these keys previously failed row iteration (databricks/databricks-sql-go#573).
