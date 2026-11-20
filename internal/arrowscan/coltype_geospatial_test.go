@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"github.com/apache/arrow-go/v18/arrow"
+	"github.com/apache/arrow-go/v18/arrow/array"
+	"github.com/apache/arrow-go/v18/arrow/memory"
 	"github.com/stretchr/testify/require"
 )
 
@@ -54,6 +56,50 @@ func TestLogicalGeospatialTypeMetadata(t *testing.T) {
 			name, ok := LogicalGeospatialType(arrow.Field{Type: arrow.BinaryTypes.String, Metadata: arrow.MetadataFrom(test.metadata)})
 			require.Equal(t, test.want, name)
 			require.Equal(t, test.want != "", ok)
+		})
+	}
+}
+
+func TestGeospatialSQLNameDoesNotEnableBinaryScanner(t *testing.T) {
+	structType := arrow.StructOf(arrow.Field{Name: "value", Type: arrow.PrimitiveTypes.Int32})
+	builder := array.NewStructBuilder(memory.NewGoAllocator(), structType)
+	defer builder.Release()
+	builder.Append(true)
+	builder.FieldBuilder(0).(*array.Int32Builder).Append(7)
+	values := builder.NewStructArray()
+	defer values.Release()
+	for _, key := range []string{"databricks.type_text", sparkSQLNameMetadataKey} {
+		for _, family := range []string{"", "STRUCT", "GEOMETRY(0)"} {
+			t.Run(key+"/"+family, func(t *testing.T) {
+				metadata := map[string]string{key: "GEOMETRY(0)"}
+				if family != "" {
+					metadata[databricksTypeNameMetadataKey] = family
+				}
+				field := arrow.Field{Type: structType, Metadata: arrow.MetadataFrom(metadata)}
+				require.Equal(t, "GEOMETRY(0)", ColumnTypeInfoForField(field).DatabaseTypeName)
+				value, err := ScanCellCachedWithOptions(values, 0, nil, nil, ScanOptions{
+					GeospatialBinary: IsBinaryGeospatialField(field),
+				})
+				require.NoError(t, err)
+				require.Equal(t, `{"value":7}`, value)
+				require.False(t, IsBinaryGeospatialField(field))
+			})
+		}
+	}
+}
+
+func TestLogicalGeospatialTypeAvoidsNonGeoAllocations(t *testing.T) {
+	for _, key := range []string{"databricks.type_text", sparkSQLNameMetadataKey, databricksTypeNameMetadataKey} {
+		t.Run(key, func(t *testing.T) {
+			field := arrow.Field{Type: arrow.StructOf(arrow.Field{Name: "value", Type: arrow.PrimitiveTypes.Int32}),
+				Metadata: arrow.MetadataFrom(map[string]string{key: "STRUCT<value: INT>"})}
+			allocations := testing.AllocsPerRun(100, func() {
+				name, geospatial := LogicalGeospatialType(field)
+				if name != "" || geospatial {
+					t.Fatal("ordinary struct reported as geospatial")
+				}
+			})
+			require.Zero(t, allocations)
 		})
 	}
 }

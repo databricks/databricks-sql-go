@@ -71,11 +71,8 @@ func ColumnTypeInfoFor(dt arrow.DataType) ColumnTypeInfo {
 	case arrow.FLOAT64:
 		return ColumnTypeInfo{DatabaseTypeName: "DOUBLE", ScanType: scanTypeFloat64}
 	case arrow.STRING, arrow.LARGE_STRING:
-		// STRING covers VARCHAR/CHAR/GEOMETRY/GEOGRAPHY too — all arrive as Arrow
-		// Utf8, and the Thrift path collapses them to STRING as well. VARIANT also
-		// arrives as Utf8, but only its field metadata identifies it, so
-		// ColumnTypeInfoForField (not this DataType-only mapping) reports VARIANT
-		// on both backends.
+		// ColumnTypeInfoForField uses field metadata to distinguish VARIANT and
+		// geospatial SQL names from physical Arrow strings on both backends.
 		return varLen("STRING", scanTypeString)
 	case arrow.BINARY:
 		return varLen("BINARY", scanTypeRawBytes)
@@ -133,10 +130,10 @@ func ColumnTypeInfoFor(dt arrow.DataType) ColumnTypeInfo {
 func LogicalGeospatialType(field arrow.Field) (string, bool) {
 	for _, key := range [...]string{"databricks.type_text", sparkSQLNameMetadataKey, databricksTypeNameMetadataKey} {
 		name, _ := field.Metadata.GetValue(key)
-		name = strings.ToUpper(strings.TrimSpace(name))
+		name = strings.TrimSpace(name)
 		family, _, _ := strings.Cut(name, "(")
-		if family == "GEOMETRY" || family == "GEOGRAPHY" {
-			return name, true
+		if strings.EqualFold(family, "GEOMETRY") || strings.EqualFold(family, "GEOGRAPHY") {
+			return strings.ToUpper(name), true
 		}
 	}
 	return "", false
@@ -146,8 +143,12 @@ func LogicalGeospatialType(field arrow.Field) (string, bool) {
 // GEOMETRY / GEOGRAPHY using the kernel's struct representation. The scanner
 // performs the detailed child-shape validation when it reads a non-null value.
 func IsBinaryGeospatialField(field arrow.Field) bool {
-	_, geospatial := LogicalGeospatialType(field)
-	return geospatial && field.Type.ID() == arrow.STRUCT
+	if field.Type == nil || field.Type.ID() != arrow.STRUCT {
+		return false
+	}
+	name, _ := field.Metadata.GetValue(databricksTypeNameMetadataKey)
+	name = strings.TrimSpace(name)
+	return strings.EqualFold(name, "GEOMETRY") || strings.EqualFold(name, "GEOGRAPHY")
 }
 
 // ColumnTypeInfoForField preserves logical time, timestamp, VARIANT and geospatial

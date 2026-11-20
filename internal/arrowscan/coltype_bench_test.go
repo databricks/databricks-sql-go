@@ -33,3 +33,34 @@ func BenchmarkColumnTypeInfoForField(benchmark *testing.B) {
 		})
 	}
 }
+
+func BenchmarkColumnTypeInfoForGeoFreeSchema(benchmark *testing.B) {
+	templates := []arrow.Field{
+		{Type: arrow.BinaryTypes.String, Metadata: arrow.MetadataFrom(map[string]string{
+			databricksTypeNameMetadataKey: "STRING", "databricks.type_text": "STRING", sparkSQLNameMetadataKey: "STRING",
+		})},
+		{Type: arrow.PrimitiveTypes.Int64, Metadata: arrow.MetadataFrom(map[string]string{
+			databricksTypeNameMetadataKey: "BIGINT", "databricks.type_text": "BIGINT", sparkSQLNameMetadataKey: "BIGINT",
+		})},
+		{Type: arrow.StructOf(arrow.Field{Name: "value", Type: arrow.PrimitiveTypes.Int32}), Metadata: arrow.MetadataFrom(map[string]string{
+			databricksTypeNameMetadataKey: "STRUCT", "databricks.type_text": "STRUCT<value: INT>", sparkSQLNameMetadataKey: "STRUCT<value: INT>",
+		})},
+		{Type: arrow.ListOf(arrow.BinaryTypes.String), Metadata: arrow.MetadataFrom(map[string]string{
+			databricksTypeNameMetadataKey: "ARRAY", "databricks.type_text": "ARRAY<STRING>", sparkSQLNameMetadataKey: "ARRAY<STRING>",
+		})},
+	}
+	fields := make([]arrow.Field, 0, 400)
+	for range 100 {
+		fields = append(fields, templates...)
+	}
+	benchmark.ReportAllocs()
+	benchmark.ResetTimer()
+	for range benchmark.N {
+		for _, field := range fields {
+			info := ColumnTypeInfoForField(field)
+			if info.ScanType == nil || IsBinaryGeospatialField(field) {
+				benchmark.Fatal("invalid non-geospatial field")
+			}
+		}
+	}
+}
