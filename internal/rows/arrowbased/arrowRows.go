@@ -455,6 +455,11 @@ func (ars *arrowRowScanner) GetArrowBatches(ctx context.Context, cfg config.Conf
 				}
 			}
 			return ars.GetArrowBatches(ctx, cfg, rpi)
+		}, func() {
+			ars.Close()
+			if rpi != nil {
+				_ = rpi.Close()
+			}
 		}), nil
 	}
 	ri := newArrowRecordIterator(ctx, rpi, ars.batchIterator, ars.arrowSchemaBytes, cfg)

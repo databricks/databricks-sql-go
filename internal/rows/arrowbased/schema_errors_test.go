@@ -113,7 +113,7 @@ func TestDeferredSchemaInitializationErrorIsStable(t *testing.T) {
 				next = func() error { _, err := iterator.Next(); return err }
 				hasNext, closeIterator = iterator.HasNext, iterator.Close
 			} else {
-				iterator := DeferArrowBatches(func() (dbsqlrows.ArrowBatchIterator, error) { calls++; return nil, wanted })
+				iterator := DeferArrowBatches(func() (dbsqlrows.ArrowBatchIterator, error) { calls++; return nil, wanted }, nil)
 				schema = func() error { _, err := iterator.Schema(); return err }
 				next = func() error { _, err := iterator.Next(); return err }
 				hasNext, closeIterator = iterator.HasNext, iterator.Close

@@ -75,12 +75,26 @@ func (d *deferredIterator[T]) nextError() error {
 }
 
 // DeferArrowBatches keeps result I/O in iteration and schema access, not the getter.
-func DeferArrowBatches(initialize func() (dbsqlrows.ArrowBatchIterator, error)) dbsqlrows.ArrowBatchIterator {
-	return &deferredBatches{deferredIterator[dbsqlrows.ArrowBatchIterator]{initialize: initialize}}
+func DeferArrowBatches(initialize func() (dbsqlrows.ArrowBatchIterator, error), closeUninitialized func()) dbsqlrows.ArrowBatchIterator {
+	return &deferredBatches{
+		deferredIterator:   deferredIterator[dbsqlrows.ArrowBatchIterator]{initialize: initialize},
+		closeUninitialized: closeUninitialized,
+	}
 }
 
 type deferredBatches struct {
 	deferredIterator[dbsqlrows.ArrowBatchIterator]
+	closeUninitialized func()
+}
+
+func (d *deferredBatches) Close() {
+	closeUninitialized := d.closeUninitialized
+	d.closeUninitialized = nil
+	unused := !d.closed && !d.loaded && d.initialize != nil
+	d.deferredIterator.Close()
+	if unused && closeUninitialized != nil {
+		closeUninitialized()
+	}
 }
 
 func (d *deferredBatches) Next() (arrow.RecordBatch, error) {

@@ -920,7 +920,7 @@ func (r *rows) GetArrowBatches(ctx context.Context) (dbsqlrows.ArrowBatchIterato
 			return arrowbased.NewArrowRecordIterator(iterCtx, r.ResultPageIterator, nil, schemaBytes, *r.config, schemaErr), nil
 		}
 		return arrowbased.NewArrowRecordIterator(iterCtx, r.ResultPageIterator, nil, schemaBytes, *r.config), nil
-	}), nil
+	}, func() { _ = r.ResultPageIterator.Close() }), nil
 }
 
 func (r *rows) GetArrowIPCStreams(ctx context.Context) (dbsqlrows.ArrowIPCStreamIterator, error) {
