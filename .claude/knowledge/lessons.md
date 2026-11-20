@@ -1,6 +1,6 @@
 # Lessons
 
-<!-- distilled-through: 2026-11-18 -->
+<!-- distilled-through: 2026-11-20 -->
 
 ## Configuration and authentication
 - L-0001 (1×, #446): Verify kernel session parameters and proxies separately from Thrift: kernel allowlists configuration keys and supports HTTP(S) proxies, while Thrift may accept additional keys/schemes.
@@ -25,6 +25,7 @@
 - L-0020 (1×, #556): Check integer duration values against MinInt64/unit and MaxInt64/unit before multiplication; report overflow with the parameter name.
 - L-0060 [phase=review] (1×, #566): Kernel applies case variants of client-only session-conf keys in sorted byte order, so the canonical lowercase key wins; check pinned session.rs before flagging map-order nondeterminism.
 - L-0061 (1×, #566): Forwarding a formerly inert option to a backend is a behavior change: label it so in CHANGELOG, explain the effect of existing tuned values, and test set values, not only unset.
+- L-0064 (1×, #557): Bound x/oauth2 token fetches by putting a copied *http.Client with a capped Timeout into the context under oauth2.HTTPClient, and pass that context to TokenSource. Never mutate DefaultClient or the caller's client. AuthStyle auto-detect can double the bound.
 
 ## Native boundaries and lifecycle
 - L-0021 (1×, #450): Never place fabricated Go pointers or cgo.Handle values into C pointer slots. Use NULL with a global sink or a real C allocation.
@@ -49,7 +50,8 @@
 - L-0038 (1×, #509): HasNext may fetch remotely. Drain local batches and check finished state first; preserve boolean short-circuit order and assert early Close sends no FetchResults RPC.
 - L-0039 (1×, log:2026-11-12): Duplicate-name support can differ between Arrow schemas, struct/cdata imports and IPC. Test both kernel and Thrift boundaries against the current Arrow version.
 - L-0040 (1×, #550 #535): New Arrow code uses github.com/apache/arrow-go/v18 RecordBatch APIs; avoid copying legacy arrow/go/v12 imports.
-- L-0041 (1×, #563 #567): Derive logical result types from field metadata with ColumnTypeInfoForField, including empty SEA string-backed schemas; test zero-row, NULL-only and populated results on both backends.
+- L-0041 (2×, #577 #567 #563): Derive logical result types from field metadata with ColumnTypeInfoForField, including empty SEA string-backed schemas. E2E tests on both backends assert the wire metadata tag for inline, CloudFetch, zero-row and NULL-only results.
+- L-0063 (1×, #574): Shared formatters must spell special values (NaN/Inf) the same way for map keys and values on both backends. Remove fallbacks that only one backend has and return the error the way the other backend does.
 
 ## Verification and dependencies
 - L-0042 (3×, #458 #510 #567): Compile/vet relevant tagged tests explicitly, including databricks_kernel,e2e where needed, and register E2E names in nightly filters. Default unit tests omit tagged coverage.
@@ -60,12 +62,13 @@
 - L-0047 (2×, #463 #440 #469): Confirm which archive the build links. Default kernel builds use published bindings; local source builds need explicit go.work/replace routing, and KERNEL_REV alone does not ship native behavior.
 - L-0048 (1×, #516): Linter fixes must preserve production pointer/value error types; use interface-typed test variables or narrowly justified suppressions.
 - L-0049 (1×, #516): Fork CI without registry credentials must install tools from prebuilt releases rather than go install; keep fork-behavior comments accurate.
-- L-0050 (1×, #525): Allocation/performance changes need AllocsPerRun assertions or benchmarks; output parity alone cannot detect a performance regression.
+- L-0050 (2×, #574 #525): Allocation/performance changes need AllocsPerRun assertions or benchmarks. Comparative benchmarks must measure the same successful work, so drop or note inputs that the baseline rejects.
 - L-0051 (2×, #526 #534 #464): Make targeted go get updates and preserve deliberate indirect security pins/hashes and require-block layout. Revalidate suppressions on tagged/untagged graphs and document security versions/advisories.
 - L-0052 (1×, #527): Fast paths need byte/error parity against the original over exhaustive/random inputs and proof the fast path runs; keep expensive sweeps out of short tests.
 - L-0053 (1×, #536): Prove no-storage-egress behavior through a workspace-only CONNECT proxy, asserting complete results and zero blocked attempts.
 - L-0054 (2×, #559 #558 #555): Join test goroutines with bounded cleanup and context cancellation. Synchronize with channels and report callback failures without FailNow/Fatal from foreign goroutines.
 - L-0055 (1×, #561): Root Go files must remain package dbsql/dbsql_test even behind tags; declare developer tools with the go.mod tool directive.
+- L-0062 (1×, #577): With db.SetMaxOpenConns(1) in tests, drain or explicitly Close each rows and check rows.Err() before the next query; a deferred Close holds the only connection and later queries hang.
 
 ## Bot workflow
 - L-0056 (1×, #442): Use concrete serving-endpoints/model/invocations MODEL_ENDPOINT URLs; anthropic/invocations produces an invalid translated CLI route.
