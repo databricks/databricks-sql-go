@@ -56,7 +56,9 @@ type arrowRowScanner struct {
 	arrowSchema *arrow.Schema
 
 	// serialized form of arrow format schema
-	arrowSchemaBytes []byte
+	arrowSchemaBytes       []byte
+	serverArrowSchemaBytes []byte
+	onServerArrowSchema    func([]byte)
 
 	// database types for the columns
 	colInfo []colInfo
@@ -94,7 +96,11 @@ func NewArrowRowScanner(resultSetMetadata *cli_service.TGetResultSetMetadataResp
 		scanner.initialize = func() dbsqlerr.DBError {
 			initialized, err := newArrowRowScanner(resultSetMetadata, rowSet, cfg, logger, ctx, onCloudFetchDownload)
 			if err == nil {
+				onSchema := scanner.onServerArrowSchema
 				*scanner = *initialized
+				if onSchema != nil && len(scanner.serverArrowSchemaBytes) > 0 {
+					onSchema(scanner.serverArrowSchemaBytes)
+				}
 			}
 			return err
 		}
@@ -204,26 +210,36 @@ func newArrowRowScanner(resultSetMetadata *cli_service.TGetResultSetMetadataResp
 	}
 
 	rs := &arrowRowScanner{
-		Delimiter:            rowscanner.NewDelimiter(rowSet.StartRowOffset, rowscanner.CountRows(rowSet)),
-		valueContainerMaker:  &arrowValueContainerMaker{},
-		ArrowConfig:          arrowConfig,
-		arrowSchemaBytes:     schemaBytes,
-		arrowSchema:          arrowSchema,
-		toTimestampFn:        ttsf,
-		colInfo:              colInfos,
-		DBSQLLogger:          logger,
-		location:             location,
-		batchIterator:        bi,
-		ctx:                  ctx,
-		detectEmbeddedSchema: len(resultSetMetadata.ArrowSchema) == 0,
+		Delimiter:              rowscanner.NewDelimiter(rowSet.StartRowOffset, rowscanner.CountRows(rowSet)),
+		valueContainerMaker:    &arrowValueContainerMaker{},
+		ArrowConfig:            arrowConfig,
+		arrowSchemaBytes:       schemaBytes,
+		serverArrowSchemaBytes: metadata.ArrowSchema,
+		arrowSchema:            arrowSchema,
+		toTimestampFn:          ttsf,
+		colInfo:                colInfos,
+		DBSQLLogger:            logger,
+		location:               location,
+		batchIterator:          bi,
+		ctx:                    ctx,
+		detectEmbeddedSchema:   len(resultSetMetadata.ArrowSchema) == 0,
 	}
 
 	return rs, nil
 }
 
+func (ars *arrowRowScanner) ObserveServerArrowSchema(onSchema func([]byte)) {
+	if ars.initialize != nil {
+		ars.onServerArrowSchema = onSchema
+	} else if len(ars.serverArrowSchemaBytes) > 0 {
+		onSchema(ars.serverArrowSchemaBytes)
+	}
+}
+
 // Close is called when the Rows instance is closed.
 func (ars *arrowRowScanner) Close() {
 	ars.initialize = nil
+	ars.onServerArrowSchema = nil
 	if ars.rowValues != nil {
 		ars.rowValues.Close()
 	}

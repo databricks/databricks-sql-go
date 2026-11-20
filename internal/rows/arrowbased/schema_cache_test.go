@@ -27,6 +27,7 @@ func (source *repeatedCloudStream) Next() (io.Reader, error) {
 		return nil, io.EOF
 	}
 	source.reader = cloudIPCReader{payload: source.payload}
+	source.reader.body.Reset(source.payload)
 	return &source.reader, nil
 }
 
@@ -90,8 +91,18 @@ func TestCloudIPCSchemaCache(test *testing.T) {
 func TestCloudIPCReader(test *testing.T) {
 	for _, prefix := range [][]byte{nil, []byte("schema")} {
 		for _, payload := range [][]byte{nil, []byte("record data")} {
-			reader := &cloudIPCReader{prefix: prefix, payload: payload}
+			reader := &cloudIPCReader{}
+			reader.prefix.Reset(prefix)
+			reader.body.Reset(payload)
 			require.NoError(test, iotest.TestReader(reader, bytes.Join([][]byte{prefix, payload}, nil)))
+			_, err := reader.Seek(0, io.SeekStart)
+			require.NoError(test, err)
+			var output bytes.Buffer
+			count, err := io.Copy(&output, reader)
+			require.NoError(test, err)
+			require.EqualValues(test, len(prefix)+len(payload), count)
+			require.True(test, bytes.Equal(bytes.Join([][]byte{prefix, payload}, nil), output.Bytes()))
+			require.Zero(test, reader.Len())
 		}
 	}
 }

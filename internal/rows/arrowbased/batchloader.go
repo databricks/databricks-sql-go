@@ -122,6 +122,7 @@ func NewLocalIPCStreamIterator(
 	detectEmbeddedSchema ...bool,
 ) (IPCStreamIterator, dbsqlerr.DBError) {
 	bi := &localIPCStreamIterator{
+		ctx:              ctx,
 		cfg:              cfg,
 		startRowOffset:   startRowOffset,
 		arrowSchemaBytes: arrowSchemaBytes,
@@ -152,6 +153,7 @@ func NewLocalBatchIterator(
 }
 
 type localIPCStreamIterator struct {
+	ctx                  context.Context
 	cfg                  *config.Config
 	startRowOffset       int64
 	arrowSchemaBytes     []byte
@@ -176,12 +178,15 @@ func (bi *localIPCStreamIterator) Next() (io.Reader, error) {
 			if compressed {
 				var header []byte
 				header, stream, err = peekIPCSchema(stream)
+				if err == io.EOF {
+					err = nil
+				}
 				embedded = len(header) > 0
 			} else {
 				embedded, err = hasIPCSchema(ab.Batch)
 			}
 			if err != nil {
-				return nil, err
+				return nil, arrowSchemaReadError(bi.ctx, "invalid inline Arrow schema", err)
 			}
 			if embedded {
 				schemaBytes = nil
@@ -390,7 +395,7 @@ func (cft *cloudFetchDownloadTask) Run() {
 			cft.link.RowCount,
 		)
 
-		cft.sendResult(cloudFetchDownloadTaskResult{data: &cloudIPCReader{payload: buf}, err: nil, downloadMs: downloadMs})
+		cft.sendResult(cloudFetchDownloadTaskResult{data: &cloudIPCReader{payload: buf, body: *bytes.NewReader(buf)}, err: nil, downloadMs: downloadMs})
 	}()
 }
 

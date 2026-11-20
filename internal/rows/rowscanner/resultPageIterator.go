@@ -112,7 +112,8 @@ type resultPageIterator struct {
 	// In some cases we don't know whether there are any records until we fetch
 	// the first result page. So our behaviour is to fetch a result page as necessary
 	// before Next() is called.
-	nextResultPage *cli_service.TFetchResultsResp
+	nextResultPage  *cli_service.TFetchResultsResp
+	emptyResultPage *cli_service.TFetchResultsResp
 
 	// Hold on to errors so they can be returned by Next()
 	err error
@@ -121,6 +122,10 @@ type resultPageIterator struct {
 	// carried it. Atomic because Rows.Close may read it from a goroutine other
 	// than the one consuming pages through an Arrow iterator.
 	resultSetMetadata atomic.Pointer[cli_service.TGetResultSetMetadataResp]
+}
+
+func (rpf *resultPageIterator) EmptyResultPage() *cli_service.TFetchResultsResp {
+	return rpf.emptyResultPage
 }
 
 var _ ResultPageIterator = (*resultPageIterator)(nil)
@@ -249,6 +254,9 @@ func (rpf *resultPageIterator) getNextPage() (*cli_service.TFetchResultsResp, er
 			rpf.isFinished = !*fetchResult.HasMoreRows
 		} else {
 			rpf.isFinished = true
+		}
+		if rpf.Count() == 0 && rpf.isFinished {
+			rpf.emptyResultPage = fetchResult
 		}
 		rpf.logger.Debug().Msgf("databricks: new result page startRow: %d, nRows: %v, hasMoreRows: %v", rpf.Start(), rpf.Count(), fetchResult.HasMoreRows)
 	}

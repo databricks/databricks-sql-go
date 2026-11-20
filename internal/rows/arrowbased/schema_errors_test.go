@@ -81,18 +81,20 @@ func TestCloudIPCHeaderValidation(t *testing.T) {
 }
 
 func TestCloudIPCHeaderTypeMismatch(t *testing.T) {
-	serialize := func(dataType arrow.DataType) []byte {
+	serialize := func(name string, dataType arrow.DataType) []byte {
 		var output bytes.Buffer
-		writer := ipc.NewWriter(&output, ipc.WithSchema(arrow.NewSchema([]arrow.Field{{Name: "value", Type: dataType}}, nil)))
+		writer := ipc.NewWriter(&output, ipc.WithSchema(arrow.NewSchema([]arrow.Field{{Name: name, Type: dataType}}, nil)))
 		require.NoError(t, writer.Close())
 		return output.Bytes()
 	}
-	source, err := NewLocalIPCStreamIterator(context.Background(), []*cli_service.TSparkArrowBatch{{Batch: serialize(arrow.PrimitiveTypes.Int64)}}, 0, nil, config.WithDefaults())
+	source, err := NewLocalIPCStreamIterator(context.Background(), []*cli_service.TSparkArrowBatch{{Batch: serialize("value", arrow.PrimitiveTypes.Int64)}}, 0, nil, config.WithDefaults())
 	require.NoError(t, err)
-	iterator := &schemaIPCStreamIterator{source: source, schema: serialize(arrow.PrimitiveTypes.Float64), ctx: context.Background()}
+	iterator := &schemaIPCStreamIterator{source: source, schema: serialize("alias", arrow.PrimitiveTypes.Float64), ctx: context.Background()}
 	defer iterator.Close()
 	_, streamErr := iterator.Next()
 	require.ErrorContains(t, streamErr, "field type")
+	require.ErrorContains(t, streamErr, "int64")
+	require.ErrorContains(t, streamErr, "float64")
 	require.Equal(t, dbsqlerrint.CategoryArrowSchemaParsing, dbsqlerrint.CategoryFromError(streamErr))
 }
 

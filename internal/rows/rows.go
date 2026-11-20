@@ -756,9 +756,16 @@ func (r *rows) fetchResultPage() error {
 	if err1 != nil {
 		if err1 == io.EOF {
 			r.useServerArrowSchema(r.ResultPageIterator.ResultSetMetadata())
+			if metadata := r.metadataSnapshot(); metadata != nil && metadata.Schema != nil {
+				_ = r.initializeEmptyArrowSchema()
+			}
 		}
 		return err1
 	}
+	if err1 = r.makeRowScanner(fetchResult); err1 != nil {
+		return err1
+	}
+	r.pendingArrowPage = nil
 
 	r.chunkCount++
 	if fetchResult != nil && fetchResult.Results != nil {
@@ -787,12 +794,6 @@ func (r *rows) fetchResultPage() error {
 	if r.telemetryUpdate != nil {
 		r.telemetryUpdate(r.chunkCount, r.bytesDownloaded, chunkIndex, effectiveLatencyMs, totalPresent)
 	}
-
-	err1 = r.makeRowScanner(fetchResult)
-	if err1 != nil {
-		return err1
-	}
-	r.pendingArrowPage = nil
 
 	// We should be iterating over the rows so the next row number should be in the
 	// next result page
@@ -845,6 +846,13 @@ func (r *rows) makeRowScanner(fetchResults *cli_service.TFetchResultsResp) dbsql
 	}
 
 	r.RowScanner = rs
+	if metadata := r.metadataSnapshot(); err == nil && metadata != nil && len(metadata.ArrowSchema) == 0 {
+		if scanner, ok := rs.(interface{ ObserveServerArrowSchema(func([]byte)) }); ok {
+			scanner.ObserveServerArrowSchema(func(schema []byte) {
+				r.useServerArrowSchema(&cli_service.TGetResultSetMetadataResp{ArrowSchema: schema})
+			})
+		}
+	}
 
 	return err
 }
@@ -961,6 +969,9 @@ func (r *rows) getArrowSchemaBytes(ctx context.Context) ([]byte, error) {
 			return nil, err
 		}
 		r.useServerArrowSchema(r.ResultPageIterator.ResultSetMetadata())
+		if err := r.initializeEmptyArrowSchema(); err != nil {
+			return nil, err
+		}
 	}
 	if _, err := r.getResultSetSchema(); err != nil {
 		return nil, err
@@ -970,6 +981,30 @@ func (r *rows) getArrowSchemaBytes(ctx context.Context) ([]byte, error) {
 		return nil, nil
 	}
 	return metadata.ArrowSchema, nil
+}
+
+func (r *rows) initializeEmptyArrowSchema() error {
+	if metadata := r.metadataSnapshot(); metadata != nil && len(metadata.ArrowSchema) > 0 {
+		return nil
+	}
+	pages, ok := r.ResultPageIterator.(interface {
+		EmptyResultPage() *cli_service.TFetchResultsResp
+	})
+	if !ok {
+		return nil
+	}
+	page := pages.EmptyResultPage()
+	if page == nil || page.Results == nil || len(page.Results.ArrowBatches) == 0 {
+		return nil
+	}
+	if err := r.makeRowScanner(page); err != nil {
+		return err
+	}
+	if r.RowScanner != nil {
+		r.RowScanner.Close()
+		r.RowScanner = nil
+	}
+	return nil
 }
 
 func (r *rows) metadataSnapshot() *cli_service.TGetResultSetMetadataResp {
