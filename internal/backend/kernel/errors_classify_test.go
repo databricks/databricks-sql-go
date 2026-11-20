@@ -39,7 +39,7 @@ func TestIsBadConnection(t *testing.T) {
 func TestIsSessionFatal(t *testing.T) {
 	fatal := []int{statusUnauthenticated, statusUnavailable, statusNetworkError}
 	for _, code := range fatal {
-		if !isSessionFatal(&KernelError{Code: code}) {
+		if !isSessionFatal(fmt.Errorf("call: %w", &KernelError{Code: code})) {
 			t.Errorf("code %d should be session-fatal", code)
 		}
 	}
@@ -57,7 +57,6 @@ func TestIsSessionFatal(t *testing.T) {
 			t.Errorf("storage error %s should not be session-fatal", err.ErrorCode)
 		}
 	}
-
 }
 
 // isUserFault picks the log level for a kernel-call failure: user/query faults
