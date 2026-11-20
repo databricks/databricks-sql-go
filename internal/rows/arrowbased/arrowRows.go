@@ -236,6 +236,15 @@ func (ars *arrowRowScanner) ObserveServerArrowSchema(onSchema func([]byte)) {
 	}
 }
 
+func (ars *arrowRowScanner) EnableEmbeddedSchemaDetection() {
+	ars.detectEmbeddedSchema = true
+	if batches, ok := ars.batchIterator.(*batchIterator); ok {
+		if local, ok := batches.ipcIterator.(*localIPCStreamIterator); ok {
+			local.detectEmbeddedSchema = true
+		}
+	}
+}
+
 // Close is called when the Rows instance is closed.
 func (ars *arrowRowScanner) Close() {
 	ars.initialize = nil

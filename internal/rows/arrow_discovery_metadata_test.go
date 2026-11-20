@@ -19,7 +19,9 @@ import (
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/client"
 	"github.com/databricks/databricks-sql-go/internal/config"
+	"github.com/databricks/databricks-sql-go/internal/rows/rowscanner"
 	dbsqlrows "github.com/databricks/databricks-sql-go/rows"
+	"github.com/pierrec/lz4/v4"
 	"github.com/stretchr/testify/require"
 )
 
@@ -179,4 +181,75 @@ func TestEmptyArrowPayloadDoesNotFetchMetadataOnNext(test *testing.T) {
 	defer func() { require.NoError(test, result.Close()) }()
 	require.ErrorIs(test, result.Next(nil), io.EOF)
 	require.Zero(test, metadataCalls)
+}
+
+func TestScalarEmbeddedSchemaPages(test *testing.T) {
+	for _, compressed := range []bool{false, true} {
+		for _, direct := range []bool{false, true} {
+			test.Run(fmt.Sprintf("lz4=%t/direct=%t", compressed, direct), func(test *testing.T) {
+				var first, second cli_service.TFetchResultsResp
+				loadTestData(test, "multipleFetch/FetchResults1.json", &first)
+				loadTestData(test, "multipleFetch/FetchResults1.json", &second)
+				count := rowscanner.CountRows(first.Results)
+				second.Results.StartRowOffset = count
+				second.HasMoreRows = new(bool)
+				for _, page := range []*cli_service.TFetchResultsResp{&first, &second} {
+					for index, batch := range page.Results.ArrowBatches {
+						payload := batch.Batch
+						if index%2 == 0 {
+							payload = bytes.Join([][]byte{page.ResultSetMetadata.ArrowSchema, payload}, nil)
+						}
+						if compressed {
+							var output bytes.Buffer
+							compressor := lz4.NewWriter(&output)
+							_, err := compressor.Write(payload)
+							require.NoError(test, err)
+							require.NoError(test, compressor.Close())
+							payload = output.Bytes()
+						}
+						batch.Batch = payload
+					}
+					page.ResultSetMetadata.ArrowSchema = nil
+				}
+				fetches := 0
+				cli := &client.TestClient{
+					FnFetchResults: func(context.Context, *cli_service.TFetchResultsReq) (*cli_service.TFetchResultsResp, error) {
+						fetches++
+						if !direct && fetches == 1 {
+							return &first, nil
+						}
+						return &second, nil
+					},
+					FnCloseOperation: func(context.Context, *cli_service.TCloseOperationReq) (*cli_service.TCloseOperationResp, error) {
+						return &cli_service.TCloseOperationResp{}, nil
+					},
+				}
+				var initial *cli_service.TSparkDirectResults
+				if direct {
+					initial = &cli_service.TSparkDirectResults{ResultSetMetadata: first.ResultSetMetadata, ResultSet: &first}
+				}
+				cfg := config.WithDefaults()
+				cfg.UseLz4Compression = compressed
+				result, rowsErr := NewRows(context.Background(), nil, cli, cfg, initial, nil)
+				require.NoError(test, rowsErr)
+				defer func() { require.NoError(test, result.Close()) }()
+				destination := make([]driver.Value, len(first.ResultSetMetadata.Schema.Columns))
+				var actual int64
+				for {
+					err := result.Next(destination)
+					if err == io.EOF {
+						break
+					}
+					require.NoError(test, err)
+					actual++
+				}
+				require.Equal(test, count*2, actual)
+				if direct {
+					require.Equal(test, 1, fetches)
+				} else {
+					require.Equal(test, 2, fetches)
+				}
+			})
+		}
+	}
 }

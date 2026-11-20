@@ -52,6 +52,7 @@ type rows struct {
 	resultSetMetadata                 *cli_service.TGetResultSetMetadataResp
 	schema                            *cli_service.TTableSchema
 	pendingArrowPage                  *cli_service.TFetchResultsResp
+	detectEmbeddedSchema              bool
 	databaseTypeNameOverrides         map[int]string
 	metadataMu                        sync.Mutex
 	databaseTypeNameOverridesMetadata *cli_service.TGetResultSetMetadataResp
@@ -824,13 +825,17 @@ func (r *rows) makeRowScanner(fetchResults *cli_service.TFetchResultsResp) dbsql
 	var rs rowscanner.RowScanner
 	var err dbsqlerr.DBError
 	if fetchResults.Results != nil {
+		metadata := r.metadataSnapshot()
+		if metadata != nil && len(metadata.ArrowSchema) == 0 && (fetchResults.Results.ArrowBatches != nil || fetchResults.Results.ResultLinks != nil) {
+			r.detectEmbeddedSchema = true
+		}
 
 		if fetchResults.Results.Columns != nil {
 			rs, err = columnbased.NewColumnRowScanner(schema, fetchResults.Results, r.config, r.logger(), r.ctx)
 		} else if fetchResults.Results.ArrowBatches != nil {
-			rs, err = arrowbased.NewArrowRowScanner(r.metadataSnapshot(), fetchResults.Results, r.config, r.logger(), r.ctx, nil)
+			rs, err = arrowbased.NewArrowRowScanner(metadata, fetchResults.Results, r.config, r.logger(), r.ctx, nil)
 		} else if fetchResults.Results.ResultLinks != nil {
-			rs, err = arrowbased.NewArrowRowScanner(r.metadataSnapshot(), fetchResults.Results, r.config, r.logger(), r.ctx, r.cloudFetchCallback)
+			rs, err = arrowbased.NewArrowRowScanner(metadata, fetchResults.Results, r.config, r.logger(), r.ctx, r.cloudFetchCallback)
 		} else {
 			r.logger().Error().Msg(errRowsUnknowRowType)
 			err = dbsqlerr_int.NewDriverError(r.ctx, errRowsUnknowRowType, nil)
@@ -841,6 +846,11 @@ func (r *rows) makeRowScanner(fetchResults *cli_service.TFetchResultsResp) dbsql
 		err = dbsqlerr_int.NewDriverError(r.ctx, errRowsUnknowRowType, nil)
 	}
 
+	if r.detectEmbeddedSchema {
+		if scanner, ok := rs.(interface{ EnableEmbeddedSchemaDetection() }); ok {
+			scanner.EnableEmbeddedSchemaDetection()
+		}
+	}
 	if r.RowScanner != nil {
 		r.RowScanner.Close()
 	}
