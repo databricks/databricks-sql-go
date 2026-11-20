@@ -652,8 +652,14 @@ func PooledClient(cfg *config.Config) *http.Client {
 	if configurable, ok := authenticator.(interface {
 		WithHTTPClient(*http.Client) auth.Authenticator
 	}); ok {
+		oauthBase := base
+		if cfg.Transport == nil && cfg.TLSConfig != nil {
+			oauthTransport := base.(*http.Transport).Clone()
+			oauthTransport.TLSClientConfig = oauthTLSConfig(cfg)
+			oauthBase = oauthTransport
+		}
 		configured := configurable.WithHTTPClient(&http.Client{
-			Transport: &userAgentTransport{base: base, userAgent: BuildUserAgent(cfg)},
+			Transport: &userAgentTransport{base: oauthBase, userAgent: BuildUserAgent(cfg)},
 			Timeout:   cfg.ClientTimeout,
 		})
 		if configured != nil {
@@ -665,6 +671,42 @@ func PooledClient(cfg *config.Config) *http.Client {
 		Transport: &Transport{Base: base, Authr: authenticator},
 		Timeout:   cfg.ClientTimeout,
 	}
+}
+
+func oauthTLSConfig(cfg *config.Config) *tls.Config {
+	tlsConfig := cfg.TLSConfig.Clone()
+	if !tlsConfig.InsecureSkipVerify {
+		return tlsConfig
+	}
+	workspaceHost := (&url.URL{Host: cfg.Host}).Hostname()
+	verifyConnection := tlsConfig.VerifyConnection
+	tlsConfig.VerifyConnection = func(connection tls.ConnectionState) error {
+		if connection.ServerName == "" {
+			return errors.New("oauth: missing TLS server name")
+		}
+		options := x509.VerifyOptions{
+			Roots:         tlsConfig.RootCAs,
+			Intermediates: x509.NewCertPool(),
+			DNSName:       connection.ServerName,
+		}
+		if strings.EqualFold(connection.ServerName, workspaceHost) {
+			options.DNSName = ""
+		}
+		if tlsConfig.Time != nil {
+			options.CurrentTime = tlsConfig.Time()
+		}
+		for _, certificate := range connection.PeerCertificates[1:] {
+			options.Intermediates.AddCert(certificate)
+		}
+		if _, err := connection.PeerCertificates[0].Verify(options); err != nil {
+			return err
+		}
+		if verifyConnection != nil {
+			return verifyConnection(connection)
+		}
+		return nil
+	}
+	return tlsConfig
 }
 
 type userAgentTransport struct {

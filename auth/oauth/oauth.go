@@ -46,7 +46,7 @@ func GetEndpoint(ctx context.Context, hostName string) (oauth2.Endpoint, error) 
 	if cloud == Azure {
 		authURL := fmt.Sprintf("https://%s/oidc/oauth2/v2.0/authorize", hostName)
 		tokenURL := fmt.Sprintf("https://%s/oidc/oauth2/v2.0/token", hostName)
-		return oauth2.Endpoint{AuthURL: authURL, TokenURL: tokenURL}, nil
+		return validateEndpoint(oauth2.Endpoint{AuthURL: authURL, TokenURL: tokenURL})
 	}
 
 	// AWS / GCP. Resolve the OIDC issuer via /.well-known/databricks-config so that
@@ -69,9 +69,24 @@ func GetEndpoint(ctx context.Context, hostName string) (oauth2.Endpoint, error) 
 		return oauth2.Endpoint{}, err
 	}
 
-	endpoint := provider.Endpoint()
+	return validateEndpoint(provider.Endpoint())
+}
 
-	return endpoint, err
+func validateEndpoint(endpoint oauth2.Endpoint) (oauth2.Endpoint, error) {
+	for _, field := range []struct {
+		name     string
+		url      string
+		required bool
+	}{
+		{"token_endpoint", endpoint.TokenURL, true},
+		{"authorization_endpoint", endpoint.AuthURL, false},
+		{"device_authorization_endpoint", endpoint.DeviceAuthURL, false},
+	} {
+		if (field.required || field.url != "") && !isValidDatabricksIssuer(field.url) {
+			return oauth2.Endpoint{}, fmt.Errorf("oauth: invalid %s", field.name)
+		}
+	}
+	return endpoint, nil
 }
 
 // hostMetadata is the subset of /.well-known/databricks-config we consume.

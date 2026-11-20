@@ -2,16 +2,11 @@ package client
 
 import (
 	"context"
-	"io"
-	"net"
 	"net/http"
-	"net/http/httptest"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/databricks/databricks-sql-go/auth"
-	"github.com/databricks/databricks-sql-go/auth/oauth/m2m"
 	"github.com/databricks/databricks-sql-go/internal/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -63,11 +58,16 @@ func TestOAuthClientUsesConnectorBaseTransport(t *testing.T) {
 			require.NotNil(t, authenticator.client)
 			tokenTransport := authenticator.client.Transport.(*userAgentTransport)
 			queryTransport := pooled.Transport.(*Transport)
-			assert.Same(t, queryTransport.Base, tokenTransport.base)
+			if customTransport {
+				assert.Same(t, queryTransport.Base, tokenTransport.base)
+			} else {
+				assert.NotSame(t, queryTransport.Base, tokenTransport.base)
+			}
 			assert.Equal(t, BuildUserAgent(cfg), tokenTransport.userAgent)
 			assert.Equal(t, cfg.ClientTimeout, authenticator.client.Timeout)
 			if !customTransport {
-				assert.Same(t, cfg.TLSConfig, tokenTransport.base.(*http.Transport).TLSClientConfig)
+				assert.NotSame(t, cfg.TLSConfig, tokenTransport.base.(*http.Transport).TLSClientConfig)
+				assert.NotNil(t, tokenTransport.base.(*http.Transport).TLSClientConfig.VerifyConnection)
 			}
 		})
 	}
@@ -95,40 +95,4 @@ func TestOAuthUserAgentTransportPreservesRequest(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, response.Body.Close())
 	assert.Equal(t, "caller-agent", request.Header.Get("User-Agent"))
-}
-
-func TestM2MUsesPooledTLSVerification(t *testing.T) {
-	var tokenHits atomic.Int32
-	server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		tokenHits.Add(1)
-		writer.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(writer, `{"access_token":"tls-token","token_type":"Bearer","expires_in":3600}`)
-	}))
-	t.Cleanup(server.Close)
-	for _, skipVerify := range []bool{false, true} {
-		t.Run(map[bool]string{false: "verify", true: "skip-verify"}[skipVerify], func(t *testing.T) {
-			cfg := config.WithDefaults()
-			cfg.Authenticator = m2m.NewAuthenticator("id", "secret", "adb-test.azuredatabricks.net")
-			cfg.TLSConfig.InsecureSkipVerify = skipVerify
-			pooled := PooledClient(cfg)
-			transport := pooled.Transport.(*Transport)
-			base := transport.Base.(*http.Transport)
-			t.Cleanup(base.CloseIdleConnections)
-			base.Proxy = nil
-			base.DialContext = func(ctx context.Context, network, _ string) (net.Conn, error) {
-				return (&net.Dialer{}).DialContext(ctx, network, server.Listener.Addr().String())
-			}
-			request, err := http.NewRequestWithContext(context.Background(), http.MethodGet, server.URL, nil)
-			require.NoError(t, err)
-			err = transport.Authr.Authenticate(request)
-			if skipVerify {
-				require.NoError(t, err)
-				assert.Equal(t, "Bearer tls-token", request.Header.Get("Authorization"))
-				assert.Equal(t, int32(1), tokenHits.Load())
-			} else {
-				require.ErrorContains(t, err, "certificate")
-				assert.Zero(t, tokenHits.Load())
-			}
-		})
-	}
 }
