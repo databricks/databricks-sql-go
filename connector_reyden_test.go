@@ -216,6 +216,29 @@ func TestReydenReactiveRecovery(t *testing.T) {
 		assert.True(t, warehouse_cache.IsKnownReyden(tt.host, tt.warehouseID),
 			"warehouse should be marked Reyden after the rejection")
 	})
+
+	t.Run("recovery onto the kernel keeps a custom WithPort", func(t *testing.T) {
+		defer warehouse_cache.ClearCache()
+
+		tt := NewTestReydenFallback()
+		var kernelHost string
+		conn := tt.makeConnector(
+			func(ctx context.Context, cfg *config.Config, client *http.Client) (backend.Backend, error) {
+				return &fakeThriftBackend{openSessionErr: dbsqlerrint.NewReydenThriftUnsupportedError(
+					"Lakehouse/RT is not supported for Thrift protocol")}, nil
+			},
+			func(ctx context.Context, cfg *config.Config) (backend.Backend, error) {
+				require.NoError(t, validateKernelHostPort(cfg.Host, cfg.Port))
+				kernelHost = buildKernelConfig(cfg, kernel.Auth{Mode: kernel.AuthPAT, Token: "test-token"}).Host
+				return &fakeKernelBackend{}, nil
+			},
+		)
+		WithPort(8443)(conn.cfg)
+
+		_, _, err := conn.openSessionWithReydenFallback(context.Background())
+		require.NoError(t, err)
+		assert.Equal(t, "reyden.example.com:8443", kernelHost)
+	})
 }
 
 func TestReydenPreCheck(t *testing.T) {

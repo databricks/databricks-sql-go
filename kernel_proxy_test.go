@@ -56,6 +56,37 @@ func TestProxyForEndpoint(t *testing.T) {
 			want:    "http://corp-proxy:3128",
 		},
 		{
+			name: "embedded port equal to Port is not doubled",
+			cfg: func() *config.Config {
+				c := config.WithDefaults()
+				c.Host = "my-workspace.databricks.com:8443"
+				c.Port = 8443
+				c.HTTPPath = "/sql/1.0/warehouses/abc"
+				return c
+			}(),
+			resolve: func(*http.Request) (*url.URL, error) { return proxyURL, nil },
+			want:    "http://corp-proxy:3128",
+		},
+		{
+			// A bracketed IPv6 literal with a port is folded into the endpoint as [addr]:port,
+			// the same way the kernel Host is built.
+			name: "bracketed IPv6 literal with Port is folded",
+			cfg: func() *config.Config {
+				c := config.WithDefaults()
+				c.Host = "[::1]"
+				c.Port = 8443
+				c.HTTPPath = "/sql/1.0/warehouses/abc"
+				return c
+			}(),
+			resolve: func(req *http.Request) (*url.URL, error) {
+				if req.URL.Host != "[::1]:8443" {
+					t.Errorf("endpoint host = %q, want %q", req.URL.Host, "[::1]:8443")
+				}
+				return proxyURL, nil
+			},
+			want: "http://corp-proxy:3128",
+		},
+		{
 			name:    "host excluded by NO_PROXY -> direct",
 			cfg:     validCfg(),
 			resolve: func(*http.Request) (*url.URL, error) { return nil, nil },
@@ -79,6 +110,43 @@ func TestProxyForEndpoint(t *testing.T) {
 				return proxyURL, nil
 			},
 			want: "",
+		},
+		{
+			// A bare IPv6 literal is bracketed before the port is folded, so the endpoint is [::1]:8443.
+			name: "bare IPv6 host with Port folds to a bracketed endpoint",
+			cfg: func() *config.Config {
+				c := config.WithDefaults()
+				c.Host = "::1"
+				c.Port = 8443
+				c.HTTPPath = "/sql/1.0/warehouses/abc"
+				return c
+			}(),
+			resolve: func(req *http.Request) (*url.URL, error) {
+				if req.URL.Host != "[::1]:8443" {
+					t.Errorf("endpoint host = %q, want %q", req.URL.Host, "[::1]:8443")
+				}
+				return proxyURL, nil
+			},
+			want: "http://corp-proxy:3128",
+		},
+		{
+			// A trailing "/" (WithServerHostname("https://h/")) is trimmed before the port is
+			// folded, so the endpoint is h:8443, not h/:8443.
+			name: "trailing slash host with Port folds to host:port",
+			cfg: func() *config.Config {
+				c := config.WithDefaults()
+				c.Host = "my-workspace.databricks.com/"
+				c.Port = 8443
+				c.HTTPPath = "/sql/1.0/warehouses/abc"
+				return c
+			}(),
+			resolve: func(req *http.Request) (*url.URL, error) {
+				if req.URL.Host != "my-workspace.databricks.com:8443" {
+					t.Errorf("endpoint host = %q, want %q", req.URL.Host, "my-workspace.databricks.com:8443")
+				}
+				return proxyURL, nil
+			},
+			want: "http://corp-proxy:3128",
 		},
 	}
 	for _, tc := range cases {
