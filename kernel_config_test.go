@@ -975,7 +975,8 @@ func TestKernelRetryConfig(t *testing.T) {
 // TestKernelCustomPort covers WithPort on the kernel backend: a non-default port is folded into the
 // kernel Host, 0 and 443 add nothing, a port embedded in the host wins, a trailing "/" is trimmed,
 // and a host with a path passes through unchanged unless a non-default port would be folded into it.
-// An out-of-range port or unbalanced IPv6 brackets are rejected with ErrInvalidKernelConfig.
+// Host parsing uses net/url. An out-of-range port, unbalanced IPv6 brackets, or a bare (unbracketed)
+// IPv6 literal are rejected with ErrInvalidKernelConfig, so an IPv6 literal must be bracketed.
 func TestKernelCustomPort(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -988,7 +989,7 @@ func TestKernelCustomPort(t *testing.T) {
 		{"unset port adds nothing", "h.databricks.com", 0, "h.databricks.com", false},
 		{"custom port", "h.databricks.com", 8443, "h.databricks.com:8443", false},
 		{"IPv4 literal", "127.0.0.1", 8443, "127.0.0.1:8443", false},
-		{"bare IPv6 is bracketed", "::1", 8443, "[::1]:8443", false},
+		{"bare IPv6 is rejected: an IPv6 literal must be bracketed", "::1", 8443, "", true},
 		{"bracketed IPv6", "[::1]", 8443, "[::1]:8443", false},
 		{"port 1", "h.databricks.com", 1, "h.databricks.com:1", false},
 		{"port 65535", "h.databricks.com", 65535, "h.databricks.com:65535", false},
@@ -1019,6 +1020,33 @@ func TestKernelCustomPort(t *testing.T) {
 		{"unclosed IPv6 bracket", "[::1", 8443, "", true},
 		{"text after IPv6 bracket", "[::1]x", 8443, "", true},
 		{"stray closing bracket", "h.databricks.com]", 8443, "", true},
+		{"stray closing bracket, default port", "h.databricks.com]", 443, "", true},
+		{"text after IPv6 bracket, default port", "[::1]x", 443, "", true},
+		{"unclosed IPv6 bracket, default port", "[::1", 443, "", true},
+		// net/url rules: an empty port, credentials, an empty fragment and bare IPv6 literals.
+		{"empty port after colon", "h:", 8443, "", true},
+		{"empty port after colon, default port", "h:", 443, "", true},
+		{"bare IPv6, default port: rejected (bracket it)", "::1", 443, "", true},
+		{"bare IPv6 with zone is rejected", "fe80::1%eth0", 8443, "", true},
+		{"userinfo, default port: unchanged", "user@h", 443, "user@h", false},
+		{"userinfo, custom port: rejected", "user@h", 8443, "", true},
+		{"userinfo with an embedded port, custom port: rejected", "user@h:8443", 9443, "", true},
+		{"userinfo with an embedded port, default port: unchanged", "user@h:8443", 443, "user@h:8443", false},
+		{"password, default port: rejected", "user:pw@h", 443, "", true},
+		{"password, custom port: rejected", "user:pw@h", 8443, "", true},
+		{"empty fragment, custom port: rejected (h#)", "h#", 8443, "", true},
+		{"empty fragment, default port: unchanged (h#)", "h#", 443, "h#", false},
+		{"embedded port out of range (h:70000)", "h:70000", 8443, "", true},
+		{"embedded port not a number (h:abc)", "h:abc", 8443, "", true},
+		{"mixed-case host is kept (custom port)", "H.Example.COM", 8443, "H.Example.COM:8443", false},
+		{"mixed-case host is kept (default port)", "H.Example.COM", 443, "H.Example.COM", false},
+		{"trailing slash after embedded port", "h:8443/", 8443, "h:8443", false},
+		{"path with custom port (h/x)", "h/x", 8443, "", true},
+		{"path, default port: unchanged (h/x)", "h/x", 443, "h/x", false},
+		{"query with custom port (h?q)", "h?q", 8443, "", true},
+		{"query, default port: unchanged (h?q)", "h?q", 443, "h?q", false},
+		{"fragment with custom port (h#f)", "h#f", 8443, "", true},
+		{"fragment, default port: unchanged (h#f)", "h#f", 443, "h#f", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

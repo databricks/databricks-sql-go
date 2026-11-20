@@ -68,12 +68,12 @@ func TestProxyForEndpoint(t *testing.T) {
 			want:    "http://corp-proxy:3128",
 		},
 		{
-			// An unbracketed IPv6 literal with a port must be bracketed in the endpoint,
+			// A bracketed IPv6 literal with a port is folded into the endpoint as [addr]:port,
 			// the same way the kernel Host is built.
-			name: "IPv6 literal with Port is bracketed",
+			name: "bracketed IPv6 literal with Port is folded",
 			cfg: func() *config.Config {
 				c := config.WithDefaults()
-				c.Host = "::1"
+				c.Host = "[::1]"
 				c.Port = 8443
 				c.HTTPPath = "/sql/1.0/warehouses/abc"
 				return c

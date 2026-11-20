@@ -85,7 +85,6 @@ func validateKernelConfigContext(ctx context.Context, cfg *config.Config) (kerne
 	if err := validateKernelHostPort(cfg.Host, cfg.Port); err != nil {
 		return kernel.Auth{}, err
 	}
-	warnEmbeddedPortWins(cfg.Host, cfg.Port)
 	// Transport (WithTransport, a custom http.RoundTripper carrying a custom CA
 	// bundle / mTLS / proxy): the kernel uses its own Rust HTTP stack below the C
 	// ABI and never sees a Go RoundTripper, so a custom Transport would be silently
@@ -239,90 +238,98 @@ func buildKernelConfig(cfg *config.Config, kauth kernel.Auth) kernel.Config {
 	return kc
 }
 
-// unbalancedBrackets reports a host whose IPv6 brackets do not pair up: an unclosed `[`, text
-// after the closing `]` other than a `:port`, or a stray bracket in a plain name.
-func unbalancedBrackets(host string) bool {
-	if !strings.HasPrefix(host, "[") {
-		return strings.ContainsAny(host, "[]")
+// kernelHost is cfg.Host split by net/url: the parts the kernel port logic needs.
+type kernelHost struct {
+	raw      string // cfg.Host with a trailing "/" trimmed; the kernel gets it unchanged when no port is folded
+	name     string // host name without IPv6 brackets (url.URL.Hostname)
+	port     string // digits after the authority's ":"; "" when there is none
+	hasPort  bool   // the authority has a ":", even with no digits after it ("h:")
+	hasPath  bool   // a path, query or fragment follows the host, or a bare "#" (url.URL drops an empty fragment)
+	userinfo bool   // a user@ prefix is present
+	password bool   // the user@ prefix carries a password
+}
+
+// parseKernelHost parses cfg.Host (trailing "/" trimmed) as the authority of an https URL, which is the
+// form the kernel connects to. The error is url.Parse's; the fields are set only when it is nil.
+func parseKernelHost(host string) (kernelHost, error) {
+	h := kernelHost{raw: strings.TrimRight(host, "/")}
+	u, err := url.Parse("https://" + h.raw)
+	if err != nil {
+		return h, err
 	}
-	end := strings.IndexByte(host, ']')
-	return end < 0 || (end+1 < len(host) && host[end+1] != ':')
+	h.name = u.Hostname()
+	h.port = u.Port()
+	h.hasPort = h.port != "" || strings.HasSuffix(u.Host, ":")
+	h.hasPath = u.Path != "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || strings.Contains(h.raw, "#")
+	h.userinfo = u.User != nil
+	_, h.password = u.User.Password()
+	return h, nil
 }
 
-// normaliseKernelHost trims trailing "/" the way the kernel's normalise_host does, so the port
-// logic below sees the same authority the kernel connects to.
-func normaliseKernelHost(host string) string {
-	return strings.TrimRight(host, "/")
-}
-
-// validateKernelHostPort rejects an out-of-range WithPort, a non-default WithPort with a host that has
-// a path, query or fragment, unbalanced IPv6 brackets, and an out-of-range or malformed port embedded
-// in the host. WithDefaults fills 443 when no port is set. A port embedded in the host wins over
-// WithPort (see warnEmbeddedPortWins), so a differing WithPort is not an error.
+// validateKernelHostPort rejects an out-of-range WithPort, a host that net/url cannot parse (an IPv6
+// literal must be bracketed), and a non-default WithPort with a host that has a path, query, fragment or
+// credentials. It also rejects unbalanced brackets and an empty, out-of-range or malformed port embedded
+// in the host. WithDefaults fills 443 when no port is set. A port embedded in the host wins over a
+// differing WithPort, with a warning rather than an error.
 func validateKernelHostPort(host string, port int) error {
 	if port < 0 || port > 65535 {
 		return fmt.Errorf("databricks: WithPort %d is out of range (want 1..65535, or 0 for the default): %w", port, dbsqlerr.ErrInvalidKernelConfig)
 	}
-	host = normaliseKernelHost(host)
+	h, err := parseKernelHost(host)
+	if err != nil {
+		return fmt.Errorf("databricks: host %q is not a valid host (bracket an IPv6 literal): %v: %w", h.raw, err, dbsqlerr.ErrInvalidKernelConfig)
+	}
+	nonDefault := port != 0 && port != 443
 	// A path, query or fragment is checked before the embedded-port parse. With the default port the
 	// host goes to the kernel unchanged, as before (the kernel appends its API paths after it). A
-	// non-default port cannot be folded into such a host, and was rejected before, so reject it.
-	if strings.ContainsAny(host, "/?#") {
-		if port != 0 && port != 443 {
+	// non-default port cannot be folded into such a host, so reject it.
+	if h.hasPath {
+		if nonDefault {
 			return fmt.Errorf("databricks: host %q has a path, query or fragment, so WithPort %d cannot be applied: %w",
-				host, port, dbsqlerr.ErrInvalidKernelConfig)
+				h.raw, port, dbsqlerr.ErrInvalidKernelConfig)
 		}
 		return nil
 	}
-	if unbalancedBrackets(host) {
-		return fmt.Errorf("databricks: host %q has unbalanced IPv6 brackets: %w", host, dbsqlerr.ErrInvalidKernelConfig)
+	// Credentials are kept only at the default port: a non-default port would have to be folded in without them.
+	if h.userinfo && nonDefault {
+		return fmt.Errorf("databricks: host %q carries credentials, so WithPort %d cannot be applied: %w",
+			h.raw, port, dbsqlerr.ErrInvalidKernelConfig)
 	}
-	_, p, err := net.SplitHostPort(host)
-	if err != nil {
+	if h.password {
+		return fmt.Errorf("databricks: host %q carries a password: %w", h.raw, dbsqlerr.ErrInvalidKernelConfig)
+	}
+	// url.Parse accepts a stray "]" in a plain name, so brackets are checked on the parsed host name
+	// (IPv6 brackets are already removed from it).
+	if strings.ContainsAny(h.name, "[]") {
+		return fmt.Errorf("databricks: host %q has unbalanced IPv6 brackets: %w", h.raw, dbsqlerr.ErrInvalidKernelConfig)
+	}
+	if !h.hasPort {
 		return nil // no embedded port
 	}
-	embedded, err := strconv.Atoi(p)
+	embedded, err := strconv.Atoi(h.port)
 	if err != nil || embedded < 1 || embedded > 65535 {
-		return fmt.Errorf("databricks: host %q carries an invalid port %q (want 1..65535): %w", host, p, dbsqlerr.ErrInvalidKernelConfig)
+		return fmt.Errorf("databricks: host %q carries an invalid port %q (want 1..65535): %w", h.raw, h.port, dbsqlerr.ErrInvalidKernelConfig)
+	}
+	// The embedded port is used, as on the kernel path before WithPort was honored. An explicit 443 is
+	// the default and is not warned about.
+	if nonDefault && embedded != port {
+		logger.Warn().Msgf("databricks: the host carries port %d, which differs from WithPort %d; connecting to port %d from the host",
+			embedded, port, embedded)
 	}
 	return nil
 }
 
-// warnEmbeddedPortWins logs when a non-default port (WithPort or the DSN) differs from the port embedded
-// in the host. The embedded port is used, as on the kernel path before WithPort was honored. An
-// explicit 443 is the default and is not warned about.
-func warnEmbeddedPortWins(host string, port int) {
-	if port == 0 || port == 443 {
-		return
-	}
-	_, p, err := net.SplitHostPort(normaliseKernelHost(host))
-	if err != nil {
-		return
-	}
-	embedded, err := strconv.Atoi(p)
-	if err != nil || embedded == port {
-		return
-	}
-	logger.Warn().Msgf("databricks: the host carries port %d, which differs from WithPort %d; connecting to port %d from the host",
-		embedded, port, embedded)
-}
-
-// kernelHostWithPort returns the Host the kernel connects to. The kernel has no port setter but
-// keeps a `host:port` authority, so a non-default port is folded in (IPv6-safe). A trailing "/" is
-// trimmed first. 0 and 443 add nothing, and a host that already carries a port is returned unchanged.
+// kernelHostWithPort returns the Host the kernel connects to. The kernel has no port setter but keeps a
+// `host:port` authority, so a non-default port is folded in with net.JoinHostPort, which brackets an IPv6
+// literal. A trailing "/" is trimmed first. 0 and 443 add nothing. A host that already carries a port, a
+// path, query or fragment, or credentials is returned unchanged; validateKernelHostPort rejects the last
+// two with a non-default port before the kernel is built.
 func kernelHostWithPort(host string, port int) string {
-	host = normaliseKernelHost(host)
-	if port == 0 || port == 443 {
-		return host
+	h, err := parseKernelHost(host)
+	if err != nil || port == 0 || port == 443 || h.hasPort || h.hasPath || h.userinfo {
+		return h.raw
 	}
-	if _, _, err := net.SplitHostPort(host); err == nil {
-		return host
-	}
-	name := host
-	if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
-		name = host[1 : len(host)-1]
-	}
-	return net.JoinHostPort(name, strconv.Itoa(port))
+	return net.JoinHostPort(h.name, strconv.Itoa(port))
 }
 
 func kernelTelemetryConfig(cfg *config.Config) *kernel.TelemetryConfig {
