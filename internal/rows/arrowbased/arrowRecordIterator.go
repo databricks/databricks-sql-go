@@ -15,13 +15,20 @@ import (
 	"github.com/databricks/databricks-sql-go/rows"
 )
 
-func NewArrowRecordIterator(ctx context.Context, rpi rowscanner.ResultPageIterator, bi BatchIterator, arrowSchemaBytes []byte, cfg config.Config) rows.ArrowBatchIterator {
+func NewArrowRecordIterator(ctx context.Context, rpi rowscanner.ResultPageIterator, bi BatchIterator, arrowSchemaBytes []byte, cfg config.Config, schemaErrors ...error) rows.ArrowBatchIterator {
+	return newArrowRecordIterator(ctx, rpi, bi, arrowSchemaBytes, cfg, schemaErrors...)
+}
+
+func newArrowRecordIterator(ctx context.Context, rpi rowscanner.ResultPageIterator, bi BatchIterator, arrowSchemaBytes []byte, cfg config.Config, schemaErrors ...error) *arrowRecordIterator {
 	ari := arrowRecordIterator{
 		cfg:                cfg,
 		batchIterator:      bi,
 		resultPageIterator: rpi,
 		ctx:                ctx,
 		arrowSchemaBytes:   arrowSchemaBytes,
+	}
+	if len(schemaErrors) > 0 {
+		ari.schemaErr = schemaErrors[0]
 	}
 
 	return &ari
@@ -30,14 +37,16 @@ func NewArrowRecordIterator(ctx context.Context, rpi rowscanner.ResultPageIterat
 
 // A type implemented DBSQLArrowBatchIterator
 type arrowRecordIterator struct {
-	ctx                context.Context
-	cfg                config.Config
-	batchIterator      BatchIterator
-	resultPageIterator rowscanner.ResultPageIterator
-	currentBatch       SparkArrowBatch
-	isFinished         bool
-	arrowSchemaBytes   []byte
-	arrowSchema        *arrow.Schema
+	ctx                  context.Context
+	cfg                  config.Config
+	batchIterator        BatchIterator
+	resultPageIterator   rowscanner.ResultPageIterator
+	currentBatch         SparkArrowBatch
+	isFinished           bool
+	arrowSchemaBytes     []byte
+	arrowSchema          *arrow.Schema
+	schemaErr            error
+	detectEmbeddedSchema bool
 	// err holds a page-fetch error detected while advancing the result page
 	// iterator. It must be surfaced through Next() rather than being masked as
 	// a normal end-of-results (io.EOF). See issue #507. Once captured the
@@ -227,12 +236,15 @@ func (ri *arrowRecordIterator) newBatchIterator(fr *cli_service.TFetchResultsRes
 	if len(rowSet.ResultLinks) > 0 {
 		return NewCloudBatchIterator(ri.ctx, rowSet.ResultLinks, rowSet.StartRowOffset, ri.arrowSchemaBytes, &ri.cfg, nil)
 	} else {
-		return NewLocalBatchIterator(ri.ctx, rowSet.ArrowBatches, rowSet.StartRowOffset, ri.arrowSchemaBytes, &ri.cfg)
+		return NewLocalBatchIterator(ri.ctx, rowSet.ArrowBatches, rowSet.StartRowOffset, ri.arrowSchemaBytes, &ri.cfg, ri.detectEmbeddedSchema)
 	}
 }
 
 // Return the schema of the records.
 func (ri *arrowRecordIterator) Schema() (*arrow.Schema, error) {
+	if ri.schemaErr != nil {
+		return nil, ri.schemaErr
+	}
 	// Return cached schema if available
 	if ri.arrowSchema != nil {
 		return ri.arrowSchema, nil

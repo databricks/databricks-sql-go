@@ -49,12 +49,15 @@ type rows struct {
 	location *time.Location
 
 	// Metadata for result set
-	resultSetMetadata         *cli_service.TGetResultSetMetadataResp
-	schema                    *cli_service.TTableSchema
-	databaseTypeNameOverrides map[int]string
-	// databaseTypeNameOverridesOnce guards the lazy, one-time build of
-	// databaseTypeNameOverrides (ColumnTypes may be called concurrently).
-	databaseTypeNameOverridesOnce sync.Once
+	resultSetMetadata                 *cli_service.TGetResultSetMetadataResp
+	schema                            *cli_service.TTableSchema
+	pendingArrowPage                  *cli_service.TFetchResultsResp
+	emptyArrowSchemaAttempted         bool
+	emptyArrowSchemaErr               error
+	detectEmbeddedSchema              bool
+	databaseTypeNameOverrides         map[int]string
+	metadataMu                        sync.Mutex
+	databaseTypeNameOverridesMetadata *cli_service.TGetResultSetMetadataResp
 
 	config *config.Config
 
@@ -151,7 +154,7 @@ func (r *rows) ResultFormat() string {
 	if r == nil {
 		return ""
 	}
-	if format := ExecutionResultFormat(r.resultSetMetadata); format != "" {
+	if format := ExecutionResultFormat(r.metadataSnapshot()); format != "" {
 		return format
 	}
 	if r.ResultPageIterator != nil {
@@ -411,8 +414,7 @@ func (r *rows) ColumnTypeScanType(index int) reflect.Type {
 		return nil
 	}
 
-	r.cacheDatabaseTypeNameOverrides()
-	if r.databaseTypeNameOverrides[index] == "TIME" {
+	if r.cacheDatabaseTypeNameOverrides()[index] == "TIME" {
 		return arrowscan.ColumnTypeInfoFor(arrow.FixedWidthTypes.Time64ns).ScanType
 	}
 	scanType := getScanType(column)
@@ -431,8 +433,7 @@ func (r *rows) ColumnTypeDatabaseTypeName(index int) string {
 		return ""
 	}
 
-	r.cacheDatabaseTypeNameOverrides()
-	if name, ok := r.databaseTypeNameOverrides[index]; ok {
+	if name, ok := r.cacheDatabaseTypeNameOverrides()[index]; ok {
 		return name
 	}
 
@@ -447,8 +448,7 @@ func (r *rows) ColumnTypeDatabaseTypeName(index int) string {
 // decoding: columnar (TColumn) results keep legacy session-location timestamp
 // parsing, so they keep the legacy TIMESTAMP type name too.
 //
-// The decision is made from result set metadata alone (it is cached before the
-// first page arrives), not from the format of each fetched page. A result set
+// The decision is made from result set metadata, not the encoding of each page. A result set
 // with an ArrowSchema, Arrow batches enabled, and ResultFormat unset is treated
 // as Arrow. If a server sent such metadata but then returned TColumn pages, the
 // column would still report TIMESTAMP_NTZ while its values went through the
@@ -457,13 +457,16 @@ func (r *rows) ColumnTypeDatabaseTypeName(index int) string {
 // VARIANT is the exception: its values are JSON text on every result format, so a
 // column the schema tags as VARIANT reports VARIANT whether or not it is Arrow-decoded.
 //
-// database/sql's Rows.ColumnTypes() only holds a read lock, so this may be
-// reached concurrently. The map is built in a local variable and published
-// exactly once via sync.Once, so readers never observe a partially filled map.
-func (r *rows) cacheDatabaseTypeNameOverrides() {
-	r.databaseTypeNameOverridesOnce.Do(func() {
+// ColumnTypes may run concurrently. Publish a new map if a fetched page supplies
+// an Arrow schema that was absent from the original metadata.
+func (r *rows) cacheDatabaseTypeNameOverrides() map[int]string {
+	r.metadataMu.Lock()
+	defer r.metadataMu.Unlock()
+	if r.databaseTypeNameOverrides == nil || r.databaseTypeNameOverridesMetadata != r.resultSetMetadata {
 		r.databaseTypeNameOverrides = r.buildDatabaseTypeNameOverrides()
-	})
+		r.databaseTypeNameOverridesMetadata = r.resultSetMetadata
+	}
+	return r.databaseTypeNameOverrides
 }
 
 func (r *rows) buildDatabaseTypeNameOverrides() map[int]string {
@@ -474,8 +477,7 @@ func (r *rows) buildDatabaseTypeNameOverrides() map[int]string {
 
 	reader, err := ipc.NewReader(bytes.NewReader(r.resultSetMetadata.ArrowSchema))
 	if err != nil {
-		// Leave the cache empty (and cached): result set metadata never changes,
-		// so retrying would fail the same way. Columns keep their Thrift type
+		// Leave the cache empty until new metadata arrives. Columns keep their Thrift type
 		// names: TIMESTAMP rather than TIMESTAMP_NTZ, and STRING rather than
 		// VARIANT on Arrow and column-based results alike. On Arrow results the
 		// row scanner surfaces the parse error itself; column-based values decode
@@ -552,8 +554,7 @@ func (r *rows) ColumnTypeLength(index int) (length int64, ok bool) {
 	if err != nil {
 		return 0, false
 	}
-	r.cacheDatabaseTypeNameOverrides()
-	if r.databaseTypeNameOverrides[index] == "TIME" {
+	if r.cacheDatabaseTypeNameOverrides()[index] == "TIME" {
 		return 0, false
 	}
 	return columnTypeLengthForID(rowscanner.GetDBTypeID(columnInfo))
@@ -688,7 +689,10 @@ func (r *rows) isNextRowInPage() (bool, dbsqlerr.DBError) {
 
 // getResultMetadata does a one time fetch of the result set schema
 func (r *rows) getResultSetSchema() (*cli_service.TTableSchema, dbsqlerr.DBError) {
-	if r.schema == nil {
+	r.metadataMu.Lock()
+	schema := r.schema
+	r.metadataMu.Unlock()
+	if schema == nil {
 		err := isValidRows(r)
 		if err != nil {
 			return nil, err
@@ -709,12 +713,16 @@ func (r *rows) getResultSetSchema() (*cli_service.TTableSchema, dbsqlerr.DBError
 			return nil, dbsqlerr_int.NewRequestError(r.ctx, errRowsMetadataFetchFailed, err2).WithCategory(dbsqlerr_int.CategoryResultSet)
 		}
 
-		r.resultSetMetadata = resp
-		r.schema = resp.Schema
+		r.metadataMu.Lock()
+		if r.schema == nil {
+			r.resultSetMetadata, r.schema = resp, resp.Schema
+		}
+		schema = r.schema
+		r.metadataMu.Unlock()
 
 	}
 
-	return r.schema, nil
+	return schema, nil
 }
 
 // fetchResultPage will fetch the result page containing the next row, if necessary
@@ -742,11 +750,25 @@ func (r *rows) fetchResultPage() error {
 	// Record 0-based chunk index before fetching (direct results occupied index 0 if present).
 	chunkIndex := r.chunkCount
 	fetchStart := time.Now()
-	fetchResult, err1 := r.ResultPageIterator.Next()
+	fetchResult := r.pendingArrowPage
+	var err1 error
+	if fetchResult == nil {
+		fetchResult, err1 = r.ResultPageIterator.Next()
+	}
 	chunkLatencyMs := time.Since(fetchStart).Milliseconds()
 	if err1 != nil {
+		if err1 == io.EOF {
+			r.useServerArrowSchema(r.ResultPageIterator.ResultSetMetadata())
+			if metadata := r.metadataSnapshot(); metadata != nil && metadata.Schema != nil {
+				r.initializeEmptyArrowSchema()
+			}
+		}
 		return err1
 	}
+	if err1 = r.makeRowScanner(fetchResult); err1 != nil {
+		return err1
+	}
+	r.pendingArrowPage = nil
 
 	r.chunkCount++
 	if fetchResult != nil && fetchResult.Results != nil {
@@ -776,11 +798,6 @@ func (r *rows) fetchResultPage() error {
 		r.telemetryUpdate(r.chunkCount, r.bytesDownloaded, chunkIndex, effectiveLatencyMs, totalPresent)
 	}
 
-	err1 = r.makeRowScanner(fetchResult)
-	if err1 != nil {
-		return err1
-	}
-
 	// We should be iterating over the rows so the next row number should be in the
 	// next result page
 	if !r.RowScanner.Contains(r.nextRowNumber) {
@@ -794,6 +811,10 @@ func (r *rows) fetchResultPage() error {
 // of the returned query results
 func (r *rows) makeRowScanner(fetchResults *cli_service.TFetchResultsResp) dbsqlerr.DBError {
 
+	if fetchResults != nil {
+		// Trust fetched metadata; the server may already have closed the operation.
+		r.useServerArrowSchema(fetchResults.ResultSetMetadata)
+	}
 	schema, err1 := r.getResultSetSchema()
 	if err1 != nil {
 		return err1
@@ -806,13 +827,17 @@ func (r *rows) makeRowScanner(fetchResults *cli_service.TFetchResultsResp) dbsql
 	var rs rowscanner.RowScanner
 	var err dbsqlerr.DBError
 	if fetchResults.Results != nil {
+		metadata := r.metadataSnapshot()
+		if metadata != nil && len(metadata.ArrowSchema) == 0 && (fetchResults.Results.ArrowBatches != nil || fetchResults.Results.ResultLinks != nil) {
+			r.detectEmbeddedSchema = true
+		}
 
 		if fetchResults.Results.Columns != nil {
 			rs, err = columnbased.NewColumnRowScanner(schema, fetchResults.Results, r.config, r.logger(), r.ctx)
 		} else if fetchResults.Results.ArrowBatches != nil {
-			rs, err = arrowbased.NewArrowRowScanner(r.resultSetMetadata, fetchResults.Results, r.config, r.logger(), r.ctx, nil)
+			rs, err = arrowbased.NewArrowRowScanner(metadata, fetchResults.Results, r.config, r.logger(), r.ctx, nil)
 		} else if fetchResults.Results.ResultLinks != nil {
-			rs, err = arrowbased.NewArrowRowScanner(r.resultSetMetadata, fetchResults.Results, r.config, r.logger(), r.ctx, r.cloudFetchCallback)
+			rs, err = arrowbased.NewArrowRowScanner(metadata, fetchResults.Results, r.config, r.logger(), r.ctx, r.cloudFetchCallback)
 		} else {
 			r.logger().Error().Msg(errRowsUnknowRowType)
 			err = dbsqlerr_int.NewDriverError(r.ctx, errRowsUnknowRowType, nil)
@@ -823,11 +848,23 @@ func (r *rows) makeRowScanner(fetchResults *cli_service.TFetchResultsResp) dbsql
 		err = dbsqlerr_int.NewDriverError(r.ctx, errRowsUnknowRowType, nil)
 	}
 
+	if r.detectEmbeddedSchema {
+		if scanner, ok := rs.(interface{ EnableEmbeddedSchemaDetection() }); ok {
+			scanner.EnableEmbeddedSchemaDetection()
+		}
+	}
 	if r.RowScanner != nil {
 		r.RowScanner.Close()
 	}
 
 	r.RowScanner = rs
+	if metadata := r.metadataSnapshot(); err == nil && metadata != nil && len(metadata.ArrowSchema) == 0 {
+		if scanner, ok := rs.(interface{ ObserveServerArrowSchema(func([]byte)) }); ok {
+			scanner.ObserveServerArrowSchema(func(schema []byte) {
+				r.useServerArrowSchema(&cli_service.TGetResultSetMetadataResp{ArrowSchema: schema})
+			})
+		}
+	}
 
 	return err
 }
@@ -867,7 +904,23 @@ func (r *rows) GetArrowBatches(ctx context.Context) (dbsqlrows.ArrowBatchIterato
 		return r.RowScanner.GetArrowBatches(iterCtx, *r.config, r.ResultPageIterator)
 	}
 
-	return arrowbased.NewArrowRecordIterator(iterCtx, r.ResultPageIterator, nil, nil, *r.config), nil
+	return arrowbased.DeferArrowBatches(func() (dbsqlrows.ArrowBatchIterator, error) {
+		schemaBytes, err := r.getArrowSchemaBytes(iterCtx)
+		if err != nil {
+			return nil, err
+		}
+		if r.RowScanner != nil {
+			return r.RowScanner.GetArrowBatches(iterCtx, *r.config, r.ResultPageIterator)
+		}
+		if len(schemaBytes) == 0 {
+			schemaErr := r.emptyArrowSchemaErr
+			if schemaErr == nil {
+				schemaBytes, schemaErr = arrowbased.GetArrowSchemaBytes(iterCtx, r.metadataSnapshot(), r.config.ArrowConfig)
+			}
+			return arrowbased.NewArrowRecordIterator(iterCtx, r.ResultPageIterator, nil, schemaBytes, *r.config, schemaErr), nil
+		}
+		return arrowbased.NewArrowRecordIterator(iterCtx, r.ResultPageIterator, nil, schemaBytes, *r.config), nil
+	}, func() { _ = r.ResultPageIterator.Close() }), nil
 }
 
 func (r *rows) GetArrowIPCStreams(ctx context.Context) (dbsqlrows.ArrowIPCStreamIterator, error) {
@@ -881,5 +934,115 @@ func (r *rows) GetArrowIPCStreams(ctx context.Context) (dbsqlrows.ArrowIPCStream
 		return r.RowScanner.GetArrowIPCStreams(iterCtx, *r.config, r.ResultPageIterator)
 	}
 
-	return arrowbased.NewArrowIPCStreamIterator(iterCtx, r.ResultPageIterator, nil, nil, *r.config), nil
+	return arrowbased.DeferArrowIPCStreams(func() (dbsqlrows.ArrowIPCStreamIterator, error) {
+		schemaBytes, err := r.getArrowSchemaBytes(iterCtx)
+		if err != nil {
+			return nil, err
+		}
+		if r.RowScanner != nil {
+			return r.RowScanner.GetArrowIPCStreams(iterCtx, *r.config, r.ResultPageIterator)
+		}
+		if len(schemaBytes) == 0 {
+			schemaErr := r.emptyArrowSchemaErr
+			if schemaErr == nil {
+				schemaBytes, schemaErr = arrowbased.GetArrowSchemaBytes(iterCtx, r.metadataSnapshot(), r.config.ArrowConfig)
+			}
+			return arrowbased.NewArrowIPCStreamIterator(iterCtx, r.ResultPageIterator, nil, schemaBytes, *r.config, schemaErr), nil
+		}
+		return arrowbased.NewArrowIPCStreamIterator(iterCtx, r.ResultPageIterator, nil, schemaBytes, *r.config), nil
+	}), nil
+}
+
+func (r *rows) getArrowSchemaBytes(ctx context.Context) ([]byte, error) {
+	if r.pendingArrowPage != nil {
+		if err := r.makeRowScanner(r.pendingArrowPage); err != nil {
+			return nil, err
+		}
+		r.pendingArrowPage = nil
+		return nil, nil
+	}
+	metadata := r.metadataSnapshot()
+	if metadata == nil || len(metadata.ArrowSchema) == 0 {
+		if r.ResultPageIterator.HasNext() {
+			r.useServerArrowSchema(r.ResultPageIterator.ResultSetMetadata())
+			metadata = r.metadataSnapshot()
+			if metadata != nil && len(metadata.ArrowSchema) > 0 {
+				return metadata.ArrowSchema, nil
+			}
+			page, err := r.ResultPageIterator.Next()
+			if err != nil {
+				return nil, err
+			}
+			r.pendingArrowPage = page
+			r.useServerArrowSchema(page.ResultSetMetadata)
+			if err := r.makeRowScanner(page); err != nil {
+				return nil, err
+			}
+			r.pendingArrowPage = nil
+			return nil, nil
+		}
+		if err := r.ResultPageIterator.Err(); err != nil {
+			return nil, err
+		}
+		r.useServerArrowSchema(r.ResultPageIterator.ResultSetMetadata())
+	}
+	if _, err := r.getResultSetSchema(); err != nil {
+		return nil, err
+	}
+	r.initializeEmptyArrowSchema()
+	metadata = r.metadataSnapshot()
+	if len(metadata.ArrowSchema) == 0 {
+		return nil, nil
+	}
+	return metadata.ArrowSchema, nil
+}
+
+func (r *rows) initializeEmptyArrowSchema() {
+	if r.emptyArrowSchemaAttempted {
+		return
+	}
+	r.emptyArrowSchemaAttempted = true
+	if metadata := r.metadataSnapshot(); metadata != nil && len(metadata.ArrowSchema) > 0 {
+		return
+	}
+	pages, ok := r.ResultPageIterator.(interface {
+		EmptyResultPage() *cli_service.TFetchResultsResp
+	})
+	if !ok {
+		return
+	}
+	page := pages.EmptyResultPage()
+	if page == nil || page.Results == nil || len(page.Results.ArrowBatches) == 0 {
+		return
+	}
+	schemaBytes, err := arrowbased.GetEmptyArrowSchemaBytes(r.ctx, page.Results, r.metadataSnapshot(), r.config)
+	r.emptyArrowSchemaErr = err
+	if len(schemaBytes) > 0 {
+		r.useServerArrowSchema(&cli_service.TGetResultSetMetadataResp{ArrowSchema: schemaBytes})
+	}
+}
+
+func (r *rows) metadataSnapshot() *cli_service.TGetResultSetMetadataResp {
+	r.metadataMu.Lock()
+	defer r.metadataMu.Unlock()
+	return r.resultSetMetadata
+}
+
+func (r *rows) useServerArrowSchema(metadata *cli_service.TGetResultSetMetadataResp) {
+	r.metadataMu.Lock()
+	defer r.metadataMu.Unlock()
+	if metadata == nil || (r.resultSetMetadata != nil && len(r.resultSetMetadata.ArrowSchema) > 0) {
+		return
+	}
+	if r.resultSetMetadata == nil {
+		r.resultSetMetadata = metadata
+		r.schema = metadata.Schema
+		return
+	}
+	if len(metadata.ArrowSchema) == 0 {
+		return
+	}
+	merged := *r.resultSetMetadata
+	merged.ArrowSchema = metadata.ArrowSchema
+	r.resultSetMetadata = &merged
 }
