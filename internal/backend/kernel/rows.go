@@ -202,6 +202,16 @@ func (r *kernelRows) ColumnTypeLength(index int) (length int64, ok bool) {
 	return ct.Length, ct.HasLength
 }
 
+// ColumnTypePrecisionScale returns the declared precision and scale for a
+// DECIMAL column, matching the Thrift path.
+func (r *kernelRows) ColumnTypePrecisionScale(index int) (precision, scale int64, ok bool) {
+	if index < 0 || index >= len(r.colTypes) {
+		return 0, 0, false
+	}
+	ct := r.colTypes[index]
+	return ct.Precision, ct.Scale, ct.HasPrecisionScale
+}
+
 // Close releases the current batch, the kernel result stream, and (query-path
 // ownership) the server operation. Idempotent.
 func (r *kernelRows) Close() error {

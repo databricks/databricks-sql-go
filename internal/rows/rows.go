@@ -559,6 +559,28 @@ func (r *rows) ColumnTypeLength(index int) (length int64, ok bool) {
 	return columnTypeLengthForID(rowscanner.GetDBTypeID(columnInfo))
 }
 
+// ColumnTypePrecisionScale returns the declared precision and scale for a
+// DECIMAL column. Non-decimal columns and incomplete metadata return ok=false.
+func (r *rows) ColumnTypePrecisionScale(index int) (precision, scale int64, ok bool) {
+	columnInfo, err := r.getColumnMetadataByIndex(index)
+	if err != nil || rowscanner.GetDBTypeID(columnInfo) != cli_service.TTypeId_DECIMAL_TYPE {
+		return 0, 0, false
+	}
+
+	qualifiers := rowscanner.GetDBTypeQualifiers(columnInfo)
+	if qualifiers == nil {
+		return 0, 0, false
+	}
+	precisionQualifier := qualifiers.Qualifiers["precision"]
+	scaleQualifier := qualifiers.Qualifiers["scale"]
+	if precisionQualifier == nil || !precisionQualifier.IsSetI32Value() ||
+		scaleQualifier == nil || !scaleQualifier.IsSetI32Value() {
+		return 0, 0, false
+	}
+
+	return int64(precisionQualifier.GetI32Value()), int64(scaleQualifier.GetI32Value()), true
+}
+
 // columnTypeLengthForID is the variable-length classification behind
 // ColumnTypeLength, factored out of the method (which needs a live *rows and a
 // server round-trip to reach it) so the exact rule can be reused verbatim — in
