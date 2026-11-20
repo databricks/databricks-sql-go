@@ -167,7 +167,7 @@ func TestNewConnector(t *testing.T) {
 			MaxFilesInMemory:             10,
 			MinTimeToExpiry:              0 * time.Second,
 			CloudFetchSpeedThresholdMbps: 0.1,
-			HTTPClient:                   &http.Client{Transport: roundTripper},
+			HTTPClient:                   &http.Client{Transport: roundTripper, Timeout: 900 * time.Second},
 		}
 		expectedUserConfig := config.UserConfig{
 			Host:             host,

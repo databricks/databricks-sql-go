@@ -1,6 +1,7 @@
 # Release History
 
 ## Unreleased (v2.0.0 prototype)
+- **Behavior change:** Each Thrift CloudFetch download attempt, including clients built for `WithTransport`, is bounded by the driver's 900s `ClientTimeout` across the whole transfer, not just inactivity; failed attempts follow `WithRetries`. Default downloads honor a shorter `http.DefaultClient.Timeout`; there is no separate opt-out (databricks/databricks-sql-go#475).
 
 - Fix leaked HTTP connections after failed or retry-exhausted requests, which could exhaust a connector's connection pool. Remove the MPL-2.0 go-retryablehttp and go-cleanhttp dependencies while preserving first-send bodies, streaming trailers and retry behavior (databricks/databricks-sql-go#177).
 - Fix OAuth M2M token requests hanging indefinitely when the token endpoint stops responding. Each request now uses a copy of `http.DefaultClient` with a timeout of at most 60s; `WithRetries` repeats failed fetches (databricks/databricks-sql-go#475).
