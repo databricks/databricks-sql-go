@@ -17,6 +17,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -639,28 +640,43 @@ func PooledTransport(cfg *config.Config) *http.Transport {
 	return transport
 }
 
+var oauthTransport = sync.OnceValue(func() *http.Transport { return PooledTransport(&config.Config{}) })
+
 func PooledClient(cfg *config.Config) *http.Client {
 	if cfg.Authenticator == nil {
 		return nil
 	}
 
-	var tr *Transport
-	if cfg.Transport != nil {
-		tr = &Transport{
-			Base:  cfg.Transport,
-			Authr: cfg.Authenticator,
+	base := cfg.Transport
+	if base == nil {
+		base = PooledTransport(cfg)
+	}
+	authenticator := cfg.Authenticator
+	if configurable, ok := authenticator.(interface {
+		WithHTTPClient(*http.Client) auth.Authenticator
+	}); ok {
+		httpClient := &http.Client{
+			Transport: &userAgentTransport{base: oauthTransport(), userAgent: BuildUserAgent(cfg)},
+			Timeout:   cfg.ClientTimeout,
 		}
-	} else {
-		tr = &Transport{
-			Base:  PooledTransport(cfg),
-			Authr: cfg.Authenticator,
-		}
+		authenticator = configurable.WithHTTPClient(httpClient)
 	}
 
 	return &http.Client{
-		Transport: tr,
+		Transport: &Transport{Base: base, Authr: authenticator},
 		Timeout:   cfg.ClientTimeout,
 	}
+}
+
+type userAgentTransport struct {
+	base      http.RoundTripper
+	userAgent string
+}
+
+func (transport *userAgentTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	cloned := cloneRequest(request)
+	cloned.Header.Set("User-Agent", transport.userAgent)
+	return transport.base.RoundTrip(cloned)
 }
 
 // cloneRequest returns a clone of the provided *http.Request.

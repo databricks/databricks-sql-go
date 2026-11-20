@@ -1,11 +1,14 @@
 package dbsql
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
 
+	"github.com/databricks/databricks-sql-go/auth"
 	"github.com/databricks/databricks-sql-go/auth/pat"
 	"github.com/databricks/databricks-sql-go/auth/tokenprovider"
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
@@ -55,6 +58,53 @@ func TestFederatedTokenAuthenticatorPreservesThriftTokenExchange(t *testing.T) {
 	exchange := <-exchangeRequests
 	assert.Equal(t, "/oidc/v1/token", exchange.path)
 	assert.Equal(t, subjectToken, exchange.subjectToken)
+}
+
+type connectorOAuthRecorder struct {
+	auth.Authenticator
+	client *http.Client
+}
+
+func (recorder *connectorOAuthRecorder) WithHTTPClient(client *http.Client) auth.Authenticator {
+	recorder.client = client
+	return recorder.Authenticator.(interface {
+		WithHTTPClient(*http.Client) auth.Authenticator
+	}).WithHTTPClient(client)
+}
+
+func TestM2MConnectorHTTPConfiguration(t *testing.T) {
+	agents := make(chan string, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		agents <- request.UserAgent()
+		writer.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(server.Close)
+	for _, dsn := range []bool{false, true} {
+		t.Run(fmt.Sprintf("dsn=%t", dsn), func(t *testing.T) {
+			caller := &http.Transport{Proxy: func(*http.Request) (*url.URL, error) {
+				return nil, fmt.Errorf("OAuth must not use the caller transport")
+			}}
+			t.Cleanup(caller.CloseIdleConnections)
+			options := []ConnOption{WithServerHostname("test.cloud.databricks.com"), WithHTTPPath("/query"),
+				WithClientCredentials("id", "secret"), WithUserAgentEntry("Issue413/partner")}
+			if dsn {
+				cfg, err := config.ParseDSN("https://test.cloud.databricks.com:443/query?authType=OauthM2M&clientID=id&clientSecret=secret&userAgentEntry=Issue413%2Fpartner")
+				require.NoError(t, err)
+				options = []ConnOption{withUserConfig(cfg)}
+			}
+			recorder := &connectorOAuthRecorder{}
+			options = append(options, WithTransport(caller), func(cfg *config.Config) {
+				recorder.Authenticator, cfg.Authenticator = cfg.Authenticator, recorder
+			})
+			_, err := NewConnector(options...)
+			require.NoError(t, err)
+			require.NotNil(t, recorder.client)
+			response, err := recorder.client.Get(server.URL)
+			require.NoError(t, err, "bound OAuth base must bypass the caller transport")
+			require.NoError(t, response.Body.Close())
+			assert.Contains(t, <-agents, "Issue413/partner")
+		})
+	}
 }
 
 func TestWithClientQueryTimeout(t *testing.T) {
