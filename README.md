@@ -272,7 +272,7 @@ session parameter on both backends.
 |---|---|---|---|---|
 | `useArrowNativeDecimal` | `WithArrowNativeDecimal` | Thrift only (inert on kernel) | `false` | Thrift: return DECIMAL as native Arrow `decimal128` (lossless string when scanned via `database/sql`). The kernel path already renders DECIMAL as the exact string regardless. |
 | | `WithKernelDecimalAsFloat(b)` | SEA only | `false` | Scan top-level DECIMAL as lossy `float64` instead of the exact string. |
-| `enableGeoSpatialSupport` | `WithEnableGeoSpatialSupport(b)` | SEA only | `false` | `true`: return top-level GEOMETRY / GEOGRAPHY as EWKB `[]byte` with the per-row SRID embedded and logical geo column metadata; `GetArrowBatches` retains the full `{srid,wkb}` struct with OGC WKB. `false`: return WKT / EWKT strings reported as `STRING`. |
+| `enableGeoSpatialSupport` | `WithEnableGeoSpatialSupport(b)` | SEA only | `false` | `true`: return top-level GEOMETRY / GEOGRAPHY as EWKB `[]byte` with the per-row SRID embedded and a `sql.RawBytes` scan type; `GetArrowBatches` retains the full `{srid,wkb}` struct with OGC WKB. `false`: return WKT / EWKT strings with a `string` scan type. Both modes report the server SQL name including its declared SRID, such as `GEOMETRY(0)`, `GEOGRAPHY(4326)` or `GEOMETRY(ANY)`, rather than the bare names previously reported in enabled mode. |
 
 See [Cloud Fetch](#cloud-fetch), [TLS](#tls), and [Proxy](#proxy) for the remaining
 groups. Telemetry parameters are covered under [Telemetry](#telemetry).
@@ -375,6 +375,11 @@ in a `time.Time` with a UTC location), INTERVAL, and nested ARRAY / MAP /
 STRUCT and VARIANT (as JSON) are supported. BINARY is returned as `sql.RawBytes`.
 Both backends return GEOMETRY / GEOGRAPHY as WKT / EWKT by default.
 Set `enableGeoSpatialSupport=true` on the kernel path to opt into EWKB.
+In both modes, `ColumnType.DatabaseTypeName()` reports the server SQL name with
+its declared SRID for top-level columns. With `WithEnableGeoSpatialSupport(true)`,
+previously bare `GEOMETRY` / `GEOGRAPHY` names now include that SRID; match the
+family before `(` when selecting a decoder. Thrift retains `STRING` when no
+readable Arrow schema is available.
 
 In ARRAY / MAP / STRUCT JSON, non-finite FLOAT and DOUBLE values render as the
 strings `"NaN"`, `"Infinity"`, and `"-Infinity"`, distinct from SQL NULL (`null`).
