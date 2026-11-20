@@ -110,7 +110,7 @@ func TestParseTelemetryConfig_FlushIntervalInvalid(t *testing.T) {
 
 // telemetry_retry_count and telemetry_retry_delay DSN parameters are accepted
 // for backwards compatibility but are no longer applied — retries are owned by
-// the underlying retryablehttp-wrapped HTTP client.
+// the underlying retrying HTTP client.
 func TestParseTelemetryConfig_RetryParamsAccepted(t *testing.T) {
 	cfg := ParseTelemetryConfig(map[string]string{
 		"telemetry_retry_count": "5",

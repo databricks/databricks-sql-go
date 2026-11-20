@@ -119,7 +119,7 @@ func (e *telemetryExporter) doExport(ctx context.Context, metrics []*telemetryMe
 
 	endpoint := ensureHTTPScheme(e.host) + telemetryEndpointPath
 
-	// Opt out of retryablehttp's transient-response retries — the
+	// Opt out of the HTTP client's transient-response retries — the
 	// circuit breaker owns the backoff and needs one HTTP transaction per
 	// call so it can see each 429/503 directly. Otherwise the transport
 	// layer would honour Retry-After once internally and the breaker
@@ -135,10 +135,8 @@ func (e *telemetryExporter) doExport(ctx context.Context, metrics []*telemetryMe
 		req.Header.Set("User-Agent", e.userAgent)
 	}
 
-	// With SkipTransientRetries set, retryablehttp returns (resp, err)
-	// for a 429/503: a wrapped error AND the actual response. Inspect
-	// the response before short-circuiting on err so we can read
-	// Retry-After.
+	// SkipTransientRetries returns 429/503 responses without an error,
+	// letting the circuit breaker inspect Retry-After.
 	resp, doErr := e.httpClient.Do(req)
 	if resp != nil {
 		_, _ = io.ReadAll(resp.Body)

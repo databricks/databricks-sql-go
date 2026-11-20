@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"io"
 	"net/http"
-	"net/url"
 	"time"
 
 	"github.com/databricks/databricks-sql-go/logger"
@@ -28,7 +27,9 @@ func (transport *retryTransport) RoundTrip(request *http.Request) (*http.Respons
 			if err != nil {
 				return nil, err
 			}
-			contentLength = int64(len(body))
+			if len(body) == 0 {
+				contentLength = 0
+			}
 			getBody = func() (io.ReadCloser, error) {
 				if len(body) == 0 {
 					return http.NoBody, nil
@@ -68,9 +69,6 @@ func (transport *retryTransport) RoundTrip(request *http.Request) (*http.Respons
 				_ = response.Body.Close()
 			}
 			transport.client.CloseIdleConnections()
-			if urlErr, ok := err.(*url.Error); ok {
-				err = urlErr.Err
-			}
 			return nil, err
 		}
 

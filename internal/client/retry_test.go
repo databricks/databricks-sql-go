@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -280,12 +281,16 @@ func TestRetryBodyPreparation(t *testing.T) {
 	for _, useGetBody := range []bool{false, true} {
 		t.Run(fmt.Sprintf("GetBody=%t", useGetBody), func(t *testing.T) {
 			payload := "statement\x00bytes"
+			wantContentLength := int64(-1)
+			if useGetBody {
+				wantContentLength = int64(len(payload))
+			}
 			var attempts atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 				body, err := io.ReadAll(request.Body)
 				assert.NoError(t, err)
 				assert.Equal(t, payload, string(body))
-				assert.Equal(t, int64(len(payload)), request.ContentLength)
+				assert.Equal(t, wantContentLength, request.ContentLength)
 				if attempts.Add(1) < 3 {
 					writer.WriteHeader(http.StatusServiceUnavailable)
 				}
@@ -339,6 +344,100 @@ func TestRetryBodyReadFailure(t *testing.T) {
 	require.ErrorIs(t, err, wantErr)
 	require.NotContains(t, err.Error(), "request error after")
 	require.True(t, body.closed.Load())
+}
+
+func TestRetryPreservesChunkedTrailers(t *testing.T) {
+	for _, contentLength := range []int64{0, -1} {
+		t.Run(fmt.Sprint(contentLength), func(t *testing.T) {
+			var attempts atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				body, err := io.ReadAll(request.Body)
+				assert.NoError(t, err)
+				assert.Equal(t, "statement", string(body))
+				assert.Equal(t, int64(-1), request.ContentLength)
+				assert.Equal(t, []string{"chunked"}, request.TransferEncoding)
+				assert.Equal(t, "abc", request.Trailer.Get("X-Checksum"))
+				if attempts.Add(1) < 3 {
+					writer.WriteHeader(http.StatusServiceUnavailable)
+				}
+			}))
+			defer server.Close()
+			request, err := http.NewRequest(http.MethodPost, server.URL, io.NopCloser(strings.NewReader("statement")))
+			require.NoError(t, err)
+			request.ContentLength = contentLength
+			request.Trailer = http.Header{"X-Checksum": []string{"abc"}}
+			response, err := RetryableClient(retryTestConfig(2)).Do(request)
+			require.NoError(t, err)
+			require.NoError(t, response.Body.Close())
+			require.Equal(t, int32(3), attempts.Load())
+			require.Equal(t, contentLength, request.ContentLength)
+		})
+	}
+}
+
+func TestRetryPreservesDeclaredContentLength(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		_, _ = io.Copy(io.Discard, request.Body)
+	}))
+	defer server.Close()
+	for _, contentLength := range []int64{1, 100} {
+		t.Run(fmt.Sprint(contentLength), func(t *testing.T) {
+			request, err := http.NewRequest(http.MethodPost, server.URL, io.NopCloser(strings.NewReader("statement")))
+			require.NoError(t, err)
+			request.ContentLength = contentLength
+			response, err := RetryableClient(retryTestConfig(0)).Do(request)
+			if response != nil {
+				_ = response.Body.Close()
+			}
+			require.Nil(t, response)
+			require.ErrorContains(t, err, "ContentLength=")
+		})
+	}
+}
+
+func TestRetryGetBodyFailure(t *testing.T) {
+	var attempts atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		attempts.Add(1)
+	}))
+	defer server.Close()
+	body := &trackedRetryBody{ReadCloser: io.NopCloser(strings.NewReader("statement"))}
+	request, err := http.NewRequest(http.MethodPost, server.URL, body)
+	require.NoError(t, err)
+	wantErr := errors.New("GetBody failed")
+	request.GetBody = func() (io.ReadCloser, error) { return nil, wantErr }
+	response, err := RetryableClient(retryTestConfig(2)).Do(request)
+	if response != nil {
+		_ = response.Body.Close()
+	}
+	require.Nil(t, response)
+	require.ErrorIs(t, err, wantErr)
+	require.True(t, body.closed.Load())
+	require.Zero(t, body.read.Load())
+	require.Zero(t, attempts.Load())
+}
+
+func TestRetryWithoutAuthenticator(t *testing.T) {
+	var attempts atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if attempts.Add(1) < 2 {
+			writer.WriteHeader(http.StatusServiceUnavailable)
+		}
+	}))
+	defer server.Close()
+	httpClient := RetryableClient(&config.Config{RetryMax: 1})
+	retry, ok := httpClient.Transport.(*retryTransport)
+	require.True(t, ok)
+	transport, ok := retry.client.Transport.(*http.Transport)
+	require.True(t, ok)
+	defer transport.CloseIdleConnections()
+	require.Equal(t, 90*time.Second, transport.IdleConnTimeout)
+	require.Equal(t, runtime.GOMAXPROCS(0)+1, transport.MaxIdleConnsPerHost)
+	require.Zero(t, transport.MaxConnsPerHost)
+	response, err := httpClient.Get(server.URL)
+	require.NoError(t, err)
+	require.NoError(t, response.Body.Close())
+	require.Equal(t, int32(2), attempts.Load())
 }
 
 func TestRetryPreservesRedirectReplayability(t *testing.T) {
