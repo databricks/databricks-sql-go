@@ -535,6 +535,7 @@ func WithTransport(t http.RoundTripper) ConnOption {
 		if c.HTTPClient == nil {
 			c.HTTPClient = &http.Client{
 				Transport: t,
+				Timeout:   c.ClientTimeout,
 			}
 		}
 	}

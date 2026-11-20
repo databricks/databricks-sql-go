@@ -59,9 +59,9 @@ func NewCloudIPCStreamIterator(
 	cfg *config.Config,
 	onFileDownloaded func(downloadMs int64),
 ) (IPCStreamIterator, dbsqlerr.DBError) {
-	httpClient := http.DefaultClient
-	if cfg.HTTPClient != nil {
-		httpClient = cfg.HTTPClient
+	httpClient := cfg.HTTPClient
+	if httpClient == nil {
+		httpClient = &http.Client{Timeout: cfg.ClientTimeout}
 	}
 
 	bi := &cloudIPCStreamIterator{
