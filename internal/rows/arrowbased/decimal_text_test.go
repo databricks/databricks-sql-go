@@ -180,11 +180,11 @@ func TestDecimalTextGateUsesDeclaredScale(t *testing.T) {
 			require.NoError(t, err)
 			scanner, err := NewArrowRowScanner(metadata, &cli_service.TRowSet{}, &config.Config{}, nil, context.Background(), nil)
 			require.NoError(t, err)
+			t.Cleanup(scanner.Close)
 			columns := scanner.(*arrowRowScanner).colInfo
 			require.Len(t, columns, 1)
 			require.Equal(t, scale, *columns[0].decimalScale)
 			require.Equal(t, scale > 6, columns[0].checkDecimalText)
-			scanner.Close()
 		}
 	}
 }
