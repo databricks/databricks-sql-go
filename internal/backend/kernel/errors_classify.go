@@ -138,6 +138,9 @@ func isBadConnection(code int) bool {
 // invalid session handles are fatal; other missing resources or invalid
 // arguments leave the session usable.
 func isSessionFatal(ke *KernelError) bool {
+	if ke.ErrorCode == "VOLUME_STORAGE_HTTP_ERROR" || ke.ErrorCode == "VOLUME_STORAGE_NETWORK_ERROR" {
+		return false
+	}
 	switch ke.Code {
 	case statusUnauthenticated, statusUnavailable, statusNetworkError:
 		return true

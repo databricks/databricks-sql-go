@@ -22,6 +22,7 @@ import (
 	"github.com/apache/arrow-go/v18/arrow/ipc"
 	"github.com/apache/arrow-go/v18/arrow/memory"
 	"github.com/databricks/databricks-sql-go/driverctx"
+	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 	"github.com/databricks/databricks-sql-go/internal/backend"
 	"github.com/databricks/databricks-sql-go/internal/backend/kernel"
 	"github.com/stretchr/testify/require"
@@ -35,7 +36,7 @@ type cancelOnCompletionErrorContext struct {
 
 func (c *cancelOnCompletionErrorContext) Err() error {
 	c.errCalls++
-	// Deliver cancellation after native completion returns to make the error race deterministic.
+	// CompleteStaging checks Err before completion and again after a native failure.
 	if c.errCalls == 2 {
 		c.cancel()
 	}
@@ -43,11 +44,26 @@ func (c *cancelOnCompletionErrorContext) Err() error {
 }
 
 func TestKernelVolumeFailureOriginControlsSessionValidity(t *testing.T) {
-	for _, mode := range []string{"instruction401", "storage401", "storageBody", "instruction401Cancelled", "storage401Cancelled"} {
-		t.Run(mode, func(t *testing.T) {
+	for _, tc := range []struct {
+		name, operation, local, errorCode                             string
+		status                                                        int
+		instruction, cancelAfterError, inFlight, success, invalidRoot bool
+	}{
+		{name: "instruction401", instruction: true, errorCode: "SESSION_EXPIRED"},
+		{name: "storage401", status: 401, errorCode: "VOLUME_STORAGE_HTTP_ERROR"},
+		{name: "storageBody", errorCode: "VOLUME_STORAGE_NETWORK_ERROR"},
+		{name: "instruction401Cancelled", instruction: true, cancelAfterError: true, errorCode: "SESSION_EXPIRED"},
+		{name: "getSuccess", success: true},
+		{name: "removeNotFound", operation: "REMOVE", status: 404, success: true},
+		{name: "inFlightCancel", inFlight: true},
+		{name: "streamPut", operation: "PUT", local: "__input_stream__"},
+		{name: "invalidUTF8Root", invalidRoot: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			directory := t.TempDir()
 			destination := filepath.Join(directory, "download.bin")
 			var result map[string]any
+			storageStarted := make(chan struct{})
 			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				_, _ = io.Copy(io.Discard, r.Body)
 				w.Header().Set("Content-Type", "application/json")
@@ -60,8 +76,13 @@ func TestKernelVolumeFailureOriginControlsSessionValidity(t *testing.T) {
 					w.WriteHeader(401)
 					_, _ = io.WriteString(w, `{"error_code":"SESSION_EXPIRED","message":"instruction session expired","sql_state":"08003"}`)
 				case r.URL.Path == "/object":
-					if strings.HasPrefix(mode, "storage401") {
-						w.WriteHeader(401)
+					if tc.inFlight {
+						close(storageStarted)
+						<-r.Context().Done()
+					} else if tc.status != 0 {
+						w.WriteHeader(tc.status)
+					} else if tc.success {
+						_, _ = io.WriteString(w, "downloaded")
 					} else {
 						w.Header().Set("Content-Length", "20")
 						_, _ = io.WriteString(w, "short")
@@ -72,7 +93,14 @@ func TestKernelVolumeFailureOriginControlsSessionValidity(t *testing.T) {
 			}))
 			defer server.Close()
 			names := []string{"operation", "presignedUrl", "headers", "localFile"}
-			values := []string{"GET", server.URL + "/object", "{}", destination}
+			operation, local := tc.operation, destination
+			if operation == "" {
+				operation = "GET"
+			}
+			if tc.local != "" {
+				local = tc.local
+			}
+			values := []string{operation, server.URL + "/object", "{}", local}
 			fields, columns := make([]arrow.Field, 4), make([]arrow.Array, 4)
 			manifestColumns := make([]map[string]any, 4)
 			for i, name := range names {
@@ -93,7 +121,7 @@ func TestKernelVolumeFailureOriginControlsSessionValidity(t *testing.T) {
 			require.NoError(t, writer.Close())
 			chunk := map[string]any{"chunk_index": 0, "row_offset": 0, "row_count": 1, "attachment": base64.StdEncoding.EncodeToString(attachment.Bytes())}
 			chunks := 1
-			if strings.HasPrefix(mode, "instruction401") {
+			if tc.instruction {
 				chunk["next_chunk_index"], chunks = 1, 2
 			}
 			result = map[string]any{
@@ -111,7 +139,7 @@ func TestKernelVolumeFailureOriginControlsSessionValidity(t *testing.T) {
 			connection, err := db.Conn(ctx)
 			require.NoError(t, err)
 			defer connection.Close()
-			if strings.HasSuffix(mode, "Cancelled") {
+			if tc.cancelAfterError {
 				err = connection.Raw(func(raw any) error {
 					operation, err := raw.(*conn).backend.Execute(ctx, backend.ExecRequest{Query: "GET instruction"})
 					if err != nil {
@@ -121,26 +149,38 @@ func TestKernelVolumeFailureOriginControlsSessionValidity(t *testing.T) {
 					cancelContext, cancelError := context.WithCancel(ctx)
 					defer cancelError()
 					stagingContext := driverctx.NewContextWithStagingInfo(&cancelOnCompletionErrorContext{Context: cancelContext, cancel: cancelError}, []string{directory})
-					return operation.(interface{ CompleteStaging(context.Context) error }).CompleteStaging(stagingContext)
+					return operation.(backend.StagingCompleter).CompleteStaging(stagingContext)
 				})
 				require.ErrorIs(t, err, context.Canceled)
 			} else {
-				_, err = connection.ExecContext(driverctx.NewContextWithStagingInfo(ctx, []string{directory}), "GET instruction")
+				roots := []string{directory}
+				if tc.invalidRoot {
+					roots = []string{directory + string([]byte{0xff})}
+				}
+				if tc.inFlight {
+					go func() { <-storageStarted; cancel() }()
+				}
+				_, err = connection.ExecContext(driverctx.NewContextWithStagingInfo(ctx, roots), "Volume instruction")
 			}
-			require.Error(t, err)
-			require.NotErrorIs(t, err, driver.ErrBadConn)
-			var detail *kernel.KernelError
-			require.ErrorAs(t, err, &detail)
-			wantCode := "VOLUME_STORAGE_HTTP_ERROR"
-			if strings.HasPrefix(mode, "instruction401") {
-				wantCode = "SESSION_EXPIRED"
+			if tc.success {
+				require.NoError(t, err)
+				if tc.operation != "REMOVE" {
+					require.FileExists(t, destination)
+				}
+			} else if tc.errorCode == "" {
+				require.ErrorIs(t, err, dbsqlerr.DriverError)
+				if tc.inFlight {
+					require.ErrorIs(t, err, context.Canceled)
+				}
+			} else {
+				require.Error(t, err)
+				require.NotErrorIs(t, err, driver.ErrBadConn)
+				var detail *kernel.KernelError
+				require.ErrorAs(t, err, &detail)
+				require.Equal(t, tc.errorCode, detail.ErrorCode)
 			}
-			if mode == "storageBody" {
-				wantCode = "VOLUME_STORAGE_NETWORK_ERROR"
-			}
-			require.Equal(t, wantCode, detail.ErrorCode)
 			require.NoError(t, connection.Raw(func(raw any) error {
-				require.Equal(t, !strings.HasPrefix(mode, "instruction401"), raw.(driver.Validator).IsValid())
+				require.Equal(t, !tc.instruction, raw.(driver.Validator).IsValid())
 				return nil
 			}))
 		})

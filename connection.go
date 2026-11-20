@@ -821,7 +821,7 @@ func (c *conn) execStagingOperation(
 	}
 
 	if len(driverctx.StagingPathsFromContext(ctx)) != 0 {
-		if native, ok := op.(interface{ CompleteStaging(context.Context) error }); ok {
+		if native, ok := op.(backend.StagingCompleter); ok {
 			if err := native.CompleteStaging(ctx); err != nil {
 				return dbsqlerrint.NewDriverError(ctx, "error performing staging operation", err)
 			}

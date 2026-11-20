@@ -65,7 +65,6 @@ import "C"
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strconv"
 	"strings"

@@ -1096,6 +1096,7 @@ func TestConnNativeStagingDispatch(t *testing.T) {
 		completionErr                      error
 	}{
 		{name: "missing roots", marked: true, wantError: true},
+		{name: "unmarked operation with roots", roots: true},
 		{name: "native completion", marked: true, roots: true, wantCall: true},
 		{name: "native completion error", marked: true, roots: true, wantCall: true, wantError: true, completionErr: completionErr},
 	} {
