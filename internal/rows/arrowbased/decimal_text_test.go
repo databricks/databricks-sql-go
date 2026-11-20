@@ -120,6 +120,62 @@ func TestScanRowDecimalTextScaleGate(t *testing.T) {
 	}
 }
 
+// With native decimals enabled, a DECIMAL the server still sends as an Arrow string
+// misses the decimal128 path and takes the same text normalization.
+func TestScanRowDecimalTextWithNativeDecimalStringField(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		scale int32
+		value string
+		want  string
+	}{
+		{"scale_six", 6, "1E-6", "1E-6"},
+		{"scale_seven", 7, "1E-7", "0.0000001"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			scale := test.scale
+			thriftSchema := &cli_service.TTableSchema{Columns: []*cli_service.TColumnDesc{{
+				ColumnName: "amount",
+				TypeDesc: &cli_service.TTypeDesc{Types: []*cli_service.TTypeEntry{{
+					PrimitiveEntry: &cli_service.TPrimitiveTypeEntry{
+						Type: cli_service.TTypeId_DECIMAL_TYPE,
+						TypeQualifiers: &cli_service.TTypeQualifiers{Qualifiers: map[string]*cli_service.TTypeQualifierValue{
+							cli_service.SCALE: {I32Value: &scale},
+						}},
+					},
+				}}},
+			}}}
+			metadata := getMetadataResp(thriftSchema)
+			var err error
+			metadata.ArrowSchema, err = getArrowSchemaBytes(
+				arrow.NewSchema([]arrow.Field{{Name: "amount", Type: arrow.BinaryTypes.String, Nullable: true}}, nil),
+				context.Background())
+			require.NoError(t, err)
+			cfg := &config.Config{}
+			cfg.UseArrowNativeDecimal = true
+			rowSet := &cli_service.TRowSet{ArrowBatches: []*cli_service.TSparkArrowBatch{{RowCount: 1}}}
+			rowScanner, err := NewArrowRowScanner(metadata, rowSet, cfg, nil, context.Background(), nil)
+			require.NoError(t, err)
+			scanner := rowScanner.(*arrowRowScanner)
+			t.Cleanup(scanner.Close)
+			require.True(t, scanner.UseArrowNativeDecimal)
+			require.NoError(t, scanner.makeColumnValuesContainers(scanner, rowscanner.NewDelimiter(0, 1)))
+			builder := array.NewStringBuilder(memory.DefaultAllocator)
+			defer builder.Release()
+			builder.Append(test.value)
+			values := builder.NewStringArray()
+			defer values.Release()
+			require.NoError(t, scanner.rowValues.SetColumnValues(0, values.Data()))
+
+			_, native := scanner.rowValues.DecimalStringValue(0, 0)
+			require.False(t, native)
+			destination := make([]driver.Value, 1)
+			require.NoError(t, scanner.ScanRow(destination, 0))
+			require.Equal(t, test.want, destination[0])
+		})
+	}
+}
+
 func TestScanRowNonDecimalTextUnchanged(t *testing.T) {
 	scale := int32(7)
 	scanner := decimalTextScanner(t, "1E-7", &scale, cli_service.TTypeId_STRING_TYPE)
