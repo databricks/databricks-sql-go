@@ -54,6 +54,12 @@ func TestScanRowDecimalText(t *testing.T) {
 		{"sub_one", "0.50", 2, "0.50"},
 		{"negative_sub_one", "-0.05", 2, "-0.05"},
 		{"small_exponent", "1E-7", 7, "0.0000001"},
+		{"negative_scale_integer", "1E+3", -3, "1E+3"},
+		{"negative_scale_fraction", "1.23E+5", -3, "1.23E+5"},
+		{"negative_scale_zero", "0E+3", -3, "0E+3"},
+		{"fractional_exponent", "1.2E-7", 8, "0.00000012"},
+		{"average_exponent", "1.0000E-7", 11, "0.00000010000"},
+		{"wide_fractional_exponent", "-1.000000000000000000000000000000E-7", 37, "-0.0000001000000000000000000000000000000"},
 		{"trailing_zeros", "100.00", 2, "100.00"},
 		{"wide", "123456789012345678901234567.89", 2, "123456789012345678901234567.89"},
 		{"negative_exponent", "-1e-7", 7, "-0.0000001"},
@@ -160,7 +166,7 @@ func TestDecimalScaleQualifiersOptional(t *testing.T) {
 }
 
 func TestDecimalTextGateUsesDeclaredScale(t *testing.T) {
-	for _, scale := range []int32{0, 6, 7, 38} {
+	for _, scale := range []int32{-3, 0, 6, 7, 38} {
 		for _, physicalType := range []arrow.DataType{arrow.BinaryTypes.String, &arrow.Decimal128Type{Precision: 38, Scale: 2}} {
 			thriftSchema := &cli_service.TTableSchema{Columns: []*cli_service.TColumnDesc{{
 				ColumnName: "amount",

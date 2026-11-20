@@ -1004,21 +1004,23 @@ func testDSNQueryTimeout(t *testing.T, host, httpPath, token, params string, acc
 }
 
 func TestE2EDecimalTextRendering(t *testing.T) {
+	host, httpPath, token := pecoTestingCreds(t)
 	for _, native := range []bool{false, true} {
 		t.Run(fmt.Sprintf("native=%t", native), func(t *testing.T) {
-			assertDecimalTextRendering(t, WithArrowNativeDecimal(native))
+			connector, err := NewConnector(
+				WithServerHostname(host), WithHTTPPath(httpPath), WithAccessToken(token),
+				WithArrowNativeDecimal(native),
+			)
+			require.NoError(t, err)
+			db := sql.OpenDB(connector)
+			t.Cleanup(func() { require.NoError(t, db.Close()) })
+			assertDecimalTextRendering(t, db)
 		})
 	}
 }
 
-func assertDecimalTextRendering(t *testing.T, options ...ConnOption) {
+func assertDecimalTextRendering(t *testing.T, db *sql.DB) {
 	t.Helper()
-	host, httpPath, token := pecoTestingCreds(t)
-	options = append([]ConnOption{WithServerHostname(host), WithHTTPPath(httpPath), WithAccessToken(token)}, options...)
-	connector, err := NewConnector(options...)
-	require.NoError(t, err)
-	db := sql.OpenDB(connector)
-	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	const query = `SELECT

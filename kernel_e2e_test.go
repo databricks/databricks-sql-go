@@ -48,7 +48,13 @@ func TestKernelE2EDecimalMetadata(t *testing.T) {
 }
 
 func TestKernelE2EDecimalTextRendering(t *testing.T) {
-	assertDecimalTextRendering(t, WithUseKernel(true))
+	db := kernelTestDBWith(t)
+	t.Cleanup(func() {
+		if err := db.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	assertDecimalTextRendering(t, db)
 }
 
 // TestKernelE2ESelect1 is the smallest end-to-end proof: PAT session over the

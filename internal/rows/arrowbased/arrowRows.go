@@ -568,7 +568,7 @@ func getColumnInfo(arrowSchema *arrow.Schema, schema *cli_service.TTableSchema) 
 			// https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/math/BigDecimal.html#toString()
 			// Other server formats retain the prior passthrough at these scales.
 			scale := colInfos[i].decimalScale
-			colInfos[i].checkDecimalText = scale == nil || *scale < 0 || *scale > 6
+			colInfos[i].checkDecimalText = scale == nil || *scale > 6
 		}
 	}
 
