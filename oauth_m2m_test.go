@@ -136,18 +136,22 @@ func TestM2MTransportCanReauthenticateSharedAuthenticator(t *testing.T) {
 		t.Run(host, func(t *testing.T) {
 			endpoint := newM2MTestEndpoint(t, host, 3600)
 			shared := m2m.NewAuthenticator("test-client", "test-secret", host)
-			transport := m2mRoundTripper(func(request *http.Request) (*http.Response, error) {
+			active := shared
+			transport := &m2mIdentityTransport{m2mRoundTripper(func(request *http.Request) (*http.Response, error) {
 				cloned := request.Clone(request.Context())
-				if request.URL.Path != "/query" {
-					if err := shared.Authenticate(cloned); err != nil {
-						return nil, err
-					}
+				authenticator := shared
+				if request.URL.Path == "/query" {
+					authenticator = active
+				}
+				if err := authenticator.Authenticate(cloned); err != nil {
+					return nil, err
 				}
 				return endpoint.transport.RoundTrip(cloned)
-			})
+			})}
 			created, err := NewConnector(WithServerHostname(host), WithHTTPPath("/query"),
 				WithAuthenticator(shared), WithTransport(transport), WithRetries(0, 0, 0))
 			require.NoError(t, err)
+			active = client.PooledClient(created.(*connector).cfg).Transport.(*client.Transport).Authr
 			requestWithM2M(t, created.(*connector))
 			requestWithM2M(t, created.(*connector))
 			require.Equal(t, int32(1), endpoint.tokenHits.Load())
