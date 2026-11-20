@@ -375,7 +375,7 @@ With the kernel backend, ExecContext completes the transfer and reports zero
 rows affected. QueryContext returns raw instruction rows without file effects.
 Both the requested local path and its resolved symlink target must remain
 within the configured staging roots. Symlinks within those roots are permitted;
-escapes are rejected, which is stricter than Thrift's requested-path check.
+escapes are rejected.
 The staging context is required for REMOVE as well as PUT and GET.
 
 # Errors

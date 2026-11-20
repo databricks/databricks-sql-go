@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/databricks/databricks-sql-go/driverctx"
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
@@ -350,6 +351,7 @@ type kernelOp struct {
 }
 
 var _ backend.Operation = (*kernelOp)(nil)
+var _ backend.StagingCompleter = (*kernelOp)(nil)
 
 // StatementID returns the server query id — captured at execute time on success,
 // or from the KernelError on an execute failure (empty only when the server
@@ -384,6 +386,7 @@ func (o *kernelOp) Results(ctx context.Context, callbacks *dbsqlrows.TelemetryCa
 	return newKernelRows(ctx, o, stream, callbacks)
 }
 
+// IsStaging reports the server-authorized Volume marker.
 func (o *kernelOp) IsStaging(ctx context.Context) (bool, error) {
 	if o.exec == nil {
 		return false, nil
@@ -395,10 +398,12 @@ func (o *kernelOp) IsStaging(ctx context.Context) (bool, error) {
 	return bool(marked), err
 }
 
+// CompleteStaging completes the marked transfer with the context roots.
 func (o *kernelOp) CompleteStaging(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	// These local handle calls perform no I/O (databricks_kernel.h), so they cannot evict a session.
 	var stream *C.kernel_result_stream_t
 	if err := call(func() C.KernelStatusCode {
 		return C.kernel_executed_statement_get_result_stream(o.exec, &stream)
@@ -422,22 +427,24 @@ func (o *kernelOp) CompleteStaging(ctx context.Context) error {
 		case <-done:
 		}
 	}()
+	// Join the watcher before freeing its canceller and result stream.
 	defer func() { close(done); <-stopped }()
-	encoded, err := json.Marshal(driverctx.StagingPathsFromContext(ctx))
-	if err != nil {
-		return err
+	roots := driverctx.StagingPathsFromContext(ctx)
+	for _, root := range roots {
+		if !utf8.ValidString(root) {
+			return errors.New("kernel: staging root must be valid UTF-8")
+		}
 	}
+	encoded, _ := json.Marshal(roots)
 	paths := newCStr(string(encoded))
 	defer paths.free()
 	var outcome C.KernelVolumeCompletion
-	err = call(func() C.KernelStatusCode {
+	err := call(func() C.KernelStatusCode {
+		// Go Thrift REMOVE treats a missing object as success.
 		return C.kernel_result_stream_complete_volume_operation(stream, paths.c, true, &outcome)
 	})
 	if err != nil {
-		var ke *KernelError
-		if !errors.As(err, &ke) || (ke.ErrorCode != "VOLUME_STORAGE_HTTP_ERROR" && ke.ErrorCode != "VOLUME_STORAGE_NETWORK_ERROR") {
-			o.backend.evictIfSessionFatal(err)
-		}
+		o.backend.evictIfSessionFatal(err)
 		if ctx.Err() != nil {
 			return fmt.Errorf("kernel: volume transfer cancelled: %w (kernel error: %w)", ctx.Err(), toStatementError(err))
 		}

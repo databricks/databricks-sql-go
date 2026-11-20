@@ -176,6 +176,7 @@ func lastError(code C.KernelStatusCode) *KernelError {
 		ErrorCode:  C.GoString(C.kernel_get_last_error_code()),
 	}
 	if code := C.kernel_get_last_error_local_os_error(); code != 0 {
+		// The C ABI reports a path and errno without a syscall name.
 		ke.cause = &os.PathError{Op: "file", Path: C.GoString(C.kernel_get_last_error_local_path()), Err: syscall.Errno(code)}
 	}
 	if e.sql_state != nil {

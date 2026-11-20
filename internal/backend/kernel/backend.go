@@ -65,7 +65,6 @@ import "C"
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -892,8 +891,7 @@ func (k *KernelBackend) markSessionDead() { k.valid = false }
 // Uses errors.As, not a bare type assertion, so it still fires if a caller wraps
 // the KernelError before passing it here.
 func (k *KernelBackend) evictIfSessionFatal(err error) {
-	var ke *KernelError
-	if errors.As(err, &ke) && isSessionFatal(ke.Code) {
+	if isSessionFatal(err) {
 		k.markSessionDead()
 	}
 }

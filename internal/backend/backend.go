@@ -114,6 +114,11 @@ type ResultFormatReporter interface {
 	ResultFormat() string
 }
 
+// StagingCompleter completes server-marked staging operations in the backend.
+type StagingCompleter interface {
+	CompleteStaging(context.Context) error
+}
+
 // ExecRequest is a backend-neutral statement-execution request. Per-backend wire
 // options (Arrow flags, CloudFetch, direct results, query tags, timeouts) are
 // derived from the config and context inside the backend implementation.
