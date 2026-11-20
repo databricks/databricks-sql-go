@@ -2,7 +2,7 @@
 
 **Status:** Draft for review
 **Scope:** Thrift backend. The kernel backend already follows this policy.
-**Related:** #413, #562, #557, #307, #308, #129
+**Related:** #413, #498, #562, #374, #557, #225, #223, #270, #307, #308, #129
 
 ## Problem
 
@@ -32,12 +32,21 @@ Consequences:
 - **OAuth fails where the network options are needed.** The token endpoint is on the workspace host
   (`https://<host>/oidc/v1/token`, or `/oidc/oauth2/v2.0/token` on Azure). A host that needs
   `WithSkipTLSHostVerify`, a custom CA or a custom dialer for SQL needs the same for OAuth. M2M and U2M
-  therefore fail on Thrift in exactly the environments those options exist for. Integrations already pass
-  their own transport, for example the ADBC Databricks driver (`go/database.go` in
-  `adbc-drivers/databricks`).
+  therefore fail on Thrift in exactly the environments those options exist for:
+  - `WithSkipTLSHostVerify` was added for private-link hostnames that are not on the workspace
+    certificate (#223, #225). M2M, the usual auth for services, can't verify the same hostname.
+  - A custom CA for a VPN or TLS-inspecting proxy (#270) goes through `WithTransport`, which OAuth
+    ignores. Integrations already pass their own transport, for example the ADBC Databricks driver
+    (`go/database.go` in `adbc-drivers/databricks`).
 - **Volume staging ignores `WithTransport` entirely.**
 - **Every new request path makes the choice again.** #307/#308 added a configurable CloudFetch client,
   and #562 proposed a fourth policy: a process-wide, always-verified OAuth transport.
+
+History: #374 documented the OAuth gap as a "pre-existing limitation, tracked separately" in
+`auth/oauth/oauth.go`. It was deferred because threading the transport changes the authenticator
+constructors, and no tracking issue was filed. #498, from the #413 reporter, implemented the M2M part
+of this design (base transport plus User-Agent) and verified it in `system.access.audit`. It was
+closed unmerged.
 
 Root causes:
 
@@ -146,7 +155,7 @@ Every Thrift request goes through `base`, wrapped for its class:
 |---|---|---|
 | Workspace | Thrift SQL, feature flags, telemetry | Auth transport, retries, connector UA (unchanged) |
 | Auth | M2M, U2M and federation discovery and token requests | Connector UA. No auth transport. Redirect policy |
-| Storage | CloudFetch downloads, volume staging | No auth, no connection headers |
+| Storage | CloudFetch downloads, volume staging | Connector UA. No auth, no connection headers |
 
 The connector keeps `base` and the storage client on its config. Staging (`conn`) and the CloudFetch
 iterator then stop building their own clients.
@@ -167,8 +176,10 @@ type HTTPClientBinder interface {
   it at compile time.
 - `WithHTTPClient` returns a copy that shares the original's token state. Connectors that share an
   authenticator therefore keep one cache and one in-flight fetch.
-- U2M discovery must go through the bound client, which moves it from `NewAuthenticator` to first use
-  (open question 3).
+- U2M discovery must go through the bound client, so it moves from `NewAuthenticator` to first use, as
+  M2M already does. This matches the kernel, which discovers when the session opens
+  (`src/session.rs:1406-1475`, `src/auth/oauth/u2m.rs:274`). It also matches the Java SDK, which
+  configures credentials on the first `authenticate()` (`DatabricksConfig.java:261-283`).
 - Authenticators the driver doesn't own are left as they are.
 
 A shared authenticator may fetch or refresh through any of the connectors that share it, and the request
@@ -200,9 +211,19 @@ client secret, not just an access token that expires in about an hour.
 | B. OAuth always verified on both backends | OAuth uses a verified transport | Needs a kernel change, or reject M2M combined with skip-verify | Protects the secret. M2M can't work on hosts that need relaxation |
 | C. Verified on Thrift only (#562) | Private verified transport | Unchanged | Backends disagree. No way to customize OAuth networking on Thrift |
 
-**Recommendation: A.** Also log a warning once per connector when M2M (client secret) is combined with
-`WithSkipTLSHostVerify`. A hostname-only option such as `WithKernelSkipHostnameVerify` would be a safer
-tool for private-link hosts on Thrift; that is a separate proposal.
+**Recommendation: A.**
+
+- **Both reference drivers apply relaxation to OAuth.** Each logs a general warning when relaxation is
+  on, not one specific to OAuth:
+  - kernel: "TLS certificate validation is disabled — this is insecure…" (`src/client/http.rs:539-551`)
+  - JDBC: "Self-signed certificates are allowed… not recommended for production"
+    (`ConfiguratorUtils.java:104-105`)
+
+  The Thrift backend should log the same kind of warning once per connector.
+- **Combining M2M with relaxation is the main use, not an edge case.** The option exists for private-link
+  hostnames (#223, #225), and the token endpoint is on that hostname.
+- **Safer follow-up:** a hostname-only option such as `WithKernelSkipHostnameVerify` would be a safer
+  tool for private-link hosts on Thrift. That is a separate proposal.
 
 ## Compatibility
 
@@ -214,7 +235,10 @@ These are behavior changes for the v2.0.0 changelog:
 - `WithTransport` now reaches OAuth and volume staging. CloudFetch already used it.
 - Without `WithTransport`, `WithSkipTLSHostVerify` now also reaches OAuth, CloudFetch and staging. This
   matches the kernel backend.
-- OAuth discovery and token requests send the connector User-Agent.
+- OAuth discovery, token and storage requests send the connector User-Agent.
+- U2M discovery runs on first use instead of in `NewConnector` or DSN parsing. An unreachable host
+  now fails at the first query or `Ping`, not at `sql.Open`. `database/sql` already documents that
+  `Open` may not connect.
 - Kernel backend: no change.
 
 ## Implementation plan
@@ -229,7 +253,8 @@ These are behavior changes for the v2.0.0 changelog:
 | Docs | ~+30 / −15 | | README, CHANGELOG, godoc |
 | **Total** | **~+315 / −120** | **~+660** | 5–6 PRs |
 
-Phase 1 can land before phase 2 by using the transport `PooledClient` already builds.
+Phase 1 can land before phase 2 by using the transport `PooledClient` already builds. #498 already
+implements most of phase 1. Build on it, or credit it if phase 1 is rewritten.
 
 Each phase sends one request per class to an `httptest` TLS server and asserts that:
 
@@ -251,12 +276,20 @@ No test mutates a process-wide transport.
    and would also unify the `WithKernel*` options. It needs public API review, and a dialer option needs
    a bridge into the kernel's HTTP stack. Revisit after this design lands.
 
+## Resolved during drafting
+
+1. **TLS relaxation reaches OAuth (option A).** The kernel and JDBC both do this, and private-link M2M
+   needs it. See the decision section.
+2. **Storage requests carry the connector User-Agent.**
+   - The kernel sets it on every client (`src/client/http.rs:524`).
+   - JDBC sends it on CloudFetch and volume GET/PUT/DELETE (`DatabricksHttpClient.java:175`), but not on
+     volume uploads.
+   - It shows up only in cloud storage access logs, so the stakes are low.
+3. **U2M discovery moves to first use.** This matches the kernel and the Java SDK. Idiomatic
+   `database/sql` code calls `Ping` rather than relying on `Open` to connect.
+
 ## Open questions
 
-1. The decision above: A, B or C.
-2. Should storage requests carry the connector User-Agent? The kernel sends it.
-3. Should U2M discovery stay eager, so `NewConnector` fails fast on a bad host, or move to first use as
-   M2M does?
-4. Kernel follow-ups: `x-databricks-org-id` on presigned storage URLs, and per-host telemetry clients
+1. Kernel follow-ups: `x-databricks-org-id` on presigned storage URLs, and per-host telemetry clients
    bound to the first session.
-5. Move `DESIGN_MULTI_STATEMENT_TRANSACTIONS.md` into `docs/design/`?
+2. Move `DESIGN_MULTI_STATEMENT_TRANSACTIONS.md` into `docs/design/`?
