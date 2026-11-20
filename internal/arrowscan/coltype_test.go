@@ -105,8 +105,9 @@ func TestColumnTypeInfoForFieldReportsGeospatialByRepresentation(t *testing.T) {
 	raw := reflect.TypeOf(sql.RawBytes{})
 	str := reflect.TypeOf("")
 	metadata := arrow.MetadataFrom(map[string]string{
-		"databricks.type_name": "geometry",
-		"databricks.type_text": "GEOMETRY(ANY)",
+		"databricks.type_name":   "geometry",
+		"databricks.type_text":   "GEOMETRY(ANY)",
+		"Spark:DataType:SqlName": "GEOMETRY(ANY)",
 	})
 	geoStruct := arrow.StructOf(
 		arrow.Field{Name: "srid", Type: arrow.PrimitiveTypes.Int32, Nullable: false},

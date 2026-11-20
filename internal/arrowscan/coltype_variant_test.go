@@ -57,7 +57,7 @@ func TestColumnTypeInfoForFieldVariant(t *testing.T) {
 		{"plain string", field(arrow.BinaryTypes.String, nil), "STRING"},
 		{"STRING type name", field(arrow.BinaryTypes.String, map[string]string{databricksTypeNameMetadataKey: "STRING"}), "STRING"},
 		{"VARCHAR type name", field(arrow.BinaryTypes.String, map[string]string{databricksTypeNameMetadataKey: "VARCHAR(10)"}), "STRING"},
-		{"GEOMETRY text", field(arrow.BinaryTypes.String, map[string]string{databricksTypeNameMetadataKey: "GEOMETRY"}), "GEOMETRY"},
+		{"GEOMETRY text", field(arrow.BinaryTypes.String, map[string]string{databricksTypeNameMetadataKey: "GEOMETRY"}), "STRING"},
 		{"TIME text", field(arrow.BinaryTypes.String, map[string]string{databricksTypeNameMetadataKey: "TIME"}), "TIME"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -124,17 +124,16 @@ func ColumnTypeInfoFor(dt arrow.DataType) ColumnTypeInfo {
 }
 
 // LogicalGeospatialType returns the top-level Databricks geospatial SQL name,
-// including its declared SRID when present in Arrow field metadata. The value is
-// UTF-8 in string mode and a struct in binary mode, so DataType alone cannot
-// preserve this database type name.
+// including its declared SRID, from Spark:DataType:SqlName. Thrift sends only
+// that key, and the kernel copies the manifest's type_text into it, so both
+// backends report the same name. The value is UTF-8 in string mode and a struct
+// in binary mode, so DataType alone cannot preserve this database type name.
 func LogicalGeospatialType(field arrow.Field) (string, bool) {
-	for _, key := range [...]string{"databricks.type_text", sparkSQLNameMetadataKey, databricksTypeNameMetadataKey} {
-		name, _ := field.Metadata.GetValue(key)
-		name = strings.TrimSpace(name)
-		family, _, _ := strings.Cut(name, "(")
-		if strings.EqualFold(family, "GEOMETRY") || strings.EqualFold(family, "GEOGRAPHY") {
-			return strings.ToUpper(name), true
-		}
+	name, _ := field.Metadata.GetValue(sparkSQLNameMetadataKey)
+	name = strings.TrimSpace(name)
+	family, _, _ := strings.Cut(name, "(")
+	if strings.EqualFold(family, "GEOMETRY") || strings.EqualFold(family, "GEOGRAPHY") {
+		return strings.ToUpper(name), true
 	}
 	return "", false
 }

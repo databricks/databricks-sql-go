@@ -11,22 +11,21 @@ import (
 
 func TestGeospatialTypeNamePreservesSRID(t *testing.T) {
 	for _, sqlName := range []string{"GEOMETRY(0)", "GEOGRAPHY(4326)", "GEOMETRY(3857)", "GEOMETRY(ANY)"} {
-		for _, key := range []string{"databricks.type_text", sparkSQLNameMetadataKey} {
-			for _, physical := range []arrow.DataType{arrow.BinaryTypes.String, arrow.BinaryTypes.LargeString,
-				arrow.StructOf(arrow.Field{Name: "srid", Type: arrow.PrimitiveTypes.Int32}, arrow.Field{Name: "wkb", Type: arrow.BinaryTypes.Binary})} {
-				t.Run(sqlName+"/"+key+"/"+physical.Name(), func(t *testing.T) {
-					field := arrow.Field{Type: physical, Metadata: arrow.MetadataFrom(map[string]string{
-						key: sqlName, databricksTypeNameMetadataKey: "GEOMETRY",
-					})}
-					info := ColumnTypeInfoForField(field)
-					require.Equal(t, sqlName, info.DatabaseTypeName)
-					before := ColumnTypeInfoFor(physical)
-					require.Equal(t, before.ScanType, info.ScanType)
-					require.Equal(t, before.Length, info.Length)
-					require.Equal(t, before.HasLength, info.HasLength)
-					require.Equal(t, physical.ID() == arrow.STRUCT, IsBinaryGeospatialField(field))
-				})
-			}
+		for _, physical := range []arrow.DataType{arrow.BinaryTypes.String, arrow.BinaryTypes.LargeString,
+			arrow.StructOf(arrow.Field{Name: "srid", Type: arrow.PrimitiveTypes.Int32}, arrow.Field{Name: "wkb", Type: arrow.BinaryTypes.Binary})} {
+			t.Run(sqlName+"/"+physical.Name(), func(t *testing.T) {
+				// The kernel writes type_name, type_text and SqlName together; Thrift sends SqlName only.
+				field := arrow.Field{Type: physical, Metadata: arrow.MetadataFrom(map[string]string{
+					sparkSQLNameMetadataKey: sqlName, "databricks.type_text": sqlName, databricksTypeNameMetadataKey: "GEOMETRY",
+				})}
+				info := ColumnTypeInfoForField(field)
+				require.Equal(t, sqlName, info.DatabaseTypeName)
+				before := ColumnTypeInfoFor(physical)
+				require.Equal(t, before.ScanType, info.ScanType)
+				require.Equal(t, before.Length, info.Length)
+				require.Equal(t, before.HasLength, info.HasLength)
+				require.Equal(t, physical.ID() == arrow.STRUCT, IsBinaryGeospatialField(field))
+			})
 		}
 	}
 	child := arrow.Field{Type: arrow.BinaryTypes.String, Metadata: arrow.MetadataFrom(map[string]string{sparkSQLNameMetadataKey: "GEOMETRY(0)"})}
@@ -44,9 +43,9 @@ func TestLogicalGeospatialTypeMetadata(t *testing.T) {
 		want     string
 	}{
 		{"case and whitespace", map[string]string{sparkSQLNameMetadataKey: " geometry(3857) "}, "GEOMETRY(3857)"},
-		{"kernel family only", map[string]string{databricksTypeNameMetadataKey: "GEOGRAPHY"}, "GEOGRAPHY"},
-		{"blank full name", map[string]string{"databricks.type_text": " ", sparkSQLNameMetadataKey: "GEOMETRY(0)"}, "GEOMETRY(0)"},
-		{"manifest before Spark name", map[string]string{"databricks.type_text": "GEOMETRY(ANY)", sparkSQLNameMetadataKey: "GEOMETRY(0)"}, "GEOMETRY(ANY)"},
+		{"type_name only is ignored", map[string]string{databricksTypeNameMetadataKey: "GEOGRAPHY"}, ""},
+		{"type_text only is ignored", map[string]string{"databricks.type_text": "GEOMETRY(0)"}, ""},
+		{"SqlName is the only source", map[string]string{"databricks.type_text": "GEOMETRY(ANY)", sparkSQLNameMetadataKey: "GEOMETRY(0)"}, "GEOMETRY(0)"},
 		{"no metadata", nil, ""},
 		{"unrelated string", map[string]string{sparkSQLNameMetadataKey: "STRING"}, ""},
 		{"nested geo", map[string]string{sparkSQLNameMetadataKey: "STRUCT<g:GEOMETRY(0)>"}, ""},
@@ -68,38 +67,32 @@ func TestGeospatialSQLNameDoesNotEnableBinaryScanner(t *testing.T) {
 	builder.FieldBuilder(0).(*array.Int32Builder).Append(7)
 	values := builder.NewStructArray()
 	defer values.Release()
-	for _, key := range []string{"databricks.type_text", sparkSQLNameMetadataKey} {
-		for _, family := range []string{"", "STRUCT", "GEOMETRY(0)"} {
-			t.Run(key+"/"+family, func(t *testing.T) {
-				metadata := map[string]string{key: "GEOMETRY(0)"}
-				if family != "" {
-					metadata[databricksTypeNameMetadataKey] = family
-				}
-				field := arrow.Field{Type: structType, Metadata: arrow.MetadataFrom(metadata)}
-				require.Equal(t, "GEOMETRY(0)", ColumnTypeInfoForField(field).DatabaseTypeName)
-				value, err := ScanCellCachedWithOptions(values, 0, nil, nil, ScanOptions{
-					GeospatialBinary: IsBinaryGeospatialField(field),
-				})
-				require.NoError(t, err)
-				require.Equal(t, `{"value":7}`, value)
-				require.False(t, IsBinaryGeospatialField(field))
+	for _, family := range []string{"", "STRUCT", "GEOMETRY(0)"} {
+		t.Run(family, func(t *testing.T) {
+			metadata := map[string]string{sparkSQLNameMetadataKey: "GEOMETRY(0)"}
+			if family != "" {
+				metadata[databricksTypeNameMetadataKey] = family
+			}
+			field := arrow.Field{Type: structType, Metadata: arrow.MetadataFrom(metadata)}
+			require.Equal(t, "GEOMETRY(0)", ColumnTypeInfoForField(field).DatabaseTypeName)
+			value, err := ScanCellCachedWithOptions(values, 0, nil, nil, ScanOptions{
+				GeospatialBinary: IsBinaryGeospatialField(field),
 			})
-		}
+			require.NoError(t, err)
+			require.Equal(t, `{"value":7}`, value)
+			require.False(t, IsBinaryGeospatialField(field))
+		})
 	}
 }
 
 func TestLogicalGeospatialTypeAvoidsNonGeoAllocations(t *testing.T) {
-	for _, key := range []string{"databricks.type_text", sparkSQLNameMetadataKey, databricksTypeNameMetadataKey} {
-		t.Run(key, func(t *testing.T) {
-			field := arrow.Field{Type: arrow.StructOf(arrow.Field{Name: "value", Type: arrow.PrimitiveTypes.Int32}),
-				Metadata: arrow.MetadataFrom(map[string]string{key: "STRUCT<value: INT>"})}
-			allocations := testing.AllocsPerRun(100, func() {
-				name, geospatial := LogicalGeospatialType(field)
-				if name != "" || geospatial {
-					t.Fatal("ordinary struct reported as geospatial")
-				}
-			})
-			require.Zero(t, allocations)
-		})
-	}
+	field := arrow.Field{Type: arrow.StructOf(arrow.Field{Name: "value", Type: arrow.PrimitiveTypes.Int32}),
+		Metadata: arrow.MetadataFrom(map[string]string{sparkSQLNameMetadataKey: "STRUCT<value: INT>"})}
+	allocations := testing.AllocsPerRun(100, func() {
+		name, geospatial := LogicalGeospatialType(field)
+		if name != "" || geospatial {
+			t.Fatal("ordinary struct reported as geospatial")
+		}
+	})
+	require.Zero(t, allocations)
 }
