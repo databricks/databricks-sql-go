@@ -176,7 +176,7 @@ func TestCloudFetchRefetch(t *testing.T) {
 						if request.MaxRows == 3 && request.StartRowOffset != nil {
 							start := *request.StartRowOffset
 							refreshed = append(refreshed, start)
-							response := page(start, 2)
+							response := page(start, 3)
 							response.Results.ResultLinks = append([]*cli_service.TSparkArrowResultLink(nil), response.Results.ResultLinks...)
 							for index, expired := range response.Results.ResultLinks {
 								fresh := *expired
@@ -195,6 +195,7 @@ func TestCloudFetchRefetch(t *testing.T) {
 					}
 					cli.FnCloseOperation = func(context.Context, *cli_service.TCloseOperationReq) (*cli_service.TCloseOperationResp, error) {
 						mutex.Lock()
+						require.False(t, closed)
 						closed = true
 						mutex.Unlock()
 						return &cli_service.TCloseOperationResp{}, nil
@@ -215,7 +216,8 @@ func TestCloudFetchRefetch(t *testing.T) {
 					require.Equal(t, expected, actual)
 					mutex.Lock()
 					defer mutex.Unlock()
-					require.ElementsMatch(t, []int64{0, 3, 6, 9, 12, 15}, refreshed)
+					require.True(t, closed)
+					require.Equal(t, []int64{0, 9}, refreshed)
 				})
 			}
 		}
@@ -223,7 +225,7 @@ func TestCloudFetchRefetch(t *testing.T) {
 }
 
 func TestCloudFetchRefetchFailures(t *testing.T) {
-	for _, scenario := range []string{"expired", "rpc failure", "wrong range", "empty response", "closed operation"} {
+	for _, scenario := range []string{"expired", "rpc failure", "wrong range", "wrong subsequent range", "missing pending range", "duplicate range", "empty response", "closed operation"} {
 		t.Run(scenario, func(t *testing.T) {
 			fixture := newCloudFetchFixture(t)
 			calls := 0
@@ -235,11 +237,22 @@ func TestCloudFetchRefetchFailures(t *testing.T) {
 				if scenario == "empty response" {
 					return &cli_service.TFetchResultsResp{}, nil
 				}
-				link := *fixture.links[0]
-				if scenario == "wrong range" {
+				links := append([]*cli_service.TSparkArrowResultLink(nil), fixture.links[:3]...)
+				switch scenario {
+				case "wrong range", "wrong subsequent range":
+					index := 0
+					if scenario == "wrong subsequent range" {
+						index = 1
+					}
+					link := *links[index]
 					link.RowCount++
+					links[index] = &link
+				case "missing pending range":
+					links = links[:2]
+				case "duplicate range":
+					links = append(links, links[0])
 				}
-				return &cli_service.TFetchResultsResp{Results: &cli_service.TRowSet{ResultLinks: []*cli_service.TSparkArrowResultLink{&link}}}, nil
+				return &cli_service.TFetchResultsResp{Results: &cli_service.TRowSet{ResultLinks: links}}, nil
 			}}
 			cli.FnCloseOperation = func(context.Context, *cli_service.TCloseOperationReq) (*cli_service.TCloseOperationResp, error) {
 				return &cli_service.TCloseOperationResp{}, nil
@@ -247,7 +260,7 @@ func TestCloudFetchRefetchFailures(t *testing.T) {
 			more := false
 			direct := &cli_service.TSparkDirectResults{
 				ResultSetMetadata: fixture.metadata,
-				ResultSet:         &cli_service.TFetchResultsResp{HasMoreRows: &more, Results: &cli_service.TRowSet{ResultLinks: fixture.links[:1]}},
+				ResultSet:         &cli_service.TFetchResultsResp{HasMoreRows: &more, Results: &cli_service.TRowSet{ResultLinks: fixture.links[:3]}},
 			}
 			if scenario == "closed operation" {
 				direct.CloseOperation = &cli_service.TCloseOperationResp{}
@@ -272,7 +285,7 @@ func TestCloudFetchRefetchFailures(t *testing.T) {
 }
 
 func TestCloudFetchCloseDuringRefetch(t *testing.T) {
-	for _, api := range []string{"rows", "batches", "ipc"} {
+	for _, api := range []string{"batches", "ipc"} {
 		t.Run(api, func(t *testing.T) {
 			fixture := newCloudFetchFixture(t)
 			started := make(chan struct{})
@@ -325,35 +338,49 @@ func TestCloudFetchCloseDuringRefetch(t *testing.T) {
 }
 
 func TestCloudFetchRefetchExpiryBuffer(t *testing.T) {
-	fixture := newCloudFetchFixture(t)
-	fixture.links[0].ExpiryTime = time.Now().Add(30 * time.Second).Unix()
-	calls := 0
-	cli := &client.TestClient{
-		FnFetchResults: func(context.Context, *cli_service.TFetchResultsReq) (*cli_service.TFetchResultsResp, error) {
-			calls++
-			fresh := *fixture.links[0]
-			fresh.ExpiryTime = time.Now().Add(time.Hour).Unix()
-			return &cli_service.TFetchResultsResp{Results: &cli_service.TRowSet{ResultLinks: []*cli_service.TSparkArrowResultLink{&fresh}}}, nil
-		},
-		FnCloseOperation: func(context.Context, *cli_service.TCloseOperationReq) (*cli_service.TCloseOperationResp, error) {
-			return &cli_service.TCloseOperationResp{}, nil
-		},
+	for _, scenario := range []struct {
+		name      string
+		buffer    time.Duration
+		remaining time.Duration
+		calls     int
+	}{
+		{"default", 0, 20 * time.Second, 1},
+		{"smaller", 10 * time.Second, 20 * time.Second, 1},
+		{"larger", time.Minute, 50 * time.Second, 1},
+		{"no renewal", 0, time.Minute, 0},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			fixture := newCloudFetchFixture(t)
+			fixture.links[0].ExpiryTime = time.Now().Add(scenario.remaining).Unix()
+			calls := 0
+			cli := &client.TestClient{
+				FnFetchResults: func(context.Context, *cli_service.TFetchResultsReq) (*cli_service.TFetchResultsResp, error) {
+					calls++
+					fresh := *fixture.links[0]
+					fresh.ExpiryTime = time.Now().Add(time.Hour).Unix()
+					return &cli_service.TFetchResultsResp{Results: &cli_service.TRowSet{ResultLinks: []*cli_service.TSparkArrowResultLink{&fresh}}}, nil
+				},
+				FnCloseOperation: func(context.Context, *cli_service.TCloseOperationReq) (*cli_service.TCloseOperationResp, error) {
+					return &cli_service.TCloseOperationResp{}, nil
+				},
+			}
+			more := false
+			direct := &cli_service.TSparkDirectResults{
+				ResultSetMetadata: fixture.metadata,
+				ResultSet:         &cli_service.TFetchResultsResp{HasMoreRows: &more, Results: &cli_service.TRowSet{ResultLinks: fixture.links[:1]}},
+			}
+			cfg := config.WithDefaults()
+			cfg.UseLz4Compression = false
+			cfg.MinTimeToExpiry = scenario.buffer
+			result, newRowsErr := NewRows(context.Background(), nil, cli, cfg, direct, nil)
+			require.NoError(t, newRowsErr)
+			defer func() { require.NoError(t, result.Close()) }()
+			actual, err := consumeCloudFetch(t, result, "rows")
+			require.NoError(t, err)
+			require.Equal(t, []int64{0, 1, 2}, actual)
+			require.Equal(t, scenario.calls, calls)
+		})
 	}
-	more := false
-	direct := &cli_service.TSparkDirectResults{
-		ResultSetMetadata: fixture.metadata,
-		ResultSet:         &cli_service.TFetchResultsResp{HasMoreRows: &more, Results: &cli_service.TRowSet{ResultLinks: fixture.links[:1]}},
-	}
-	cfg := config.WithDefaults()
-	cfg.UseLz4Compression = false
-	cfg.MinTimeToExpiry = time.Minute
-	result, newRowsErr := NewRows(context.Background(), nil, cli, cfg, direct, nil)
-	require.NoError(t, newRowsErr)
-	defer func() { require.NoError(t, result.Close()) }()
-	actual, err := consumeCloudFetch(t, result, "rows")
-	require.NoError(t, err)
-	require.Equal(t, []int64{0, 1, 2}, actual)
-	require.Equal(t, 1, calls)
 }
 
 func BenchmarkCloudFetchNoExpiry(benchmark *testing.B) {

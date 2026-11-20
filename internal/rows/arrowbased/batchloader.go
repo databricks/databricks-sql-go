@@ -3,6 +3,7 @@ package arrowbased
 import (
 	"bytes"
 	"context"
+	stderrors "errors"
 	"fmt"
 	"io"
 	"strings"
@@ -71,6 +72,7 @@ func NewCloudIPCStreamIterator(
 		cancel:           cancel,
 		cfg:              cfg,
 		startRowOffset:   startRowOffset,
+		links:            files,
 		pendingLinks:     NewQueue[cli_service.TSparkArrowResultLink](),
 		downloadTasks:    NewQueue[cloudFetchDownloadTask](),
 		httpClient:       httpClient,
@@ -193,6 +195,8 @@ type cloudIPCStreamIterator struct {
 	cancel           context.CancelFunc
 	cfg              *config.Config
 	startRowOffset   int64
+	links            []*cli_service.TSparkArrowResultLink
+	renewedLinks     map[int64]*cli_service.TSparkArrowResultLink
 	pendingLinks     Queue[cli_service.TSparkArrowResultLink]
 	downloadTasks    Queue[cloudFetchDownloadTask]
 	httpClient       *http.Client
@@ -224,22 +228,7 @@ func (bi *cloudIPCStreamIterator) NextWithMetadata() (io.Reader, int64, int64, e
 			link.RowCount,
 		)
 
-		cancelCtx, cancelFn := context.WithCancel(bi.ctx) //nolint:gosec // cancelFn stored in task and called on completion
-		task := &cloudFetchDownloadTask{
-			ctx:                cancelCtx,
-			cancel:             cancelFn,
-			useLz4Compression:  bi.cfg.UseLz4Compression,
-			link:               link,
-			resultChan:         make(chan cloudFetchDownloadTaskResult),
-			minTimeToExpiry:    bi.cfg.MinTimeToExpiry,
-			speedThresholdMbps: bi.cfg.CloudFetchSpeedThresholdMbps,
-			httpClient:         bi.httpClient,
-			retryMax:           bi.cfg.RetryMax,
-			retryWaitMin:       bi.cfg.RetryWaitMin,
-			retryWaitMax:       bi.cfg.RetryWaitMax,
-		}
-		task.Run()
-		bi.downloadTasks.Enqueue(task)
+		bi.downloadTasks.Enqueue(bi.newDownloadTask(bi.linkForDownload(link)))
 	}
 
 	task := bi.downloadTasks.Dequeue()
@@ -249,7 +238,27 @@ func (bi *cloudIPCStreamIterator) NextWithMetadata() (io.Reader, int64, int64, e
 	}
 
 	data, downloadMs, err := task.GetResult()
-	defer task.cancel()
+	defer func() { task.cancel() }()
+	for attempts := 0; errors.Is(err, errLinkExpired); {
+		if ctxErr := bi.ctx.Err(); ctxErr != nil {
+			err = ctxErr
+			break
+		}
+		link := bi.linkForDownload(task.link)
+		if isLinkExpired(link.ExpiryTime, bi.cfg.MinTimeToExpiry) {
+			if attempts >= 3 {
+				break
+			}
+			attempts++
+			link, err = bi.refetchLinks(task.link, attempts)
+			if err != nil {
+				break
+			}
+		}
+		task.cancel()
+		task = bi.newDownloadTask(link)
+		data, downloadMs, err = task.GetResult()
+	}
 
 	// once we've got an errored out task - cancel the remaining ones
 	if err != nil {
@@ -266,6 +275,71 @@ func (bi *cloudIPCStreamIterator) NextWithMetadata() (io.Reader, int64, int64, e
 	}
 
 	return data, task.link.StartRowOffset, task.link.RowCount, nil
+}
+
+func (bi *cloudIPCStreamIterator) newDownloadTask(link *cli_service.TSparkArrowResultLink) *cloudFetchDownloadTask {
+	cancelCtx, cancelFn := context.WithCancel(bi.ctx)
+	task := &cloudFetchDownloadTask{
+		ctx:                cancelCtx,
+		cancel:             cancelFn,
+		link:               link,
+		useLz4Compression:  bi.cfg.UseLz4Compression,
+		resultChan:         make(chan cloudFetchDownloadTaskResult),
+		minTimeToExpiry:    bi.cfg.MinTimeToExpiry,
+		speedThresholdMbps: bi.cfg.CloudFetchSpeedThresholdMbps,
+		httpClient:         bi.httpClient,
+		retryMax:           bi.cfg.RetryMax,
+		retryWaitMin:       bi.cfg.RetryWaitMin,
+		retryWaitMax:       bi.cfg.RetryWaitMax,
+	}
+	task.Run()
+	return task
+}
+
+func (bi *cloudIPCStreamIterator) linkForDownload(original *cli_service.TSparkArrowResultLink) *cli_service.TSparkArrowResultLink {
+	if renewed := bi.renewedLinks[original.StartRowOffset]; renewed != nil {
+		return renewed
+	}
+	return original
+}
+
+func (bi *cloudIPCStreamIterator) refetchLinks(expired *cli_service.TSparkArrowResultLink, attempt int) (*cli_service.TSparkArrowResultLink, error) {
+	refetch := rowscanner.CloudFetchLinkRefresherFromContext(bi.ctx)
+	if refetch == nil {
+		return nil, errors.WithStack(errLinkExpired)
+	}
+	logger.Debug().Msgf("CloudFetch: renewing links from offset %d row count %d (attempt %d/3)", expired.StartRowOffset, expired.RowCount, attempt)
+	freshLinks, err := refetch(bi.ctx, expired)
+	if err != nil {
+		return nil, err
+	}
+	replacements := make(map[int64]*cli_service.TSparkArrowResultLink, len(freshLinks))
+	for _, fresh := range freshLinks {
+		if fresh == nil || replacements[fresh.StartRowOffset] != nil {
+			return nil, errors.WithStack(errLinkExpired)
+		}
+		replacements[fresh.StartRowOffset] = fresh
+	}
+	for _, original := range bi.links {
+		if original.StartRowOffset < expired.StartRowOffset {
+			continue
+		}
+		fresh := replacements[original.StartRowOffset]
+		if fresh != nil && fresh.RowCount != original.RowCount {
+			return nil, errors.WithStack(errLinkExpired)
+		}
+		if isLinkExpired(bi.linkForDownload(original).ExpiryTime, bi.cfg.MinTimeToExpiry) && fresh == nil {
+			return nil, errors.WithStack(errLinkExpired)
+		}
+	}
+	if bi.renewedLinks == nil {
+		bi.renewedLinks = replacements
+	} else {
+		for offset, fresh := range replacements {
+			bi.renewedLinks[offset] = fresh
+		}
+	}
+	return bi.linkForDownload(expired), nil
 }
 
 func (bi *cloudIPCStreamIterator) HasNext() bool {
@@ -347,23 +421,7 @@ func (cft *cloudFetchDownloadTask) Run() {
 			cft.link.RowCount,
 		)
 		downloadStart := time.Now()
-		var rawBody []byte
-		var err error
-		link := cft.link
-		for attempt := 0; ; attempt++ {
-			rawBody, err = fetchBatchBytes(cft.ctx, link, cft.minTimeToExpiry, cft.speedThresholdMbps, cft.httpClient, cft.retryMax, cft.retryWaitMin, cft.retryWaitMax)
-			if err != errLinkExpired || attempt >= 3 {
-				break
-			}
-			refetch := rowscanner.CloudFetchLinkRefresherFromContext(cft.ctx)
-			if refetch == nil {
-				break
-			}
-			link, err = refetch(cft.ctx, link)
-			if err != nil {
-				break
-			}
-		}
+		rawBody, err := fetchBatchBytes(cft.ctx, cft.link, cft.minTimeToExpiry, cft.speedThresholdMbps, cft.httpClient, cft.retryMax, cft.retryWaitMin, cft.retryWaitMax)
 		if err != nil {
 			cft.sendResult(cloudFetchDownloadTaskResult{data: nil, err: err})
 			return
@@ -475,7 +533,7 @@ func fetchBatchBytes(
 		// presigned URL, and there's no point spending another HTTP attempt
 		// (or another retry) on a link we know will be rejected.
 		if isLinkExpired(link.ExpiryTime, minTimeToExpiry) {
-			return nil, errLinkExpired
+			return nil, errors.WithStack(errLinkExpired)
 		}
 
 		req, err := http.NewRequestWithContext(ctx, "GET", link.FileLink, nil)
@@ -544,7 +602,7 @@ func fetchBatchBytes(
 	return nil, dbsqlerrint.NewDriverError(ctx, msg, lastErr).WithCategory(dbsqlerrint.CategoryChunkDownload)
 }
 
-var errLinkExpired = errors.New(dbsqlerr.ErrLinkExpired)
+var errLinkExpired = stderrors.New(dbsqlerr.ErrLinkExpired)
 
 func getReader(r io.Reader, useLz4Compression bool) io.Reader {
 	if useLz4Compression {
@@ -554,8 +612,7 @@ func getReader(r io.Reader, useLz4Compression bool) io.Reader {
 }
 
 func isLinkExpired(expiryTime int64, linkExpiryBuffer time.Duration) bool {
-	bufferSecs := int64(linkExpiryBuffer.Seconds())
-	return expiryTime-bufferSecs < time.Now().Unix()
+	return time.Until(time.Unix(expiryTime, 0)) < max(linkExpiryBuffer, 30*time.Second)
 }
 
 func getArrowRecords(r io.Reader, startRowOffset int64) ([]SparkArrowRecord, error) {

@@ -627,7 +627,7 @@ func TestCloudFetchIterator(t *testing.T) {
 		cfg.RetryMax = 5
 		cfg.RetryWaitMin = 1 * time.Millisecond
 		cfg.RetryWaitMax = 3 * time.Second
-		expiryTime := time.Now().Unix() + 2
+		expiryTime := time.Now().Unix() + 32
 
 		bi, err := NewCloudBatchIterator(
 			context.Background(),

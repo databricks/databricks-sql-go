@@ -20,6 +20,10 @@ import (
 )
 
 func openCloudFetchOperation(t *testing.T) (context.Context, cli_service.TCLIService, *cli_service.TOperationHandle) {
+	return openCloudFetchOperationForQuery(t, "SELECT id, repeat('x', 64) AS pad FROM range(2000000)")
+}
+
+func openCloudFetchOperationForQuery(t *testing.T, statement string) (context.Context, cli_service.TCLIService, *cli_service.TOperationHandle) {
 	t.Helper()
 	host, path, token := pecoTestingCreds(t)
 	driverConnector, err := NewConnector(WithServerHostname(host), WithPort(443), WithHTTPPath(path), WithAccessToken(token))
@@ -39,7 +43,7 @@ func openCloudFetchOperation(t *testing.T) (context.Context, cli_service.TCLISer
 	enabled := true
 	execution, err := thriftClient.ExecuteStatement(ctx, &cli_service.TExecuteStatementReq{
 		SessionHandle:       session.SessionHandle,
-		Statement:           "SELECT id, repeat('x', 64) AS pad FROM range(2000000)",
+		Statement:           statement,
 		CanReadArrowResult_: &enabled,
 		CanDownloadResult_:  &enabled,
 	})
@@ -76,14 +80,28 @@ func TestE2ECloudFetchAbsoluteOffset(t *testing.T) {
 
 type cloudFetchRefetchCounter struct {
 	cli_service.TCLIService
-	refetches atomic.Int64
+	refetches    atomic.Int64
+	restores     atomic.Int64
+	plainFetches atomic.Int64
+	closes       atomic.Int64
 }
 
 func (counter *cloudFetchRefetchCounter) FetchResults(ctx context.Context, request *cli_service.TFetchResultsReq) (*cli_service.TFetchResultsResp, error) {
 	if request.StartRowOffset != nil {
-		counter.refetches.Add(1)
+		if request.GetIncludeResultSetMetadata() {
+			counter.restores.Add(1)
+		} else {
+			counter.refetches.Add(1)
+		}
+	} else {
+		counter.plainFetches.Add(1)
 	}
 	return counter.TCLIService.FetchResults(ctx, request)
+}
+
+func (counter *cloudFetchRefetchCounter) CloseOperation(ctx context.Context, request *cli_service.TCloseOperationReq) (*cli_service.TCloseOperationResp, error) {
+	counter.closes.Add(1)
+	return counter.TCLIService.CloseOperation(ctx, request)
 }
 
 func TestE2ECloudFetchRefetchExpiredLinks(t *testing.T) {
@@ -118,15 +136,48 @@ func TestE2ECloudFetchRefetchExpiredLinks(t *testing.T) {
 				require.Equal(t, int64(1999999000000), checksum)
 				if expire {
 					require.Equal(t, baselineChecksum, checksum)
-					require.GreaterOrEqual(t, counter.refetches.Load(), int64(len(initial.Results.ResultLinks)))
+					require.Equal(t, int64(1), counter.refetches.Load())
 				} else {
 					baselineChecksum = checksum
 					require.Zero(t, counter.refetches.Load())
 				}
+				require.Equal(t, int64(1), counter.closes.Load())
 				t.Logf("forced_expiry=%t rows=%d checksum=%d initial_files=%d refetches=%d (shared warehouse)", expire, count, checksum, len(initial.Results.ResultLinks), counter.refetches.Load())
 			}
 		})
 	}
+}
+
+func TestE2ECloudFetchRefetchMultiplePages(t *testing.T) {
+	ctx, thriftClient, handle := openCloudFetchOperationForQuery(t, "SELECT id, repeat('x', 256) AS pad FROM range(9000000)")
+	metadata := true
+	initial, err := thriftClient.FetchResults(ctx, &cli_service.TFetchResultsReq{
+		OperationHandle: handle, MaxRows: 500000, IncludeResultSetMetadata: &metadata,
+	})
+	require.NoError(t, err)
+	require.True(t, initial.GetHasMoreRows(), "the regression must exercise cursor restoration across pages")
+	require.Greater(t, len(initial.Results.ResultLinks), 1)
+	for _, link := range initial.Results.ResultLinks {
+		link.ExpiryTime = time.Now().Add(20 * time.Second).Unix()
+	}
+	counter := &cloudFetchRefetchCounter{TCLIService: thriftClient}
+	cfg := config.WithDefaults()
+	cfg.MaxDownloadThreads = 4
+	cfg.UseLz4Compression = false
+	result, rowsErr := internalrows.NewRows(ctx, handle, counter, cfg, &cli_service.TSparkDirectResults{
+		ResultSet: initial, ResultSetMetadata: initial.ResultSetMetadata,
+	}, nil)
+	require.NoError(t, rowsErr)
+	t.Cleanup(func() { require.NoError(t, result.Close()) })
+	count, checksum := drainCloudFetchLive(t, result, "ipc")
+	require.NoError(t, result.Close())
+	require.Equal(t, int64(9000000), count)
+	require.Equal(t, int64(40499995500000), checksum)
+	require.Equal(t, int64(1), counter.refetches.Load())
+	require.Equal(t, int64(1), counter.restores.Load())
+	require.GreaterOrEqual(t, counter.plainFetches.Load(), int64(1))
+	require.Equal(t, int64(1), counter.closes.Load())
+	t.Logf("rows=%d checksum=%d initial_files=%d renewals=%d restores=%d plain_fetches=%d closes=%d (shared warehouse)", count, checksum, len(initial.Results.ResultLinks), counter.refetches.Load(), counter.restores.Load(), counter.plainFetches.Load(), counter.closes.Load())
 }
 
 func drainCloudFetchLive(t *testing.T, result driver.Rows, api string) (int64, int64) {

@@ -10,7 +10,7 @@ import (
 )
 
 type cloudFetchRefresher interface {
-	RefetchLink(context.Context, *cli_service.TSparkArrowResultLink) (*cli_service.TSparkArrowResultLink, error)
+	RefetchLinks(context.Context, *cli_service.TSparkArrowResultLink) ([]*cli_service.TSparkArrowResultLink, error)
 }
 
 type cloudFetchRefresherKey struct{}
@@ -22,16 +22,16 @@ func WithCloudFetchLinkRefresher(ctx context.Context, pages ResultPageIterator) 
 	return ctx
 }
 
-func CloudFetchLinkRefresherFromContext(ctx context.Context) func(context.Context, *cli_service.TSparkArrowResultLink) (*cli_service.TSparkArrowResultLink, error) {
+func CloudFetchLinkRefresherFromContext(ctx context.Context) func(context.Context, *cli_service.TSparkArrowResultLink) ([]*cli_service.TSparkArrowResultLink, error) {
 	if refresher, ok := ctx.Value(cloudFetchRefresherKey{}).(cloudFetchRefresher); ok {
-		return refresher.RefetchLink
+		return refresher.RefetchLinks
 	}
 	return nil
 }
 
-func (rpf *resultPageIterator) RefetchLink(ctx context.Context, expired *cli_service.TSparkArrowResultLink) (*cli_service.TSparkArrowResultLink, error) {
+func (rpf *resultPageIterator) RefetchLinks(ctx context.Context, expired *cli_service.TSparkArrowResultLink) ([]*cli_service.TSparkArrowResultLink, error) {
 	ctx, cancel := context.WithCancel(ctx)
-	stop := context.AfterFunc(rpf.fetchCtx, cancel)
+	stop := context.AfterFunc(rpf.fetchContext(), cancel)
 	defer stop()
 	defer cancel()
 
@@ -53,12 +53,8 @@ func (rpf *resultPageIterator) RefetchLink(ctx context.Context, expired *cli_ser
 	if err != nil {
 		return nil, dbsqlerrint.NewRequestError(ctx, dbsqlerr.ErrLinkExpired, err)
 	}
-	if response != nil && response.Results != nil {
-		for _, link := range response.Results.ResultLinks {
-			if link != nil && link.StartRowOffset == expired.StartRowOffset && link.RowCount == expired.RowCount {
-				return link, nil
-			}
-		}
+	if response != nil && response.Results != nil && len(response.Results.ResultLinks) > 0 {
+		return response.Results.ResultLinks, nil
 	}
 	return nil, errors.New(dbsqlerr.ErrLinkExpired)
 }
@@ -66,10 +62,7 @@ func (rpf *resultPageIterator) RefetchLink(ctx context.Context, expired *cli_ser
 func (rpf *resultPageIterator) fetchPage(request *cli_service.TFetchResultsReq, startRowOffset int64) (*cli_service.TFetchResultsResp, error) {
 	rpf.operationMu.Lock()
 	defer rpf.operationMu.Unlock()
-	ctx := rpf.fetchCtx
-	if ctx == nil {
-		ctx = rpf.ctx
-	}
+	ctx := rpf.fetchContext()
 	if ctx != nil {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -83,4 +76,11 @@ func (rpf *resultPageIterator) fetchPage(request *cli_service.TFetchResultsReq, 
 		rpf.fetchPositionChanged = false
 	}
 	return response, err
+}
+
+func (rpf *resultPageIterator) fetchContext() context.Context {
+	if rpf.fetchCtx != nil {
+		return rpf.fetchCtx
+	}
+	return rpf.ctx
 }
