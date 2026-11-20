@@ -56,6 +56,22 @@ func schemaFromFirstBatch(ctx context.Context, rowSet *cli_service.TRowSet, cfg 
 	}, nil
 }
 
+// GetEmptyArrowSchemaBytes inspects inline batches without constructing a scanner or downloading files.
+func GetEmptyArrowSchemaBytes(ctx context.Context, rowSet *cli_service.TRowSet, metadata *cli_service.TGetResultSetMetadataResp, cfg *config.Config) ([]byte, dbsqlerr.DBError) {
+	schemaBytes, _, err := schemaFromFirstBatch(ctx, &cli_service.TRowSet{ArrowBatches: rowSet.ArrowBatches}, cfg, nil)
+	if err != nil || len(schemaBytes) == 0 {
+		return nil, err
+	}
+	schema, parseErr := schemaFromIPCBytes(schemaBytes)
+	if parseErr != nil {
+		return nil, arrowSchemaReadError(ctx, errArrowRowsConvertSchema, parseErr)
+	}
+	if schema.NumFields() != len(metadata.Schema.GetColumns()) {
+		return nil, arrowSchemaReadError(ctx, "discovered Arrow schema field count differs from result metadata", nil)
+	}
+	return schemaBytes, nil
+}
+
 // Inspect only message metadata; record bodies remain unread, including under LZ4.
 func peekIPCSchema(stream io.Reader) ([]byte, io.Reader, error) {
 	if downloaded, ok := stream.(*cloudIPCReader); ok {
@@ -189,10 +205,11 @@ func (iterator *schemaIPCStreamIterator) Next() (io.Reader, error) {
 	}
 	matchesReplacement := bytes.Equal(header, replacement)
 	if !matchesReplacement && !bytes.Equal(header, iterator.validatedHeader) {
-		iterator.spliceHeader, err = iterator.validateHeader(header, replacement)
+		splice, err := iterator.validateHeader(header, replacement)
 		if err != nil {
 			return nil, iterator.schemaError(err)
 		}
+		iterator.spliceHeader = splice
 		iterator.validatedHeader = append(iterator.validatedHeader[:0], header...)
 	}
 	if downloaded, ok := stream.(*cloudIPCReader); ok {

@@ -52,6 +52,8 @@ type rows struct {
 	resultSetMetadata                 *cli_service.TGetResultSetMetadataResp
 	schema                            *cli_service.TTableSchema
 	pendingArrowPage                  *cli_service.TFetchResultsResp
+	emptyArrowSchemaAttempted         bool
+	emptyArrowSchemaErr               error
 	detectEmbeddedSchema              bool
 	databaseTypeNameOverrides         map[int]string
 	metadataMu                        sync.Mutex
@@ -758,7 +760,7 @@ func (r *rows) fetchResultPage() error {
 		if err1 == io.EOF {
 			r.useServerArrowSchema(r.ResultPageIterator.ResultSetMetadata())
 			if metadata := r.metadataSnapshot(); metadata != nil && metadata.Schema != nil {
-				_ = r.initializeEmptyArrowSchema()
+				r.initializeEmptyArrowSchema()
 			}
 		}
 		return err1
@@ -911,8 +913,10 @@ func (r *rows) GetArrowBatches(ctx context.Context) (dbsqlrows.ArrowBatchIterato
 			return r.RowScanner.GetArrowBatches(iterCtx, *r.config, r.ResultPageIterator)
 		}
 		if len(schemaBytes) == 0 {
-			var schemaErr error
-			schemaBytes, schemaErr = arrowbased.GetArrowSchemaBytes(iterCtx, r.metadataSnapshot(), r.config.ArrowConfig)
+			schemaErr := r.emptyArrowSchemaErr
+			if schemaErr == nil {
+				schemaBytes, schemaErr = arrowbased.GetArrowSchemaBytes(iterCtx, r.metadataSnapshot(), r.config.ArrowConfig)
+			}
 			return arrowbased.NewArrowRecordIterator(iterCtx, r.ResultPageIterator, nil, schemaBytes, *r.config, schemaErr), nil
 		}
 		return arrowbased.NewArrowRecordIterator(iterCtx, r.ResultPageIterator, nil, schemaBytes, *r.config), nil
@@ -939,8 +943,10 @@ func (r *rows) GetArrowIPCStreams(ctx context.Context) (dbsqlrows.ArrowIPCStream
 			return r.RowScanner.GetArrowIPCStreams(iterCtx, *r.config, r.ResultPageIterator)
 		}
 		if len(schemaBytes) == 0 {
-			var schemaErr error
-			schemaBytes, schemaErr = arrowbased.GetArrowSchemaBytes(iterCtx, r.metadataSnapshot(), r.config.ArrowConfig)
+			schemaErr := r.emptyArrowSchemaErr
+			if schemaErr == nil {
+				schemaBytes, schemaErr = arrowbased.GetArrowSchemaBytes(iterCtx, r.metadataSnapshot(), r.config.ArrowConfig)
+			}
 			return arrowbased.NewArrowIPCStreamIterator(iterCtx, r.ResultPageIterator, nil, schemaBytes, *r.config, schemaErr), nil
 		}
 		return arrowbased.NewArrowIPCStreamIterator(iterCtx, r.ResultPageIterator, nil, schemaBytes, *r.config), nil
@@ -979,13 +985,11 @@ func (r *rows) getArrowSchemaBytes(ctx context.Context) ([]byte, error) {
 			return nil, err
 		}
 		r.useServerArrowSchema(r.ResultPageIterator.ResultSetMetadata())
-		if err := r.initializeEmptyArrowSchema(); err != nil {
-			return nil, err
-		}
 	}
 	if _, err := r.getResultSetSchema(); err != nil {
 		return nil, err
 	}
+	r.initializeEmptyArrowSchema()
 	metadata = r.metadataSnapshot()
 	if len(metadata.ArrowSchema) == 0 {
 		return nil, nil
@@ -993,28 +997,29 @@ func (r *rows) getArrowSchemaBytes(ctx context.Context) ([]byte, error) {
 	return metadata.ArrowSchema, nil
 }
 
-func (r *rows) initializeEmptyArrowSchema() error {
+func (r *rows) initializeEmptyArrowSchema() {
+	if r.emptyArrowSchemaAttempted {
+		return
+	}
+	r.emptyArrowSchemaAttempted = true
 	if metadata := r.metadataSnapshot(); metadata != nil && len(metadata.ArrowSchema) > 0 {
-		return nil
+		return
 	}
 	pages, ok := r.ResultPageIterator.(interface {
 		EmptyResultPage() *cli_service.TFetchResultsResp
 	})
 	if !ok {
-		return nil
+		return
 	}
 	page := pages.EmptyResultPage()
 	if page == nil || page.Results == nil || len(page.Results.ArrowBatches) == 0 {
-		return nil
+		return
 	}
-	if err := r.makeRowScanner(page); err != nil {
-		return err
+	schemaBytes, err := arrowbased.GetEmptyArrowSchemaBytes(r.ctx, page.Results, r.metadataSnapshot(), r.config)
+	r.emptyArrowSchemaErr = err
+	if len(schemaBytes) > 0 {
+		r.useServerArrowSchema(&cli_service.TGetResultSetMetadataResp{ArrowSchema: schemaBytes})
 	}
-	if r.RowScanner != nil {
-		r.RowScanner.Close()
-		r.RowScanner = nil
-	}
-	return nil
 }
 
 func (r *rows) metadataSnapshot() *cli_service.TGetResultSetMetadataResp {

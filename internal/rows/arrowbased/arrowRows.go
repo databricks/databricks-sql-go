@@ -682,7 +682,7 @@ func getColumnInfo(arrowSchema *arrow.Schema, schema *cli_service.TTableSchema) 
 
 // GetArrowSchemaBytes returns the server schema or converts the Thrift schema using the Arrow configuration.
 func GetArrowSchemaBytes(ctx context.Context, metadata *cli_service.TGetResultSetMetadataResp, cfg config.ArrowConfig) ([]byte, dbsqlerr.DBError) {
-	schemaBytes, _, err := tGetResultSetMetadataRespToArrowSchema(metadata, cfg, ctx, dbsqllog.Logger)
+	schemaBytes, _, err := tGetResultSetMetadataRespToArrowSchema(metadata, cfg, ctx, nil)
 	return schemaBytes, err
 }
 
@@ -696,14 +696,18 @@ func tGetResultSetMetadataRespToArrowSchema(resultSetMetadata *cli_service.TGetR
 		// Thrift omits nullability, TIMESTAMP_NTZ, and native complex/interval details.
 		arrowSchema, err = tTableSchemaToArrowSchema(resultSetMetadata.Schema, &arrowConfig)
 		if err != nil {
-			logger.Err(err).Msg(errArrowRowsConvertSchema)
+			if logger != nil {
+				logger.Err(err).Msg(errArrowRowsConvertSchema)
+			}
 			return nil, nil, dbsqlerrint.NewDriverError(ctx, errArrowRowsConvertSchema, err).WithCategory(dbsqlerrint.CategoryArrowSchemaParsing)
 		}
 
 		// serialize the arrow schema
 		schemaBytes, err = getArrowSchemaBytes(arrowSchema, ctx)
 		if err != nil {
-			logger.Err(err).Msg(errArrowRowsSerializeSchema)
+			if logger != nil {
+				logger.Err(err).Msg(errArrowRowsSerializeSchema)
+			}
 			return nil, nil, dbsqlerrint.NewDriverError(ctx, errArrowRowsSerializeSchema, err).WithCategory(dbsqlerrint.CategoryArrowSchemaParsing)
 		}
 	} else {
