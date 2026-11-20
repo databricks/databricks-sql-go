@@ -727,9 +727,14 @@ func errorHandler(resp *http.Response, err error, numTries int) (*http.Response,
 		}
 
 		logger.Err(werr).Msg(resp.Status)
+
+		// net/http discards a response returned with an error, so close it here.
+		if resp.Body != nil {
+			_ = resp.Body.Close()
+		}
 	}
 
-	return resp, werr
+	return nil, werr
 }
 
 var (
