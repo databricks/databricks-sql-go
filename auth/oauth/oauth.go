@@ -82,7 +82,7 @@ func validateEndpoint(endpoint oauth2.Endpoint) (oauth2.Endpoint, error) {
 		{"authorization_endpoint", endpoint.AuthURL, false},
 		{"device_authorization_endpoint", endpoint.DeviceAuthURL, false},
 	} {
-		if (field.required || field.url != "") && !isValidDatabricksIssuer(field.url) {
+		if (field.required || field.url != "") && !isValidDatabricksURL(field.url, true) {
 			return oauth2.Endpoint{}, fmt.Errorf("oauth: invalid %s", field.name)
 		}
 	}
@@ -148,14 +148,22 @@ func substituteAccountID(meta hostMetadata) string {
 // InsecureIssuerURLContext because the discovered issuer is cross-host) and avoids
 // cleartext OAuth from an http:// endpoint.
 func isValidDatabricksIssuer(issuer string) bool {
-	if strings.Contains(issuer, accountIDPlaceholder) {
+	return isValidDatabricksURL(issuer, false)
+}
+
+func isValidDatabricksURL(value string, allowRootDot bool) bool {
+	if strings.Contains(value, accountIDPlaceholder) {
 		return false
 	}
-	u, err := url.Parse(issuer)
-	if err != nil || u.Scheme != "https" || u.Hostname() == "" {
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" {
 		return false
 	}
-	return isDatabricksHost(u.Hostname())
+	host := parsed.Hostname()
+	if allowRootDot {
+		host = strings.TrimSuffix(host, ".")
+	}
+	return isDatabricksHost(host)
 }
 
 // databricksHostSuffixes is the set of DNS suffixes treated as first-party

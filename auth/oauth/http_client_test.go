@@ -16,6 +16,27 @@ import (
 
 type discoveryRoundTripper func(*http.Request) (*http.Response, error)
 
+func TestDiscoveredEndpointRootDotValidation(t *testing.T) {
+	for _, test := range []struct {
+		value string
+		valid bool
+	}{
+		{"https://test.cloud.databricks.com/token", true},
+		{"https://test.cloud.databricks.com./token", true},
+		{"https://TEST.CLOUD.DATABRICKS.COM.:443/token", true},
+		{"https://test.cloud.databricks.com../token", false},
+		{"https://test.cloud.databricks.com.evil./token", false},
+		{"http://test.cloud.databricks.com./token", false},
+		{"https:///token", false},
+		{"https://test.cloud.databricks.com./{account_id}", false},
+	} {
+		t.Run(test.value, func(t *testing.T) {
+			assert.Equal(t, test.valid, isValidDatabricksURL(test.value, true))
+		})
+	}
+	assert.False(t, isValidDatabricksIssuer("https://test.cloud.databricks.com./oidc"))
+}
+
 func TestGetEndpointPreservesConfiguredAzureHostForms(t *testing.T) {
 	for _, host := range []string{"adb-1.1.azuredatabricks.net.", "adb-1.1.azuredatabricks.net.corp.example"} {
 		t.Run(host, func(t *testing.T) {

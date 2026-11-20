@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -384,6 +385,30 @@ func TestM2MCustomConnectorCachesAreLocal(t *testing.T) {
 				wantDiscoveries = 10
 			}
 			assert.Equal(t, wantDiscoveries, discoveries)
+		})
+	}
+}
+
+func TestM2MRootedDiscoveryEndpoints(t *testing.T) {
+	const host = "test.cloud.databricks.com"
+	for _, endpointHost := range []string{host + ".", host + ".:443", "TEST.CLOUD.DATABRICKS.COM.:443"} {
+		t.Run(endpointHost, func(t *testing.T) {
+			endpoint := newM2MTestEndpoint(t, host, 3600)
+			transport := m2mRoundTripper(func(request *http.Request) (*http.Response, error) {
+				if strings.HasSuffix(request.URL.Path, "/.well-known/openid-configuration") {
+					body := fmt.Sprintf(`{"issuer":"https://%s/oidc","token_endpoint":"https://%s/token","authorization_endpoint":"https://%s/authorize","device_authorization_endpoint":"https://%s/device"}`, host, endpointHost, endpointHost, endpointHost)
+					return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(body)), Request: request}, nil
+				}
+				if request.URL.Path == "/token" {
+					assert.Equal(t, endpointHost, request.URL.Host)
+				}
+				return endpoint.transport.RoundTrip(request)
+			})
+			created, err := NewConnector(WithServerHostname(host), WithClientCredentials("test-client", "test-secret"), WithTransport(transport), WithRetries(0, 0, 0))
+			require.NoError(t, err)
+			requestWithM2M(t, created.(*connector))
+			requestWithM2M(t, created.(*connector))
+			assert.Equal(t, int32(1), endpoint.tokenHits.Load())
 		})
 	}
 }
