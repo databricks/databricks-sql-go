@@ -386,7 +386,7 @@ func (o *kernelOp) Results(ctx context.Context, callbacks *dbsqlrows.TelemetryCa
 	return newKernelRows(ctx, o, stream, callbacks)
 }
 
-// IsStaging reports the server-authorized Volume marker.
+// IsStaging reports whether the server marked the statement as a Volume PUT, GET or REMOVE.
 func (o *kernelOp) IsStaging(ctx context.Context) (bool, error) {
 	if o.exec == nil {
 		return false, nil
@@ -398,12 +398,12 @@ func (o *kernelOp) IsStaging(ctx context.Context) (bool, error) {
 	return bool(marked), err
 }
 
-// CompleteStaging completes the marked transfer with the context roots.
+// CompleteStaging runs the Volume file transfer, limited to the staging paths set on ctx.
 func (o *kernelOp) CompleteStaging(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	// These local handle calls perform no I/O (databricks_kernel.h), so they cannot evict a session.
+	// These two calls do no network I/O, so their errors never mean the session is dead.
 	var stream *C.kernel_result_stream_t
 	if err := call(func() C.KernelStatusCode {
 		return C.kernel_executed_statement_get_result_stream(o.exec, &stream)

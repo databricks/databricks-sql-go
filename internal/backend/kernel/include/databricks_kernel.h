@@ -56,7 +56,7 @@
  * - **A result stream borrows its executed handle.** Closing the executed
  *   handle invalidates any stream obtained from it: schema access, fetching
  *   and Volume completion return `InvalidStatementHandle` (a defined error,
- *   not UB). The cached Volume marker remains readable until stream close.
+ *   not UB).
  * - **Close is awaited.** `kernel_session_close` waits for the server-side
  *   delete to complete and flushes close-session telemetry before returning.
  *   If close fails, the kernel still schedules best-effort cleanup when the
@@ -375,13 +375,13 @@ KernelStatusCode kernel_session_config_set_sea_response_compression_enabled(
 /* Configure the total timeout for one HTTP request, from connection start
  * through response-body completion. A separate 30s connection timeout also
  * applies, so connection establishment is bounded by the shorter limit.
- * Volume storage inactivity uses the separate storage-read-timeout setter.
+ * Does not apply to Volume file transfers; see the storage read timeout.
  * `request_timeout_ms == 0` keeps the kernel default (120s). */
 KernelStatusCode kernel_session_config_set_request_timeout(KernelSessionConfig* config,
                                                            uint64_t request_timeout_ms);
 
-/* Configure Volume storage idle time for reads, upload progress and PUT response
- * waits. Zero disables it. Redirected stream PUT resends have no idle bound. */
+/* Idle limit for Volume file transfers: a transfer fails after this long without
+ * progress. Also caps connection setup. Zero sets no limit. */
 KernelStatusCode kernel_session_config_set_storage_read_timeout(KernelSessionConfig* config,
                                                                 uint64_t timeout_ms);
 
@@ -984,17 +984,19 @@ typedef enum KernelVolumeCompletion {
   KernelVolumeCompletion_Completed = 2
 } KernelVolumeCompletion;
 
-/* out is written only on success. */
+/* Whether the statement is a Volume PUT, GET or REMOVE. */
 KernelStatusCode kernel_executed_statement_is_volume_operation(
     const kernel_executed_statement_t* exec, bool* out);
-/* The cached marker does not establish whether the executed owner is valid.
- * out is written only on success. */
+/* Same flag, read from the stream. Still succeeds after the executed statement
+ * is closed. */
 KernelStatusCode kernel_result_stream_is_volume_operation(
     const kernel_result_stream_t* stream, bool* out);
-/* Complete a server-marked Volume operation while retaining its instruction rows.
- * Roots are a JSON array of strings.
- * The detached result-stream canceller can interrupt completion.
- * out_status is written only on success. */
+/* Runs the file transfer for a Volume PUT, GET or REMOVE result. Call before
+ * fetching; the rows stay readable afterwards.
+ * allowed_paths_json: JSON array of local directories the transfer may use.
+ * remove_not_found_is_success: report success when the remote file is missing.
+ * Returns NeedsInputStream for a stream upload, which this API cannot perform.
+ * kernel_result_stream_canceller_cancel interrupts it from another thread. */
 KernelStatusCode kernel_result_stream_complete_volume_operation(
     kernel_result_stream_t* stream, const char* allowed_paths_json,
     bool remove_not_found_is_success, KernelVolumeCompletion* out_status);
