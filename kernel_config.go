@@ -230,6 +230,7 @@ func buildKernelConfig(cfg *config.Config, kauth kernel.Auth) kernel.Config {
 		if ke.EnableGeoSpatialSupport != nil {
 			kc.EnableGeoSpatialSupport = *ke.EnableGeoSpatialSupport
 		}
+		kc.EnableHTTP2 = ke.EnableHTTP2
 		// U2M token-cache control (WithTokenCache / tokenCache DSN param): forward to kernel.
 		kc.TokenCacheEnabled = ke.TokenCacheEnabled
 	}

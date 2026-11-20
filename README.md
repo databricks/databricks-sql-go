@@ -245,6 +245,7 @@ session parameter on both backends.
 | `catalog` | `WithInitialNamespace` | Both | | Initial catalog. Kernel applies it post-connect via `USE CATALOG`. |
 | `schema` | `WithInitialNamespace` | Both | | Initial schema. Kernel applies it post-connect via `USE SCHEMA`. |
 | `useKernel` | `WithUseKernel` | Both | `false` | Select the SEA/kernel backend. Requires a `databricks_kernel` build. |
+| `enableHttp2` | `WithEnableHTTP2(b)` | SEA only | `true` | Negotiate HTTP/2 for session HTTPS traffic, with HTTP/1.1 fallback. `false` or a configured proxy forces HTTP/1.1, including bypassed hosts. |
 
 ### Query execution
 
