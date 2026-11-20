@@ -49,6 +49,15 @@ func TestIsSessionFatal(t *testing.T) {
 			t.Errorf("code %d should not be session-fatal", code)
 		}
 	}
+	for _, err := range []*KernelError{
+		{Code: statusUnauthenticated, ErrorCode: "VOLUME_STORAGE_HTTP_ERROR"},
+		{Code: statusNetworkError, ErrorCode: "VOLUME_STORAGE_NETWORK_ERROR"},
+	} {
+		if isSessionFatal(err) {
+			t.Errorf("storage error %s should not be session-fatal", err.ErrorCode)
+		}
+	}
+
 }
 
 func expiredSessionError() *KernelError {
