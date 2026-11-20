@@ -1181,3 +1181,60 @@ func TestE2ETelemetryReportsExecutionResult(t *testing.T) {
 		})
 	}
 }
+
+type unclosedBodyCounter struct {
+	base      http.RoundTripper
+	responses atomic.Int32
+	forbidden atomic.Int32
+	open      atomic.Int32
+}
+
+func (counter *unclosedBodyCounter) RoundTrip(request *http.Request) (*http.Response, error) {
+	response, err := counter.base.RoundTrip(request)
+	if response != nil && response.Body != nil {
+		counter.responses.Add(1)
+		counter.open.Add(1)
+		if response.StatusCode == http.StatusForbidden {
+			counter.forbidden.Add(1)
+		}
+		response.Body = &countedBody{ReadCloser: response.Body, counter: counter}
+	}
+	return response, err
+}
+
+type countedBody struct {
+	io.ReadCloser
+	counter *unclosedBodyCounter
+	once    sync.Once
+}
+
+func (body *countedBody) Close() error {
+	body.once.Do(func() { body.counter.open.Add(-1) })
+	return body.ReadCloser.Close()
+}
+
+func TestE2ERejectedRequestClosesResponse(t *testing.T) {
+	host, httpPath, _ := pecoTestingCreds(t)
+	counter := &unclosedBodyCounter{base: client.PooledTransport(config.WithDefaults())}
+	connector, err := NewConnector(
+		WithServerHostname(host),
+		WithPort(443),
+		WithHTTPPath(httpPath),
+		WithAccessToken("dapi-invalid-token-for-e2e"),
+		WithTransport(counter),
+		WithRetries(1, 10*time.Millisecond, 20*time.Millisecond),
+	)
+	require.NoError(t, err)
+	db := sql.OpenDB(connector)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+
+	for attempt := 0; attempt < 3; attempt++ {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		err := db.PingContext(ctx)
+		cancel()
+		require.ErrorContains(t, err, "open session request error")
+	}
+	require.Positive(t, counter.responses.Load())
+	require.Equal(t, counter.responses.Load(), counter.forbidden.Load())
+	assert.Zero(t, counter.open.Load(), "rejected responses left unclosed")
+}

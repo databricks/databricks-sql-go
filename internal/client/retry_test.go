@@ -63,6 +63,7 @@ type trackedRetryBody struct {
 	io.ReadCloser
 	read   atomic.Int64
 	closed atomic.Bool
+	closes atomic.Int32
 }
 
 func (body *trackedRetryBody) Read(buffer []byte) (int, error) {
@@ -73,6 +74,7 @@ func (body *trackedRetryBody) Read(buffer []byte) (int, error) {
 
 func (body *trackedRetryBody) Close() error {
 	body.closed.Store(true)
+	body.closes.Add(1)
 	return body.ReadCloser.Close()
 }
 
@@ -171,8 +173,8 @@ func TestRetryEmptyBodies(t *testing.T) {
 }
 
 func TestRetryCancelDuringBackoff(t *testing.T) {
-	for _, deadline := range []bool{false, true} {
-		t.Run(fmt.Sprint(deadline), func(t *testing.T) {
+	for _, test := range []struct{ deadline, useGetBody bool }{{false, false}, {false, true}, {true, false}, {true, true}} {
+		t.Run(fmt.Sprintf("deadline=%t/GetBody=%t", test.deadline, test.useGetBody), func(t *testing.T) {
 			received := make(chan struct{}, 1)
 			var attempts atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
@@ -189,14 +191,21 @@ func TestRetryCancelDuringBackoff(t *testing.T) {
 			cfg.Transport = transport
 			ctx, cancel := context.WithCancel(context.Background())
 			wantErr := context.Canceled
-			if deadline {
+			if test.deadline {
 				cancel()
 				ctx, cancel = context.WithTimeout(context.Background(), 100*time.Millisecond)
 				wantErr = context.DeadlineExceeded
 			}
 			defer cancel()
-			request, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL, strings.NewReader("body"))
+			body := &trackedRetryBody{ReadCloser: io.NopCloser(strings.NewReader("body"))}
+			request, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL, body)
 			require.NoError(t, err)
+			if test.useGetBody {
+				request.GetBody = func() (io.ReadCloser, error) {
+					t.Error("body replayed after cancellation")
+					return http.NoBody, nil
+				}
+			}
 			result := make(chan error, 1)
 			go func() {
 				response, doErr := RetryableClient(cfg).Do(request)
@@ -215,7 +224,7 @@ func TestRetryCancelDuringBackoff(t *testing.T) {
 				defer transport.mu.Unlock()
 				return len(transport.bodies) == 1 && transport.bodies[0].closed.Load()
 			}, time.Second, time.Millisecond)
-			if !deadline {
+			if !test.deadline {
 				cancel()
 			}
 			select {
@@ -226,6 +235,7 @@ func TestRetryCancelDuringBackoff(t *testing.T) {
 				t.Fatal("backoff ignored cancellation")
 			}
 			require.Equal(t, int32(1), attempts.Load())
+			require.Eventually(t, func() bool { return body.closes.Load() == 1 }, time.Second, time.Millisecond)
 		})
 	}
 }
@@ -300,23 +310,27 @@ func TestRetryBodyPreparation(t *testing.T) {
 			request, err := http.NewRequest(http.MethodPost, server.URL, original)
 			require.NoError(t, err)
 			var bodyCalls int
+			var replayBodies []*trackedRetryBody
 			if useGetBody {
 				request.ContentLength = int64(len(payload))
 				request.GetBody = func() (io.ReadCloser, error) {
 					bodyCalls++
-					return io.NopCloser(strings.NewReader(payload)), nil
+					body := &trackedRetryBody{ReadCloser: io.NopCloser(strings.NewReader(payload))}
+					replayBodies = append(replayBodies, body)
+					return body, nil
 				}
 			}
 			response, err := RetryableClient(retryTestConfig(2)).Do(request)
 			require.NoError(t, err)
 			require.NoError(t, response.Body.Close())
 			require.Equal(t, int32(3), attempts.Load())
-			require.True(t, original.closed.Load())
+			require.Eventually(t, func() bool { return original.closes.Load() == 1 }, time.Second, time.Millisecond)
+			require.Equal(t, int64(len(payload)), original.read.Load())
 			if useGetBody {
-				require.Equal(t, 3, bodyCalls)
-				require.Zero(t, original.read.Load())
-			} else {
-				require.Equal(t, int64(len(payload)), original.read.Load())
+				require.Equal(t, 2, bodyCalls)
+				for _, body := range replayBodies {
+					require.Eventually(t, func() bool { return body.closes.Load() == 1 }, time.Second, time.Millisecond)
+				}
 			}
 			require.Same(t, original, request.Body)
 		})
@@ -343,7 +357,7 @@ func TestRetryBodyReadFailure(t *testing.T) {
 	require.Nil(t, response)
 	require.ErrorIs(t, err, wantErr)
 	require.NotContains(t, err.Error(), "request error after")
-	require.True(t, body.closed.Load())
+	require.Equal(t, int32(1), body.closes.Load())
 }
 
 func TestRetryPreservesChunkedTrailers(t *testing.T) {
@@ -396,25 +410,155 @@ func TestRetryPreservesDeclaredContentLength(t *testing.T) {
 }
 
 func TestRetryGetBodyFailure(t *testing.T) {
-	var attempts atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		attempts.Add(1)
-	}))
-	defer server.Close()
-	body := &trackedRetryBody{ReadCloser: io.NopCloser(strings.NewReader("statement"))}
-	request, err := http.NewRequest(http.MethodPost, server.URL, body)
-	require.NoError(t, err)
-	wantErr := errors.New("GetBody failed")
-	request.GetBody = func() (io.ReadCloser, error) { return nil, wantErr }
-	response, err := RetryableClient(retryTestConfig(2)).Do(request)
-	if response != nil {
-		_ = response.Body.Close()
+	for _, firstStatus := range []int{http.StatusOK, http.StatusServiceUnavailable} {
+		t.Run(fmt.Sprint(firstStatus), func(t *testing.T) {
+			var attempts atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				received, err := io.ReadAll(request.Body)
+				assert.NoError(t, err)
+				assert.Equal(t, "statement", string(received))
+				attempts.Add(1)
+				writer.WriteHeader(firstStatus)
+			}))
+			defer server.Close()
+			body := &trackedRetryBody{ReadCloser: io.NopCloser(strings.NewReader("statement"))}
+			request, err := http.NewRequest(http.MethodPost, server.URL, body)
+			require.NoError(t, err)
+			wantErr := errors.New("GetBody failed")
+			var bodyCalls int
+			request.GetBody = func() (io.ReadCloser, error) {
+				bodyCalls++
+				return nil, wantErr
+			}
+			response, err := RetryableClient(retryTestConfig(2)).Do(request)
+			if response != nil {
+				require.NoError(t, response.Body.Close())
+			}
+			require.Equal(t, int32(1), attempts.Load())
+			require.Equal(t, int64(len("statement")), body.read.Load())
+			require.Eventually(t, func() bool { return body.closes.Load() == 1 }, time.Second, time.Millisecond)
+			if firstStatus == http.StatusOK {
+				require.NoError(t, err)
+				require.NotNil(t, response)
+				require.Zero(t, bodyCalls)
+			} else {
+				require.Nil(t, response)
+				require.ErrorIs(t, err, wantErr)
+				require.Equal(t, 1, bodyCalls)
+			}
+		})
 	}
-	require.Nil(t, response)
-	require.ErrorIs(t, err, wantErr)
-	require.True(t, body.closed.Load())
-	require.Zero(t, body.read.Load())
-	require.Zero(t, attempts.Load())
+}
+
+type eofTrailerBody struct {
+	io.ReadCloser
+	trailer  http.Header
+	checksum string
+}
+
+func TestRetryClosesRequestBodyOnError(t *testing.T) {
+	for _, canceled := range []bool{false, true} {
+		for _, useGetBody := range []bool{false, true} {
+			t.Run(fmt.Sprintf("canceled=%t/GetBody=%t", canceled, useGetBody), func(t *testing.T) {
+				var attempts atomic.Int32
+				server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+					_, err := io.Copy(io.Discard, request.Body)
+					assert.NoError(t, err)
+					attempts.Add(1)
+					writer.WriteHeader(http.StatusServiceUnavailable)
+				}))
+				defer server.Close()
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				if canceled {
+					cancel()
+				}
+				original := &trackedRetryBody{ReadCloser: io.NopCloser(strings.NewReader("statement"))}
+				request, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL, original)
+				require.NoError(t, err)
+				var replayBodies []*trackedRetryBody
+				if useGetBody {
+					request.GetBody = func() (io.ReadCloser, error) {
+						body := &trackedRetryBody{ReadCloser: io.NopCloser(strings.NewReader("statement"))}
+						replayBodies = append(replayBodies, body)
+						return body, nil
+					}
+				}
+				response, err := RetryableClient(retryTestConfig(1)).Do(request)
+				if response != nil {
+					_ = response.Body.Close()
+				}
+				require.Nil(t, response)
+				require.Error(t, err)
+				require.Eventually(t, func() bool { return original.closes.Load() == 1 }, time.Second, time.Millisecond)
+				if canceled {
+					require.ErrorIs(t, err, context.Canceled)
+					require.Zero(t, attempts.Load())
+					require.Empty(t, replayBodies)
+				} else {
+					require.Equal(t, int32(2), attempts.Load())
+					if useGetBody {
+						require.Len(t, replayBodies, 1)
+						require.Eventually(t, func() bool { return replayBodies[0].closes.Load() == 1 }, time.Second, time.Millisecond)
+					}
+				}
+			})
+		}
+	}
+}
+
+func (body *eofTrailerBody) Read(buffer []byte) (int, error) {
+	count, err := body.ReadCloser.Read(buffer)
+	if err == io.EOF {
+		body.trailer.Set("X-Checksum", body.checksum)
+	}
+	return count, err
+}
+
+func TestRetrySendsTrailersFilledAtEOF(t *testing.T) {
+	for _, useGetBody := range []bool{false, true} {
+		t.Run(fmt.Sprintf("GetBody=%t", useGetBody), func(t *testing.T) {
+			var attempts atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				received, err := io.ReadAll(request.Body)
+				assert.NoError(t, err)
+				assert.Equal(t, "statement", string(received))
+				attempt := attempts.Add(1)
+				checksum := "1"
+				if useGetBody {
+					checksum = fmt.Sprint(attempt)
+				}
+				assert.Equal(t, checksum, request.Trailer.Get("X-Checksum"))
+				if attempt < 3 {
+					writer.WriteHeader(http.StatusServiceUnavailable)
+				}
+			}))
+			defer server.Close()
+			trailer := http.Header{"X-Checksum": nil}
+			newBody := func(checksum string) io.ReadCloser {
+				return &eofTrailerBody{
+					ReadCloser: io.NopCloser(strings.NewReader("statement")),
+					trailer:    trailer,
+					checksum:   checksum,
+				}
+			}
+			request, err := http.NewRequest(http.MethodPost, server.URL, newBody("1"))
+			require.NoError(t, err)
+			request.ContentLength = -1
+			request.Trailer = trailer
+			if useGetBody {
+				var bodyCalls int
+				request.GetBody = func() (io.ReadCloser, error) {
+					bodyCalls++
+					return newBody(fmt.Sprint(bodyCalls + 1)), nil
+				}
+			}
+			response, err := RetryableClient(retryTestConfig(2)).Do(request)
+			require.NoError(t, err)
+			require.NoError(t, response.Body.Close())
+			require.Equal(t, int32(3), attempts.Load())
+		})
+	}
 }
 
 func TestRetryWithoutAuthenticator(t *testing.T) {

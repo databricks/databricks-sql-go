@@ -17,34 +17,34 @@ type retryTransport struct {
 }
 
 func (transport *retryTransport) RoundTrip(request *http.Request) (*http.Response, error) {
-	var getBody func() (io.ReadCloser, error)
+	bufferBody := request.Body != nil && request.GetBody == nil
+	var buffered []byte
 	contentLength := request.ContentLength
-	if request.Body != nil {
+	if bufferBody {
 		defer request.Body.Close() //nolint:errcheck
-		getBody = request.GetBody
-		if getBody == nil {
-			body, err := io.ReadAll(request.Body)
-			if err != nil {
-				return nil, err
-			}
-			if len(body) == 0 {
-				contentLength = 0
-			}
-			getBody = func() (io.ReadCloser, error) {
-				if len(body) == 0 {
-					return http.NoBody, nil
-				}
-				return io.NopCloser(bytes.NewReader(body)), nil
-			}
+		body, err := io.ReadAll(request.Body)
+		if err != nil {
+			return nil, err
+		}
+		buffered = body
+		if len(body) == 0 {
+			contentLength = 0
 		}
 	}
 
 	logger.Debug().Msg("performing request")
 	for attempt := 0; ; attempt++ {
-		attemptRequest := request.Clone(request.Context())
+		attemptRequest := new(http.Request)
+		*attemptRequest = *request
 		attemptRequest.ContentLength = contentLength
-		if getBody != nil {
-			body, err := getBody()
+		switch {
+		case bufferBody:
+			attemptRequest.Body = http.NoBody
+			if len(buffered) > 0 {
+				attemptRequest.Body = io.NopCloser(bytes.NewReader(buffered))
+			}
+		case attempt > 0 && request.Body != nil && request.GetBody != nil:
+			body, err := request.GetBody()
 			if err != nil {
 				transport.client.CloseIdleConnections()
 				return nil, err
