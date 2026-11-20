@@ -293,11 +293,11 @@ const (
 // kernelRetryConfig resolves the driver's WithRetries policy (RetryWaitMin /
 // RetryWaitMax / RetryMax) into the kernel retry descriptor so the caller's
 // backoff/attempt policy is authoritative on the kernel path — matching the Thrift
-// path, which applies exactly these values via go-retryablehttp, and the same
+// path, which applies exactly these values via its retrying HTTP client, and the same
 // "retries after the initial attempt" semantics the kernel setter uses. The
 // connector's WithDefaults guarantees positive waits (1s / 30s) and RetryMax 4.
 //
-// A negative RetryMax is the WithRetries disable form (retryablehttp treats it as
+// A negative RetryMax is the WithRetries disable form (the Thrift client treats it as
 // zero retries); it maps to MaxRetries == 0 and is honored EVEN when the waits are
 // zero (WithRetries(-1, 0, 0) is the idiomatic disable), by substituting a valid
 // placeholder range the setter accepts — the backoff is unused with no retries.
@@ -322,7 +322,7 @@ const (
 // Sub-millisecond waits are clamped up to a 1ms floor before they are returned:
 // applyRetry forwards RetryConfig waits via time.Duration.Milliseconds(), so a valid
 // wait in (0, 1ms) would truncate to 0ms, which the kernel setter rejects
-// (min_wait_ms must be > 0) — a connect failure the Thrift path (go-retryablehttp,
+// (min_wait_ms must be > 0) — a connect failure the Thrift path (its retry loop,
 // which accepts any Duration) does not have.
 func kernelRetryConfig(cfg *config.Config) *kernel.RetryConfig {
 	// Kernel-only overall retry budget (WithKernelRetryOverallTimeout), carried on
