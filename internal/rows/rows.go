@@ -225,6 +225,17 @@ func NewRows(
 		r.resultFormatCallback = callbacks.OnResultFormat
 		r.closeCallback = callbacks.OnClose
 	}
+	closedOnServer := directResults != nil && directResults.CloseOperation != nil
+	var hasMoreRows *bool
+	delimiter := rowscanner.NewDelimiter(0, 0)
+	if directResults != nil && directResults.ResultSet != nil {
+		hasMoreRows = directResults.ResultSet.HasMoreRows
+		if rowSet := directResults.ResultSet.Results; rowSet != nil {
+			delimiter = rowscanner.NewDelimiter(rowSet.StartRowOffset, rowscanner.CountRows(rowSet))
+		}
+	}
+	r.ResultPageIterator = rowscanner.NewResultPageIterator(resultsCtx, delimiter, pageSize, opHandle, hasMoreRows, closedOnServer, client, r.logger())
+	r.ctx = rowscanner.WithCloudFetchLinkRefresher(resultsCtx, r.ResultPageIterator)
 
 	// if we already have results for the query do some additional initialization
 	if directResults != nil {
@@ -263,30 +274,6 @@ func NewRows(
 			r.telemetryUpdate(r.chunkCount, r.bytesDownloaded, 0, 0, totalPresent)
 		}
 	}
-
-	var d rowscanner.Delimiter
-	if r.RowScanner != nil {
-		d = rowscanner.NewDelimiter(r.RowScanner.Start(), r.RowScanner.Count())
-	} else {
-		d = rowscanner.NewDelimiter(0, 0)
-	}
-
-	// CloudFetch may deliver all links without closing the server operation.
-	closedOnServer := directResults != nil && directResults.CloseOperation != nil
-	var hasMoreRows *bool
-	if directResults != nil && directResults.ResultSet != nil {
-		hasMoreRows = directResults.ResultSet.HasMoreRows
-	}
-	r.ResultPageIterator = rowscanner.NewResultPageIterator(
-		resultsCtx,
-		d,
-		pageSize,
-		opHandle,
-		hasMoreRows,
-		closedOnServer,
-		client,
-		r.logger(),
-	)
 
 	return r, nil
 }

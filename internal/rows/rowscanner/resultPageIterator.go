@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"sync"
 	"sync/atomic"
 
 	"github.com/databricks/databricks-sql-go/driverctx"
@@ -63,9 +64,12 @@ func NewResultPageIterator(
 	client cli_service.TCLIService,
 	logger *dbsqllog.DBSQLLogger,
 ) ResultPageIterator {
+	fetchCtx, fetchCancel := context.WithCancel(ctx)
 
 	return &resultPageIterator{
 		ctx:            ctx,
+		fetchCtx:       fetchCtx,
+		fetchCancel:    fetchCancel,
 		Delimiter:      delimiter,
 		isFinished:     closedOnServer || (hasMoreRows != nil && !*hasMoreRows),
 		maxPageSize:    maxPageSize,
@@ -79,7 +83,11 @@ func NewResultPageIterator(
 }
 
 type resultPageIterator struct {
-	ctx context.Context
+	ctx                  context.Context
+	fetchCtx             context.Context
+	fetchCancel          context.CancelFunc
+	operationMu          sync.Mutex
+	fetchPositionChanged bool
 
 	// Gives the parameters of the current result page
 	Delimiter
@@ -149,7 +157,7 @@ func (rpf *resultPageIterator) Err() error {
 func (rpf *resultPageIterator) HasNext() bool {
 	if rpf.isFinished && rpf.nextResultPage == nil {
 		// Preserve best-effort cleanup when direct results skip the final fetch.
-		rpf.Close() //nolint:errcheck,gosec // G104: match cleanup of the final fetched page
+		rpf.closeOperation() //nolint:errcheck,gosec // G104: match cleanup of the final fetched page
 		// There are no more pages to load and there isn't an already fetched
 		// page waiting to retrieved by Next(). Preserve a previously stored
 		// fetch error rather than masking it as a normal end-of-results.
@@ -163,7 +171,7 @@ func (rpf *resultPageIterator) HasNext() bool {
 	if rpf.nextResultPage == nil {
 		nrp, err := rpf.getNextPage()
 		if err != nil {
-			rpf.Close() //nolint:errcheck,gosec // G104: close in error path
+			rpf.closeOperation() //nolint:errcheck,gosec // G104: close in error path
 			rpf.isFinished = true
 			rpf.err = err
 			return false
@@ -171,8 +179,8 @@ func (rpf *resultPageIterator) HasNext() bool {
 
 		rpf.err = nil
 		rpf.nextResultPage = nrp
-		if !nrp.GetHasMoreRows() {
-			rpf.Close() //nolint:errcheck,gosec // G104: close in error path
+		if !nrp.GetHasMoreRows() && (nrp.Results == nil || len(nrp.Results.ResultLinks) == 0) {
+			rpf.closeOperation() //nolint:errcheck,gosec // G104: close in error path
 		}
 	}
 
@@ -229,7 +237,7 @@ func (rpf *resultPageIterator) getNextPage() (*cli_service.TFetchResultsResp, er
 			IncludeResultSetMetadata: &includeResultSetMetadata,
 		}
 
-		fetchResult, err = rpf.client.FetchResults(rpf.ctx, &req)
+		fetchResult, err = rpf.fetchPage(&req, nextPageStartRow)
 		if err != nil {
 			rpf.logger.Err(err).Msg("databricks: Rows instance failed to retrieve results")
 			// A fetch aborted via the results context (e.g. Close) isn't a
@@ -257,6 +265,15 @@ func (rpf *resultPageIterator) getNextPage() (*cli_service.TFetchResultsResp, er
 }
 
 func (rpf *resultPageIterator) Close() (err error) {
+	if rpf.fetchCancel != nil {
+		rpf.fetchCancel()
+	}
+	return rpf.closeOperation()
+}
+
+func (rpf *resultPageIterator) closeOperation() (err error) {
+	rpf.operationMu.Lock()
+	defer rpf.operationMu.Unlock()
 	// if the operation hasn't already been closed on the server we
 	// need to do that now
 	if !rpf.closedOnServer {

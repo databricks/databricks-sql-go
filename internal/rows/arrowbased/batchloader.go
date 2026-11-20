@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/databricks/databricks-sql-go/internal/config"
@@ -63,9 +64,11 @@ func NewCloudIPCStreamIterator(
 	if cfg.HTTPClient != nil {
 		httpClient = cfg.HTTPClient
 	}
+	ctx, cancel := context.WithCancel(ctx)
 
 	bi := &cloudIPCStreamIterator{
 		ctx:              ctx,
+		cancel:           cancel,
 		cfg:              cfg,
 		startRowOffset:   startRowOffset,
 		pendingLinks:     NewQueue[cli_service.TSparkArrowResultLink](),
@@ -185,7 +188,9 @@ func (bi *localIPCStreamIterator) Close() {
 }
 
 type cloudIPCStreamIterator struct {
+	mu               sync.Mutex
 	ctx              context.Context
+	cancel           context.CancelFunc
 	cfg              *config.Config
 	startRowOffset   int64
 	pendingLinks     Queue[cli_service.TSparkArrowResultLink]
@@ -206,6 +211,11 @@ func (bi *cloudIPCStreamIterator) Next() (io.Reader, error) {
 // with the link's authoritative StartRowOffset and RowCount. The Arrow file may
 // contain padding rows beyond RowCount; the caller caps to RowCount.
 func (bi *cloudIPCStreamIterator) NextWithMetadata() (io.Reader, int64, int64, error) {
+	bi.mu.Lock()
+	if err := bi.ctx.Err(); err != nil {
+		bi.mu.Unlock()
+		return nil, 0, 0, err
+	}
 	for (bi.downloadTasks.Len() < bi.cfg.MaxDownloadThreads) && (bi.pendingLinks.Len() > 0) {
 		link := bi.pendingLinks.Dequeue()
 		logger.Debug().Msgf(
@@ -233,20 +243,19 @@ func (bi *cloudIPCStreamIterator) NextWithMetadata() (io.Reader, int64, int64, e
 	}
 
 	task := bi.downloadTasks.Dequeue()
+	bi.mu.Unlock()
 	if task == nil {
 		return nil, 0, 0, io.EOF
 	}
 
 	data, downloadMs, err := task.GetResult()
+	defer task.cancel()
 
 	// once we've got an errored out task - cancel the remaining ones
 	if err != nil {
 		bi.Close()
 		return nil, 0, 0, err
 	}
-
-	// explicitly call cancel function on successfully completed task to avoid context leak
-	task.cancel()
 
 	// Notify telemetry with per-file download time (matches JDBC's per-chunk HTTP GET timing).
 	// Always invoke for successfully completed downloads so the caller can count files;
@@ -260,10 +269,17 @@ func (bi *cloudIPCStreamIterator) NextWithMetadata() (io.Reader, int64, int64, e
 }
 
 func (bi *cloudIPCStreamIterator) HasNext() bool {
+	bi.mu.Lock()
+	defer bi.mu.Unlock()
 	return (bi.pendingLinks.Len() > 0) || (bi.downloadTasks.Len() > 0)
 }
 
 func (bi *cloudIPCStreamIterator) Close() {
+	if bi.cancel != nil {
+		bi.cancel()
+	}
+	bi.mu.Lock()
+	defer bi.mu.Unlock()
 	bi.pendingLinks.Clear()
 	for bi.downloadTasks.Len() > 0 {
 		task := bi.downloadTasks.Dequeue()
@@ -313,13 +329,12 @@ func (cft *cloudFetchDownloadTask) GetResult() (io.Reader, int64, error) {
 		return result.data, result.downloadMs, nil
 	}
 
-	// This branch should never be reached. If you see this message - something got really wrong
 	logger.Debug().Msgf(
 		"CloudFetch: channel was closed before result was received; link at offset %d row count %d",
 		link.StartRowOffset,
 		link.RowCount,
 	)
-	return nil, 0, nil
+	return nil, 0, cft.ctx.Err()
 }
 
 func (cft *cloudFetchDownloadTask) Run() {
@@ -332,16 +347,23 @@ func (cft *cloudFetchDownloadTask) Run() {
 			cft.link.RowCount,
 		)
 		downloadStart := time.Now()
-		rawBody, err := fetchBatchBytes(
-			cft.ctx,
-			cft.link,
-			cft.minTimeToExpiry,
-			cft.speedThresholdMbps,
-			cft.httpClient,
-			cft.retryMax,
-			cft.retryWaitMin,
-			cft.retryWaitMax,
-		)
+		var rawBody []byte
+		var err error
+		link := cft.link
+		for attempt := 0; ; attempt++ {
+			rawBody, err = fetchBatchBytes(cft.ctx, link, cft.minTimeToExpiry, cft.speedThresholdMbps, cft.httpClient, cft.retryMax, cft.retryWaitMin, cft.retryWaitMax)
+			if err != errLinkExpired || attempt >= 3 {
+				break
+			}
+			refetch := rowscanner.CloudFetchLinkRefresherFromContext(cft.ctx)
+			if refetch == nil {
+				break
+			}
+			link, err = refetch(cft.ctx, link)
+			if err != nil {
+				break
+			}
+		}
 		if err != nil {
 			cft.sendResult(cloudFetchDownloadTaskResult{data: nil, err: err})
 			return
@@ -429,6 +451,9 @@ func fetchBatchBytes(
 	)
 
 	for attempt := 0; attempt <= retryMax; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if attempt > 0 {
 			wait := retry.Backoff(attempt, retryWaitMin, retryWaitMax, lastRetryAfter)
 			logger.Debug().Msgf(
@@ -450,7 +475,7 @@ func fetchBatchBytes(
 		// presigned URL, and there's no point spending another HTTP attempt
 		// (or another retry) on a link we know will be rejected.
 		if isLinkExpired(link.ExpiryTime, minTimeToExpiry) {
-			return nil, errors.New(dbsqlerr.ErrLinkExpired)
+			return nil, errLinkExpired
 		}
 
 		req, err := http.NewRequestWithContext(ctx, "GET", link.FileLink, nil)
@@ -518,6 +543,8 @@ func fetchBatchBytes(
 	msg := fmt.Sprintf("%s: %v (after %d retries)", errArrowRowsCloudFetchDownloadFailure, lastErr, retryMax)
 	return nil, dbsqlerrint.NewDriverError(ctx, msg, lastErr).WithCategory(dbsqlerrint.CategoryChunkDownload)
 }
+
+var errLinkExpired = errors.New(dbsqlerr.ErrLinkExpired)
 
 func getReader(r io.Reader, useLz4Compression bool) io.Reader {
 	if useLz4Compression {
