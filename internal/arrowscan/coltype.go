@@ -71,8 +71,11 @@ func ColumnTypeInfoFor(dt arrow.DataType) ColumnTypeInfo {
 	case arrow.FLOAT64:
 		return ColumnTypeInfo{DatabaseTypeName: "DOUBLE", ScanType: scanTypeFloat64}
 	case arrow.STRING, arrow.LARGE_STRING:
-		// STRING covers VARCHAR/CHAR/VARIANT/GEOMETRY/GEOGRAPHY too — all arrive as
-		// Arrow Utf8, and the Thrift path collapses them to STRING as well.
+		// STRING covers VARCHAR/CHAR/GEOMETRY/GEOGRAPHY too — all arrive as Arrow
+		// Utf8, and the Thrift path collapses them to STRING as well. VARIANT also
+		// arrives as Utf8, but only its field metadata identifies it, so
+		// ColumnTypeInfoForField (not this DataType-only mapping) reports VARIANT
+		// on both backends.
 		return varLen("STRING", scanTypeString)
 	case arrow.BINARY:
 		return varLen("BINARY", scanTypeRawBytes)
@@ -150,24 +153,23 @@ func IsBinaryGeospatialField(field arrow.Field) bool {
 	return geospatial && field.Type.ID() == arrow.STRUCT
 }
 
-// ColumnTypeInfoForField preserves logical time, timestamp and geospatial types that
-// the kernel's physical Arrow representation alone cannot distinguish.
+// ColumnTypeInfoForField preserves logical time, timestamp, VARIANT and geospatial
+// types that the kernel's physical Arrow representation alone cannot distinguish.
 func ColumnTypeInfoForField(field arrow.Field) ColumnTypeInfo {
 	if field.Type != nil && field.Type.ID() == arrow.TIMESTAMP {
 		return timestampColumnTypeInfo(field)
 	}
 	if field.Type != nil && (field.Type.ID() == arrow.STRING || field.Type.ID() == arrow.LARGE_STRING) {
-		for _, key := range [...]string{databricksTypeNameMetadataKey, sparkSQLNameMetadataKey} {
-			name, ok := field.Metadata.GetValue(key)
-			if !ok || strings.TrimSpace(name) == "" {
-				continue
-			}
-			switch strings.ToUpper(strings.TrimSpace(name)) {
-			case "TIME", "TIME(0)", "TIME(1)", "TIME(2)", "TIME(3)", "TIME(4)", "TIME(5)", "TIME(6)":
-				return ColumnTypeInfoFor(arrow.FixedWidthTypes.Time64ns)
-			}
-			break
+		switch strings.ToUpper(logicalTypeName(field)) {
+		case "TIME", "TIME(0)", "TIME(1)", "TIME(2)", "TIME(3)", "TIME(4)", "TIME(5)", "TIME(6)":
+			return ColumnTypeInfoFor(arrow.FixedWidthTypes.Time64ns)
 		}
+	}
+	if IsVariantField(field) {
+		// Only the name changes: the value is scanned as the same string.
+		info := ColumnTypeInfoFor(field.Type)
+		info.DatabaseTypeName = "VARIANT"
+		return info
 	}
 	name, geospatial := LogicalGeospatialType(field)
 	if !geospatial {
@@ -203,12 +205,22 @@ func IsTimestampNTZField(field arrow.Field) bool {
 	if !ok {
 		return false
 	}
-	for _, key := range [...]string{databricksTypeNameMetadataKey, sparkSQLNameMetadataKey} {
-		if name, ok := field.Metadata.GetValue(key); ok && strings.TrimSpace(name) != "" {
-			return strings.EqualFold(strings.TrimSpace(name), "TIMESTAMP_NTZ")
-		}
+	if name := logicalTypeName(field); name != "" {
+		return strings.EqualFold(name, "TIMESTAMP_NTZ")
 	}
 	return ts.TimeZone == ""
+}
+
+// logicalTypeName returns the trimmed value of the first non-blank logical type key
+// (databricks.type_name, then Spark:DataType:SqlName), or "" when neither is set.
+// Callers that switch on a logical type name share this so the precedence is defined once.
+func logicalTypeName(field arrow.Field) string {
+	for _, key := range [...]string{databricksTypeNameMetadataKey, sparkSQLNameMetadataKey} {
+		if name, ok := field.Metadata.GetValue(key); ok && strings.TrimSpace(name) != "" {
+			return strings.TrimSpace(name)
+		}
+	}
+	return ""
 }
 
 // childLocation returns the location to render a nested child field's values
@@ -229,6 +241,21 @@ func timestampColumnTypeInfo(field arrow.Field) ColumnTypeInfo {
 		return ColumnTypeInfo{DatabaseTypeName: "TIMESTAMP_NTZ", ScanType: scanTypeDateTime}
 	}
 	return ColumnTypeInfo{DatabaseTypeName: "TIMESTAMP", ScanType: scanTypeDateTime}
+}
+
+// IsVariantField reports whether field is a top-level VARIANT column. The server sends
+// VARIANT as a string field whose logical type name is in field metadata, so the
+// physical type alone cannot tell it from STRING. Only string physical types qualify,
+// so a reported VARIANT name never describes a value the scanner would not produce.
+// The logical type name decides, as in IsTimestampNTZField.
+func IsVariantField(field arrow.Field) bool {
+	if field.Type == nil {
+		return false
+	}
+	if id := field.Type.ID(); id != arrow.STRING && id != arrow.LARGE_STRING {
+		return false
+	}
+	return strings.EqualFold(logicalTypeName(field), "VARIANT")
 }
 
 // varLen builds a ColumnTypeInfo for a variable-length type, reporting the

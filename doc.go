@@ -301,6 +301,10 @@ Arrow schema. Without that schema, NTZ still reports TIMESTAMP and uses
 session-location handling. String timestamps (internal UseArrowNativeTimestamp=false)
 and non-Arrow values also retain legacy session-location parsing.
 
+Top-level VARIANT columns report VARIANT as the database type name on both backends.
+Values stay JSON text with the STRING scan type and length. On Thrift, detection reads
+the server-supplied Arrow schema; without it, VARIANT reports STRING.
+
 On the read path, context cancellation is honored at result-batch boundaries, not
 mid-fetch: an in-flight CloudFetch batch runs to completion before the cancel takes
 effect.
@@ -558,7 +562,11 @@ INTERVAL (year-month) --> string
 INTERVAL (day-time) --> string
 
 For ARRAY, STRUCT, and MAP types, sql.Scan can cast sql.RawBytes to JSON string, which can be unmarshalled to Golang
-arrays, maps, and structs. For example:
+arrays, maps, and structs. Nested non-finite FLOAT and DOUBLE values are represented as the JSON strings
+"NaN", "Infinity", and "-Infinity", distinct from SQL NULL (null). Finite values remain JSON numbers.
+Use any or a custom decoder for fields that can contain special values; encoding/json cannot unmarshal
+these strings into plain float fields. Top-level FLOAT and DOUBLE values remain numeric. Non-finite
+floating-point MAP keys use the same "NaN", "Infinity", and "-Infinity" spellings. For example:
 
 	type structVal struct {
 			StringField string `json:"string_field"`

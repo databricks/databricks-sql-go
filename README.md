@@ -376,6 +376,14 @@ STRUCT and VARIANT (as JSON) are supported. BINARY is returned as `sql.RawBytes`
 Both backends return GEOMETRY / GEOGRAPHY as WKT / EWKT by default.
 Set `enableGeoSpatialSupport=true` on the kernel path to opt into EWKB.
 
+In ARRAY / MAP / STRUCT JSON, non-finite FLOAT and DOUBLE values render as the
+strings `"NaN"`, `"Infinity"`, and `"-Infinity"`, distinct from SQL NULL (`null`).
+Finite values remain JSON numbers. Use `any` or a custom decoder for fields that
+can contain special values; `encoding/json` does not unmarshal these strings into
+plain `float32` or `float64` fields. Top-level FLOAT / DOUBLE values remain numeric.
+Non-finite floating-point MAP keys use the same `"NaN"`, `"Infinity"`, and
+`"-Infinity"` spellings.
+
 | SQL type | Go value | NULL detection |
 |---|---|---|
 | `TIME` | `time.Time` on `0001-01-01` UTC | `sql.NullTime.Valid` or a nil `*time.Time`, never `IsZero()`; midnight is the zero time and JSON `omitzero` omits it. |
@@ -409,6 +417,12 @@ On Thrift, TIMESTAMP_NTZ handling requires native timestamp fields in the
 server-supplied Arrow schema. Without that schema, NTZ still reports `TIMESTAMP`
 and uses session-location handling. String timestamps (`UseArrowNativeTimestamp=false`,
 an internal setting) and non-Arrow values also retain legacy session-location parsing.
+
+Top-level VARIANT columns report `VARIANT` in `sql.ColumnType.DatabaseTypeName()` on
+both backends. Values stay JSON text, and the scan type (`string`) and length match a
+STRING column. Nested VARIANT (inside ARRAY, MAP or STRUCT) is not reported by name. On
+Thrift, detection reads the server-supplied Arrow schema; without it, VARIANT reports
+`STRING`.
 
 Metadata is reached through SQL (`SHOW`, `DESCRIBE`, `information_schema`) on both
 backends — the driver exposes no `GetCatalogs`/`GetSchemas`/`GetTables`/`GetColumns` API

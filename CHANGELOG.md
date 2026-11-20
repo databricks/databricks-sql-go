@@ -3,7 +3,8 @@
 ## Unreleased (v2.0.0 prototype)
 
 - Honor `WithPort` / DSN port on the kernel backend, including the automatic Reyden recovery onto the kernel: a non-default port is folded into the host (`host:port`, IPv6-safe) instead of being rejected. A port embedded in the host wins over a differing `WithPort` (a warning is logged), a zero port means the default, and a trailing `/` on the host is ignored. An out-of-range port, or a non-default port with a host that has a path, query or fragment, is rejected with `ErrInvalidKernelConfig`. With OAuth and a non-default port, the kernel uses the same `host:port` for OAuth; Thrift keeps OAuth on the bare host (documented, not guarded).
-
+- Render non-finite FLOAT / DOUBLE values inside ARRAY / MAP / STRUCT results as the JSON strings `"NaN"`, `"Infinity"`, and `"-Infinity"` on both backends instead of failing row iteration. SQL NULL remains `null`; top-level floats remain numeric (databricks/databricks-sql-go#573).
+- **Behavior change:** Non-finite floating-point MAP keys use the same spellings as values on both backends. On the kernel backend, keys previously rendered as `"+Inf"` and `"-Inf"` now render as `"Infinity"` and `"-Infinity"`; `"NaN"` is unchanged. On Thrift, these keys previously failed row iteration (databricks/databricks-sql-go#573).
 - Fix the module-root package conflict when building, linting, or running Gazelle with the `tools` build tag (databricks/databricks-sql-go#162).
 - **Behavior change:** Report declared DECIMAL precision and scale through `sql.ColumnType.DecimalSize()` on Thrift and SEA, including zero-row results. Tools such as ORM migrators can now act on these qualifiers (databricks/databricks-sql-go#500).
 - **Behavior change:** Support Arrow TIME results on Thrift and SEA as UTC `time.Time` values on `0001-01-01`, preserving precision and using clock-only nested JSON. TIME metadata now reports `TIME`/`time.Time` with no length, including empty and NULL-only results; previously Thrift reported `STRING`/`string` with unbounded length, and SEA reported an empty name with `*interface{}` (databricks/databricks-sql-go#505).
@@ -16,6 +17,7 @@
 - Report `statement_type` (`SQL`, as on the kernel backend) and the result delivery format (`INLINE_ARROW`, `EXTERNAL_LINKS` or `COLUMNAR_INLINE`) in Thrift statement telemetry. The format is reported when the driver already has the result metadata (databricks/databricks-sql-go#454).
 - **Behavior change:** The DSN `timeout` param now rejects values outside ±9223372036 seconds with an error naming `timeout`. These values previously overflowed `time.Duration` and silently became a different, often negative, timeout. Negative values within range are still accepted (databricks/databricks-sql-go#490).
 - Avoid redundant Thrift result fetches when direct results specify `hasMoreRows=false` (databricks/databricks-sql-go#539).
+- **Behavior change:** Top-level VARIANT columns report `VARIANT` from `sql.ColumnType.DatabaseTypeName()` on Thrift and SEA instead of `STRING`, matching the Python and JDBC drivers. Values stay JSON text, and the scan type (`string`) and length are unchanged. Nested VARIANT is not reported by name. On Thrift, this requires the server-supplied Arrow result schema; without it, VARIANT still reports `STRING` (databricks/databricks-sql-go#576).
 
 ## v1.19.0 (2026-11-04)
 - Upgrade the SQL kernel bindings to v1.4.0.
