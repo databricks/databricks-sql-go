@@ -507,6 +507,7 @@ func WithQueryTags(tags map[string]string) ConnOption {
 }
 
 // WithSkipTLSHostVerify disables the verification of the hostname in the TLS certificate.
+// The same TLS setting applies to OAuth M2M discovery and the client-secret exchange.
 // WARNING:
 // When this option is used, TLS is susceptible to machine-in-the-middle attacks.
 // Please only use this option when the hostname is an internal private link hostname
@@ -528,6 +529,7 @@ func WithAuthenticator(authr auth.Authenticator) ConnOption {
 }
 
 // WithTransport sets up the transport configuration to be used by the httpclient.
+// OAuth M2M discovery and credential exchange, including the client secret, also use this transport.
 func WithTransport(t http.RoundTripper) ConnOption {
 	return func(c *config.Config) {
 		c.Transport = t

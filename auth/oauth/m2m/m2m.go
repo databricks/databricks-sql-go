@@ -45,6 +45,8 @@ type tokenCache struct {
 	config *clientcredentials.Config
 }
 
+type tokenRequestContextKey struct{}
+
 func (c *authClient) WithHTTPClient(client *http.Client) auth.Authenticator {
 	return &authClient{
 		clientID:     c.clientID,
@@ -73,6 +75,9 @@ func (c *authClient) M2MScopes() []string {
 // Auth will start the OAuth Authorization Flow to authenticate the cli client
 // using the users credentials in the browser. Compatible with SSO.
 func (c *authClient) Authenticate(r *http.Request) error {
+	if r.Context().Value(tokenRequestContextKey{}) == c.cache {
+		return nil
+	}
 	c.cache.mutex.Lock()
 	defer c.cache.mutex.Unlock()
 	if c.cache.token.Valid() {
@@ -80,7 +85,7 @@ func (c *authClient) Authenticate(r *http.Request) error {
 		return nil
 	}
 
-	ctx := context.Background()
+	ctx := context.WithValue(context.Background(), tokenRequestContextKey{}, c.cache)
 	if c.httpClient != nil {
 		ctx = context.WithValue(ctx, oauth2.HTTPClient, c.httpClient)
 	}

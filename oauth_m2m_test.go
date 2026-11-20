@@ -7,10 +7,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"os/exec"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/databricks/databricks-sql-go/auth/oauth/m2m"
 	"github.com/databricks/databricks-sql-go/internal/client"
@@ -108,6 +111,50 @@ func requestWithM2M(t *testing.T, connector *connector) {
 	require.NoError(t, response.Body.Close())
 	require.Equal(t, http.StatusOK, response.StatusCode)
 	require.Empty(t, request.Header.Get("Authorization"))
+}
+
+//nolint:gosec // The subprocess only reexecutes this test binary.
+func TestM2MTransportCanReauthenticateSharedAuthenticator(t *testing.T) {
+	if os.Getenv("DATABRICKS_M2M_REENTRY_TEST") != "1" {
+		executable, err := os.Executable()
+		require.NoError(t, err)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		command := exec.CommandContext(ctx, executable,
+			"-test.run=^TestM2MTransportCanReauthenticateSharedAuthenticator$", "-test.timeout=5s")
+		command.Env = append(os.Environ(), "DATABRICKS_M2M_REENTRY_TEST=1")
+		output, err := command.CombinedOutput()
+		require.NoError(t, err, "%s", output)
+		return
+	}
+	blockM2MDefaultTransport(t)
+	for _, host := range []string{"test.cloud.databricks.com", "test.gcp.databricks.com", "adb-test.azuredatabricks.net"} {
+		t.Run(host, func(t *testing.T) {
+			endpoint := newM2MTestEndpoint(t, host, 3600)
+			shared := m2m.NewAuthenticator("test-client", "test-secret", host)
+			transport := m2mRoundTripper(func(request *http.Request) (*http.Response, error) {
+				cloned := request.Clone(request.Context())
+				if err := shared.Authenticate(cloned); err != nil {
+					return nil, err
+				}
+				return endpoint.transport.RoundTrip(cloned)
+			})
+			created, err := NewConnector(WithServerHostname(host), WithHTTPPath("/query"),
+				WithAuthenticator(shared), WithTransport(transport), WithRetries(0, 0, 0))
+			require.NoError(t, err)
+			requestWithM2M(t, created.(*connector))
+			requestWithM2M(t, created.(*connector))
+			require.Equal(t, int32(1), endpoint.tokenHits.Load())
+			for _, request := range endpoint.requests {
+				if strings.Contains(request.path, ".well-known") {
+					assert.Empty(t, request.authorization)
+				}
+				if request.path == "/query" {
+					assert.True(t, strings.HasPrefix(request.authorization, "Bearer token-"))
+				}
+			}
+		})
+	}
 }
 
 func TestM2MConnectorHTTPConfiguration(t *testing.T) {
