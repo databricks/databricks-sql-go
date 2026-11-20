@@ -57,6 +57,42 @@ func TestFederatedTokenAuthenticatorPreservesThriftTokenExchange(t *testing.T) {
 	assert.Equal(t, subjectToken, exchange.subjectToken)
 }
 
+func TestM2MConnectorHTTPConfiguration(t *testing.T) {
+	const host = "test.cloud.databricks.com"
+	for _, order := range []string{"auth-first", "auth-last", "dsn", "dsn-inferred-auth"} {
+		t.Run(order, func(t *testing.T) {
+			transport := &http.Transport{}
+			t.Cleanup(transport.CloseIdleConnections)
+			options := []ConnOption{WithServerHostname(host), WithPort(443), WithHTTPPath("/query")}
+			httpOptions := []ConnOption{WithUserAgentEntry("Issue413/partner"), WithTransport(transport)}
+			switch order {
+			case "auth-first":
+				options = append(options, WithClientCredentials("test-client", "test-secret"))
+				options = append(options, httpOptions...)
+			case "auth-last":
+				options = append(options, httpOptions...)
+				options = append(options, WithClientCredentials("test-client", "test-secret"))
+			default:
+				dsn := host + ":443/query?clientID=test-client&clientSecret=test-secret&userAgentEntry=Issue413%2Fpartner"
+				if order == "dsn" {
+					dsn = "https://" + dsn + "&authType=OauthM2M"
+				}
+				userConfig, err := config.ParseDSN(dsn)
+				require.NoError(t, err)
+				options = []ConnOption{withUserConfig(userConfig), WithTransport(transport)}
+			}
+			created, err := NewConnector(options...)
+			require.NoError(t, err)
+			connector := created.(*connector)
+			pooled := connector.client.Transport.(*retryablehttp.RoundTripper).Client.HTTPClient
+			bound := pooled.Transport.(*client.Transport)
+			assert.NotSame(t, connector.cfg.Authenticator, bound.Authr)
+			assert.Same(t, transport, bound.Base)
+			assert.Contains(t, client.BuildUserAgent(connector.cfg), "Issue413/partner")
+		})
+	}
+}
+
 func TestWithClientQueryTimeout(t *testing.T) {
 	t.Run("omitted remains distinguishable from explicit zero", func(t *testing.T) {
 		con, err := NewConnector(WithUseKernel(true))

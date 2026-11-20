@@ -2,106 +2,95 @@ package client
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"io"
+	"log"
+	"net"
 	"net/http"
+	"net/http/httptest"
+	"reflect"
 	"testing"
-	"time"
 
-	"github.com/databricks/databricks-sql-go/auth"
+	"github.com/databricks/databricks-sql-go/auth/oauth/m2m"
 	"github.com/databricks/databricks-sql-go/internal/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-type oauthHTTPClientAuthenticator struct {
-	client    *http.Client
-	returnNil bool
-}
-
-func (authenticator *oauthHTTPClientAuthenticator) Authenticate(*http.Request) error { return nil }
-
-func (authenticator *oauthHTTPClientAuthenticator) WithHTTPClient(client *http.Client) auth.Authenticator {
-	authenticator.client = client
-	if authenticator.returnNil {
-		return nil
-	}
-	return authenticator
-}
-
-func TestOAuthClientPreservesAuthenticatorWhenHookReturnsNil(t *testing.T) {
-	authenticator := &oauthHTTPClientAuthenticator{returnNil: true}
-	cfg := config.WithDefaults()
-	cfg.Authenticator = authenticator
-	cfg.Transport = oauthTestRoundTripper(func(*http.Request) (*http.Response, error) {
-		return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody}, nil
-	})
-	pooled := PooledClient(cfg)
-	assert.Same(t, authenticator, pooled.Transport.(*Transport).Authr)
-	request, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "https://example.com", nil)
-	require.NoError(t, err)
-	response, err := pooled.Do(request)
-	require.NoError(t, err)
-	require.NoError(t, response.Body.Close())
-}
-
-func TestOAuthClientUsesDriverTransport(t *testing.T) {
-	for _, customTransport := range []bool{false, true} {
-		t.Run(map[bool]string{false: "pooled-tls", true: "custom"}[customTransport], func(t *testing.T) {
-			authenticator := &oauthHTTPClientAuthenticator{}
+func TestOAuthTransportIsolation(t *testing.T) {
+	for _, custom := range []bool{false, true} {
+		for _, skip := range []bool{false, true} {
 			cfg := config.WithDefaults()
-			cfg.Authenticator = authenticator
-			cfg.TLSConfig.InsecureSkipVerify = true
-			cfg.ClientTimeout = 7 * time.Second
-			if customTransport {
-				cfg.Transport = &http.Transport{}
+			cfg.TLSConfig.InsecureSkipVerify = skip
+			caller := &http.Transport{}
+			if custom {
+				cfg.Transport = caller
 			}
-			pooled := PooledClient(cfg)
-			require.NotNil(t, authenticator.client)
-			tokenTransport := authenticator.client.Transport.(*userAgentTransport)
-			queryTransport := pooled.Transport.(*Transport)
-			assert.NotSame(t, queryTransport.Base, tokenTransport.base)
-			assert.Equal(t, BuildUserAgent(cfg), tokenTransport.userAgent)
-			assert.Equal(t, cfg.ClientTimeout, authenticator.client.Timeout)
-			transport := tokenTransport.base.(*http.Transport)
+			cfg.Authenticator = m2m.NewAuthenticator("id", "secret", "test.cloud.databricks.com")
+			pooled, oauthClient := newM2MClient(t, cfg)
+			transport := oauthClient.Transport.(*userAgentTransport).base.(*http.Transport)
 			assert.Nil(t, transport.TLSClientConfig)
-			assert.NotNil(t, transport.Proxy)
-			t.Cleanup(transport.CloseIdleConnections)
-			if sqlTransport, ok := queryTransport.Base.(*http.Transport); ok {
-				t.Cleanup(sqlTransport.CloseIdleConnections)
+			require.NotNil(t, transport.Proxy)
+			assert.Equal(t, reflect.ValueOf(http.ProxyFromEnvironment).Pointer(), reflect.ValueOf(transport.Proxy).Pointer())
+			if custom {
+				assert.Nil(t, caller.Proxy)
+				assert.Same(t, caller, pooled.Transport.(*Transport).Base)
 			}
-		})
+			assert.Equal(t, !custom && !skip, transport == pooled.Transport.(*Transport).Base)
+			assert.Equal(t, skip, cfg.TLSConfig.InsecureSkipVerify)
+		}
 	}
 }
 
-type oauthTestRoundTripper func(*http.Request) (*http.Response, error)
-
-func TestOAuthSharesDefaultSQLPool(t *testing.T) {
-	cfg := config.WithDefaults()
-	authenticator := &oauthHTTPClientAuthenticator{}
-	cfg.Authenticator = authenticator
-	pooled := PooledClient(cfg)
-	transport := pooled.Transport.(*Transport).Base.(*http.Transport)
-	t.Cleanup(transport.CloseIdleConnections)
-	assert.Same(t, transport, authenticator.client.Transport.(*userAgentTransport).base)
+func TestOAuthTLSVerification(t *testing.T) {
+	for _, trusted := range []bool{false, true} {
+		server := httptest.NewUnstartedServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+			t.Error("OAuth must reject the certificate")
+		}))
+		server.Config.ErrorLog = log.New(io.Discard, "", 0)
+		server.StartTLS()
+		t.Cleanup(server.Close)
+		cfg := config.WithDefaults()
+		cfg.TLSConfig.InsecureSkipVerify = true
+		cfg.Authenticator = m2m.NewAuthenticator("id", "secret", "test.cloud.databricks.com")
+		_, oauthClient := newM2MClient(t, cfg)
+		transport := oauthClient.Transport.(*userAgentTransport).base.(*http.Transport)
+		target := server.URL
+		if trusted {
+			roots := x509.NewCertPool()
+			roots.AddCert(server.Certificate())
+			transport.TLSClientConfig = &tls.Config{RootCAs: roots}
+			target = "https://test.cloud.databricks.com/token"
+		}
+		transport.Proxy = nil
+		transport.DialContext = func(ctx context.Context, network, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, network, server.Listener.Addr().String())
+		}
+		response, err := oauthClient.Get(target)
+		if response != nil {
+			require.NoError(t, response.Body.Close())
+		}
+		if trusted {
+			var hostnameError x509.HostnameError
+			require.ErrorAs(t, err, &hostnameError)
+		} else {
+			var authorityError x509.UnknownAuthorityError
+			require.ErrorAs(t, err, &authorityError)
+		}
+	}
 }
 
-func (transport oauthTestRoundTripper) RoundTrip(request *http.Request) (*http.Response, error) {
-	return transport(request)
-}
-
-func TestOAuthUserAgentTransportPreservesRequest(t *testing.T) {
+func TestOAuthUserAgentPreservesRequest(t *testing.T) {
 	request, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "https://example.com", nil)
 	require.NoError(t, err)
-	request.Header.Set("User-Agent", "caller-agent")
-	transport := &userAgentTransport{
-		userAgent: "driver-agent",
-		base: oauthTestRoundTripper(func(received *http.Request) (*http.Response, error) {
-			assert.NotSame(t, request, received)
-			assert.Equal(t, "driver-agent", received.Header.Get("User-Agent"))
-			return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody}, nil
-		}),
-	}
+	request.Header.Set("User-Agent", "original")
+	transport := userAgentTransport{userAgent: "partner", base: oauthTestRoundTripper(func(received *http.Request) (*http.Response, error) {
+		assert.Equal(t, "partner", received.UserAgent())
+		return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody}, nil
+	})}
 	response, err := transport.RoundTrip(request)
 	require.NoError(t, err)
 	require.NoError(t, response.Body.Close())
-	assert.Equal(t, "caller-agent", request.Header.Get("User-Agent"))
+	assert.Equal(t, "original", request.UserAgent())
 }

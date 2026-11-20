@@ -660,10 +660,7 @@ func PooledClient(cfg *config.Config) *http.Client {
 			Transport: &userAgentTransport{base: oauthBase, userAgent: BuildUserAgent(cfg)},
 			Timeout:   cfg.ClientTimeout,
 		}
-		configured := configurable.WithHTTPClient(httpClient)
-		if configured != nil {
-			authenticator = configured
-		}
+		authenticator = configurable.WithHTTPClient(httpClient)
 	}
 
 	return &http.Client{

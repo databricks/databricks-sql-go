@@ -47,14 +47,9 @@ type tokenCache struct {
 }
 
 func (c *authClient) WithHTTPClient(client *http.Client) auth.Authenticator {
-	return &authClient{
-		clientID:     c.clientID,
-		clientSecret: c.clientSecret,
-		hostName:     c.hostName,
-		scopes:       append([]string(nil), c.scopes...),
-		httpClient:   client,
-		cache:        c.cache,
-	}
+	configured := *c
+	configured.httpClient = client
+	return &configured
 }
 
 // M2MCredentials exposes the raw client-credentials so the SEA-via-kernel backend
