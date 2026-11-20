@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/databricks/databricks-sql-go/auth"
 	"github.com/databricks/databricks-sql-go/auth/oauth"
@@ -66,12 +67,14 @@ func (c *authClient) Authenticate(r *http.Request) error {
 		return nil
 	}
 
-	config, err := GetConfig(context.Background(), c.hostName, c.clientID, c.clientSecret, c.scopes)
+	ctx := withTokenRequestTimeout(context.Background())
+	config, err := getConfig(ctx, c.hostName, c.clientID, c.clientSecret, c.scopes)
 	if err != nil {
 		return fmt.Errorf("unable to generate clientCredentials.Config: %w", err)
 	}
 
-	c.tokenSource = GetTokenSource(config)
+	// The token source keeps ctx, so refreshes are bounded too.
+	c.tokenSource = config.TokenSource(ctx)
 	token, err := c.tokenSource.Token()
 	if err != nil {
 		logger.Err(err).Msg("failed to get token")
@@ -85,6 +88,30 @@ func (c *authClient) Authenticate(r *http.Request) error {
 
 	return nil
 
+}
+
+var (
+	// tokenRequestTimeout bounds each token request, matching the SQL kernel's
+	// default HTTP timeout. Until a fetch succeeds, oauth2's AuthStyle auto-detect
+	// retries each failed request once, so such a fetch can take up to twice this.
+	tokenRequestTimeout = 60 * time.Second
+
+	// getConfig is replaced in tests to skip endpoint discovery.
+	getConfig = GetConfig
+)
+
+// withTokenRequestTimeout returns ctx carrying a copy of its oauth2.HTTPClient
+// (http.DefaultClient when unset) whose Timeout is at most tokenRequestTimeout.
+func withTokenRequestTimeout(ctx context.Context) context.Context {
+	base := http.DefaultClient
+	if hc, ok := ctx.Value(oauth2.HTTPClient).(*http.Client); ok && hc != nil {
+		base = hc
+	}
+	client := *base
+	if client.Timeout <= 0 || client.Timeout > tokenRequestTimeout {
+		client.Timeout = tokenRequestTimeout
+	}
+	return context.WithValue(ctx, oauth2.HTTPClient, &client)
 }
 
 func GetTokenSource(config clientcredentials.Config) oauth2.TokenSource {
