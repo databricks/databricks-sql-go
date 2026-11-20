@@ -2,7 +2,7 @@
 
 ## Unreleased (v2.0.0 prototype)
 
-- Bound each OAuth M2M token request to 60 seconds, so a hung token endpoint no longer blocks every request on the connector indefinitely (databricks/databricks-sql-go#475).
+- **Behavior change:** OAuth M2M token requests use a snapshot of the HTTP client capped at 60 seconds, including longer `http.DefaultClient.Timeout` values. Until the first success, auth-style detection can make two requests per fetch; Thrift retries (`WithRetries`) repeat the fetch, so a single retryable RPC can take about 615 seconds with defaults, excluding discovery and time queued behind other callers (databricks/databricks-sql-go#475).
 - Render non-finite FLOAT / DOUBLE values inside ARRAY / MAP / STRUCT results as the JSON strings `"NaN"`, `"Infinity"`, and `"-Infinity"` on both backends instead of failing row iteration. SQL NULL remains `null`; top-level floats remain numeric (databricks/databricks-sql-go#573).
 - **Behavior change:** Non-finite floating-point MAP keys use the same spellings as values on both backends. On the kernel backend, keys previously rendered as `"+Inf"` and `"-Inf"` now render as `"Infinity"` and `"-Infinity"`; `"NaN"` is unchanged. On Thrift, these keys previously failed row iteration (databricks/databricks-sql-go#573).
 - Fix the module-root package conflict when building, linting, or running Gazelle with the `tools` build tag (databricks/databricks-sql-go#162).
