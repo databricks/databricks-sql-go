@@ -477,9 +477,9 @@ func (r *rows) buildDatabaseTypeNameOverrides() map[int]string {
 		// Leave the cache empty (and cached): result set metadata never changes,
 		// so retrying would fail the same way. Columns keep their Thrift type
 		// names: TIMESTAMP rather than TIMESTAMP_NTZ, and STRING rather than
-		// VARIANT on Arrow and column-based results alike. On Arrow results the
+		// VARIANT/geospatial SQL names on Arrow and column-based results alike. The
 		// row scanner surfaces the parse error itself; column-based values decode
-		// without the schema, so only the VARIANT name is lost.
+		// without the schema, so only the logical type names are lost.
 		r.logger().Debug().Err(err).Msg("databricks: failed to parse arrow schema for column type name overrides; falling back to thrift type names")
 		return overrides
 	}
