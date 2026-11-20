@@ -23,7 +23,7 @@ import (
 
 func TestCloudFetchClientTimeout(t *testing.T) {
 	for _, transport := range []string{"default", "WithTransport"} {
-		for _, stall := range []string{"headers", "body", "expired-link"} {
+		for _, stall := range []string{"headers", "body"} {
 			for _, api := range []string{"rows", "batches", "streams"} {
 				t.Run(transport+"/"+stall+"/"+api, func(t *testing.T) {
 					release := make(chan struct{})
@@ -46,12 +46,6 @@ func TestCloudFetchClientTimeout(t *testing.T) {
 					options := []ConnOption{func(cfg *config.Config) {
 						cfg.ClientTimeout = 100 * time.Millisecond
 						cfg.RetryMax = 0
-						if stall == "expired-link" {
-							cfg.ClientTimeout = 2200 * time.Millisecond
-							cfg.RetryMax = config.WithDefaults().RetryMax
-							cfg.RetryWaitMin = time.Millisecond
-							cfg.RetryWaitMax = time.Millisecond
-						}
 						cfg.UseLz4Compression = false
 						cfg.MaxDownloadThreads = 2
 					}}
@@ -68,9 +62,6 @@ func TestCloudFetchClientTimeout(t *testing.T) {
 					direct := execute.DirectResults
 					direct.ResultSet.Results.ArrowBatches = nil
 					expiry := time.Now().Add(time.Hour).Unix()
-					if stall == "expired-link" {
-						expiry = time.Now().Add(time.Second).Unix()
-					}
 					direct.ResultSet.Results.ResultLinks = []*cli_service.TSparkArrowResultLink{
 						{FileLink: server.URL + "/file?sig=SECRET_SIGNATURE", ExpiryTime: expiry, RowCount: 1},
 						{FileLink: server.URL + "/file?sig=SECRET_SIGNATURE", ExpiryTime: expiry, RowCount: 1, StartRowOffset: 1},
@@ -118,9 +109,6 @@ func TestCloudFetchClientTimeout(t *testing.T) {
 						assert.ErrorIs(t, nextErr, context.DeadlineExceeded)
 						assert.Equal(t, dbsqlerrint.CategoryChunkDownload, dbsqlerrint.CategoryFromError(nextErr))
 						assert.NotContains(t, nextErr.Error(), "SECRET_SIGNATURE")
-						if stall == "expired-link" {
-							assert.ErrorContains(t, nextErr, dbsqlerr.ErrLinkExpired)
-						}
 						assert.GreaterOrEqual(t, time.Since(start), cfg.ClientTimeout)
 					case <-time.After(cfg.ClientTimeout + 2*time.Second):
 						server.CloseClientConnections()

@@ -3,6 +3,7 @@ package arrowbased
 import (
 	"bytes"
 	"context"
+	"net"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
@@ -120,15 +121,17 @@ func TestCloudFetchDownloadErrorsRedactQuery(t *testing.T) {
 	}))
 	defer server.Close()
 	var output bytes.Buffer
-	originalLogger := logger.Logger
+	originalLogger := logger.Logger.Logger
 	logger.Logger.Logger = logger.Logger.Output(zerolog.SyncWriter(&output)).Level(zerolog.DebugLevel)
-	defer func() { logger.Logger = originalLogger }()
+	t.Cleanup(func() { logger.Logger.Logger = originalLogger })
 	cfg := config.WithDefaults()
 	cfg.ClientTimeout = 50 * time.Millisecond
 	cfg.RetryMax = 1
 	cfg.RetryWaitMin = time.Millisecond
 	cfg.RetryWaitMax = time.Millisecond
-	iterator, err := NewCloudIPCStreamIterator(context.Background(), []*cli_service.TSparkArrowResultLink{{
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	iterator, err := NewCloudIPCStreamIterator(ctx, []*cli_service.TSparkArrowResultLink{{
 		FileLink: server.URL + "/file?sig=SECRET_SIGNATURE", ExpiryTime: time.Now().Add(time.Hour).Unix(), RowCount: 1,
 	}}, 0, cfg, nil)
 	require.NoError(t, err)
@@ -154,6 +157,87 @@ func TestCloudFetchErrorRedactionPreservesCause(t *testing.T) {
 	assert.ErrorContains(t, redacted, "https://storage.example/redirect")
 	assert.Contains(t, original.URL, "SECRET_SIGNATURE")
 	assert.Contains(t, cause.URL, "SECRET_SIGNATURE")
+}
+
+func TestCloudFetchRedactionPreservesOuterError(t *testing.T) {
+	original := &net.OpError{Op: "proxy", Net: "tcp", Err: &url.Error{
+		Op: "Get", URL: "https://storage.example/file?sig=SECRET_SIGNATURE", Err: context.DeadlineExceeded,
+	}}
+	redacted := redactCloudFetchError(original)
+	var operationError *net.OpError
+	require.ErrorAs(t, redacted, &operationError)
+	assert.Same(t, original, operationError)
+	assert.ErrorIs(t, redacted, context.DeadlineExceeded)
+}
+
+type cloudFetchErrorTransport struct {
+	err error
+}
+
+func (transport cloudFetchErrorTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	return nil, transport.err
+}
+
+func TestCloudFetchDownloadErrorsPreserveTransportCause(t *testing.T) {
+	fileLink := "https://storage.example/file?sig=SECRET_SIGNATURE"
+	original := &net.OpError{Op: "proxy", Net: "tcp", Err: &url.Error{
+		Op: "Get", URL: fileLink, Err: context.DeadlineExceeded,
+	}}
+	cfg := config.WithDefaults()
+	cfg.RetryMax = 0
+	cfg.HTTPClient = &http.Client{Transport: cloudFetchErrorTransport{err: original}}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	iterator, err := NewCloudIPCStreamIterator(ctx, []*cli_service.TSparkArrowResultLink{{
+		FileLink: fileLink, ExpiryTime: time.Now().Add(time.Hour).Unix(), RowCount: 1,
+	}}, 0, cfg, nil)
+	require.NoError(t, err)
+	defer iterator.Close()
+	_, nextErr := iterator.Next()
+	require.Error(t, nextErr)
+	assert.NotContains(t, nextErr.Error(), "SECRET_SIGNATURE")
+	assert.ErrorContains(t, nextErr, "https://storage.example/file")
+	assert.ErrorIs(t, nextErr, context.DeadlineExceeded)
+	var operationError *net.OpError
+	require.ErrorAs(t, nextErr, &operationError)
+	assert.Same(t, original, operationError)
+	var networkError net.Error
+	require.ErrorAs(t, nextErr, &networkError)
+	assert.True(t, networkError.Timeout())
+	assert.Contains(t, original.Error(), "SECRET_SIGNATURE")
+}
+
+func TestCloudFetchDownloadErrorsRedactLocation(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Location", "http://127.0.0.1:badport/file?"+request.URL.RawQuery)
+		response.WriteHeader(http.StatusFound)
+	}))
+	defer server.Close()
+	cfg := config.WithDefaults()
+	cfg.RetryMax = 0
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	iterator, err := NewCloudIPCStreamIterator(ctx, []*cli_service.TSparkArrowResultLink{{
+		FileLink: server.URL + "/file?sig=SECRET_SIGNATURE", ExpiryTime: time.Now().Add(time.Hour).Unix(), RowCount: 1,
+	}}, 0, cfg, nil)
+	require.NoError(t, err)
+	defer iterator.Close()
+	_, nextErr := iterator.Next()
+	require.Error(t, nextErr)
+	assert.ErrorContains(t, nextErr, "failed to parse Location header")
+	assert.ErrorContains(t, nextErr, "/file")
+	assert.NotContains(t, nextErr.Error(), "SECRET_SIGNATURE")
+}
+
+func TestCloudFetchRedactionRestoresLogger(t *testing.T) {
+	originalLogger := logger.Logger.Logger
+	defer func() { logger.Logger.Logger = originalLogger }()
+	var output bytes.Buffer
+	logger.Logger.Logger = originalLogger.Output(zerolog.SyncWriter(&output)).Level(zerolog.WarnLevel)
+	t.Run("redact", TestCloudFetchDownloadErrorsRedactQuery)
+	assert.Equal(t, zerolog.WarnLevel, logger.Logger.GetLevel())
+	logger.Logger.Warn().Msg("original destination restored")
+	assert.Contains(t, output.String(), "original destination restored")
 }
 
 func TestCloudFetchClientTimeoutRetries(t *testing.T) {
