@@ -114,7 +114,8 @@ type ResultFormatReporter interface {
 	ResultFormat() string
 }
 
-// StagingCompleter completes server-marked staging operations in the backend.
+// StagingCompleter is implemented by operations that run the staging (Volume)
+// file transfer themselves.
 type StagingCompleter interface {
 	CompleteStaging(context.Context) error
 }
