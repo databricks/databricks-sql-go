@@ -31,6 +31,10 @@ type m2mRequest struct {
 
 type m2mRoundTripper func(*http.Request) (*http.Response, error)
 
+type m2mIdentityTransport struct {
+	http.RoundTripper
+}
+
 func (transport m2mRoundTripper) RoundTrip(request *http.Request) (*http.Response, error) {
 	return transport(request)
 }
@@ -76,7 +80,7 @@ func newM2MTestEndpoint(t *testing.T, host string, expiresIn int) *m2mTestEndpoi
 	require.NoError(t, err)
 	base := server.Client().Transport
 	t.Cleanup(base.(*http.Transport).CloseIdleConnections)
-	endpoint.transport = m2mRoundTripper(func(request *http.Request) (*http.Response, error) {
+	endpoint.transport = &m2mIdentityTransport{m2mRoundTripper(func(request *http.Request) (*http.Response, error) {
 		endpoint.mutex.Lock()
 		endpoint.requests = append(endpoint.requests, m2mRequest{
 			path: request.URL.Path, userAgent: request.Header.Get("User-Agent"),
@@ -87,7 +91,7 @@ func newM2MTestEndpoint(t *testing.T, host string, expiresIn int) *m2mTestEndpoi
 		forwarded.URL.Scheme = target.Scheme
 		forwarded.URL.Host = target.Host
 		return base.RoundTrip(forwarded)
-	})
+	})}
 	return endpoint
 }
 
@@ -134,8 +138,10 @@ func TestM2MTransportCanReauthenticateSharedAuthenticator(t *testing.T) {
 			shared := m2m.NewAuthenticator("test-client", "test-secret", host)
 			transport := m2mRoundTripper(func(request *http.Request) (*http.Response, error) {
 				cloned := request.Clone(request.Context())
-				if err := shared.Authenticate(cloned); err != nil {
-					return nil, err
+				if request.URL.Path != "/query" {
+					if err := shared.Authenticate(cloned); err != nil {
+						return nil, err
+					}
 				}
 				return endpoint.transport.RoundTrip(cloned)
 			})
@@ -165,7 +171,7 @@ func TestM2MConnectorTimeoutBoundsDiscoveryAndRefresh(t *testing.T) {
 				shared := m2m.NewAuthenticator("test-client", "test-secret", host)
 				endpoint := newM2MTestEndpoint(t, host, 1)
 				var discoveries, grants atomic.Int32
-				transport := m2mRoundTripper(func(request *http.Request) (*http.Response, error) {
+				transport := &m2mIdentityTransport{m2mRoundTripper(func(request *http.Request) (*http.Response, error) {
 					if request.URL.Path != "/query" {
 						wantTimeout := time.Minute
 						if strings.Contains(request.URL.Path, ".well-known") {
@@ -186,7 +192,7 @@ func TestM2MConnectorTimeoutBoundsDiscoveryAndRefresh(t *testing.T) {
 						assert.Equal(t, authorization, request.Header.Get("Authorization"))
 					}
 					return endpoint.transport.RoundTrip(request)
-				})
+				})}
 				for range 2 {
 					created, err := NewConnector(WithServerHostname(host), WithAuthenticator(shared),
 						WithUserAgentEntry("Issue413/composed"), WithTransport(transport), WithRetries(0, 0, 0),
@@ -329,11 +335,7 @@ func testM2MPreviouslyUsedAuthenticator(t *testing.T, expiresIn int) {
 	connector := created.(*connector)
 	requestWithM2M(t, connector)
 	requestWithM2M(t, connector)
-	wantTokens := int32(0)
-	if expiresIn == 1 {
-		wantTokens = 1
-	}
-	require.Equal(t, wantTokens, configured.tokenHits.Load())
+	require.Equal(t, int32(1), configured.tokenHits.Load())
 	configured.mutex.Lock()
 	defer configured.mutex.Unlock()
 	for _, observed := range configured.requests {
@@ -341,7 +343,11 @@ func testM2MPreviouslyUsedAuthenticator(t *testing.T, expiresIn int) {
 			assert.Equal(t, client.BuildUserAgent(connector.cfg), observed.userAgent)
 		}
 	}
-	require.NoError(t, shared.Authenticate(request))
+	if expiresIn == 1 {
+		require.ErrorContains(t, shared.Authenticate(request), "OAuth bypassed connector transport")
+	} else {
+		require.NoError(t, shared.Authenticate(request))
+	}
 	require.Equal(t, int32(1), original.tokenHits.Load())
 }
 
@@ -350,10 +356,8 @@ func TestM2MSharedAuthenticatorReusesToken(t *testing.T) {
 	for _, host := range []string{"test.cloud.databricks.com", "adb-test.azuredatabricks.net"} {
 		t.Run(host, func(t *testing.T) {
 			shared := m2m.NewAuthenticator("test-client", "test-secret", host)
-			var tokenHits int32
-			discoveries := 0
+			endpoint := newM2MTestEndpoint(t, host, 3600)
 			for index := range 5 {
-				endpoint := newM2MTestEndpoint(t, host, 3600)
 				created, err := NewConnector(WithServerHostname(host), WithAuthenticator(shared),
 					WithUserAgentEntry(fmt.Sprintf("partner/%d", index)), WithTransport(endpoint.transport),
 					WithRetries(0, 0, 0))
@@ -361,16 +365,14 @@ func TestM2MSharedAuthenticatorReusesToken(t *testing.T) {
 				for range 3 {
 					requestWithM2M(t, created.(*connector))
 				}
-				tokenHits += endpoint.tokenHits.Load()
-				endpoint.mutex.Lock()
-				for _, request := range endpoint.requests {
-					if strings.Contains(request.path, ".well-known") {
-						discoveries++
-					}
-				}
-				endpoint.mutex.Unlock()
 			}
-			assert.Equal(t, int32(1), tokenHits)
+			assert.Equal(t, int32(1), endpoint.tokenHits.Load())
+			discoveries := 0
+			for _, request := range endpoint.requests {
+				if strings.Contains(request.path, ".well-known") {
+					discoveries++
+				}
+			}
 			wantDiscoveries := 0
 			if strings.Contains(host, "cloud.databricks.com") {
 				wantDiscoveries = 2

@@ -78,7 +78,7 @@ func TestTokenRequestContextSkipsOnlySharedAuthenticator(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			ctx := context.Background()
 			if test.marked {
-				ctx = context.WithValue(ctx, tokenRequestContextKey{}, shared.cache)
+				ctx = context.WithValue(ctx, tokenRequestContextKey{}, shared.caches)
 			}
 			cloned := request.Clone(ctx)
 			require.NoError(t, test.authenticator.Authenticate(cloned))
@@ -101,12 +101,11 @@ func TestSharedTokenRefreshUsesCallingClient(t *testing.T) {
 	config, err := GetConfig(context.Background(), shared.hostName, shared.clientID, shared.clientSecret, shared.scopes)
 	require.NoError(t, err)
 	config.TokenURL = server.URL
-	shared.cache.config = &config
 	base := http.DefaultTransport.(*http.Transport).Clone()
 	t.Cleanup(base.CloseIdleConnections)
 	var authenticators []*authClient
 	for _, partner := range []string{"first", "second"} {
-		configured := shared.WithHTTPClient(&http.Client{
+		configured := shared.WithHTTPClientForTransport(&http.Client{
 			Transport: m2mCacheRoundTripper(func(request *http.Request) (*http.Response, error) {
 				cloned := request.Clone(request.Context())
 				cloned.Header.Set("User-Agent", partner)
@@ -115,7 +114,8 @@ func TestSharedTokenRefreshUsesCallingClient(t *testing.T) {
 				}
 				return base.RoundTrip(cloned)
 			}),
-		}).(*authClient)
+		}, nil).(*authClient)
+		configured.cache.config = &config
 		authenticators = append(authenticators, configured)
 	}
 	for index, authenticator := range authenticators {
@@ -137,9 +137,9 @@ func TestSharedTokenRefreshUsesCallingClient(t *testing.T) {
 			require.NoError(t, <-errors)
 		}
 		assert.Equal(t, int32(index+1), tokenHits.Load())
-		shared.cache.mutex.Lock()
-		shared.cache.token.Expiry = time.Now().Add(-time.Hour)
-		shared.cache.mutex.Unlock()
+		authenticator.cache.mutex.Lock()
+		authenticator.cache.token.Expiry = time.Now().Add(-time.Hour)
+		authenticator.cache.mutex.Unlock()
 	}
 	errors := make(chan error, 20)
 	for index := range 20 {

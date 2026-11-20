@@ -34,14 +34,16 @@ func TestM2MRejectsDiscoveredEndpointsWithoutCaching(t *testing.T) {
 							metadata = `{"oidc_endpoint":"https://accounts.cloud.databricks.com/oidc/accounts/{account_id}","account_id":"account-1"}`
 						}
 						var discoveries, grants atomic.Int32
-						transport := func(bad bool) http.RoundTripper {
+						var bad atomic.Bool
+						bad.Store(true)
+						transport := func() http.RoundTripper {
 							return m2mRoundTripper(func(request *http.Request) (*http.Response, error) {
 								body := metadata
 								switch {
 								case strings.HasSuffix(request.URL.Path, "/.well-known/openid-configuration"):
 									discoveries.Add(1)
 									document := map[string]string{"issuer": issuer, "token_endpoint": issuer + "/token", "authorization_endpoint": issuer + "/authorize", "device_authorization_endpoint": issuer + "/device"}
-									if bad {
+									if bad.Load() {
 										document[field] = invalid
 									}
 									encoded, err := json.Marshal(document)
@@ -57,10 +59,11 @@ func TestM2MRejectsDiscoveredEndpointsWithoutCaching(t *testing.T) {
 								return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(body)), Request: request}, nil
 							})
 						}
+						sharedTransport := &m2mIdentityTransport{transport()}
 						shared := m2m.NewAuthenticator("id", "secret", host)
-						first, err := NewConnector(WithServerHostname(host), WithHTTPPath("/sql"), WithAuthenticator(shared), WithSkipTLSHostVerify(), WithTransport(transport(true)))
+						first, err := NewConnector(WithServerHostname(host), WithHTTPPath("/sql"), WithAuthenticator(shared), WithSkipTLSHostVerify(), WithTransport(sharedTransport))
 						require.NoError(t, err)
-						second, err := NewConnector(WithServerHostname(host), WithHTTPPath("/sql"), WithAuthenticator(shared), WithTransport(transport(false)))
+						second, err := NewConnector(WithServerHostname(host), WithHTTPPath("/sql"), WithAuthenticator(shared), WithTransport(sharedTransport))
 						require.NoError(t, err)
 						request, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "https://"+host+"/query", nil)
 						require.NoError(t, err)
@@ -71,6 +74,7 @@ func TestM2MRejectsDiscoveredEndpointsWithoutCaching(t *testing.T) {
 						require.ErrorContains(t, err, field)
 						assert.NotContains(t, err.Error(), "/secret")
 						assert.Zero(t, grants.Load())
+						bad.Store(false)
 						response, err = second.(*connector).client.Do(request)
 						require.NoError(t, err)
 						require.NoError(t, response.Body.Close())

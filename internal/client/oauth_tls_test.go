@@ -4,13 +4,14 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
-	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"sync/atomic"
 	"testing"
 
 	"github.com/databricks/databricks-sql-go/auth/oauth"
@@ -30,12 +31,11 @@ func TestOAuthTLSHostVerification(t *testing.T) {
 				configured string
 				target     string
 				trusted    bool
-				wantOK     bool
 			}{
-				{"untrusted-chain", workspace, workspace, false, false},
-				{"workspace-name-mismatch", workspace, workspace, true, true},
-				{"case-and-port", "WORKSPACE.CLOUD.DATABRICKS.COM:443", workspace, true, true},
-				{"other-name-mismatch", workspace, "accounts.cloud.databricks.com", true, false},
+				{"untrusted-chain", workspace, workspace, false},
+				{"workspace-name-mismatch", workspace, workspace, true},
+				{"case-and-port", "WORKSPACE.CLOUD.DATABRICKS.COM:443", workspace, true},
+				{"other-name-mismatch", workspace, "accounts.cloud.databricks.com", true},
 			} {
 				t.Run(fmt.Sprintf("%s/skip=%t/%s", operation, skipVerify, scenario.name), func(t *testing.T) {
 					server := httptest.NewUnstartedServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
@@ -75,15 +75,8 @@ func TestOAuthTLSHostVerification(t *testing.T) {
 						grant := clientcredentials.Config{ClientID: "id", ClientSecret: "secret", TokenURL: "https://" + scenario.target + "/token"}
 						_, err = grant.Token(ctx)
 					}
-					if skipVerify && scenario.wantOK {
-						require.NoError(t, err)
-					} else {
-						require.ErrorContains(t, err, "certificate")
-						if skipVerify && !scenario.trusted {
-							var authorityError x509.UnknownAuthorityError
-							assert.ErrorAs(t, err, &authorityError)
-						}
-					}
+					require.ErrorContains(t, err, "certificate")
+					assert.False(t, tokenTransport.TLSClientConfig.InsecureSkipVerify)
 					assert.Equal(t, skipVerify, cfg.TLSConfig.InsecureSkipVerify)
 					assert.Nil(t, cfg.TLSConfig.VerifyConnection)
 					if skipVerify {
@@ -96,24 +89,34 @@ func TestOAuthTLSHostVerification(t *testing.T) {
 	}
 }
 
-func TestOAuthTLSConfigPreservesVerificationHooks(t *testing.T) {
-	server := httptest.NewTLSServer(http.NotFoundHandler())
+func TestOAuthVerifiesHTTPSProxyByIP(t *testing.T) {
+	var connects, verified atomic.Int32
+	server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		assert.Equal(t, http.MethodConnect, request.Method)
+		connects.Add(1)
+		http.Error(writer, "proxy refused target", http.StatusBadGateway)
+	}))
 	t.Cleanup(server.Close)
 	cfg := config.WithDefaults()
 	cfg.Host = "workspace.cloud.databricks.com"
 	cfg.TLSConfig.InsecureSkipVerify = true
 	cfg.TLSConfig.RootCAs = x509.NewCertPool()
 	cfg.TLSConfig.RootCAs.AddCert(server.Certificate())
-	wantError := errors.New("caller verification failed")
-	cfg.TLSConfig.VerifyConnection = func(tls.ConnectionState) error { return wantError }
-	verify := oauthTLSConfig(cfg).VerifyConnection
-	state := tls.ConnectionState{ServerName: server.Certificate().DNSNames[0], PeerCertificates: []*x509.Certificate{server.Certificate()}}
-	assert.ErrorIs(t, verify(state), wantError)
-	state.ServerName = cfg.Host
-	assert.ErrorIs(t, verify(state), wantError)
-	state.ServerName = "another.cloud.databricks.com"
-	var hostnameError x509.HostnameError
-	assert.ErrorAs(t, verify(state), &hostnameError)
-	state.ServerName = ""
-	assert.ErrorContains(t, verify(state), "missing TLS server name")
+	cfg.TLSConfig.VerifyConnection = func(tls.ConnectionState) error { verified.Add(1); return nil }
+	authenticator := &oauthHTTPClientAuthenticator{}
+	cfg.Authenticator = authenticator
+	pooled := PooledClient(cfg)
+	t.Cleanup(pooled.Transport.(*Transport).Base.(*http.Transport).CloseIdleConnections)
+	transport := authenticator.client.Transport.(*userAgentTransport).base.(*http.Transport)
+	t.Cleanup(transport.CloseIdleConnections)
+	proxyURL, err := url.Parse(server.URL)
+	require.NoError(t, err)
+	transport.Proxy = http.ProxyURL(proxyURL)
+	response, err := authenticator.client.Get("https://" + cfg.Host + "/token")
+	if response != nil {
+		require.NoError(t, response.Body.Close())
+	}
+	require.ErrorContains(t, err, "Bad Gateway")
+	assert.Equal(t, int32(1), connects.Load())
+	assert.Equal(t, int32(1), verified.Load())
 }

@@ -507,8 +507,9 @@ func WithQueryTags(tags map[string]string) ConnOption {
 }
 
 // WithSkipTLSHostVerify disables certificate chain and hostname verification for SQL traffic.
-// Built-in OAuth M2M transports still verify chains, skipping only the connector host's name check.
-// Other OAuth hosts are fully verified. WithTransport callers control their own TLS verification.
+// On Thrift, it does not relax OAuth discovery or the client-secret exchange.
+// On kernel (including Reyden fallback), it also disables both checks for kernel M2M.
+// WithTransport callers control their own TLS verification.
 // WARNING:
 // When this option is used, TLS is susceptible to machine-in-the-middle attacks.
 // Please only use this option when the hostname is an internal private link hostname
@@ -531,7 +532,7 @@ func WithAuthenticator(authr auth.Authenticator) ConnOption {
 
 // WithTransport sets up the transport configuration to be used by the httpclient.
 // OAuth M2M discovery and credential exchange, including the client secret, also use this transport.
-// The caller is responsible for its TLS verification, including when WithSkipTLSHostVerify is set.
+// The caller owns TLS verification; previously OAuth used the fully verified default transport.
 func WithTransport(t http.RoundTripper) ConnOption {
 	return func(c *config.Config) {
 		c.Transport = t

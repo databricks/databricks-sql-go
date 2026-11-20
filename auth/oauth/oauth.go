@@ -46,7 +46,7 @@ func GetEndpoint(ctx context.Context, hostName string) (oauth2.Endpoint, error) 
 	if cloud == Azure {
 		authURL := fmt.Sprintf("https://%s/oidc/oauth2/v2.0/authorize", hostName)
 		tokenURL := fmt.Sprintf("https://%s/oidc/oauth2/v2.0/token", hostName)
-		return validateEndpoint(oauth2.Endpoint{AuthURL: authURL, TokenURL: tokenURL})
+		return oauth2.Endpoint{AuthURL: authURL, TokenURL: tokenURL}, nil
 	}
 
 	// AWS / GCP. Resolve the OIDC issuer via /.well-known/databricks-config so that

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"reflect"
 	"sync"
 	"time"
 
@@ -28,6 +29,7 @@ func NewAuthenticatorWithScopes(clientID, clientSecret, hostName string, scopes 
 		hostName:     hostName,
 		scopes:       scopes,
 		cache:        &tokenCache{},
+		caches:       &tokenCaches{},
 	}
 }
 
@@ -38,6 +40,12 @@ type authClient struct {
 	scopes       []string
 	httpClient   *http.Client
 	cache        *tokenCache
+	caches       *tokenCaches
+}
+
+type tokenCaches struct {
+	mutex       sync.Mutex
+	byTransport map[http.RoundTripper]*tokenCache
 }
 
 type tokenCache struct {
@@ -49,13 +57,39 @@ type tokenCache struct {
 type tokenRequestContextKey struct{}
 
 func (c *authClient) WithHTTPClient(client *http.Client) auth.Authenticator {
+	base := client
+	if base == nil {
+		base = http.DefaultClient
+	}
+	transport := base.Transport
+	if transport == nil {
+		transport = http.DefaultTransport
+	}
+	return c.WithHTTPClientForTransport(client, transport)
+}
+
+func (c *authClient) WithHTTPClientForTransport(client *http.Client, transport http.RoundTripper) auth.Authenticator {
+	cache := &tokenCache{}
+	if transport == nil || reflect.ValueOf(transport).Comparable() {
+		c.caches.mutex.Lock()
+		if c.caches.byTransport == nil {
+			c.caches.byTransport = make(map[http.RoundTripper]*tokenCache)
+		}
+		if existing := c.caches.byTransport[transport]; existing != nil {
+			cache = existing
+		} else {
+			c.caches.byTransport[transport] = cache
+		}
+		c.caches.mutex.Unlock()
+	}
 	return &authClient{
 		clientID:     c.clientID,
 		clientSecret: c.clientSecret,
 		hostName:     c.hostName,
 		scopes:       append([]string(nil), c.scopes...),
 		httpClient:   client,
-		cache:        c.cache,
+		cache:        cache,
+		caches:       c.caches,
 	}
 }
 
@@ -76,7 +110,7 @@ func (c *authClient) M2MScopes() []string {
 // Auth will start the OAuth Authorization Flow to authenticate the cli client
 // using the users credentials in the browser. Compatible with SSO.
 func (c *authClient) Authenticate(r *http.Request) error {
-	if r.Context().Value(tokenRequestContextKey{}) == c.cache {
+	if r.Context().Value(tokenRequestContextKey{}) == c.caches {
 		return nil
 	}
 	c.cache.mutex.Lock()
@@ -86,7 +120,7 @@ func (c *authClient) Authenticate(r *http.Request) error {
 		return nil
 	}
 
-	ctx := context.WithValue(context.Background(), tokenRequestContextKey{}, c.cache)
+	ctx := context.WithValue(context.Background(), tokenRequestContextKey{}, c.caches)
 	if c.httpClient != nil {
 		ctx = context.WithValue(ctx, oauth2.HTTPClient, c.httpClient)
 	}

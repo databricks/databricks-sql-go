@@ -67,7 +67,8 @@ func TestOAuthClientUsesConnectorBaseTransport(t *testing.T) {
 			assert.Equal(t, cfg.ClientTimeout, authenticator.client.Timeout)
 			if !customTransport {
 				assert.NotSame(t, cfg.TLSConfig, tokenTransport.base.(*http.Transport).TLSClientConfig)
-				assert.NotNil(t, tokenTransport.base.(*http.Transport).TLSClientConfig.VerifyConnection)
+				assert.False(t, tokenTransport.base.(*http.Transport).TLSClientConfig.InsecureSkipVerify)
+				assert.Nil(t, tokenTransport.base.(*http.Transport).TLSClientConfig.VerifyConnection)
 			}
 		})
 	}

@@ -16,6 +16,17 @@ import (
 
 type discoveryRoundTripper func(*http.Request) (*http.Response, error)
 
+func TestGetEndpointPreservesConfiguredAzureHostForms(t *testing.T) {
+	for _, host := range []string{"adb-1.1.azuredatabricks.net.", "adb-1.1.azuredatabricks.net.corp.example"} {
+		t.Run(host, func(t *testing.T) {
+			endpoint, err := GetEndpoint(context.Background(), host)
+			require.NoError(t, err)
+			assert.Equal(t, "https://"+host+"/oidc/oauth2/v2.0/token", endpoint.TokenURL)
+			assert.Equal(t, "https://"+host+"/oidc/oauth2/v2.0/authorize", endpoint.AuthURL)
+		})
+	}
+}
+
 func (transport discoveryRoundTripper) RoundTrip(request *http.Request) (*http.Response, error) {
 	return transport(request)
 }
