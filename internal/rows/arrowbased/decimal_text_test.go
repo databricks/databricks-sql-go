@@ -159,6 +159,36 @@ func TestDecimalScaleQualifiersOptional(t *testing.T) {
 	}
 }
 
+func TestDecimalTextGateUsesDeclaredScale(t *testing.T) {
+	for _, scale := range []int32{0, 6, 7, 38} {
+		for _, physicalType := range []arrow.DataType{arrow.BinaryTypes.String, &arrow.Decimal128Type{Precision: 38, Scale: 2}} {
+			thriftSchema := &cli_service.TTableSchema{Columns: []*cli_service.TColumnDesc{{
+				ColumnName: "amount",
+				TypeDesc: &cli_service.TTypeDesc{Types: []*cli_service.TTypeEntry{{
+					PrimitiveEntry: &cli_service.TPrimitiveTypeEntry{
+						Type: cli_service.TTypeId_DECIMAL_TYPE,
+						TypeQualifiers: &cli_service.TTypeQualifiers{Qualifiers: map[string]*cli_service.TTypeQualifierValue{
+							cli_service.SCALE: {I32Value: &scale},
+						}},
+					},
+				}}},
+			}}}
+			arrowSchema := arrow.NewSchema([]arrow.Field{{Name: "amount", Type: physicalType}}, nil)
+			metadata := getMetadataResp(thriftSchema)
+			var err error
+			metadata.ArrowSchema, err = getArrowSchemaBytes(arrowSchema, context.Background())
+			require.NoError(t, err)
+			scanner, err := NewArrowRowScanner(metadata, &cli_service.TRowSet{}, &config.Config{}, nil, context.Background(), nil)
+			require.NoError(t, err)
+			columns := scanner.(*arrowRowScanner).colInfo
+			require.Len(t, columns, 1)
+			require.Equal(t, scale, *columns[0].decimalScale)
+			require.Equal(t, scale > 6, columns[0].checkDecimalText)
+			scanner.Close()
+		}
+	}
+}
+
 func BenchmarkScanRowDecimalText(b *testing.B) {
 	for _, test := range []struct {
 		value string

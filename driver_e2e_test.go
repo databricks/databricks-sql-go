@@ -1036,6 +1036,7 @@ func assertDecimalTextRendering(t *testing.T, options ...ConnOption) {
 	want := []string{"0.00", "0.50", "-0.05", "0.0000001", "100.00", "123456789012345678901234567.89",
 		"-0.0000001", "99999999999999999999999999999999999999", "-99999999999999999999999999999999999999",
 		"0.00000000000000000000000000000000000001", "0.000000000000000000", "0.000001", ""}
+	testDecimalTextEmptyAndNullMetadata(t, db)
 	for _, surface := range []string{"string", "any", "bytes"} {
 		t.Run(surface, func(t *testing.T) {
 			destinations := make([]any, len(want))
@@ -1070,6 +1071,43 @@ func assertDecimalTextRendering(t *testing.T, options ...ConnOption) {
 					require.Equal(t, expected, string(binary[column]))
 				}
 			}
+		})
+	}
+}
+
+func testDecimalTextEmptyAndNullMetadata(t *testing.T, db *sql.DB) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	const projection = "SELECT CAST(NULL AS DECIMAL(20,6)), CAST(NULL AS DECIMAL(20,7)), CAST(NULL AS DECIMAL(38,38))"
+	for _, empty := range []bool{false, true} {
+		t.Run(fmt.Sprintf("null_metadata/empty=%t", empty), func(t *testing.T) {
+			query := projection
+			if empty {
+				query += " WHERE 1 = 0"
+			}
+			result, err := db.QueryContext(ctx, query)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, result.Close()) })
+			columns, err := result.ColumnTypes()
+			require.NoError(t, err)
+			require.Len(t, columns, 3)
+			for index, expected := range [][2]int64{{20, 6}, {20, 7}, {38, 38}} {
+				precision, scale, ok := columns[index].DecimalSize()
+				require.True(t, ok)
+				require.Equal(t, expected, [2]int64{precision, scale})
+			}
+			require.Equal(t, !empty, result.Next())
+			if !empty {
+				var low, high, highest any
+				require.NoError(t, result.Scan(&low, &high, &highest))
+				require.Nil(t, low)
+				require.Nil(t, high)
+				require.Nil(t, highest)
+				require.False(t, result.Next())
+			}
+			require.NoError(t, result.Err())
+			require.NoError(t, result.Close())
 		})
 	}
 }
