@@ -39,14 +39,22 @@ func TestIsBadConnection(t *testing.T) {
 func TestIsSessionFatal(t *testing.T) {
 	fatal := []int{statusUnauthenticated, statusUnavailable, statusNetworkError}
 	for _, code := range fatal {
-		if !isSessionFatal(code) {
+		if !isSessionFatal(fmt.Errorf("call: %w", &KernelError{Code: code})) {
 			t.Errorf("code %d should be session-fatal", code)
 		}
 	}
 	notFatal := []int{statusInvalidArgument, statusSqlError, statusTimeout}
 	for _, code := range notFatal {
-		if isSessionFatal(code) {
+		if isSessionFatal(&KernelError{Code: code}) {
 			t.Errorf("code %d should not be session-fatal", code)
+		}
+	}
+	for _, err := range []*KernelError{
+		{Code: statusUnauthenticated, ErrorCode: "VOLUME_STORAGE_HTTP_ERROR"},
+		{Code: statusNetworkError, ErrorCode: "VOLUME_STORAGE_NETWORK_ERROR"},
+	} {
+		if isSessionFatal(err) {
+			t.Errorf("storage error %s should not be session-fatal", err.ErrorCode)
 		}
 	}
 }

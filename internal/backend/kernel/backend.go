@@ -65,14 +65,12 @@ import "C"
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
 
-	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 	"github.com/databricks/databricks-sql-go/internal/backend"
 )
 
@@ -893,8 +891,7 @@ func (k *KernelBackend) markSessionDead() { k.valid = false }
 // Uses errors.As, not a bare type assertion, so it still fires if a caller wraps
 // the KernelError before passing it here.
 func (k *KernelBackend) evictIfSessionFatal(err error) {
-	var ke *KernelError
-	if errors.As(err, &ke) && isSessionFatal(ke.Code) {
+	if isSessionFatal(err) {
 		k.markSessionDead()
 	}
 }
@@ -908,15 +905,5 @@ func (k *KernelBackend) SessionID() string { return k.sessionID }
 // parameters (req.Params) are bound onto the statement in execute (see
 // bindParams).
 func (k *KernelBackend) Execute(ctx context.Context, req backend.ExecRequest) (backend.Operation, error) {
-	// Staging (Unity Catalog volume PUT/GET/REMOVE) needs a local file transfer the
-	// kernel path can't perform, and the kernel C ABI surfaces no IsStagingOperation
-	// signal to drive conn.execStagingOperation. Reject it here rather than let
-	// IsStaging return false and report success with no file moved (silent data loss).
-	// (Bound parameters, by contrast, ARE now supported — bound in execute via the
-	// kernel's raw-param C ABI.)
-	if isStagingStatement(req.Query) {
-		return &kernelOp{}, fmt.Errorf("databricks: staging operations (PUT/GET/REMOVE on a volume) are %w; "+
-			"use the default (Thrift) backend", dbsqlerr.ErrNotSupportedByKernel)
-	}
 	return k.execute(ctx, req)
 }

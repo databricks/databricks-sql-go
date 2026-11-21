@@ -49,7 +49,11 @@ type KernelError struct {
 	HTTPStatus uint16
 	Retryable  bool
 	QueryID    string
+	ErrorCode  string
+	cause      error
 }
+
+func (e *KernelError) Unwrap() error { return e.cause }
 
 func (e *KernelError) Error() string {
 	// Append the server query id when present — it is the one correlation handle
@@ -129,15 +133,19 @@ func isBadConnection(code int) bool {
 	}
 }
 
-// isSessionFatal reports whether a status code means the server-side session is no
+// isSessionFatal reports whether an error means the server-side session is no
 // longer usable, so the conn must be evicted from the pool rather than reused for
 // the next query. Broader than isBadConnection: it also covers Unauthenticated (an
 // expired/revoked token kills the session) — but unlike isBadConnection it is NOT
 // used to produce driver.ErrBadConn on the statement path, so eviction happens
 // without database/sql replaying the statement (see toStatementError + the
 // KernelBackend.markSessionDead call sites).
-func isSessionFatal(code int) bool {
-	switch code {
+func isSessionFatal(err error) bool {
+	var detail *KernelError
+	if !errors.As(err, &detail) || detail.ErrorCode == "VOLUME_STORAGE_HTTP_ERROR" || detail.ErrorCode == "VOLUME_STORAGE_NETWORK_ERROR" {
+		return false
+	}
+	switch detail.Code {
 	case statusUnauthenticated, statusUnavailable, statusNetworkError:
 		return true
 	default:
