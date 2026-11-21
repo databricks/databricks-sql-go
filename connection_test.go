@@ -25,6 +25,70 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+// TestConn_ExecContextReportUnknownRowsAffected drives ExecContext end to end
+// through the Thrift backend for a statement whose status carries no
+// NumModifiedRows (e.g. CREATE VIEW): RowsAffected is 0 by default and -1 under
+// WithReportUnknownRowsAffected, while a reported count is unchanged either way.
+func TestConn_ExecContextReportUnknownRowsAffected(t *testing.T) {
+	t.Parallel()
+
+	execWithStatus := func(t *testing.T, reportUnknown bool, numModifiedRows *int64) int64 {
+		testClient := &client.TestClient{
+			FnExecuteStatement: func(ctx context.Context, req *cli_service.TExecuteStatementReq) (*cli_service.TExecuteStatementResp, error) {
+				return &cli_service.TExecuteStatementResp{
+					Status: &cli_service.TStatus{StatusCode: cli_service.TStatusCode_SUCCESS_STATUS},
+					OperationHandle: &cli_service.TOperationHandle{
+						OperationId: &cli_service.THandleIdentifier{
+							GUID:   []byte{1, 2, 3, 4, 2, 23, 4, 2, 3, 2, 3, 4, 4, 223, 34, 54},
+							Secret: []byte("b"),
+						},
+					},
+				}, nil
+			},
+			FnGetOperationStatus: func(ctx context.Context, req *cli_service.TGetOperationStatusReq) (*cli_service.TGetOperationStatusResp, error) {
+				return &cli_service.TGetOperationStatusResp{
+					OperationState:  cli_service.TOperationStatePtr(cli_service.TOperationState_FINISHED_STATE),
+					NumModifiedRows: numModifiedRows,
+				}, nil
+			},
+			FnGetResultSetMetadata: func(ctx context.Context, req *cli_service.TGetResultSetMetadataReq) (*cli_service.TGetResultSetMetadataResp, error) {
+				isStaging := false
+				return &cli_service.TGetResultSetMetadataResp{IsStagingOperation: &isStaging}, nil
+			},
+			FnCloseOperation: func(ctx context.Context, req *cli_service.TCloseOperationReq) (*cli_service.TCloseOperationResp, error) {
+				return &cli_service.TCloseOperationResp{}, nil
+			},
+		}
+		cfg := config.WithDefaults()
+		WithReportUnknownRowsAffected(reportUnknown)(cfg)
+		testConn := &conn{
+			cfg:     cfg,
+			backend: thriftbackend.NewForTest(testClient, getTestSession(), cfg),
+		}
+		res, err := testConn.ExecContext(context.Background(), "CREATE VIEW v AS SELECT 1", []driver.NamedValue{})
+		assert.NoError(t, err)
+		if !assert.NotNil(t, res) {
+			return 0
+		}
+		rowsAffected, err := res.RowsAffected()
+		assert.NoError(t, err)
+		return rowsAffected
+	}
+
+	t.Run("unreported count is 0 by default", func(t *testing.T) {
+		assert.Equal(t, int64(0), execWithStatus(t, false, nil))
+	})
+	t.Run("unreported count is -1 when enabled", func(t *testing.T) {
+		assert.Equal(t, int64(-1), execWithStatus(t, true, nil))
+	})
+	t.Run("reported 0 stays 0 when enabled", func(t *testing.T) {
+		assert.Equal(t, int64(0), execWithStatus(t, true, thrift.Int64Ptr(0)))
+	})
+	t.Run("reported count unchanged when enabled", func(t *testing.T) {
+		assert.Equal(t, int64(10), execWithStatus(t, true, thrift.Int64Ptr(10)))
+	})
+}
+
 func TestConn_ExecContext(t *testing.T) {
 	t.Parallel()
 	t.Run("ExecContext currently does not support query parameters", func(t *testing.T) {

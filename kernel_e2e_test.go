@@ -47,6 +47,27 @@ func TestKernelE2EDecimalMetadata(t *testing.T) {
 	}
 }
 
+// TestKernelE2EReportUnknownRowsAffected checks that the kernel reports its
+// unknown-count sentinel for view DDL, which the unit tests can only assume.
+// See https://github.com/databricks/databricks-sql-go/issues/588.
+func TestKernelE2EReportUnknownRowsAffected(t *testing.T) {
+	for _, report := range []bool{false, true} {
+		name := "report=false"
+		if report {
+			name = "report=true"
+		}
+		t.Run(name, func(t *testing.T) {
+			db := kernelTestDBWith(t, WithReportUnknownRowsAffected(report))
+			t.Cleanup(func() {
+				if err := db.Close(); err != nil {
+					t.Error(err)
+				}
+			})
+			testViewDDLRowsAffected(t, db, report)
+		})
+	}
+}
+
 // TestKernelE2ESelect1 is the smallest end-to-end proof: PAT session over the
 // kernel, execute, scan one scalar row.
 func TestKernelE2ESelect1(t *testing.T) {

@@ -102,6 +102,10 @@ type Config struct {
 	// the exact string (from WithKernelDecimalAsFloat). Kernel still sends Decimal128.
 	DecimalAsFloat bool
 
+	// ReportUnknownRowsAffected keeps the C ABI's "no modified-row count" sentinel
+	// as -1 instead of folding it to 0 (from WithReportUnknownRowsAffected).
+	ReportUnknownRowsAffected bool
+
 	// EnableGeoSpatialSupport selects the local GEOMETRY / GEOGRAPHY result
 	// representation. True requests the canonical struct<srid,wkb> Arrow
 	// representation; false requests WKT / EWKT strings. The connector always

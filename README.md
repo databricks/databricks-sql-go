@@ -258,6 +258,7 @@ session parameter on both backends.
 | *(via session param)* | `WithQueryTags` | Both | | Session-level query tags (serialized into `QUERY_TAGS`). |
 | `timezone` | `WithSessionParams(timezone=…)` | Both | | Session time zone (e.g. `America/Los_Angeles`). |
 | `enableMetricViewMetadata` | `WithEnableMetricViewMetadata` | Both | `false` | Enables metric-view metadata (`spark.sql.thriftserver.metadata.metricview.enabled=true`). |
+| `reportUnknownRowsAffected` | `WithReportUnknownRowsAffected` | Both | `false` | `true`: `Result.RowsAffected()` returns `-1` when the server reports no modified-row count (e.g. DDL such as `CREATE VIEW`). A reported count, including `0`, is unchanged. `false`: an unreported count is `0`. |
 
 ### Retry / backoff
 

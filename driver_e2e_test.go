@@ -1008,6 +1008,52 @@ func TestE2EDSNQueryTimeout(t *testing.T) {
 	testDSNQueryTimeout(t, host, httpPath, token, "", "60", "-1")
 }
 
+// The unit tests mock TGetOperationStatusResp, so only a live warehouse shows
+// whether the server leaves NumModifiedRows unset for a view DDL (the option
+// would have no effect if it sent an explicit 0).
+// See https://github.com/databricks/databricks-sql-go/issues/588.
+func TestE2EReportUnknownRowsAffected(t *testing.T) {
+	host, httpPath, token := pecoTestingCreds(t)
+	for _, report := range []bool{false, true} {
+		t.Run(fmt.Sprintf("report=%t", report), func(t *testing.T) {
+			connector, err := NewConnector(
+				WithServerHostname(host), WithPort(443), WithHTTPPath(httpPath), WithAccessToken(token),
+				WithReportUnknownRowsAffected(report),
+			)
+			require.NoError(t, err)
+			db := sql.OpenDB(connector)
+			defer db.Close() //nolint:errcheck
+			testViewDDLRowsAffected(t, db, report)
+		})
+	}
+}
+
+// testViewDDLRowsAffected is shared with the kernel E2E suite.
+func testViewDDLRowsAffected(t *testing.T, db *sql.DB, reportUnknown bool) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	// Temporary views are session-scoped, so pin one connection.
+	conn, err := db.Conn(ctx)
+	require.NoError(t, err)
+	defer conn.Close() //nolint:errcheck
+
+	want := int64(0)
+	if reportUnknown {
+		want = -1
+	}
+	for _, statement := range []string{
+		"CREATE OR REPLACE TEMPORARY VIEW go_e2e_rows_affected_unknown AS SELECT 1 AS id",
+		"DROP VIEW go_e2e_rows_affected_unknown",
+	} {
+		res, err := conn.ExecContext(ctx, statement)
+		require.NoError(t, err, statement)
+		rowsAffected, err := res.RowsAffected()
+		require.NoError(t, err, statement)
+		assert.Equal(t, want, rowsAffected, statement)
+	}
+}
+
 // TestE2ETimestampNTZTypeName asserts that a zoned TIMESTAMP and a TIMESTAMP_NTZ
 // in the same result set report distinct database type names. The Databricks
 // TIMESTAMP_NTZ type is a wall-clock value with no zone; it must be reported as

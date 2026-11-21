@@ -730,6 +730,36 @@ func TestParseDSNEnableGeoSpatialSupport(t *testing.T) {
 	}
 }
 
+func TestParseDSNReportUnknownRowsAffected(t *testing.T) {
+	base := "token:supersecret@example.cloud.databricks.com:443/sql/1.0/endpoints/abc"
+	for _, tc := range []struct {
+		name  string
+		query string
+		want  bool
+	}{
+		{name: "omitted defaults to false", query: "", want: false},
+		{name: "enabled", query: "?reportUnknownRowsAffected=true", want: true},
+		{name: "disabled", query: "?reportUnknownRowsAffected=false", want: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := ParseDSN(base + tc.query)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.ReportUnknownRowsAffected != tc.want {
+				t.Errorf("ReportUnknownRowsAffected = %v, want %v", got.ReportUnknownRowsAffected, tc.want)
+			}
+			if _, leaked := got.SessionParams["reportUnknownRowsAffected"]; leaked {
+				t.Error("reportUnknownRowsAffected must be consumed, not forwarded as a session param")
+			}
+		})
+	}
+
+	if _, err := ParseDSN(base + "?reportUnknownRowsAffected=notabool"); err == nil {
+		t.Error("malformed reportUnknownRowsAffected should fail DSN parsing")
+	}
+}
+
 func TestParseDSNQueryTimeoutRange(t *testing.T) {
 	if strconv.IntSize < 64 {
 		t.Skip("strconv.Atoi rejects these values before the range check on 32-bit platforms")
@@ -856,6 +886,7 @@ func TestUserConfig_DeepCopy(t *testing.T) {
 				MaxDownloadThreads:    10,
 				MaxDownloadThreadsSet: true,
 			},
+			ReportUnknownRowsAffected: true,
 		}
 
 		cfg_copy := cfg.DeepCopy()

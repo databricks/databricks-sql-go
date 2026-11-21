@@ -102,6 +102,7 @@ Notes for the SEA/kernel backend:
 | *(via session param)* | `WithQueryTags` | ✅ | ✅ | | Session-level query tags (serialized into `QUERY_TAGS`). |
 | `timezone` | `WithSessionParams(timezone=…)` | ✅ | ✅ | | Session time zone (e.g. `America/Los_Angeles`). |
 | `enableMetricViewMetadata` | `WithEnableMetricViewMetadata` | ✅ | ⚠️ | `false` | Enables metric-view metadata (sets `spark.sql.thriftserver.metadata.metricview.enabled=true`). Both paths forward the identical conf. Whether it takes effect on the SEA/kernel path depends on server-side SEA support (PECOBLR-4142). |
+| `reportUnknownRowsAffected` | `WithReportUnknownRowsAffected` | ✅ | ✅ | `false` | `true`: `Result.RowsAffected()` returns `-1` when the server reports no modified-row count (e.g. DDL such as `CREATE VIEW`; Thrift: `NumModifiedRows` unset; kernel: the C ABI's unknown sentinel). A reported count, including `0`, is unchanged. `false`: an unreported count is `0`. Client-side only; nothing is sent to the server. |
 
 ### Kernel session confs
 

@@ -235,8 +235,9 @@ func (k *KernelBackend) execute(ctx context.Context, req backend.ExecRequest) (b
 	// Capture the modified-row count and server query id now, while exec is live —
 	// the operation is closed (nulling exec) before these are read on the
 	// ExecContext path, and the query-id pointer is only valid while exec lives.
-	// normalizeAffectedRows folds the C ABI's -1 sentinel to 0 for Thrift parity.
-	op.affectedRows = normalizeAffectedRows(int64(C.kernel_executed_statement_num_modified_rows(exec)))
+	// normalizeAffectedRows folds the C ABI's -1 sentinel to 0 for Thrift parity,
+	// or keeps it as -1 under WithReportUnknownRowsAffected.
+	op.affectedRows = normalizeAffectedRows(int64(C.kernel_executed_statement_num_modified_rows(exec)), k.cfg.ReportUnknownRowsAffected)
 	// A nil execErr means the statement reached a terminal state server-side (it
 	// committed). We deliberately do NOT re-check ctx.Err() here to convert a
 	// completed statement into a cancellation: for a non-idempotent DML that would

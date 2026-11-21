@@ -149,7 +149,8 @@ func TestOperationStatementID(t *testing.T) {
 // which returns 0 when the field is unset. AffectedRows is defined only on
 // the success path (per backend.Operation), where runQuery has guaranteed a
 // non-nil opStatusResp, so a nil-opStatusResp input is out of contract and
-// not tested.
+// not tested here (TestOperationAffectedRowsReportUnknown covers it under the
+// option).
 func TestOperationAffectedRows(t *testing.T) {
 	be := NewForTest(&client.TestClient{}, getTestSession(), config.WithDefaults())
 
@@ -169,6 +170,41 @@ func TestOperationAffectedRows(t *testing.T) {
 		)
 		assert.Equal(t, int64(0), op.AffectedRows())
 	})
+
+	t.Run("returns an explicit 0 as 0", func(t *testing.T) {
+		zero := int64(0)
+		op := be.OperationForTest(
+			&cli_service.TExecuteStatementResp{OperationHandle: opHandle()},
+			&cli_service.TGetOperationStatusResp{NumModifiedRows: &zero},
+		)
+		assert.Equal(t, int64(0), op.AffectedRows())
+	})
+}
+
+// TestOperationAffectedRowsReportUnknown pins WithReportUnknownRowsAffected: an
+// unreported count becomes -1, while any reported count (including 0) is kept.
+func TestOperationAffectedRowsReportUnknown(t *testing.T) {
+	cfg := config.WithDefaults()
+	cfg.ReportUnknownRowsAffected = true
+	be := NewForTest(&client.TestClient{}, getTestSession(), cfg)
+	count := func(n int64) *int64 { return &n }
+
+	cases := []struct {
+		name     string
+		opStatus *cli_service.TGetOperationStatusResp
+		want     int64
+	}{
+		{"unset NumModifiedRows -> -1", &cli_service.TGetOperationStatusResp{}, -1},
+		{"nil status response -> -1", nil, -1},
+		{"explicit 0 stays 0", &cli_service.TGetOperationStatusResp{NumModifiedRows: count(0)}, 0},
+		{"positive count unchanged", &cli_service.TGetOperationStatusResp{NumModifiedRows: count(42)}, 42},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			op := be.OperationForTest(&cli_service.TExecuteStatementResp{OperationHandle: opHandle()}, tc.opStatus)
+			assert.Equal(t, tc.want, op.AffectedRows())
+		})
+	}
 }
 
 // TestOperationClose_Idempotency pins the interface contract: a second Close
