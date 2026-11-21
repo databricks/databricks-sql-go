@@ -1023,29 +1023,34 @@ func TestE2EReportUnknownRowsAffected(t *testing.T) {
 			require.NoError(t, err)
 			db := sql.OpenDB(connector)
 			defer db.Close() //nolint:errcheck
-
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-			defer cancel()
-			// Temporary views are session-scoped, so pin one connection.
-			conn, err := db.Conn(ctx)
-			require.NoError(t, err)
-			defer conn.Close() //nolint:errcheck
-
-			want := int64(0)
-			if report {
-				want = -1
-			}
-			for _, statement := range []string{
-				"CREATE OR REPLACE TEMPORARY VIEW go_e2e_rows_affected_unknown AS SELECT 1 AS id",
-				"DROP VIEW go_e2e_rows_affected_unknown",
-			} {
-				res, err := conn.ExecContext(ctx, statement)
-				require.NoError(t, err, statement)
-				rowsAffected, err := res.RowsAffected()
-				require.NoError(t, err, statement)
-				assert.Equal(t, want, rowsAffected, statement)
-			}
+			testViewDDLRowsAffected(t, db, report)
 		})
+	}
+}
+
+// testViewDDLRowsAffected is shared with the kernel E2E suite.
+func testViewDDLRowsAffected(t *testing.T, db *sql.DB, reportUnknown bool) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	// Temporary views are session-scoped, so pin one connection.
+	conn, err := db.Conn(ctx)
+	require.NoError(t, err)
+	defer conn.Close() //nolint:errcheck
+
+	want := int64(0)
+	if reportUnknown {
+		want = -1
+	}
+	for _, statement := range []string{
+		"CREATE OR REPLACE TEMPORARY VIEW go_e2e_rows_affected_unknown AS SELECT 1 AS id",
+		"DROP VIEW go_e2e_rows_affected_unknown",
+	} {
+		res, err := conn.ExecContext(ctx, statement)
+		require.NoError(t, err, statement)
+		rowsAffected, err := res.RowsAffected()
+		require.NoError(t, err, statement)
+		assert.Equal(t, want, rowsAffected, statement)
 	}
 }
 
