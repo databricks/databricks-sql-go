@@ -47,9 +47,9 @@ func (c *cancelOnCompletionErrorContext) Err() error {
 
 func TestKernelVolumeCompletionControlsSessionValidity(t *testing.T) {
 	for _, tc := range []struct {
-		name, operation, local, errorCode                             string
-		status                                                        int
-		instruction, cancelAfterError, inFlight, success, invalidRoot bool
+		name, operation, local, errorCode, message                                  string
+		status                                                                      int
+		instruction, cancelAfterError, inFlight, success, invalidRoot, missingLocal bool
 	}{
 		{name: "instruction401", instruction: true, errorCode: "SESSION_EXPIRED"},
 		{name: "storage401", status: 401, errorCode: "VOLUME_STORAGE_HTTP_ERROR"},
@@ -58,8 +58,9 @@ func TestKernelVolumeCompletionControlsSessionValidity(t *testing.T) {
 		{name: "getSuccess", success: true},
 		{name: "removeNotFound", operation: "REMOVE", status: 404, success: true},
 		{name: "inFlightCancel", inFlight: true},
-		{name: "streamPut", operation: "PUT", local: "__input_stream__"},
-		{name: "invalidUTF8Root", invalidRoot: true},
+		{name: "streamPut", operation: "PUT", local: "__input_stream__", message: "requires a local file instruction"},
+		{name: "invalidUTF8Root", invalidRoot: true, message: "valid UTF-8"},
+		{name: "putMissingFile", operation: "PUT", missingLocal: true, errorCode: "VOLUME_LOCAL_FILE_ERROR"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			directory := t.TempDir()
@@ -102,6 +103,9 @@ func TestKernelVolumeCompletionControlsSessionValidity(t *testing.T) {
 			if tc.local != "" {
 				local = tc.local
 			}
+			if tc.missingLocal {
+				local = filepath.Join(directory, "missing.bin")
+			}
 			values := []string{operation, server.URL + "/object", "{}", local}
 			fields, columns := make([]arrow.Field, 4), make([]arrow.Array, 4)
 			manifestColumns := make([]map[string]any, 4)
@@ -143,7 +147,16 @@ func TestKernelVolumeCompletionControlsSessionValidity(t *testing.T) {
 			defer func() {
 				cancel()
 				server.CloseClientConnections()
-				go connection.Close()
+				closed := make(chan struct{})
+				go func() {
+					defer close(closed)
+					_ = connection.Close()
+				}()
+				select {
+				case <-closed:
+				case <-time.After(5 * time.Second):
+					t.Error("connection.Close did not return")
+				}
 			}()
 			var execResult sql.Result
 			if tc.cancelAfterError {
@@ -195,6 +208,9 @@ func TestKernelVolumeCompletionControlsSessionValidity(t *testing.T) {
 				}
 			} else if tc.errorCode == "" {
 				require.ErrorIs(t, err, dbsqlerr.DriverError)
+				if tc.message != "" {
+					require.ErrorContains(t, err, tc.message)
+				}
 				if tc.inFlight {
 					require.ErrorIs(t, err, context.Canceled)
 				}
@@ -204,6 +220,9 @@ func TestKernelVolumeCompletionControlsSessionValidity(t *testing.T) {
 				var detail *kernel.KernelError
 				require.ErrorAs(t, err, &detail)
 				require.Equal(t, tc.errorCode, detail.ErrorCode)
+				if tc.missingLocal {
+					require.ErrorIs(t, err, fs.ErrNotExist)
+				}
 			}
 			require.NoError(t, connection.Raw(func(raw any) error {
 				require.Equal(t, !tc.instruction, raw.(driver.Validator).IsValid())
