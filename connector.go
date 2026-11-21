@@ -326,6 +326,10 @@ func withUserConfig(ucfg config.UserConfig) ConnOption {
 			enabled := *ucfg.EnableGeoSpatialSupportDSN
 			kernelExperimental(c).EnableGeoSpatialSupport = &enabled
 		}
+		if ucfg.EnableHTTP2DSN != nil {
+			enabled := *ucfg.EnableHTTP2DSN
+			kernelExperimental(c).EnableHTTP2 = &enabled
+		}
 	}
 }
 
@@ -709,6 +713,17 @@ func WithEnableGeoSpatialSupport(enabled bool) ConnOption {
 	return func(c *config.Config) {
 		value := enabled
 		kernelExperimental(c).EnableGeoSpatialSupport = &value
+	}
+}
+
+// WithEnableHTTP2 controls HTTPS protocol negotiation on the kernel backend.
+// Defaults to HTTP/2 with HTTP/1.1 fallback. False or a configured proxy forces
+// HTTP/1.1 for session traffic, including destinations that bypass the proxy.
+// The Thrift backend rejects this option. DSN: enableHttp2=false.
+func WithEnableHTTP2(enabled bool) ConnOption {
+	return func(c *config.Config) {
+		value := enabled
+		kernelExperimental(c).EnableHTTP2 = &value
 	}
 }
 

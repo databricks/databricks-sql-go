@@ -108,6 +108,9 @@ type Config struct {
 	// sets this field and defaults it to false.
 	EnableGeoSpatialSupport bool
 
+	// EnableHTTP2 leaves the kernel default in effect when nil; false forces HTTP/1.1.
+	EnableHTTP2 *bool
+
 	// TokenCacheEnabled controls the kernel's on-disk OAuth U2M token-cache persistence
 	// (WithTokenCache / tokenCache DSN param). When false (the default), tokens are held
 	// in memory only; when true, the refresh token is persisted encrypted to

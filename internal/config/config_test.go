@@ -730,6 +730,39 @@ func TestParseDSNEnableGeoSpatialSupport(t *testing.T) {
 	}
 }
 
+func TestParseDSNEnableHTTP2(t *testing.T) {
+	base := "token:supersecret@example.cloud.databricks.com:443/sql/1.0/endpoints/abc"
+	for _, tc := range []struct {
+		name  string
+		query string
+		want  *bool
+	}{
+		{name: "omitted", query: "", want: nil},
+		{name: "enabled", query: "?enableHttp2=true", want: func() *bool { v := true; return &v }()},
+		{name: "disabled", query: "?enableHttp2=false", want: func() *bool { v := false; return &v }()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := ParseDSN(base + tc.query)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.want == nil {
+				if got.EnableHTTP2DSN != nil {
+					t.Errorf("EnableHTTP2DSN = %v, want nil", *got.EnableHTTP2DSN)
+				}
+				return
+			}
+			if got.EnableHTTP2DSN == nil || *got.EnableHTTP2DSN != *tc.want {
+				t.Errorf("EnableHTTP2DSN = %v, want %v", got.EnableHTTP2DSN, *tc.want)
+			}
+		})
+	}
+
+	if _, err := ParseDSN(base + "?enableHttp2=invalid"); err == nil {
+		t.Error("malformed enableHttp2 should fail DSN parsing")
+	}
+}
+
 func TestParseDSNQueryTimeoutRange(t *testing.T) {
 	if strconv.IntSize < 64 {
 		t.Skip("strconv.Atoi rejects these values before the range check on 32-bit platforms")
