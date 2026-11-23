@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/databricks/databricks-sql-go/auth"
+	"github.com/databricks/databricks-sql-go/v2/auth"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/oauth2"

@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
-	"github.com/databricks/databricks-sql-go/internal/backend"
+	dbsqlerr "github.com/databricks/databricks-sql-go/v2/errors"
+	"github.com/databricks/databricks-sql-go/v2/internal/backend"
 	"github.com/pkg/errors"
 )
 

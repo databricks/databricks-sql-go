@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
-	"github.com/databricks/databricks-sql-go/logger"
+	"github.com/databricks/databricks-sql-go/v2/logger"
 	"golang.org/x/oauth2"
 )
 

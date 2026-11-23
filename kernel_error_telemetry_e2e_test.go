@@ -12,9 +12,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/databricks/databricks-sql-go/internal/config"
-	dbsqlerrint "github.com/databricks/databricks-sql-go/internal/errors"
-	"github.com/databricks/databricks-sql-go/telemetry"
+	"github.com/databricks/databricks-sql-go/v2/internal/config"
+	dbsqlerrint "github.com/databricks/databricks-sql-go/v2/internal/errors"
+	"github.com/databricks/databricks-sql-go/v2/telemetry"
 )
 
 // captureTransport records the JSON body of every /telemetry-ext POST so a test can

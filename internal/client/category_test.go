@@ -5,9 +5,9 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/databricks/databricks-sql-go/driverctx"
-	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
-	dbsqlerrint "github.com/databricks/databricks-sql-go/internal/errors"
+	"github.com/databricks/databricks-sql-go/v2/driverctx"
+	dbsqlerr "github.com/databricks/databricks-sql-go/v2/errors"
+	dbsqlerrint "github.com/databricks/databricks-sql-go/v2/internal/errors"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 )

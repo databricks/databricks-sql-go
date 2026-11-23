@@ -5,13 +5,13 @@ import (
 	"database/sql/driver"
 	"time"
 
-	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
-	"github.com/databricks/databricks-sql-go/internal/cli_service"
-	"github.com/databricks/databricks-sql-go/internal/config"
-	dbsqlerr_int "github.com/databricks/databricks-sql-go/internal/errors"
-	"github.com/databricks/databricks-sql-go/internal/rows/rowscanner"
-	dbsqllog "github.com/databricks/databricks-sql-go/logger"
-	dbsqlrows "github.com/databricks/databricks-sql-go/rows"
+	dbsqlerr "github.com/databricks/databricks-sql-go/v2/errors"
+	"github.com/databricks/databricks-sql-go/v2/internal/cli_service"
+	"github.com/databricks/databricks-sql-go/v2/internal/config"
+	dbsqlerr_int "github.com/databricks/databricks-sql-go/v2/internal/errors"
+	"github.com/databricks/databricks-sql-go/v2/internal/rows/rowscanner"
+	dbsqllog "github.com/databricks/databricks-sql-go/v2/logger"
+	dbsqlrows "github.com/databricks/databricks-sql-go/v2/rows"
 )
 
 var errRowsParseDateTime = "databricks: column row scanner failed to parse date/time"

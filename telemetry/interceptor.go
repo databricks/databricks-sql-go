@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/databricks/databricks-sql-go/logger"
+	"github.com/databricks/databricks-sql-go/v2/logger"
 )
 
 // Interceptor wraps driver operations to collect metrics.

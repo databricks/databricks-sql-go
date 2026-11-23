@@ -7,7 +7,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 
-	dbsqlerrint "github.com/databricks/databricks-sql-go/internal/errors"
+	dbsqlerrint "github.com/databricks/databricks-sql-go/v2/internal/errors"
 )
 
 // With no source category set, classifyError must return the same values it

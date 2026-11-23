@@ -4,9 +4,9 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/databricks/databricks-sql-go/auth/oauth/m2m"
-	"github.com/databricks/databricks-sql-go/auth/oauth/u2m"
-	"github.com/databricks/databricks-sql-go/internal/backend/kernel"
+	"github.com/databricks/databricks-sql-go/v2/auth/oauth/m2m"
+	"github.com/databricks/databricks-sql-go/v2/auth/oauth/u2m"
+	"github.com/databricks/databricks-sql-go/v2/internal/backend/kernel"
 )
 
 // resolveKernelAuth selects the M2M / U2M path by asserting cfg.Authenticator

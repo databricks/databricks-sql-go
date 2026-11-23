@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/databricks/databricks-sql-go/logger"
+	"github.com/databricks/databricks-sql-go/v2/logger"
 )
 
 type retryTransport struct {

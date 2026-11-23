@@ -21,13 +21,13 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	thriftbackend "github.com/databricks/databricks-sql-go/internal/backend/thrift"
-	"github.com/databricks/databricks-sql-go/internal/cli_service"
-	"github.com/databricks/databricks-sql-go/internal/client"
-	"github.com/databricks/databricks-sql-go/internal/config"
-	"github.com/databricks/databricks-sql-go/internal/featureflags"
-	dbsqlrows "github.com/databricks/databricks-sql-go/rows"
-	"github.com/databricks/databricks-sql-go/telemetry"
+	thriftbackend "github.com/databricks/databricks-sql-go/v2/internal/backend/thrift"
+	"github.com/databricks/databricks-sql-go/v2/internal/cli_service"
+	"github.com/databricks/databricks-sql-go/v2/internal/client"
+	"github.com/databricks/databricks-sql-go/v2/internal/config"
+	"github.com/databricks/databricks-sql-go/v2/internal/featureflags"
+	dbsqlrows "github.com/databricks/databricks-sql-go/v2/rows"
+	"github.com/databricks/databricks-sql-go/v2/telemetry"
 )
 
 // telemetryCapture records the frontend logs POSTed to /telemetry-ext by the

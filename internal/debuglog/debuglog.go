@@ -30,8 +30,8 @@ import (
 
 	"github.com/rs/zerolog"
 
-	"github.com/databricks/databricks-sql-go/driverctx"
-	"github.com/databricks/databricks-sql-go/logger"
+	"github.com/databricks/databricks-sql-go/v2/driverctx"
+	"github.com/databricks/databricks-sql-go/v2/logger"
 )
 
 // Enabled reports whether debug-level logging is currently on, i.e. whether

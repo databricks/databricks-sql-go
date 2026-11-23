@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/databricks/databricks-sql-go/internal/config"
-	"github.com/databricks/databricks-sql-go/internal/retry"
-	"github.com/databricks/databricks-sql-go/internal/rows/rowscanner"
+	"github.com/databricks/databricks-sql-go/v2/internal/config"
+	"github.com/databricks/databricks-sql-go/v2/internal/retry"
+	"github.com/databricks/databricks-sql-go/v2/internal/rows/rowscanner"
 	"github.com/pierrec/lz4/v4"
 	"github.com/pkg/errors"
 
@@ -19,10 +19,10 @@ import (
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/arrow-go/v18/arrow/array"
 	"github.com/apache/arrow-go/v18/arrow/ipc"
-	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
-	"github.com/databricks/databricks-sql-go/internal/cli_service"
-	dbsqlerrint "github.com/databricks/databricks-sql-go/internal/errors"
-	"github.com/databricks/databricks-sql-go/logger"
+	dbsqlerr "github.com/databricks/databricks-sql-go/v2/errors"
+	"github.com/databricks/databricks-sql-go/v2/internal/cli_service"
+	dbsqlerrint "github.com/databricks/databricks-sql-go/v2/internal/errors"
+	"github.com/databricks/databricks-sql-go/v2/logger"
 )
 
 type IPCStreamIterator interface {

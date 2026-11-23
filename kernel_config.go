@@ -9,13 +9,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/databricks/databricks-sql-go/auth/noop"
-	"github.com/databricks/databricks-sql-go/auth/pat"
-	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
-	"github.com/databricks/databricks-sql-go/internal/backend/kernel"
-	"github.com/databricks/databricks-sql-go/internal/client"
-	"github.com/databricks/databricks-sql-go/internal/config"
-	"github.com/databricks/databricks-sql-go/telemetry"
+	"github.com/databricks/databricks-sql-go/v2/auth/noop"
+	"github.com/databricks/databricks-sql-go/v2/auth/pat"
+	dbsqlerr "github.com/databricks/databricks-sql-go/v2/errors"
+	"github.com/databricks/databricks-sql-go/v2/internal/backend/kernel"
+	"github.com/databricks/databricks-sql-go/v2/internal/client"
+	"github.com/databricks/databricks-sql-go/v2/internal/config"
+	"github.com/databricks/databricks-sql-go/v2/telemetry"
 )
 
 // This file is intentionally NOT behind the `cgo && databricks_kernel` build tag.

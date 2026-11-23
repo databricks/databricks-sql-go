@@ -1,8 +1,8 @@
 package thrift
 
 import (
-	"github.com/databricks/databricks-sql-go/internal/backend"
-	"github.com/databricks/databricks-sql-go/internal/cli_service"
+	"github.com/databricks/databricks-sql-go/v2/internal/backend"
+	"github.com/databricks/databricks-sql-go/v2/internal/cli_service"
 )
 
 // toSparkParameters maps the backend-neutral, already-stringified parameters

@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"net/url"
 
-	"github.com/databricks/databricks-sql-go/internal/config"
+	"github.com/databricks/databricks-sql-go/v2/internal/config"
 )
 
 // This file is intentionally NOT behind the `cgo && databricks_kernel` build tag:

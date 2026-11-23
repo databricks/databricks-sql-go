@@ -29,8 +29,8 @@ import (
 	"os"
 	"time"
 
-	dbsql "github.com/databricks/databricks-sql-go"
-	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
+	dbsql "github.com/databricks/databricks-sql-go/v2"
+	dbsqlerr "github.com/databricks/databricks-sql-go/v2/errors"
 	"github.com/joho/godotenv"
 )
 

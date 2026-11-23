@@ -4,7 +4,7 @@ import (
 	"errors"
 	"strings"
 
-	dbsqlerrint "github.com/databricks/databricks-sql-go/internal/errors"
+	dbsqlerrint "github.com/databricks/databricks-sql-go/v2/internal/errors"
 )
 
 // isTerminalError returns true if error is terminal (non-retryable).

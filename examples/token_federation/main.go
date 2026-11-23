@@ -21,8 +21,8 @@ import (
 	"os"
 	"time"
 
-	dbsql "github.com/databricks/databricks-sql-go"
-	"github.com/databricks/databricks-sql-go/auth/tokenprovider"
+	dbsql "github.com/databricks/databricks-sql-go/v2"
+	"github.com/databricks/databricks-sql-go/v2/auth/tokenprovider"
 	"github.com/joho/godotenv"
 )
 

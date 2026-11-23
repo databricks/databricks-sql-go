@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/databricks/databricks-sql-go/internal/config"
+	"github.com/databricks/databricks-sql-go/v2/internal/config"
 )
 
 // newKernelBackend builds a backend for a supported config and propagates a

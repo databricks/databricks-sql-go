@@ -5,9 +5,9 @@ package dbsql
 import (
 	"context"
 
-	"github.com/databricks/databricks-sql-go/internal/backend"
-	"github.com/databricks/databricks-sql-go/internal/backend/kernel"
-	"github.com/databricks/databricks-sql-go/internal/config"
+	"github.com/databricks/databricks-sql-go/v2/internal/backend"
+	"github.com/databricks/databricks-sql-go/v2/internal/backend/kernel"
+	"github.com/databricks/databricks-sql-go/v2/internal/config"
 )
 
 // newKernelBackend builds the SEA-via-kernel backend from the driver config; the

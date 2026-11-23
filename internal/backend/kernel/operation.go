@@ -16,12 +16,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/databricks/databricks-sql-go/driverctx"
-	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
-	"github.com/databricks/databricks-sql-go/internal/backend"
-	dbsqlerrint "github.com/databricks/databricks-sql-go/internal/errors"
-	"github.com/databricks/databricks-sql-go/internal/querytags"
-	dbsqlrows "github.com/databricks/databricks-sql-go/internal/rows"
+	"github.com/databricks/databricks-sql-go/v2/driverctx"
+	dbsqlerr "github.com/databricks/databricks-sql-go/v2/errors"
+	"github.com/databricks/databricks-sql-go/v2/internal/backend"
+	dbsqlerrint "github.com/databricks/databricks-sql-go/v2/internal/errors"
+	"github.com/databricks/databricks-sql-go/v2/internal/querytags"
+	dbsqlrows "github.com/databricks/databricks-sql-go/v2/internal/rows"
 )
 
 // execute runs one statement to a terminal state on the blocking-execute path,

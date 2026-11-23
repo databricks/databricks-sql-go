@@ -4,7 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	dbsql "github.com/databricks/databricks-sql-go"
+	dbsql "github.com/databricks/databricks-sql-go/v2"
 	"log"
 	"os"
 	"strconv"

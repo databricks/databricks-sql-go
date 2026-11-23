@@ -3,7 +3,7 @@ package client
 import (
 	"testing"
 
-	"github.com/databricks/databricks-sql-go/internal/config"
+	"github.com/databricks/databricks-sql-go/v2/internal/config"
 )
 
 // clearAgentEnv blanks every env var agent.Detect inspects so the test

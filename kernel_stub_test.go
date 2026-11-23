@@ -7,7 +7,7 @@ import (
 	"errors"
 	"testing"
 
-	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
+	dbsqlerr "github.com/databricks/databricks-sql-go/v2/errors"
 )
 
 // In the default pure-Go build (no databricks_kernel tag) the kernel backend is

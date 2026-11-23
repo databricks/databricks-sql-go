@@ -7,8 +7,8 @@ import (
 	"errors"
 	"testing"
 
-	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
-	"github.com/databricks/databricks-sql-go/internal/config"
+	dbsqlerr "github.com/databricks/databricks-sql-go/v2/errors"
+	"github.com/databricks/databricks-sql-go/v2/internal/config"
 	"github.com/stretchr/testify/assert"
 )
 

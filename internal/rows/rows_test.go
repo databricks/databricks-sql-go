@@ -16,12 +16,12 @@ import (
 
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/arrow-go/v18/arrow/ipc"
-	"github.com/databricks/databricks-sql-go/driverctx"
-	"github.com/databricks/databricks-sql-go/internal/cli_service"
-	"github.com/databricks/databricks-sql-go/internal/client"
-	"github.com/databricks/databricks-sql-go/internal/config"
-	"github.com/databricks/databricks-sql-go/internal/rows/rowscanner"
-	dbsqlrows "github.com/databricks/databricks-sql-go/rows"
+	"github.com/databricks/databricks-sql-go/v2/driverctx"
+	"github.com/databricks/databricks-sql-go/v2/internal/cli_service"
+	"github.com/databricks/databricks-sql-go/v2/internal/client"
+	"github.com/databricks/databricks-sql-go/v2/internal/config"
+	"github.com/databricks/databricks-sql-go/v2/internal/rows/rowscanner"
+	dbsqlrows "github.com/databricks/databricks-sql-go/v2/rows"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

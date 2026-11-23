@@ -14,11 +14,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/databricks/databricks-sql-go/driverctx"
-	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
-	"github.com/databricks/databricks-sql-go/internal/backend"
-	dbsqlrows "github.com/databricks/databricks-sql-go/internal/rows"
-	"github.com/databricks/databricks-sql-go/logger"
+	"github.com/databricks/databricks-sql-go/v2/driverctx"
+	dbsqlerr "github.com/databricks/databricks-sql-go/v2/errors"
+	"github.com/databricks/databricks-sql-go/v2/internal/backend"
+	dbsqlrows "github.com/databricks/databricks-sql-go/v2/internal/rows"
+	"github.com/databricks/databricks-sql-go/v2/logger"
 )
 
 func TestStatementExecuteTimeoutRouting(t *testing.T) {
