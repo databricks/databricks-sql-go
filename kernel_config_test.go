@@ -1200,6 +1200,12 @@ func TestKernelHostErrorsRedactCredentials(t *testing.T) {
 		{"password with an IPv6 literal", "user:" + secret + "@[::1]", 443},
 		{"password with a bad IPv6 bracket", "user:" + secret + "@[::1", 443},
 		{"password with a bare IPv6 literal", "user:" + secret + "@::1", 443},
+		// A "/", "?" or "#" inside the password ends the authority before the "@", so redaction must not rely
+		// on the authority split.
+		{"password containing a slash, default port", "user:" + secret + "/part@h", 443},
+		{"password containing a slash, custom port", "user:" + secret + "/part@h", 8443},
+		{"password containing a question mark", "user:" + secret + "?part@h", 443},
+		{"password containing a hash", "user:" + secret + "#part@h", 8443},
 	}
 	check := func(t *testing.T, err error) {
 		t.Helper()

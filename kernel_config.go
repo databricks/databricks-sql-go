@@ -271,14 +271,15 @@ func bracketBareIPv6(raw string) string {
 	return raw
 }
 
-// redactUserinfo replaces the user[:password] of a host with "<redacted>", keeping the host itself.
+// redactUserinfo replaces everything up to the last "@" of a host with "<redacted>". The whole string is
+// searched, not only the authority: a password may contain "/", "?" or "#" (e.g. "user:p/w@h"), which would
+// otherwise end the authority before the "@" and leave the password in the text.
 func redactUserinfo(raw string) string {
-	authority, rest := splitAuthority(raw)
-	at := strings.LastIndex(authority, "@")
+	at := strings.LastIndex(raw, "@")
 	if at < 0 {
 		return raw
 	}
-	return "<redacted>@" + authority[at+1:] + rest
+	return "<redacted>@" + raw[at+1:]
 }
 
 // parseKernelHost parses cfg.Host (trailing "/" trimmed, bare IPv6 bracketed) as the authority of an https
@@ -290,10 +291,11 @@ func parseKernelHost(host string) (kernelHost, error) {
 	h := kernelHost{raw: raw, redacted: redactUserinfo(raw)}
 	u, err := url.Parse("https://" + raw)
 	if err != nil {
-		authority, _ := splitAuthority(raw)
+		// The parser's reason can quote part of the userinfo (e.g. `invalid port ":p"` for "user:p/w@h"), so it
+		// is withheld whenever an "@" appears anywhere in the host.
 		reason := "it does not parse as a host"
 		var ue *url.Error
-		if !strings.Contains(authority, "@") && errors.As(err, &ue) {
+		if !strings.Contains(raw, "@") && errors.As(err, &ue) {
 			reason = ue.Err.Error()
 		}
 		return h, errors.New(reason)
