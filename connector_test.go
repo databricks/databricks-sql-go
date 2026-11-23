@@ -1,11 +1,14 @@
 package dbsql
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
 
+	"github.com/databricks/databricks-sql-go/v2/auth"
 	"github.com/databricks/databricks-sql-go/v2/auth/pat"
 	"github.com/databricks/databricks-sql-go/v2/auth/tokenprovider"
 	dbsqlerr "github.com/databricks/databricks-sql-go/v2/errors"
@@ -53,6 +56,43 @@ func TestFederatedTokenAuthenticatorPreservesThriftTokenExchange(t *testing.T) {
 	exchange := <-exchangeRequests
 	assert.Equal(t, "/oidc/v1/token", exchange.path)
 	assert.Equal(t, subjectToken, exchange.subjectToken)
+}
+
+type connectorOAuthRecorder struct {
+	auth.Authenticator
+	client *http.Client
+}
+
+func (recorder *connectorOAuthRecorder) WithHTTPClient(client *http.Client) auth.Authenticator {
+	recorder.client = client
+	return recorder.Authenticator.(interface {
+		WithHTTPClient(*http.Client) auth.Authenticator
+	}).WithHTTPClient(client)
+}
+
+func TestM2MConnectorHTTPConfiguration(t *testing.T) {
+	agents := make(chan string, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		agents <- request.UserAgent()
+		writer.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(server.Close)
+	caller := &http.Transport{Proxy: func(*http.Request) (*url.URL, error) {
+		return nil, fmt.Errorf("OAuth must not use the caller transport")
+	}}
+	t.Cleanup(caller.CloseIdleConnections)
+	recorder := &connectorOAuthRecorder{}
+	_, err := NewConnector(WithServerHostname("test.cloud.databricks.com"), WithHTTPPath("/query"),
+		WithClientCredentials("id", "secret"), WithUserAgentEntry("Issue413/partner"), WithTransport(caller),
+		func(cfg *config.Config) {
+			recorder.Authenticator, cfg.Authenticator = cfg.Authenticator, recorder
+		})
+	require.NoError(t, err)
+	require.NotNil(t, recorder.client)
+	response, err := recorder.client.Get(server.URL)
+	require.NoError(t, err, "bound OAuth base must bypass the caller transport")
+	require.NoError(t, response.Body.Close())
+	assert.Contains(t, <-agents, "Issue413/partner")
 }
 
 func TestWithClientQueryTimeout(t *testing.T) {

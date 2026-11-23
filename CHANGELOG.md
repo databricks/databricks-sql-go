@@ -7,6 +7,7 @@
 - **Behavior change:** Bound each whole-transfer Thrift CloudFetch download attempt, including `WithTransport`, by the existing 900s `ClientTimeout`, and omit the link's presigned query string from download errors (databricks/databricks-sql-go#475).
 - **Behavior change:** Without direct results, `ArrowIPCStreamIterator.SchemaBytes()` and `ArrowBatchIterator.Schema()` now retrieve result metadata without fetching data and return the result schema, including for empty results, and can return request or schema-conversion errors. Schemas inferred from Thrift metadata may differ from CloudFetch file schemas when server ArrowSchema is absent (databricks/databricks-sql-go#312).
 - Evict kernel connections when SEA reports a missing or invalid session, and reject later requests locally without replaying the failed statement.
+- OAuth M2M discovery, grants and refreshes now send the connector User-Agent (databricks/databricks-sql-go#413).
 
 ## v2.0.0 (2026-11-23)
 
