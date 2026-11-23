@@ -10,10 +10,8 @@ import (
 	"github.com/databricks/databricks-sql-go/auth/tokenprovider"
 	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 	"github.com/databricks/databricks-sql-go/internal/backend/kernel"
-	"github.com/databricks/databricks-sql-go/internal/client"
 	"github.com/databricks/databricks-sql-go/internal/config"
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/hashicorp/go-retryablehttp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -321,6 +319,10 @@ func TestNewConnector(t *testing.T) {
 	})
 
 	t.Run("Connector test WithSkipTLSHostVerify with PoolClient", func(t *testing.T) {
+		server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			writer.WriteHeader(http.StatusOK)
+		}))
+		defer server.Close()
 		hostname := "databricks-host"
 		con, err := NewConnector(
 			WithServerHostname(hostname),
@@ -333,13 +335,10 @@ func TestNewConnector(t *testing.T) {
 		userConfig := coni.cfg.UserConfig
 		require.Equal(t, hostname, userConfig.Host)
 
-		httpClient, ok := coni.client.Transport.(*retryablehttp.RoundTripper)
-		require.True(t, ok)
-		poolClient, ok := httpClient.Client.HTTPClient.Transport.(*client.Transport)
-		require.True(t, ok)
-		internalClient, ok := poolClient.Base.(*http.Transport)
-		require.True(t, ok)
-		require.True(t, internalClient.TLSClientConfig.InsecureSkipVerify)
+		response, err := coni.client.Get(server.URL)
+		require.NoError(t, err)
+		require.NoError(t, response.Body.Close())
+		require.Equal(t, http.StatusOK, response.StatusCode)
 	})
 
 	t.Run("Connector test WithEnableMetricViewMetadata enabled", func(t *testing.T) {

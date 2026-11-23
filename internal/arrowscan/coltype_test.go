@@ -105,8 +105,9 @@ func TestColumnTypeInfoForFieldReportsGeospatialByRepresentation(t *testing.T) {
 	raw := reflect.TypeOf(sql.RawBytes{})
 	str := reflect.TypeOf("")
 	metadata := arrow.MetadataFrom(map[string]string{
-		"databricks.type_name": "geometry",
-		"databricks.type_text": "GEOMETRY(ANY)",
+		"databricks.type_name":   "geometry",
+		"databricks.type_text":   "GEOMETRY(ANY)",
+		"Spark:DataType:SqlName": "GEOMETRY(ANY)",
 	})
 	geoStruct := arrow.StructOf(
 		arrow.Field{Name: "srid", Type: arrow.PrimitiveTypes.Int32, Nullable: false},
@@ -116,8 +117,8 @@ func TestColumnTypeInfoForFieldReportsGeospatialByRepresentation(t *testing.T) {
 	for _, stringType := range []arrow.DataType{arrow.BinaryTypes.String, arrow.BinaryTypes.LargeString} {
 		stringField := arrow.Field{Name: "g", Type: stringType, Nullable: true, Metadata: metadata}
 		stringInfo := ColumnTypeInfoForField(stringField)
-		if stringInfo.DatabaseTypeName != "STRING" || stringInfo.ScanType != str {
-			t.Errorf("%s geo metadata = (%q, %v), want (STRING, string)",
+		if stringInfo.DatabaseTypeName != "GEOMETRY(ANY)" || stringInfo.ScanType != str {
+			t.Errorf("%s geo metadata = (%q, %v), want (GEOMETRY(ANY), string)",
 				stringType, stringInfo.DatabaseTypeName, stringInfo.ScanType)
 		}
 		if IsBinaryGeospatialField(stringField) {
@@ -127,8 +128,8 @@ func TestColumnTypeInfoForFieldReportsGeospatialByRepresentation(t *testing.T) {
 
 	binaryField := arrow.Field{Name: "g", Type: geoStruct, Nullable: true, Metadata: metadata}
 	binaryInfo := ColumnTypeInfoForField(binaryField)
-	if binaryInfo.DatabaseTypeName != "GEOMETRY" || binaryInfo.ScanType != raw {
-		t.Errorf("binary geo metadata = (%q, %v), want (GEOMETRY, RawBytes)", binaryInfo.DatabaseTypeName, binaryInfo.ScanType)
+	if binaryInfo.DatabaseTypeName != "GEOMETRY(ANY)" || binaryInfo.ScanType != raw {
+		t.Errorf("binary geo metadata = (%q, %v), want (GEOMETRY(ANY), RawBytes)", binaryInfo.DatabaseTypeName, binaryInfo.ScanType)
 	}
 	if !IsBinaryGeospatialField(binaryField) {
 		t.Error("logical geospatial struct was not classified as binary")

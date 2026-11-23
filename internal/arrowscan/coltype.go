@@ -71,11 +71,8 @@ func ColumnTypeInfoFor(dt arrow.DataType) ColumnTypeInfo {
 	case arrow.FLOAT64:
 		return ColumnTypeInfo{DatabaseTypeName: "DOUBLE", ScanType: scanTypeFloat64}
 	case arrow.STRING, arrow.LARGE_STRING:
-		// STRING covers VARCHAR/CHAR/GEOMETRY/GEOGRAPHY too — all arrive as Arrow
-		// Utf8, and the Thrift path collapses them to STRING as well. VARIANT also
-		// arrives as Utf8, but only its field metadata identifies it, so
-		// ColumnTypeInfoForField (not this DataType-only mapping) reports VARIANT
-		// on both backends.
+		// ColumnTypeInfoForField uses field metadata to distinguish VARIANT and
+		// geospatial SQL names from physical Arrow strings on both backends.
 		return varLen("STRING", scanTypeString)
 	case arrow.BINARY:
 		return varLen("BINARY", scanTypeRawBytes)
@@ -126,31 +123,31 @@ func ColumnTypeInfoFor(dt arrow.DataType) ColumnTypeInfo {
 	}
 }
 
-// LogicalGeospatialType returns the top-level Databricks geospatial family
-// recorded by the kernel on an Arrow field. The physical value is UTF-8 in
-// string mode and a struct in binary mode, so DataType alone cannot preserve
-// this database type name.
+// LogicalGeospatialType returns the top-level Databricks geospatial SQL name,
+// including its declared SRID, from Spark:DataType:SqlName. Thrift sends only
+// that key, and the kernel copies the manifest's type_text into it, so both
+// backends report the same name. The value is UTF-8 in string mode and a struct
+// in binary mode, so DataType alone cannot preserve this database type name.
 func LogicalGeospatialType(field arrow.Field) (string, bool) {
-	name, ok := field.Metadata.GetValue(databricksTypeNameMetadataKey)
-	if !ok {
-		return "", false
+	name, _ := field.Metadata.GetValue(sparkSQLNameMetadataKey)
+	name = strings.TrimSpace(name)
+	family, _, _ := strings.Cut(name, "(")
+	if strings.EqualFold(family, "GEOMETRY") || strings.EqualFold(family, "GEOGRAPHY") {
+		return strings.ToUpper(name), true
 	}
-	switch strings.ToUpper(strings.TrimSpace(name)) {
-	case "GEOMETRY":
-		return "GEOMETRY", true
-	case "GEOGRAPHY":
-		return "GEOGRAPHY", true
-	default:
-		return "", false
-	}
+	return "", false
 }
 
 // IsBinaryGeospatialField reports whether field is a logical top-level
 // GEOMETRY / GEOGRAPHY using the kernel's struct representation. The scanner
 // performs the detailed child-shape validation when it reads a non-null value.
 func IsBinaryGeospatialField(field arrow.Field) bool {
-	_, geospatial := LogicalGeospatialType(field)
-	return geospatial && field.Type.ID() == arrow.STRUCT
+	if field.Type == nil || field.Type.ID() != arrow.STRUCT {
+		return false
+	}
+	name, _ := field.Metadata.GetValue(databricksTypeNameMetadataKey)
+	name = strings.TrimSpace(name)
+	return strings.EqualFold(name, "GEOMETRY") || strings.EqualFold(name, "GEOGRAPHY")
 }
 
 // ColumnTypeInfoForField preserves logical time, timestamp, VARIANT and geospatial
@@ -179,7 +176,7 @@ func ColumnTypeInfoForField(field arrow.Field) ColumnTypeInfo {
 		return varLen(name, scanTypeRawBytes)
 	}
 	if field.Type.ID() == arrow.STRING || field.Type.ID() == arrow.LARGE_STRING {
-		return varLen("STRING", scanTypeString)
+		return varLen(name, scanTypeString)
 	}
 	info := ColumnTypeInfoFor(field.Type)
 	info.DatabaseTypeName = name

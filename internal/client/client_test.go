@@ -262,9 +262,8 @@ func TestRetryPolicy(t *testing.T) {
 		ctx := WithSkipTransientRetries(base)
 
 		// 429/503 with the flag set: not retried AND no error returned,
-		// so retryablehttp's StandardClient adapter (and net/http
-		// underneath) deliver the response to the caller. The caller
-		// inspects the status code directly.
+		// so the HTTP client delivers the response to the caller,
+		// which inspects the status code directly.
 		resp429 := &http.Response{StatusCode: http.StatusTooManyRequests}
 		retry, err := RetryPolicy(ctx, resp429, nil)
 		require.False(t, retry, "429 with SkipTransientRetries should not be retried")

@@ -305,6 +305,14 @@ Top-level VARIANT columns report VARIANT as the database type name on both backe
 Values stay JSON text with the STRING scan type and length. On Thrift, detection reads
 the server-supplied Arrow schema; without it, VARIANT reports STRING.
 
+Top-level GEOMETRY / GEOGRAPHY columns report the server SQL name including its
+declared SRID, such as GEOMETRY(0), GEOGRAPHY(4326) or GEOMETRY(ANY), in both modes.
+The default keeps WKT / EWKT strings and a string scan type; the kernel's
+WithEnableGeoSpatialSupport(true) keeps EWKB values and a sql.RawBytes scan type.
+Previously that opt-in reported bare GEOMETRY / GEOGRAPHY names; match the family
+before "(" when selecting a decoder. Thrift retains STRING without a readable
+Arrow schema. Raw Arrow schemas are unchanged.
+
 On the read path, context cancellation is honored at result-batch boundaries, not
 mid-fetch: an in-flight CloudFetch batch runs to completion before the cancel takes
 effect.

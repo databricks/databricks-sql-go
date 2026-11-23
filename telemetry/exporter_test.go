@@ -123,7 +123,7 @@ func TestExport_SetsUserAgent(t *testing.T) {
 
 // TestExport_SingleAttemptPerExport asserts that doExport itself never
 // retries — a single export is exactly one HTTP transaction. Retries are
-// owned by the underlying retryablehttp-wrapped client (not exercised here
+// owned by the underlying retrying HTTP client (not exercised here
 // because the test uses a plain *http.Client). Each export → one breaker
 // outcome.
 func TestExport_SingleAttemptPerExport(t *testing.T) {
@@ -237,7 +237,7 @@ func TestExport_ErrorSwallowing(t *testing.T) {
 
 // TestExport_SingleAttemptThroughRetryableClient is the integration-flavor
 // counterpart to TestExport_SingleAttemptPerExport: it routes the export
-// through the *real* retryablehttp-wrapped client returned by
+// through the *real* retrying HTTP client returned by
 // client.RetryableClient, which is what production uses. The flag set by
 // the exporter (WithSkipTransientRetries) must collapse retries for every
 // status code that would otherwise bounce inside the transport — 429 and

@@ -51,9 +51,9 @@ func TestKernelE2EGeospatialRepresentations(t *testing.T) {
 				t.Fatal(err)
 			}
 			for i, family := range []string{"GEOMETRY", "GEOGRAPHY"} {
-				wantType, wantScan := "STRING", reflect.TypeOf("")
+				wantType, wantScan := family+"(4326)", reflect.TypeOf("")
 				if mode.native {
-					wantType, wantScan = family, reflect.TypeOf(sql.RawBytes{})
+					wantScan = reflect.TypeOf(sql.RawBytes{})
 				}
 				if columns[i].DatabaseTypeName() != wantType || columns[i].ScanType() != wantScan {
 					t.Fatalf("column %d: type=%s scan=%v, want %s/%v", i, columns[i].DatabaseTypeName(), columns[i].ScanType(), wantType, wantScan)

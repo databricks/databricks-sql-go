@@ -252,7 +252,7 @@ func fetchFeatureFlags(ctx context.Context, request Request) (map[string]string,
 
 	// Feature-flag GET shares the same rate-limit group as /telemetry-ext on
 	// the server side, so a 429/503 here should also fail fast rather than
-	// being retried 5× by retryablehttp.
+	// being retried 5× by the HTTP client.
 	ctx = client.WithSkipTransientRetries(ctx)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", endpoint, nil)

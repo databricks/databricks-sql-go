@@ -29,7 +29,6 @@ linters:
             - github.com/apache/thrift/lib/go/thrift
             - github.com/coreos/go-oidc/v3/oidc
             - github.com/golang-jwt/jwt/v5
-            - github.com/hashicorp/go-retryablehttp
             - github.com/joho/godotenv
             - github.com/mattn/go-isatty
             - github.com/pierrec/lz4/v4

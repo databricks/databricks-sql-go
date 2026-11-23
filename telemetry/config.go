@@ -80,7 +80,7 @@ func ParseTelemetryConfig(params map[string]string) *Config {
 
 	// Note: telemetry_retry_count and telemetry_retry_delay DSN parameters
 	// are accepted for backwards compatibility but are no longer applied
-	// here. Retries are owned by the underlying retryablehttp-wrapped client
+	// here. Retries are owned by the underlying retrying HTTP client
 	// (see internal/client.RetryableClient), which honors Retry-After.
 	return cfg
 }

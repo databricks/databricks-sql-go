@@ -72,7 +72,7 @@ type circuitBreakerConfig struct {
 // defaultCircuitBreakerConfig returns default configuration.
 //
 // Each export call is exactly one HTTP transaction (the exporter sets
-// WithSkipTransientRetries so the retryablehttp layer does not loop on
+// WithSkipTransientRetries so the retrying HTTP client does not loop on
 // 429/503), which means each breaker call corresponds to one observed
 // outcome from the server.
 //

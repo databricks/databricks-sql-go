@@ -15,6 +15,7 @@ import (
 	"os"
 	"reflect"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -29,7 +30,6 @@ import (
 	"github.com/databricks/databricks-sql-go/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/internal/config"
 	"github.com/databricks/databricks-sql-go/logger"
-	"github.com/hashicorp/go-retryablehttp"
 	"github.com/pkg/errors"
 )
 
@@ -75,7 +75,7 @@ func sentByEarlierHop(ctx context.Context) bool {
 	return !ok || s.redirected.Load()
 }
 
-// WithSkipTransientRetries returns a context that disables retryablehttp's
+// WithSkipTransientRetries returns a context that disables the HTTP client's
 // retries for the transient-server-response codes (429 + 503). The caller
 // takes responsibility for handling these responses (e.g. via a circuit
 // breaker that parses Retry-After).
@@ -602,17 +602,19 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 
 func RetryableClient(cfg *config.Config) *http.Client {
 	httpclient := PooledClient(cfg)
-	retryableClient := &retryablehttp.Client{
-		HTTPClient:   httpclient,
-		Logger:       &leveledLogger{},
-		RetryWaitMin: cfg.RetryWaitMin,
-		RetryWaitMax: cfg.RetryWaitMax,
-		RetryMax:     cfg.RetryMax,
-		ErrorHandler: errorHandler,
-		CheckRetry:   RetryPolicy,
-		Backoff:      backoff,
+	if httpclient == nil {
+		transport := PooledTransport(&config.Config{})
+		transport.IdleConnTimeout = 90 * time.Second
+		transport.MaxIdleConnsPerHost = runtime.GOMAXPROCS(0) + 1
+		transport.MaxConnsPerHost = 0
+		httpclient = &http.Client{Transport: transport}
 	}
-	return retryableClient.StandardClient()
+	return &http.Client{Transport: &retryTransport{
+		client:       httpclient,
+		retryWaitMin: cfg.RetryWaitMin,
+		retryWaitMax: cfg.RetryWaitMax,
+		retryMax:     cfg.RetryMax,
+	}}
 }
 
 func PooledTransport(cfg *config.Config) *http.Transport {
@@ -675,22 +677,6 @@ func cloneRequest(r *http.Request) *http.Request {
 		r2.Header[k] = append([]string(nil), s...)
 	}
 	return r2
-}
-
-type leveledLogger struct {
-}
-
-func (l *leveledLogger) Error(msg string, keysAndValues ...interface{}) {
-	logger.Error().Msg(msg)
-}
-func (l *leveledLogger) Info(msg string, keysAndValues ...interface{}) {
-	logger.Info().Msg(msg)
-}
-func (l *leveledLogger) Debug(msg string, keysAndValues ...interface{}) {
-	logger.Debug().Msg(msg)
-}
-func (l *leveledLogger) Warn(msg string, keysAndValues ...interface{}) {
-	logger.Warn().Msg(msg)
 }
 
 func errorHandler(resp *http.Response, err error, numTries int) (*http.Response, error) {
@@ -784,8 +770,7 @@ func RetryPolicy(ctx context.Context, resp *http.Response, err error) (bool, err
 		// Callers that own their own backoff for transient responses
 		// (e.g. the telemetry circuit breaker) opt out via
 		// WithSkipTransientRetries. Return (false, nil) — not a wrapped
-		// error — because retryablehttp's StandardClient adapter is
-		// fronted by net/http, which discards the response whenever the
+		// error — because net/http discards the response whenever the
 		// transport returns both a response and an error. The caller
 		// will see the non-2xx status code on the response and react to
 		// it directly (e.g. parse Retry-After off the headers).
