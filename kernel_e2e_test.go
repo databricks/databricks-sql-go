@@ -15,9 +15,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/databricks/databricks-sql-go/driverctx"
-	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
-	dbsqlrows "github.com/databricks/databricks-sql-go/rows"
+	"github.com/databricks/databricks-sql-go/v2/driverctx"
+	dbsqlerr "github.com/databricks/databricks-sql-go/v2/errors"
+	dbsqlrows "github.com/databricks/databricks-sql-go/v2/rows"
 )
 
 // kernelTestDB opens a kernel-backed *sql.DB from the DATABRICKS_PECOTESTING_*

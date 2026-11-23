@@ -12,9 +12,9 @@ import (
 	"github.com/apache/arrow-go/v18/arrow/ipc"
 	"github.com/stretchr/testify/require"
 
-	"github.com/databricks/databricks-sql-go/internal/cli_service"
-	"github.com/databricks/databricks-sql-go/internal/client"
-	"github.com/databricks/databricks-sql-go/internal/config"
+	"github.com/databricks/databricks-sql-go/v2/internal/cli_service"
+	"github.com/databricks/databricks-sql-go/v2/internal/client"
+	"github.com/databricks/databricks-sql-go/v2/internal/config"
 )
 
 func TestTimeColumnMetadata(t *testing.T) {

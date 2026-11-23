@@ -5,10 +5,10 @@ import (
 	"io"
 	"testing"
 
-	"github.com/databricks/databricks-sql-go/internal/cli_service"
-	"github.com/databricks/databricks-sql-go/internal/client"
-	dbsqlerrint "github.com/databricks/databricks-sql-go/internal/errors"
-	dbsqllog "github.com/databricks/databricks-sql-go/logger"
+	"github.com/databricks/databricks-sql-go/v2/internal/cli_service"
+	"github.com/databricks/databricks-sql-go/v2/internal/client"
+	dbsqlerrint "github.com/databricks/databricks-sql-go/v2/internal/errors"
+	dbsqllog "github.com/databricks/databricks-sql-go/v2/logger"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 )

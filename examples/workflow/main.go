@@ -9,9 +9,9 @@ import (
 	"strconv"
 	"time"
 
-	dbsql "github.com/databricks/databricks-sql-go"
-	dbsqlctx "github.com/databricks/databricks-sql-go/driverctx"
-	dbsqllog "github.com/databricks/databricks-sql-go/logger"
+	dbsql "github.com/databricks/databricks-sql-go/v2"
+	dbsqlctx "github.com/databricks/databricks-sql-go/v2/driverctx"
+	dbsqllog "github.com/databricks/databricks-sql-go/v2/logger"
 	"github.com/joho/godotenv"
 )
 
@@ -82,7 +82,7 @@ func main() {
 	// layer of tracking, as sometimes the same query can be used with multiple
 	// connections.
 
-	// the "github.com/databricks/databricks-sql-go/driverctx" has some functions to help set the context for the driver
+	// the "github.com/databricks/databricks-sql-go/v2/driverctx" has some functions to help set the context for the driver
 	ogCtx := dbsqlctx.NewContextWithCorrelationId(context.Background(), "workflow-example")
 
 	// sets the timeout to 30 seconds. More than that we ping will fail. The default is 15 seconds

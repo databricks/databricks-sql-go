@@ -16,10 +16,10 @@ import (
 	"github.com/apache/arrow-go/v18/arrow/array"
 	"github.com/apache/arrow-go/v18/arrow/ipc"
 	"github.com/apache/arrow-go/v18/arrow/memory"
-	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
-	"github.com/databricks/databricks-sql-go/internal/arrowscan"
-	dbsqlrows "github.com/databricks/databricks-sql-go/internal/rows"
-	dbrows "github.com/databricks/databricks-sql-go/rows"
+	dbsqlerr "github.com/databricks/databricks-sql-go/v2/errors"
+	"github.com/databricks/databricks-sql-go/v2/internal/arrowscan"
+	dbsqlrows "github.com/databricks/databricks-sql-go/v2/internal/rows"
+	dbrows "github.com/databricks/databricks-sql-go/v2/rows"
 	"github.com/stretchr/testify/require"
 )
 

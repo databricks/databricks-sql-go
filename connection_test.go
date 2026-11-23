@@ -17,11 +17,11 @@ import (
 	"github.com/apache/thrift/lib/go/thrift"
 	"github.com/pkg/errors"
 
-	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
-	thriftbackend "github.com/databricks/databricks-sql-go/internal/backend/thrift"
-	"github.com/databricks/databricks-sql-go/internal/cli_service"
-	"github.com/databricks/databricks-sql-go/internal/client"
-	"github.com/databricks/databricks-sql-go/internal/config"
+	dbsqlerr "github.com/databricks/databricks-sql-go/v2/errors"
+	thriftbackend "github.com/databricks/databricks-sql-go/v2/internal/backend/thrift"
+	"github.com/databricks/databricks-sql-go/v2/internal/cli_service"
+	"github.com/databricks/databricks-sql-go/v2/internal/client"
+	"github.com/databricks/databricks-sql-go/v2/internal/config"
 	"github.com/stretchr/testify/assert"
 )
 

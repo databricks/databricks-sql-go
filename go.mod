@@ -1,4 +1,4 @@
-module github.com/databricks/databricks-sql-go
+module github.com/databricks/databricks-sql-go/v2
 
 go 1.27.3
 
@@ -56,7 +56,7 @@ require (
 // Thrift build downloads none of them.
 //
 // The versions are pinned in lockstep with the driver release. A consumer's
-// `go get github.com/databricks/databricks-sql-go@vX.Y.Z` transitively pins the
+// `go get github.com/databricks/databricks-sql-go/v2@vX.Y.Z` transitively pins the
 // matching per-platform kernel archive; upgrading the driver moves the kernel
 // version. See the databricks-sql-kernel-bindings repo README.
 require (

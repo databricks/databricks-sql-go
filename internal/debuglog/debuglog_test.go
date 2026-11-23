@@ -10,8 +10,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/databricks/databricks-sql-go/driverctx"
-	"github.com/databricks/databricks-sql-go/logger"
+	"github.com/databricks/databricks-sql-go/v2/driverctx"
+	"github.com/databricks/databricks-sql-go/v2/logger"
 )
 
 // entry is one parsed zerolog line from the shared logger's sink.

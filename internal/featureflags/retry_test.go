@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/databricks/databricks-sql-go/auth/noop"
-	"github.com/databricks/databricks-sql-go/internal/client"
-	"github.com/databricks/databricks-sql-go/internal/config"
+	"github.com/databricks/databricks-sql-go/v2/auth/noop"
+	"github.com/databricks/databricks-sql-go/v2/internal/client"
+	"github.com/databricks/databricks-sql-go/v2/internal/config"
 	"github.com/stretchr/testify/require"
 )
 

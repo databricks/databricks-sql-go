@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/databricks/databricks-sql-go/internal/config"
+	"github.com/databricks/databricks-sql-go/v2/internal/config"
 
-	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
+	dbsqlerr "github.com/databricks/databricks-sql-go/v2/errors"
 )
 
 // This file is untagged (no cgo) so its tests — the experimental-option

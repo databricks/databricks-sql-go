@@ -8,12 +8,12 @@ import (
 	"os"
 	"testing"
 
-	"github.com/databricks/databricks-sql-go/driverctx"
-	"github.com/databricks/databricks-sql-go/internal/cli_service"
-	"github.com/databricks/databricks-sql-go/internal/client"
-	"github.com/databricks/databricks-sql-go/internal/config"
-	"github.com/databricks/databricks-sql-go/internal/rows/rowscanner"
-	dbsqllog "github.com/databricks/databricks-sql-go/logger"
+	"github.com/databricks/databricks-sql-go/v2/driverctx"
+	"github.com/databricks/databricks-sql-go/v2/internal/cli_service"
+	"github.com/databricks/databricks-sql-go/v2/internal/client"
+	"github.com/databricks/databricks-sql-go/v2/internal/config"
+	"github.com/databricks/databricks-sql-go/v2/internal/rows/rowscanner"
+	dbsqllog "github.com/databricks/databricks-sql-go/v2/logger"
 	"github.com/stretchr/testify/assert"
 )
 

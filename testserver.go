@@ -5,7 +5,7 @@ import (
 	"net/http/httptest"
 
 	"github.com/apache/thrift/lib/go/thrift"
-	"github.com/databricks/databricks-sql-go/internal/cli_service"
+	"github.com/databricks/databricks-sql-go/v2/internal/cli_service"
 )
 
 type thriftHandler struct {

@@ -15,7 +15,7 @@ import (
 	"testing"
 
 	"github.com/apache/arrow-go/v18/arrow/array"
-	dbsqlrows "github.com/databricks/databricks-sql-go/rows"
+	dbsqlrows "github.com/databricks/databricks-sql-go/v2/rows"
 )
 
 // Runs unchanged on the DBSQL and Reyden legs. A server rejection is a failure,

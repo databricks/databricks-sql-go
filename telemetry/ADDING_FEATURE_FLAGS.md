@@ -16,7 +16,7 @@ and returns an error.
 The caller supplies an authenticated HTTP client and chooses the expected type:
 
 ```go
-import "github.com/databricks/databricks-sql-go/internal/featureflags"
+import "github.com/databricks/databricks-sql-go/v2/internal/featureflags"
 
 request := featureflags.Request{
     Host:          host,

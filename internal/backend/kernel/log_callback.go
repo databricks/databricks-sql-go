@@ -24,7 +24,7 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/databricks/databricks-sql-go/logger"
+	"github.com/databricks/databricks-sql-go/v2/logger"
 )
 
 // This file is the thin cgo layer of the kernel log bridge: the exported callback

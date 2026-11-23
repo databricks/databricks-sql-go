@@ -17,7 +17,7 @@ import (
 	"github.com/apache/arrow-go/v18/arrow/memory"
 	"github.com/stretchr/testify/require"
 
-	"github.com/databricks/databricks-sql-go/internal/cli_service"
+	"github.com/databricks/databricks-sql-go/v2/internal/cli_service"
 )
 
 func TestTimeScanDestinations(t *testing.T) {

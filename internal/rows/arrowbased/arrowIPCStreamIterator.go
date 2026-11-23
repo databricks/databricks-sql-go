@@ -4,11 +4,11 @@ import (
 	"context"
 	"io"
 
-	"github.com/databricks/databricks-sql-go/internal/cli_service"
-	"github.com/databricks/databricks-sql-go/internal/config"
-	dbsqlerrint "github.com/databricks/databricks-sql-go/internal/errors"
-	"github.com/databricks/databricks-sql-go/internal/rows/rowscanner"
-	"github.com/databricks/databricks-sql-go/rows"
+	"github.com/databricks/databricks-sql-go/v2/internal/cli_service"
+	"github.com/databricks/databricks-sql-go/v2/internal/config"
+	dbsqlerrint "github.com/databricks/databricks-sql-go/v2/internal/errors"
+	"github.com/databricks/databricks-sql-go/v2/internal/rows/rowscanner"
+	"github.com/databricks/databricks-sql-go/v2/rows"
 )
 
 // NewArrowIPCStreamIterator creates a new iterator for Arrow IPC streams

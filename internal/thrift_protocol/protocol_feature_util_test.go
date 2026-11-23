@@ -3,7 +3,7 @@ package thrift_protocol
 import (
 	"testing"
 
-	"github.com/databricks/databricks-sql-go/internal/cli_service"
+	"github.com/databricks/databricks-sql-go/v2/internal/cli_service"
 	"github.com/stretchr/testify/assert"
 )
 

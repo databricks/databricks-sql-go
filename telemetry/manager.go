@@ -5,7 +5,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/databricks/databricks-sql-go/logger"
+	"github.com/databricks/databricks-sql-go/v2/logger"
 )
 
 // normalizeHostKey returns a canonical lookup key for host-based registries

@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
-	thriftbackend "github.com/databricks/databricks-sql-go/internal/backend/thrift"
-	"github.com/databricks/databricks-sql-go/internal/cli_service"
+	dbsqlerr "github.com/databricks/databricks-sql-go/v2/errors"
+	thriftbackend "github.com/databricks/databricks-sql-go/v2/internal/backend/thrift"
+	"github.com/databricks/databricks-sql-go/v2/internal/cli_service"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

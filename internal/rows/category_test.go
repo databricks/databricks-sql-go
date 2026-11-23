@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/databricks/databricks-sql-go/internal/cli_service"
-	"github.com/databricks/databricks-sql-go/internal/client"
-	dbsqlerrint "github.com/databricks/databricks-sql-go/internal/errors"
+	"github.com/databricks/databricks-sql-go/v2/internal/cli_service"
+	"github.com/databricks/databricks-sql-go/v2/internal/client"
+	dbsqlerrint "github.com/databricks/databricks-sql-go/v2/internal/errors"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 )

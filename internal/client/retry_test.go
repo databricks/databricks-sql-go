@@ -15,10 +15,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/databricks/databricks-sql-go/auth/noop"
-	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
-	"github.com/databricks/databricks-sql-go/internal/config"
-	dbsqlerrint "github.com/databricks/databricks-sql-go/internal/errors"
+	"github.com/databricks/databricks-sql-go/v2/auth/noop"
+	dbsqlerr "github.com/databricks/databricks-sql-go/v2/errors"
+	"github.com/databricks/databricks-sql-go/v2/internal/config"
+	dbsqlerrint "github.com/databricks/databricks-sql-go/v2/internal/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

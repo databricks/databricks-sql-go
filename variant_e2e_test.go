@@ -17,11 +17,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/databricks/databricks-sql-go/internal/backend"
-	thriftbackend "github.com/databricks/databricks-sql-go/internal/backend/thrift"
-	"github.com/databricks/databricks-sql-go/internal/cli_service"
-	"github.com/databricks/databricks-sql-go/internal/client"
-	"github.com/databricks/databricks-sql-go/internal/config"
+	"github.com/databricks/databricks-sql-go/v2/internal/backend"
+	thriftbackend "github.com/databricks/databricks-sql-go/v2/internal/backend/thrift"
+	"github.com/databricks/databricks-sql-go/v2/internal/cli_service"
+	"github.com/databricks/databricks-sql-go/v2/internal/client"
+	"github.com/databricks/databricks-sql-go/v2/internal/config"
 )
 
 // variantCloudFetchRows is large enough for the server to return the result

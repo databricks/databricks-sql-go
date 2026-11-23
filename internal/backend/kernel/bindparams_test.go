@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/databricks/databricks-sql-go/internal/backend"
+	"github.com/databricks/databricks-sql-go/v2/internal/backend"
 )
 
 // paramBindArg is the parity-critical param mapping (positional vs named, SQL NULL

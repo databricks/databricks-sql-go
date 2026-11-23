@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/apache/arrow-go/v18/arrow"
-	"github.com/databricks/databricks-sql-go/internal/arrowscan"
+	"github.com/databricks/databricks-sql-go/v2/internal/arrowscan"
 	"github.com/stretchr/testify/require"
 )
 

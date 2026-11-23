@@ -4,13 +4,13 @@ import (
 	"context"
 	"database/sql/driver"
 
-	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
-	"github.com/databricks/databricks-sql-go/internal/backend"
-	"github.com/databricks/databricks-sql-go/internal/cli_service"
-	"github.com/databricks/databricks-sql-go/internal/client"
-	"github.com/databricks/databricks-sql-go/internal/debuglog"
-	dbsqlerrint "github.com/databricks/databricks-sql-go/internal/errors"
-	dbsqlrows "github.com/databricks/databricks-sql-go/internal/rows"
+	dbsqlerr "github.com/databricks/databricks-sql-go/v2/errors"
+	"github.com/databricks/databricks-sql-go/v2/internal/backend"
+	"github.com/databricks/databricks-sql-go/v2/internal/cli_service"
+	"github.com/databricks/databricks-sql-go/v2/internal/client"
+	"github.com/databricks/databricks-sql-go/v2/internal/debuglog"
+	dbsqlerrint "github.com/databricks/databricks-sql-go/v2/internal/errors"
+	dbsqlrows "github.com/databricks/databricks-sql-go/v2/internal/rows"
 )
 
 // thriftOperation is the Thrift implementation of backend.Operation. It carries

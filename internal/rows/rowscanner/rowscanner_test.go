@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	dbsqllog "github.com/databricks/databricks-sql-go/logger"
+	dbsqllog "github.com/databricks/databricks-sql-go/v2/logger"
 	"github.com/stretchr/testify/assert"
 )
 

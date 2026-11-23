@@ -7,9 +7,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/databricks/databricks-sql-go/auth"
-	"github.com/databricks/databricks-sql-go/auth/oauth"
-	"github.com/databricks/databricks-sql-go/logger"
+	"github.com/databricks/databricks-sql-go/v2/auth"
+	"github.com/databricks/databricks-sql-go/v2/auth/oauth"
+	"github.com/databricks/databricks-sql-go/v2/logger"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/clientcredentials"
 )

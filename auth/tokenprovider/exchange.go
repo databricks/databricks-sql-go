@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/databricks/databricks-sql-go/logger"
+	"github.com/databricks/databricks-sql-go/v2/logger"
 	"github.com/golang-jwt/jwt/v5"
 )
 
