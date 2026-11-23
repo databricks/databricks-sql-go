@@ -2,8 +2,7 @@
 
 ## Unreleased (v2.0.0 prototype)
 
-- Upgrade Databricks SQL Kernel to 1.5.0.
-
+- Upgrade the SQL kernel bindings to v1.5.0.
 - Fix leaked HTTP connections after failed or retry-exhausted requests, which could exhaust a connector's connection pool. Remove the MPL-2.0 go-retryablehttp and go-cleanhttp dependencies while preserving first-send bodies, streaming trailers and retry behavior (databricks/databricks-sql-go#177).
 - Fix OAuth M2M token requests hanging indefinitely when the token endpoint stops responding. Each request now uses a copy of `http.DefaultClient` with a timeout of at most 60s; `WithRetries` repeats failed fetches (databricks/databricks-sql-go#475).
 - **Behavior change:** Top-level GEOMETRY and GEOGRAPHY columns report server SQL names including SRIDs on Thrift and SEA. With `WithEnableGeoSpatialSupport(true)` (`enableGeoSpatialSupport=true`, available since v1.17.0), previously bare `GEOMETRY` / `GEOGRAPHY` names now include the declared SRID, such as `GEOMETRY(0)`, `GEOGRAPHY(4326)` or `GEOMETRY(ANY)`; match the family before `(` when selecting a decoder. String mode previously reported `STRING`; values, scan types, lengths and raw Arrow schemas are unchanged, and Thrift retains `STRING` without a readable Arrow schema (databricks/databricks-sql-go#474).
