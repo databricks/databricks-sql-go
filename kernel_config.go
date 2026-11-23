@@ -313,45 +313,58 @@ func parseKernelHost(host string) (kernelHost, error) {
 // unchanged (checked before the password, as before). It also rejects unbalanced brackets and an empty, out-of-range or malformed
 // port embedded in the host. An IPv6 literal may be bare or bracketed. WithDefaults fills 443 when no port
 // is set. A port embedded in the host wins over a differing WithPort, with a warning rather than an error.
-// Every error names the host with its credentials redacted.
+// Every error names the host with its credentials redacted, and wraps ErrInvalidKernelConfig. With a
+// non-default WithPort it also wraps ErrNotSupportedByKernel: before WithPort was honored, any non-default
+// port was that error on the kernel path, so a caller that falls back to the default backend on
+// errors.Is(err, ErrNotSupportedByKernel) still does.
 func validateKernelHostPort(host string, port int) error {
+	nonDefault := port != 0 && port != 443
+	reject := func(err error) error {
+		if nonDefault {
+			return fmt.Errorf("%w: %w", err, dbsqlerr.ErrNotSupportedByKernel)
+		}
+		return err
+	}
 	if port < 0 || port > 65535 {
-		return fmt.Errorf("databricks: WithPort %d is out of range (want 1..65535, or 0 for the default): %w", port, dbsqlerr.ErrInvalidKernelConfig)
+		return reject(fmt.Errorf("databricks: WithPort %d is out of range (want 1..65535, or 0 for the default): %w", port, dbsqlerr.ErrInvalidKernelConfig))
+	}
+	// An empty host cannot take a port: it would reach the kernel as ":<port>".
+	if nonDefault && strings.TrimSpace(host) == "" {
+		return reject(fmt.Errorf("databricks: WithPort %d needs a host (WithServerHostname is empty): %w", port, dbsqlerr.ErrInvalidKernelConfig))
 	}
 	h, err := parseKernelHost(host)
 	if err != nil {
-		return fmt.Errorf("databricks: host %q is not a valid host (want a host name, an IPv4 address or an IPv6 literal): %v: %w", h.redacted, err, dbsqlerr.ErrInvalidKernelConfig)
+		return reject(fmt.Errorf("databricks: host %q is not a valid host (want a host name, an IPv4 address or an IPv6 literal): %v: %w", h.redacted, err, dbsqlerr.ErrInvalidKernelConfig))
 	}
-	nonDefault := port != 0 && port != 443
 	// A path, query or fragment is checked before the embedded-port parse. With the default port the
 	// host goes to the kernel unchanged, as before (the kernel appends its API paths after it). A
 	// non-default port cannot be folded into such a host, so reject it.
 	if h.hasPath {
 		if nonDefault {
-			return fmt.Errorf("databricks: host %q has a path, query or fragment, so WithPort %d cannot be applied: %w",
-				h.redacted, port, dbsqlerr.ErrInvalidKernelConfig)
+			return reject(fmt.Errorf("databricks: host %q has a path, query or fragment, so WithPort %d cannot be applied: %w",
+				h.redacted, port, dbsqlerr.ErrInvalidKernelConfig))
 		}
 		return nil
 	}
 	// Credentials are kept only at the default port: a non-default port would have to be folded in without them.
 	if h.userinfo && nonDefault {
-		return fmt.Errorf("databricks: host %q carries credentials, so WithPort %d cannot be applied: %w",
-			h.redacted, port, dbsqlerr.ErrInvalidKernelConfig)
+		return reject(fmt.Errorf("databricks: host %q carries credentials, so WithPort %d cannot be applied: %w",
+			h.redacted, port, dbsqlerr.ErrInvalidKernelConfig))
 	}
 	if h.password {
-		return fmt.Errorf("databricks: host %q carries a password: %w", h.redacted, dbsqlerr.ErrInvalidKernelConfig)
+		return reject(fmt.Errorf("databricks: host %q carries a password: %w", h.redacted, dbsqlerr.ErrInvalidKernelConfig))
 	}
 	// url.Parse accepts a stray "]" in a plain name, so brackets are checked on the parsed host name
 	// (IPv6 brackets are already removed from it).
 	if strings.ContainsAny(h.name, "[]") {
-		return fmt.Errorf("databricks: host %q has unbalanced IPv6 brackets: %w", h.redacted, dbsqlerr.ErrInvalidKernelConfig)
+		return reject(fmt.Errorf("databricks: host %q has unbalanced IPv6 brackets: %w", h.redacted, dbsqlerr.ErrInvalidKernelConfig))
 	}
 	if !h.hasPort {
 		return nil // no embedded port
 	}
 	embedded, err := strconv.Atoi(h.port)
 	if err != nil || embedded < 1 || embedded > 65535 {
-		return fmt.Errorf("databricks: host %q carries an invalid port %q (want 1..65535): %w", h.redacted, h.port, dbsqlerr.ErrInvalidKernelConfig)
+		return reject(fmt.Errorf("databricks: host %q carries an invalid port %q (want 1..65535): %w", h.redacted, h.port, dbsqlerr.ErrInvalidKernelConfig))
 	}
 	// The embedded port is used, as on the kernel path before WithPort was honored. An explicit 443 is
 	// the default and is not warned about.

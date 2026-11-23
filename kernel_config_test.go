@@ -1059,6 +1059,9 @@ func TestKernelCustomPort(t *testing.T) {
 		{"query, default port: unchanged (h?q)", "h?q", 443, "h?q", false},
 		{"fragment with custom port (h#f)", "h#f", 8443, "", true},
 		{"fragment, default port: unchanged (h#f)", "h#f", 443, "h#f", false},
+		{"empty host, custom port: rejected", "", 8443, "", true},
+		{"empty host, unset port: unchanged", "", 0, "", false},
+		{"empty host, default port: unchanged", "", 443, "", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1066,6 +1069,12 @@ func TestKernelCustomPort(t *testing.T) {
 			if tc.wantErr {
 				if !errors.Is(err, dbsqlerr.ErrInvalidKernelConfig) {
 					t.Errorf("err = %v, want ErrInvalidKernelConfig", err)
+				}
+				// Before WithPort was honored, a non-default port was ErrNotSupportedByKernel on the kernel
+				// path, so a rejection with one still wraps it; a default-port rejection does not.
+				nonDefault := tc.port != 0 && tc.port != 443
+				if got := errors.Is(err, dbsqlerr.ErrNotSupportedByKernel); got != nonDefault {
+					t.Errorf("errors.Is(err, ErrNotSupportedByKernel) = %v, want %v (err %v)", got, nonDefault, err)
 				}
 				return
 			}
