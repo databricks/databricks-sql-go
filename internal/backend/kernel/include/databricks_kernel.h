@@ -225,12 +225,12 @@ typedef struct kernel_statement_canceller_t kernel_statement_canceller_t;
 /* Detached canceller for a result stream, returned by
  * kernel_result_stream_canceller_new. Firing it interrupts an in-flight
  * kernel_result_stream_next_batch so it returns KernelStatusCode_Cancelled
- * promptly instead of blocking until the (possibly slow / CloudFetch-link)
- * batch fetch finishes. Unlike the statement canceller it holds ONLY a shared
- * client-side cancellation token (no server RPC, no borrow of the stream's
- * mutable state), so — see its doc — it is safe to obtain and to fire
- * concurrently with a next_batch/close on the owning thread. Once fired, the
- * stream is permanently aborted (every later next_batch returns Cancelled). */
+ * promptly instead of waiting for the batch fetch to finish. It also stops a
+ * running Volume file transfer. Unlike the statement canceller it makes no
+ * server RPC and borrows no mutable stream state, so — see its doc — it is
+ * safe to obtain and fire concurrently with a next_batch/close on the owning
+ * thread. Once fired, the stream is permanently aborted (every later next_batch
+ * returns Cancelled). */
 typedef struct kernel_result_stream_canceller_t kernel_result_stream_canceller_t;
 
 /* ─── Session config ──────────────────────────────────────────────────
@@ -995,6 +995,8 @@ KernelStatusCode kernel_result_stream_is_volume_operation(
     const kernel_result_stream_t* stream, bool* out);
 /* Runs the file transfer for a Volume PUT, GET or REMOVE result. Call before
  * fetching; the rows stay readable afterwards.
+ * The outcome, success or failure, is cached, so a repeat call does not
+ * transfer again.
  * allowed_paths_json: JSON array of local directories the transfer may use.
  * remove_not_found_is_success: report success when the remote file is missing.
  * Returns NeedsInputStream for a stream upload, which this API cannot perform.
