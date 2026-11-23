@@ -146,17 +146,18 @@ func TestKernelVolumeCompletionControlsSessionValidity(t *testing.T) {
 			require.NoError(t, err)
 			defer func() {
 				cancel()
-				server.CloseClientConnections()
 				closed := make(chan struct{})
 				go func() {
 					defer close(closed)
 					_ = connection.Close()
+					_ = db.Close()
 				}()
 				select {
 				case <-closed:
 				case <-time.After(5 * time.Second):
-					t.Error("connection.Close did not return")
+					t.Error("connection and database close did not return")
 				}
+				server.CloseClientConnections()
 			}()
 			var execResult sql.Result
 			if tc.cancelAfterError {

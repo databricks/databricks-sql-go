@@ -889,8 +889,6 @@ func (k *KernelBackend) markSessionDead() { k.valid = false }
 // evictIfSessionFatal marks the session dead when err is (or wraps) a
 // session-fatal KernelError, so a conn whose server session died mid-life is
 // evicted from the pool. A no-op for nil, non-KernelError, or non-fatal errors.
-// Uses errors.As, not a bare type assertion, so it still fires if a caller wraps
-// the KernelError before passing it here.
 func (k *KernelBackend) evictIfSessionFatal(err error) {
 	var ke *KernelError
 	if errors.As(err, &ke) && isSessionFatal(ke) {
