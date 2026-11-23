@@ -40,6 +40,7 @@ Supported optional connection parameters can be specified in param=value and inc
   - useCloudFetch: Used to enable cloud fetch for the query execution. Default is true
   - maxDownloadThreads: Sets the CloudFetch download window on both backends. When unset, defaults to 10 on Thrift and 16 on the kernel; an explicit value <= 0 logs a warning and uses 10
   - useArrowNativeDecimal: Returns DECIMAL columns as native Arrow decimal128 (via GetArrowBatches); when scanned through database/sql they are returned as lossless strings. Default is false
+  - reportUnknownRowsAffected: When true, Result.RowsAffected() returns -1 if the server reports no modified-row count (e.g. DDL), instead of 0. A reported count, including 0, is unchanged. Both backends. Default is false
   - authType: Specifies the desired authentication type. Valid values are: Pat, OauthM2M, OauthU2M
   - accessToken: Personal access token. Required if authType set to Pat
   - clientID: Specifies the client ID to use with OauthM2M
@@ -91,6 +92,7 @@ Supported functional options include:
   - WithUserAgentEntry(<isv-name+product-name> string). Used to identify partners. Optional
   - WithCloudFetch (bool). Used to enable cloud fetch for the query execution. Default is true. Optional
   - WithMaxDownloadThreads (<num_threads> int). Sets the CloudFetch download window on both backends. When unset, defaults to 10 on Thrift and 16 on the kernel; an explicit value <= 0 logs a warning and uses 10. Optional
+  - WithReportUnknownRowsAffected (bool). When true, Result.RowsAffected() returns -1 if the server reports no modified-row count (e.g. DDL such as CREATE VIEW), so it can be told apart from zero rows modified; a reported count, including 0, is unchanged. Both backends. Default is false (returns 0). Optional
   - WithAuthenticator (<authenticator> auth.Authenticator). Sets up authentication. Required if neither access token or client credentials are provided.
   - WithClientCredentials(<clientID> string, <clientSecret> string). Sets up Oauth M2M authentication.
   - WithUseKernel(<useKernel> bool). Routes execution through the SEA-via-kernel backend instead of Thrift. Requires a build with -tags databricks_kernel (CGO_ENABLED=1); the default build returns a clear error. Default is false. See the kernel-backend section below. Optional

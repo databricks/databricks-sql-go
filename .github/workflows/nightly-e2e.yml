@@ -78,7 +78,8 @@ jobs:
       # in the default pure-Go build (CGO_ENABLED=0). -run targets the high-value
       # real-warehouse scenarios: large multi-page CloudFetch drain-past-caller-
       # deadline, exact row count, and a non-positive download-thread count
-      # (issue #439), and DECIMAL metadata (issue #500). -count=1 defeats the test cache so a scheduled
+      # (issue #439), DECIMAL metadata (issue #500), and the unknown row count for
+      # view DDL (issue #588). -count=1 defeats the test cache so a scheduled
       # run always re-exercises the warehouse. NOT -short, so
       # TestE2ECloudFetchExactRowCount (guarded by -short) actually runs.
       - name: Run Thrift E2E
@@ -90,7 +91,7 @@ jobs:
           DATABRICKS_PECOTESTING_TOKEN_PERSONAL: ${{ secrets.DATABRICKS_PECOTESTING_TOKEN_PERSONAL }}
         run: |
           go test -tags e2e -count=1 -v -timeout 15m \
-            -run 'TestE2EArrowBatchesSurviveQueryContextCancellation|TestE2ECloudFetchExactRowCount|TestE2ECloudFetchNonPositiveMaxDownloadThreads|TestE2EDecimalMetadata|TestE2EVariantTypeName|TestE2EGeospatialTypeNames|^TestE2ETime(Results|ArrowResults)$|TestE2ERejectedRequestClosesResponse' .
+            -run 'TestE2EArrowBatchesSurviveQueryContextCancellation|TestE2ECloudFetchExactRowCount|TestE2ECloudFetchNonPositiveMaxDownloadThreads|TestE2EDecimalMetadata|TestE2EVariantTypeName|TestE2EGeospatialTypeNames|^TestE2ETime(Results|ArrowResults)$|TestE2ERejectedRequestClosesResponse|TestE2EReportUnknownRowsAffected' .
 
   kernel-e2e:
     name: E2E (kernel backend)

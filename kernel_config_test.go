@@ -438,6 +438,8 @@ var kernelConfigFieldDisposition = map[string]string{
 	// Folded into SessionConf by config.EffectiveSessionParams (metric-view conf),
 	// sent identically on both backends.
 	"EnableMetricViewMetadata": "forwarded",
+	// Client-side: kernel.Config.ReportUnknownRowsAffected → normalizeAffectedRows.
+	"ReportUnknownRowsAffected": "forwarded",
 	// Applied post-connect via USE CATALOG / USE SCHEMA (no kernel config setter).
 	"Catalog": "forwarded",
 	"Schema":  "forwarded",
@@ -549,6 +551,20 @@ func TestBuildKernelConfig(t *testing.T) {
 		timeout = 5 * time.Second
 		if *kc.ClientQueryTimeout != 0 {
 			t.Errorf("kernel ClientQueryTimeout changed after source mutation: got %v, want 0", *kc.ClientQueryTimeout)
+		}
+	})
+
+	t.Run("report unknown rows affected defaults false and is forwarded", func(t *testing.T) {
+		c := baseKernelConfig()
+		kc := buildKernelConfig(c, kernel.Auth{Mode: kernel.AuthPAT, Token: "dapi-x"})
+		if kc.ReportUnknownRowsAffected {
+			t.Fatal("omitted ReportUnknownRowsAffected = true, want default false")
+		}
+
+		WithReportUnknownRowsAffected(true)(c)
+		kc = buildKernelConfig(c, kernel.Auth{Mode: kernel.AuthPAT, Token: "dapi-x"})
+		if !kc.ReportUnknownRowsAffected {
+			t.Fatal("WithReportUnknownRowsAffected(true) was not forwarded to kernel.Config")
 		}
 	})
 

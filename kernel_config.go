@@ -180,6 +180,8 @@ func buildKernelConfig(cfg *config.Config, kauth kernel.Auth) kernel.Config {
 		// Preserve string results by default, including automatic kernel recovery.
 		// An explicit true below opts into native geospatial values.
 		EnableGeoSpatialSupport: false,
+		// Client-side: how the kernel's "no modified-row count" sentinel is reported.
+		ReportUnknownRowsAffected: cfg.ReportUnknownRowsAffected,
 	}
 	hasChunkLimit := false
 	for key := range kc.SessionConf {
