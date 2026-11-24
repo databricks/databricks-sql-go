@@ -85,7 +85,7 @@ func TestCloudFetchRowsCloseFromAnotherGoroutine(t *testing.T) {
 	for i := range links {
 		links[i] = &cli_service.TSparkArrowResultLink{
 			FileLink:       fmt.Sprintf("%s/%d", files.URL, i),
-			ExpiryTime:     time.Now().Add(10 * time.Minute).Unix(),
+			ExpiryTime:     time.Now().Add(10 * time.Minute).UnixMilli(),
 			StartRowOffset: int64(i * rowsPerFile),
 			RowCount:       rowsPerFile,
 		}

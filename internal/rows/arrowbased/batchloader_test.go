@@ -79,14 +79,14 @@ func TestCloudFetchIterator(t *testing.T) {
 		links := []*cli_service.TSparkArrowResultLink{
 			{
 				FileLink:       server.URL,
-				ExpiryTime:     time.Now().Add(10 * time.Minute).Unix(),
+				ExpiryTime:     time.Now().Add(10 * time.Minute).UnixMilli(),
 				StartRowOffset: startRowOffset,
 				RowCount:       1,
 				HttpHeaders:    cloudFetchHeaders,
 			},
 			{
 				FileLink:       server.URL,
-				ExpiryTime:     time.Now().Add(10 * time.Minute).Unix(),
+				ExpiryTime:     time.Now().Add(10 * time.Minute).UnixMilli(),
 				StartRowOffset: startRowOffset + 1,
 				RowCount:       1,
 				HttpHeaders:    cloudFetchHeaders,
@@ -143,7 +143,7 @@ func TestCloudFetchIterator(t *testing.T) {
 		assert.False(t, bi.HasNext())
 	})
 
-	t.Run("should fail on expired link", func(t *testing.T) {
+	t.Run("should download locally expired links when storage accepts them", func(t *testing.T) {
 		handler = func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
 			_, err := w.Write(generateMockArrowBytes(generateArrowRecord()))
@@ -157,13 +157,13 @@ func TestCloudFetchIterator(t *testing.T) {
 		links := []*cli_service.TSparkArrowResultLink{
 			{
 				FileLink:       server.URL,
-				ExpiryTime:     time.Now().Add(10 * time.Minute).Unix(),
+				ExpiryTime:     time.Now().Add(10 * time.Minute).UnixMilli(),
 				StartRowOffset: startRowOffset,
 				RowCount:       1,
 			},
 			{
 				FileLink:       server.URL,
-				ExpiryTime:     time.Now().Add(-10 * time.Minute).Unix(), // expired link
+				ExpiryTime:     time.Now().Add(-10 * time.Minute).UnixMilli(), // expired link
 				StartRowOffset: startRowOffset + 1,
 				RowCount:       1,
 			},
@@ -205,10 +205,9 @@ func TestCloudFetchIterator(t *testing.T) {
 		assert.Equal(t, cbi.downloadTasks.Len(), 0)
 		assert.Equal(t, sab1.Start(), startRowOffset)
 
-		// get second link - should fail
-		_, err3 := bi.Next()
-		assert.NotNil(t, err3)
-		assert.ErrorContains(t, err3, dbsqlerr.ErrLinkExpired)
+		sab2, err3 := bi.Next()
+		assert.Nil(t, err3)
+		assert.Equal(t, startRowOffset+1, sab2.Start())
 	})
 
 	t.Run("should fail on HTTP errors", func(t *testing.T) {
@@ -217,13 +216,13 @@ func TestCloudFetchIterator(t *testing.T) {
 		links := []*cli_service.TSparkArrowResultLink{
 			{
 				FileLink:       server.URL,
-				ExpiryTime:     time.Now().Add(10 * time.Minute).Unix(),
+				ExpiryTime:     time.Now().Add(10 * time.Minute).UnixMilli(),
 				StartRowOffset: startRowOffset,
 				RowCount:       1,
 			},
 			{
 				FileLink:       server.URL,
-				ExpiryTime:     time.Now().Add(10 * time.Minute).Unix(),
+				ExpiryTime:     time.Now().Add(10 * time.Minute).UnixMilli(),
 				StartRowOffset: startRowOffset + 1,
 				RowCount:       1,
 			},
@@ -308,7 +307,7 @@ func TestCloudFetchIterator(t *testing.T) {
 			context.Background(),
 			[]*cli_service.TSparkArrowResultLink{{
 				FileLink:       server.URL,
-				ExpiryTime:     time.Now().Add(10 * time.Minute).Unix(),
+				ExpiryTime:     time.Now().Add(10 * time.Minute).UnixMilli(),
 				StartRowOffset: startRowOffset,
 				RowCount:       1,
 			}},
@@ -348,7 +347,7 @@ func TestCloudFetchIterator(t *testing.T) {
 			context.Background(),
 			[]*cli_service.TSparkArrowResultLink{{
 				FileLink:       server.URL,
-				ExpiryTime:     time.Now().Add(10 * time.Minute).Unix(),
+				ExpiryTime:     time.Now().Add(10 * time.Minute).UnixMilli(),
 				StartRowOffset: startRowOffset,
 				RowCount:       1,
 			}},
@@ -396,7 +395,7 @@ func TestCloudFetchIterator(t *testing.T) {
 			context.Background(),
 			[]*cli_service.TSparkArrowResultLink{{
 				FileLink:       server.URL,
-				ExpiryTime:     time.Now().Add(10 * time.Minute).Unix(),
+				ExpiryTime:     time.Now().Add(10 * time.Minute).UnixMilli(),
 				StartRowOffset: startRowOffset,
 				RowCount:       1,
 			}},
@@ -440,7 +439,7 @@ func TestCloudFetchIterator(t *testing.T) {
 			context.Background(),
 			[]*cli_service.TSparkArrowResultLink{{
 				FileLink:       server.URL,
-				ExpiryTime:     time.Now().Add(10 * time.Minute).Unix(),
+				ExpiryTime:     time.Now().Add(10 * time.Minute).UnixMilli(),
 				StartRowOffset: startRowOffset,
 				RowCount:       1,
 			}},
@@ -476,7 +475,7 @@ func TestCloudFetchIterator(t *testing.T) {
 			context.Background(),
 			[]*cli_service.TSparkArrowResultLink{{
 				FileLink:       server.URL,
-				ExpiryTime:     time.Now().Add(10 * time.Minute).Unix(),
+				ExpiryTime:     time.Now().Add(10 * time.Minute).UnixMilli(),
 				StartRowOffset: startRowOffset,
 				RowCount:       1,
 			}},
@@ -521,7 +520,7 @@ func TestCloudFetchIterator(t *testing.T) {
 			context.Background(),
 			[]*cli_service.TSparkArrowResultLink{{
 				FileLink:       server.URL,
-				ExpiryTime:     time.Now().Add(10 * time.Minute).Unix(),
+				ExpiryTime:     time.Now().Add(10 * time.Minute).UnixMilli(),
 				StartRowOffset: startRowOffset,
 				RowCount:       1,
 			}},
@@ -557,7 +556,7 @@ func TestCloudFetchIterator(t *testing.T) {
 			context.Background(),
 			[]*cli_service.TSparkArrowResultLink{{
 				FileLink:       server.URL,
-				ExpiryTime:     time.Now().Add(10 * time.Minute).Unix(),
+				ExpiryTime:     time.Now().Add(10 * time.Minute).UnixMilli(),
 				StartRowOffset: startRowOffset,
 				RowCount:       1,
 			}},
@@ -595,7 +594,7 @@ func TestCloudFetchIterator(t *testing.T) {
 			context.Background(),
 			[]*cli_service.TSparkArrowResultLink{{
 				FileLink:       server.URL,
-				ExpiryTime:     time.Now().Add(10 * time.Minute).Unix(),
+				ExpiryTime:     time.Now().Add(10 * time.Minute).UnixMilli(),
 				StartRowOffset: startRowOffset,
 				RowCount:       1,
 			}},
@@ -613,11 +612,10 @@ func TestCloudFetchIterator(t *testing.T) {
 		assert.Equal(t, int32(1), atomic.LoadInt32(&attempts), "non-retryable status must fail on first attempt")
 	})
 
-	t.Run("should detect link expiry between retries", func(t *testing.T) {
+	t.Run("should keep download errors without renewal", func(t *testing.T) {
 		var attempts int32
 		handler = func(w http.ResponseWriter, r *http.Request) {
 			atomic.AddInt32(&attempts, 1)
-			w.Header().Set("Retry-After", "3")
 			w.WriteHeader(http.StatusServiceUnavailable)
 		}
 
@@ -625,10 +623,10 @@ func TestCloudFetchIterator(t *testing.T) {
 		cfg := config.WithDefaults()
 		cfg.UseLz4Compression = false
 		cfg.MaxDownloadThreads = 1
-		cfg.RetryMax = 5
+		cfg.RetryMax = 1
 		cfg.RetryWaitMin = 1 * time.Millisecond
-		cfg.RetryWaitMax = 3 * time.Second
-		expiryTime := time.Now().Unix() + 2
+		cfg.RetryWaitMax = time.Millisecond
+		expiryTime := time.Now().Add(-time.Second).UnixMilli()
 
 		bi, err := NewCloudBatchIterator(
 			context.Background(),
@@ -647,9 +645,9 @@ func TestCloudFetchIterator(t *testing.T) {
 
 		_, nextErr := bi.Next()
 		assert.NotNil(t, nextErr)
-		assert.ErrorContains(t, nextErr, dbsqlerr.ErrLinkExpired)
-		// The retry sleeps past expiry, then short-circuits before another GET.
-		assert.Equal(t, int32(1), atomic.LoadInt32(&attempts))
+		assert.ErrorContains(t, nextErr, "HTTP error 503 (after 1 retries)")
+		assert.NotContains(t, nextErr.Error(), dbsqlerr.ErrLinkExpired)
+		assert.Equal(t, int32(2), atomic.LoadInt32(&attempts))
 	})
 
 	t.Run("should respect context cancellation during backoff", func(t *testing.T) {
@@ -677,7 +675,7 @@ func TestCloudFetchIterator(t *testing.T) {
 			ctx,
 			[]*cli_service.TSparkArrowResultLink{{
 				FileLink:       server.URL,
-				ExpiryTime:     time.Now().Add(10 * time.Minute).Unix(),
+				ExpiryTime:     time.Now().Add(10 * time.Minute).UnixMilli(),
 				StartRowOffset: startRowOffset,
 				RowCount:       1,
 			}},
@@ -735,7 +733,7 @@ func TestCloudFetchSchemaOverride(t *testing.T) {
 		links := []*cli_service.TSparkArrowResultLink{
 			{
 				FileLink:       server.URL,
-				ExpiryTime:     time.Now().Add(10 * time.Minute).Unix(),
+				ExpiryTime:     time.Now().Add(10 * time.Minute).UnixMilli(),
 				StartRowOffset: 0,
 				RowCount:       3,
 			},
@@ -778,7 +776,7 @@ func TestCloudFetchSchemaOverride(t *testing.T) {
 		links := []*cli_service.TSparkArrowResultLink{
 			{
 				FileLink:       server.URL,
-				ExpiryTime:     time.Now().Add(10 * time.Minute).Unix(),
+				ExpiryTime:     time.Now().Add(10 * time.Minute).UnixMilli(),
 				StartRowOffset: 0,
 				RowCount:       3,
 			},
@@ -835,13 +833,13 @@ func TestCloudFetchIterator_OnFileDownloaded_CallbackInvokedWithPositiveDuration
 	links := []*cli_service.TSparkArrowResultLink{
 		{
 			FileLink:       server.URL,
-			ExpiryTime:     time.Now().Add(10 * time.Minute).Unix(),
+			ExpiryTime:     time.Now().Add(10 * time.Minute).UnixMilli(),
 			StartRowOffset: startRowOffset,
 			RowCount:       1,
 		},
 		{
 			FileLink:       server.URL,
-			ExpiryTime:     time.Now().Add(10 * time.Minute).Unix(),
+			ExpiryTime:     time.Now().Add(10 * time.Minute).UnixMilli(),
 			StartRowOffset: startRowOffset + 1,
 			RowCount:       1,
 		},
@@ -900,7 +898,7 @@ func TestCloudFetchIterator_OnFileDownloaded_NilCallbackDoesNotPanic(t *testing.
 	links := []*cli_service.TSparkArrowResultLink{
 		{
 			FileLink:       server.URL,
-			ExpiryTime:     time.Now().Add(10 * time.Minute).Unix(),
+			ExpiryTime:     time.Now().Add(10 * time.Minute).UnixMilli(),
 			StartRowOffset: startRowOffset,
 			RowCount:       1,
 		},
@@ -990,7 +988,7 @@ func TestCloudFetchIterator_CloseReleasesInFlightDownloads(t *testing.T) {
 	for i := range links {
 		links[i] = &cli_service.TSparkArrowResultLink{
 			FileLink:       server.URL,
-			ExpiryTime:     time.Now().Add(10 * time.Minute).Unix(),
+			ExpiryTime:     time.Now().Add(10 * time.Minute).UnixMilli(),
 			StartRowOffset: int64(i),
 			RowCount:       1,
 		}
@@ -1105,7 +1103,7 @@ func TestCloudFetchIterator_CloseReleasesAfterRetry(t *testing.T) {
 			// Unique query string per link so the server's per-link
 			// attempt counter doesn't conflate parallel requests.
 			FileLink:       fmt.Sprintf("%s/?id=%d", server.URL, i),
-			ExpiryTime:     time.Now().Add(10 * time.Minute).Unix(),
+			ExpiryTime:     time.Now().Add(10 * time.Minute).UnixMilli(),
 			StartRowOffset: int64(i),
 			RowCount:       1,
 		}
