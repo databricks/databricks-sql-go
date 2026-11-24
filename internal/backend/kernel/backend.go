@@ -894,7 +894,7 @@ func (k *KernelBackend) markSessionDead() { k.valid = false }
 // the KernelError before passing it here.
 func (k *KernelBackend) evictIfSessionFatal(err error) {
 	var ke *KernelError
-	if errors.As(err, &ke) && isSessionFatal(ke.Code) {
+	if errors.As(err, &ke) && isSessionFatalError(ke) {
 		k.markSessionDead()
 	}
 }

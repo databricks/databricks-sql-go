@@ -3,6 +3,7 @@ package kernel
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	dbsqlerrint "github.com/databricks/databricks-sql-go/v2/internal/errors"
 )
@@ -143,6 +144,22 @@ func isSessionFatal(code int) bool {
 	default:
 		return false
 	}
+}
+
+// sessionNotFoundMessage is how the server reports a request on a session it has
+// already expired or deleted ("HTTP 404: Session does not exist: <id>"). The kernel
+// maps it to NotFound, the same code as any other missing resource, so the message
+// is the only signal that the session itself is gone.
+const sessionNotFoundMessage = "Session does not exist"
+
+// isSessionFatalError reports whether ke means this conn's server session is no
+// longer usable: a session-fatal status, or NotFound for the session itself. Without
+// the latter, an expired session stays valid in the pool and every later query on it
+// fails the same way. Other NotFound errors (a missing table, statement or volume
+// path) leave the session usable, so they don't match.
+func isSessionFatalError(ke *KernelError) bool {
+	return isSessionFatal(ke.Code) ||
+		(ke.Code == statusNotFound && strings.Contains(ke.Message, sessionNotFoundMessage))
 }
 
 // isUserFault reports whether a status code is a user/query fault (a bad SQL
