@@ -8,6 +8,7 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"sync"
@@ -476,23 +477,31 @@ func TestEvictIfSessionFatal(t *testing.T) {
 	// valid tracks the session-dead flag SessionValid() gates on; the opaque
 	// session pointer is orthogonal here (can't construct the incomplete C type),
 	// so assert on k.valid directly.
-	k := &KernelBackend{valid: true}
-
-	// Non-fatal (e.g. a SQL error) leaves the session valid.
-	k.evictIfSessionFatal(&KernelError{Code: statusSqlError})
-	if !k.valid {
-		t.Error("a SQL error must not evict the session")
+	cases := []struct {
+		name      string
+		err       error
+		wantValid bool
+	}{
+		{"nil", nil, true},
+		{"plain error", errors.New("Session does not exist"), true},
+		{"SQL error", &KernelError{Code: statusSqlError}, true},
+		{"unavailable", &KernelError{Code: statusUnavailable}, false},
+		{"expired session", expiredSessionError(), false},
+		{"wrapped expired session", fmt.Errorf("execute: %w", expiredSessionError()), false},
+		{"missing statement", &KernelError{Code: statusNotFound, Message: "Statement does not exist"}, true},
+		{"missing table", &KernelError{Code: statusNotFound, Message: "Table does not exist"}, true},
 	}
-
-	// A session-fatal error marks the session dead, and the surfaced statement-path
-	// error is NOT driver.ErrBadConn (so database/sql won't re-run the statement).
-	fatal := &KernelError{Code: statusUnavailable, Message: "session gone"}
-	k.evictIfSessionFatal(fatal)
-	if k.valid {
-		t.Error("a session-fatal error must evict the session (valid=false)")
-	}
-	if errors.Is(toStatementError(fatal), driver.ErrBadConn) {
-		t.Error("the statement-path error must not be driver.ErrBadConn (no replay)")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			k := &KernelBackend{valid: true}
+			k.evictIfSessionFatal(tc.err)
+			if k.valid != tc.wantValid {
+				t.Errorf("valid = %v, want %v", k.valid, tc.wantValid)
+			}
+			if err := toStatementError(tc.err); err != tc.err || errors.Is(err, driver.ErrBadConn) {
+				t.Errorf("statement error = %v, want the original error without ErrBadConn", err)
+			}
+		})
 	}
 }
 
