@@ -488,6 +488,9 @@ func TestEvictIfSessionFatal(t *testing.T) {
 		{"unavailable", &KernelError{Code: statusUnavailable}, false},
 		{"expired session", expiredSessionError(), false},
 		{"wrapped expired session", fmt.Errorf("execute: %w", expiredSessionError()), false},
+		{"invalid session handle", invalidSessionHandleError(), false},
+		{"wrapped invalid session handle", fmt.Errorf("execute: %w", invalidSessionHandleError()), false},
+		{"invalid argument", &KernelError{Code: statusInvalidArgument, Message: "invalid parameter value"}, true},
 		{"missing statement", &KernelError{Code: statusNotFound, Message: "Statement does not exist"}, true},
 		{"missing table", &KernelError{Code: statusNotFound, Message: "Table does not exist"}, true},
 	}
@@ -505,19 +508,28 @@ func TestEvictIfSessionFatal(t *testing.T) {
 	}
 }
 
-// Bound parameters are rejected up front by Execute with a clear error, before
-// any session/C work — so this runs on a zero-value backend. The returned
-// Operation must be non-nil (Backend contract) and its Close must report
-// closed=false, since no server statement was ever created (a phantom
-// CLOSE_STATEMENT would otherwise be recorded for it).
-// When Execute fails before it acquires a statement handle (here: a nil session
-// makes new_statement fail), it must still honor the Backend contract — a non-nil,
-// handle-less Operation that Closes as a no-op (closed=false, no CLOSE_STATEMENT)
-// and reports zero AffectedRows. (A nil-session unit test can't reach the bind
-// path: the param mapping is unit-tested hermetically in TestParamBindArg, and
-// exercised live end-to-end in TestKernelParamsVsThrift.)
+func TestExecuteRejectsDeadSession(t *testing.T) {
+	k := &KernelBackend{valid: true}
+	k.markSessionDead()
+	op, err := k.Execute(context.Background(), backend.ExecRequest{Query: "SELECT 1"})
+	if !errors.Is(err, driver.ErrBadConn) {
+		t.Fatalf("Execute error = %v, want ErrBadConn before submission", err)
+	}
+	if op == nil {
+		t.Fatal("Execute must return a non-nil Operation per the Backend contract")
+	}
+	if op.StatementID() != "" {
+		t.Error("a rejected request must not have a statement ID")
+	}
+	if closed, closeErr := op.Close(context.Background()); closed || closeErr != nil {
+		t.Errorf("Close = (%v, %v), want (false, nil) for an unsubmitted operation", closed, closeErr)
+	}
+}
+
+// Failure before allocating a statement handle must still return an operation
+// whose Close is a no-op, so callers cannot record a phantom close RPC.
 func TestExecuteHandleLessOpContract(t *testing.T) {
-	k := &KernelBackend{} // nil session → new_statement fails
+	k := &KernelBackend{valid: true} // nil session → new_statement fails
 	op, err := k.Execute(context.Background(), backend.ExecRequest{
 		Query:  "SELECT ?",
 		Params: []backend.Param{{Name: "x", Type: "STRING", Value: strPtr("v")}},
@@ -545,7 +557,7 @@ func TestExecuteHandleLessOpContract(t *testing.T) {
 // refactor that dropped or reordered the check would silently reopen the
 // silent-no-op data-loss path. Mirrors TestExecuteRejectsParams.
 func TestExecuteRejectsStaging(t *testing.T) {
-	k := &KernelBackend{}
+	k := &KernelBackend{valid: true}
 	op, err := k.Execute(context.Background(), backend.ExecRequest{
 		Query: "PUT '/tmp/f' INTO '/Volumes/main/s/e/f.csv'",
 	})

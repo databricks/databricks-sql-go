@@ -74,6 +74,7 @@ import (
 
 	dbsqlerr "github.com/databricks/databricks-sql-go/v2/errors"
 	"github.com/databricks/databricks-sql-go/v2/internal/backend"
+	dbsqlerrint "github.com/databricks/databricks-sql-go/v2/internal/errors"
 )
 
 // kernelSessionSeq is a process-wide monotonic counter for kernel session ids.
@@ -908,6 +909,11 @@ func (k *KernelBackend) SessionID() string { return k.sessionID }
 // parameters (req.Params) are bound onto the statement in execute (see
 // bindParams).
 func (k *KernelBackend) Execute(ctx context.Context, req backend.ExecRequest) (backend.Operation, error) {
+	if !k.valid {
+		// Pinned sql.Conn instances bypass pool validation. Nothing has been sent,
+		// so ErrBadConn can safely retire the connection before this request.
+		return &kernelOp{}, dbsqlerrint.NewBadConnectionError(errors.New("kernel: session is no longer valid"))
+	}
 	// Staging (Unity Catalog volume PUT/GET/REMOVE) needs a local file transfer the
 	// kernel path can't perform, and the kernel C ABI surfaces no IsStagingOperation
 	// signal to drive conn.execStagingOperation. Reject it here rather than let

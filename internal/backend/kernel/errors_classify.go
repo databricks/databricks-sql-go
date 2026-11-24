@@ -130,15 +130,17 @@ func isBadConnection(code int) bool {
 	}
 }
 
-// isSessionFatal reports whether the connection must be evicted. NotFound is
-// fatal only when the session itself is gone. Statement errors remain unchanged
-// so database/sql cannot replay a possibly committed statement.
+// isSessionFatal reports whether the connection must be evicted. Missing or
+// invalid session handles are fatal; other missing resources or invalid
+// arguments leave the session usable.
 func isSessionFatal(ke *KernelError) bool {
 	switch ke.Code {
 	case statusUnauthenticated, statusUnavailable, statusNetworkError:
 		return true
 	case statusNotFound:
 		return strings.Contains(strings.ToLower(ke.Message), "session does not exist")
+	case statusInvalidArgument:
+		return strings.Contains(strings.ToLower(ke.Message), "invalid sessionhandle")
 	default:
 		return false
 	}

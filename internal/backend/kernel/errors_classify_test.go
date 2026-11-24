@@ -59,6 +59,35 @@ func expiredSessionError() *KernelError {
 	}
 }
 
+func invalidSessionHandleError() *KernelError {
+	return &KernelError{
+		Code:       statusInvalidArgument,
+		Message:    "HTTP 400: Invalid SessionHandle: test-session; error_code=BAD_REQUEST",
+		HTTPStatus: 400,
+	}
+}
+
+func TestIsSessionFatalInvalidSessionHandle(t *testing.T) {
+	cases := []struct {
+		name string
+		err  *KernelError
+		want bool
+	}{
+		{"invalid session handle", invalidSessionHandleError(), true},
+		{"case insensitive", &KernelError{Code: statusInvalidArgument, Message: "HTTP 400: invalid sessionhandle: test-session"}, true},
+		{"invalid argument", &KernelError{Code: statusInvalidArgument, Message: "invalid parameter value"}, false},
+		{"no detail", &KernelError{Code: statusInvalidArgument}, false},
+		{"SQL error echoes message", &KernelError{Code: statusSqlError, Message: "Invalid SessionHandle"}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isSessionFatal(tc.err); got != tc.want {
+				t.Errorf("isSessionFatal(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestIsSessionFatalNotFound(t *testing.T) {
 	cases := []struct {
 		name string
@@ -83,17 +112,20 @@ func TestIsSessionFatalNotFound(t *testing.T) {
 }
 
 func TestExpiredSessionDoesNotTriggerReplay(t *testing.T) {
-	ke := expiredSessionError()
-	for name, err := range map[string]error{
-		"statement":  toStatementError(ke),
-		"connection": toConnError(ke),
-	} {
-		t.Run(name, func(t *testing.T) {
-			if err != ke {
-				t.Errorf("got %v, want the original kernel error", err)
-			}
-			if errors.Is(err, driver.ErrBadConn) {
-				t.Error("an expired-session error must not trigger automatic replay")
+	for _, ke := range []*KernelError{expiredSessionError(), invalidSessionHandleError()} {
+		t.Run(fmt.Sprintf("status=%d", ke.HTTPStatus), func(t *testing.T) {
+			for name, err := range map[string]error{
+				"statement":  toStatementError(ke),
+				"connection": toConnError(ke),
+			} {
+				t.Run(name, func(t *testing.T) {
+					if err != ke {
+						t.Errorf("got %v, want the original kernel error", err)
+					}
+					if errors.Is(err, driver.ErrBadConn) {
+						t.Error("an expired-session error must not trigger automatic replay")
+					}
+				})
 			}
 		})
 	}
