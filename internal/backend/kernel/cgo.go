@@ -195,7 +195,7 @@ func lastError(code C.KernelStatusCode) *KernelError {
 	// User/query faults (bad SQL, bad argument) are routine and log at Debug so they
 	// don't inflate the WARN rate on-call alerts key on; infra codes stay at Warn.
 	msg := "databricks: kernel call failed: code=%d sqlstate=%q vendor=%d http=%d retryable=%v queryId=%q"
-	if isUserFault(ke.Code) {
+	if isUserFault(ke.Code, ke.ErrorCode) {
 		logger.Logger.Debug().Msgf(msg, ke.Code, ke.SQLState, ke.VendorCode, ke.HTTPStatus, ke.Retryable, ke.QueryID)
 	} else {
 		logger.Logger.Warn().Msgf(msg, ke.Code, ke.SQLState, ke.VendorCode, ke.HTTPStatus, ke.Retryable, ke.QueryID)

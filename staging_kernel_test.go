@@ -52,9 +52,9 @@ func (c *cancelAfterFailureContext) Err() error {
 
 func TestKernelVolumeCompletion(t *testing.T) {
 	for _, tc := range []struct {
-		name, operation, local, errorCode, message                                  string
-		status                                                                      int
-		instruction, cancelAfterError, inFlight, success, invalidRoot, missingLocal bool
+		name, operation, local, errorCode, message                                               string
+		status                                                                                   int
+		instruction, cancelAfterError, inFlight, success, invalidRoot, missingLocal, outsideRoot bool
 	}{
 		{name: "instruction401", instruction: true, errorCode: "SESSION_EXPIRED"},
 		{name: "storage401", status: 401, errorCode: "VOLUME_STORAGE_HTTP_ERROR"},
@@ -66,12 +66,14 @@ func TestKernelVolumeCompletion(t *testing.T) {
 		{name: "streamPut", operation: "PUT", local: "__input_stream__", message: "requires a local file instruction"},
 		{name: "invalidUTF8Root", invalidRoot: true, message: "valid UTF-8"},
 		{name: "putMissingFile", operation: "PUT", missingLocal: true, errorCode: "VOLUME_LOCAL_FILE_ERROR"},
+		{name: "putOutsideRoot", operation: "PUT", outsideRoot: true, errorCode: "VOLUME_PATH_NOT_ALLOWED"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			directory := t.TempDir()
 			destination := filepath.Join(directory, "download.bin")
 			var result map[string]any
 			var failed atomic.Bool
+			var storageRequests atomic.Int64
 			completionChecked := make(chan struct{}, 1)
 			storageStarted := make(chan struct{})
 			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -94,6 +96,7 @@ func TestKernelVolumeCompletion(t *testing.T) {
 					w.WriteHeader(401)
 					_, _ = io.WriteString(w, `{"error_code":"SESSION_EXPIRED","message":"instruction session expired","sql_state":"08003"}`)
 				case r.URL.Path == "/object":
+					storageRequests.Add(1)
 					if tc.inFlight {
 						close(storageStarted)
 						<-r.Context().Done()
@@ -120,6 +123,10 @@ func TestKernelVolumeCompletion(t *testing.T) {
 			}
 			if tc.missingLocal {
 				local = filepath.Join(directory, "missing.bin")
+			}
+			if tc.outsideRoot {
+				local = filepath.Join(t.TempDir(), "source.bin")
+				require.NoError(t, os.WriteFile(local, []byte("payload"), 0600))
 			}
 			values := []string{operation, server.URL + "/object", "{}", local}
 			fields, columns := make([]arrow.Field, 4), make([]arrow.Array, 4)
@@ -244,6 +251,9 @@ func TestKernelVolumeCompletion(t *testing.T) {
 				if tc.missingLocal {
 					require.ErrorIs(t, err, fs.ErrNotExist)
 				}
+			}
+			if tc.outsideRoot {
+				require.Zero(t, storageRequests.Load())
 			}
 			require.NoError(t, connection.Raw(func(raw any) error {
 				require.Equal(t, !tc.instruction, raw.(driver.Validator).IsValid())

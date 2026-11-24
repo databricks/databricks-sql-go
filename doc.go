@@ -384,6 +384,7 @@ rows affected. QueryContext returns raw instruction rows without file effects.
 Both the requested local path and its resolved symlink target must remain
 within the configured staging roots. Symlinks within those roots are permitted;
 escapes are rejected.
+New GET files are created with mode 0666 before the umask; the Thrift backend uses 0644.
 The staging context is required for REMOVE as well as PUT and GET.
 
 # Errors
