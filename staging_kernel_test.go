@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -23,29 +24,33 @@ import (
 	"github.com/apache/arrow-go/v18/arrow/array"
 	"github.com/apache/arrow-go/v18/arrow/ipc"
 	"github.com/apache/arrow-go/v18/arrow/memory"
-	"github.com/databricks/databricks-sql-go/driverctx"
-	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
-	"github.com/databricks/databricks-sql-go/internal/backend"
-	"github.com/databricks/databricks-sql-go/internal/backend/kernel"
+	"github.com/databricks/databricks-sql-go/v2/driverctx"
+	dbsqlerr "github.com/databricks/databricks-sql-go/v2/errors"
+	"github.com/databricks/databricks-sql-go/v2/internal/backend"
+	"github.com/databricks/databricks-sql-go/v2/internal/backend/kernel"
 	"github.com/stretchr/testify/require"
 )
 
-type cancelOnCompletionErrorContext struct {
+type cancelAfterFailureContext struct {
 	context.Context
-	cancel   context.CancelFunc
-	errCalls int
+	cancel  context.CancelFunc
+	failed  *atomic.Bool
+	checked chan<- struct{}
 }
 
-func (c *cancelOnCompletionErrorContext) Err() error {
-	c.errCalls++
-	// CompleteStaging checks Err before completion and again after a native failure.
-	if c.errCalls == 2 {
+func (c *cancelAfterFailureContext) Err() error {
+	// Cancel on the first check after the server has answered with the failure.
+	if c.failed.Load() {
 		c.cancel()
+	}
+	select {
+	case c.checked <- struct{}{}:
+	default:
 	}
 	return c.Context.Err()
 }
 
-func TestKernelVolumeCompletionControlsSessionValidity(t *testing.T) {
+func TestKernelVolumeCompletion(t *testing.T) {
 	for _, tc := range []struct {
 		name, operation, local, errorCode, message                                  string
 		status                                                                      int
@@ -66,6 +71,8 @@ func TestKernelVolumeCompletionControlsSessionValidity(t *testing.T) {
 			directory := t.TempDir()
 			destination := filepath.Join(directory, "download.bin")
 			var result map[string]any
+			var failed atomic.Bool
+			completionChecked := make(chan struct{}, 1)
 			storageStarted := make(chan struct{})
 			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				_, _ = io.Copy(io.Discard, r.Body)
@@ -76,6 +83,14 @@ func TestKernelVolumeCompletionControlsSessionValidity(t *testing.T) {
 				case r.Method == "POST" && r.URL.Path == "/api/2.0/sql/statements":
 					_ = json.NewEncoder(w).Encode(result)
 				case r.URL.Path == "/api/2.0/sql/statements/volume-stmt/result/chunks/1":
+					if tc.cancelAfterError {
+						select {
+						case <-completionChecked:
+						case <-r.Context().Done():
+							return
+						}
+					}
+					failed.Store(true)
 					w.WriteHeader(401)
 					_, _ = io.WriteString(w, `{"error_code":"SESSION_EXPIRED","message":"instruction session expired","sql_state":"08003"}`)
 				case r.URL.Path == "/object":
@@ -169,7 +184,12 @@ func TestKernelVolumeCompletionControlsSessionValidity(t *testing.T) {
 					defer operation.Close(ctx)
 					cancelContext, cancelError := context.WithCancel(ctx)
 					defer cancelError()
-					stagingContext := driverctx.NewContextWithStagingInfo(&cancelOnCompletionErrorContext{Context: cancelContext, cancel: cancelError}, []string{directory})
+					stagingContext := driverctx.NewContextWithStagingInfo(&cancelAfterFailureContext{
+						Context: cancelContext,
+						cancel:  cancelError,
+						failed:  &failed,
+						checked: completionChecked,
+					}, []string{directory})
 					return operation.(backend.StagingCompleter).CompleteStaging(stagingContext)
 				})
 				require.ErrorIs(t, err, context.Canceled)
