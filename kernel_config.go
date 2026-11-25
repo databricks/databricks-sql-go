@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
 	"net/url"
 	"strconv"
 	"strings"
@@ -16,7 +15,6 @@ import (
 	"github.com/databricks/databricks-sql-go/internal/backend/kernel"
 	"github.com/databricks/databricks-sql-go/internal/client"
 	"github.com/databricks/databricks-sql-go/internal/config"
-	"github.com/databricks/databricks-sql-go/logger"
 	"github.com/databricks/databricks-sql-go/telemetry"
 )
 
@@ -80,9 +78,10 @@ func validateKernelConfigContext(ctx context.Context, cfg *config.Config) (kerne
 		return kernel.Auth{}, fmt.Errorf("databricks: a non-https protocol is %w "+
 			"(it connects over https); use the default (Thrift) backend", dbsqlerr.ErrNotSupportedByKernel)
 	}
-	// Port: the kernel folds host:port (see kernelHostWithPort); reject a bad port or host here. An
-	// embedded host port wins over a differing WithPort, with a warning rather than an error.
-	if err := validateKernelHostPort(cfg.Host, cfg.Port); err != nil {
+	// Port: only the uint16 range is checked here. The kernel folds a non-default port into
+	// the host and validates the host/port pair itself (kernel_session_config_set_port), and
+	// its InvalidArgument reaches the caller with the same sentinels (see portRejection).
+	if err := validateKernelPort(cfg.Port); err != nil {
 		return kernel.Auth{}, err
 	}
 	// Transport (WithTransport, a custom http.RoundTripper carrying a custom CA
@@ -154,7 +153,9 @@ func validateKernelConfigContext(ctx context.Context, cfg *config.Config) (kerne
 // with newKernelBackend's kernel.Config assembly.
 func buildKernelConfig(cfg *config.Config, kauth kernel.Auth) kernel.Config {
 	kc := kernel.Config{
-		Host:        kernelHostWithPort(cfg.Host, cfg.Port),
+		// The host goes through unchanged; the kernel applies Port (set_port).
+		Host:        cfg.Host,
+		Port:        uint16(cfg.Port), //nolint:gosec // G115: range-checked by validateKernelPort before this runs
 		HTTPPath:    cfg.HTTPPath,
 		WarehouseID: cfg.WarehouseID,
 		Auth:        kauth,
@@ -238,156 +239,17 @@ func buildKernelConfig(cfg *config.Config, kauth kernel.Auth) kernel.Config {
 	return kc
 }
 
-// kernelHost is cfg.Host split by net/url: the parts the kernel port logic needs.
-type kernelHost struct {
-	raw      string // cfg.Host with a trailing "/" trimmed and a bare IPv6 literal bracketed; the kernel gets it unchanged when no port is folded
-	redacted string // raw with any user[:password] replaced by "<redacted>"; the only form of the host that goes into an error
-	name     string // host name without IPv6 brackets (url.URL.Hostname)
-	port     string // digits after the authority's ":"; "" when there is none
-	hasPort  bool   // the authority has a ":", even with no digits after it ("h:")
-	hasPath  bool   // a path, query or fragment follows the host, or a bare "#" (url.URL drops an empty fragment)
-	userinfo bool   // a user@ prefix is present
-	password bool   // the user@ prefix carries a password
-}
-
-// splitAuthority splits a host string at its first "/", "?" or "#": the authority, and the rest.
-func splitAuthority(raw string) (authority, rest string) {
-	if i := strings.IndexAny(raw, "/?#"); i >= 0 {
-		return raw[:i], raw[i:]
-	}
-	return raw, ""
-}
-
-// bracketBareIPv6 wraps a bare IPv6 literal (after any user@ prefix) in brackets. net/url parses
-// "https://[::1]" the same way on every Go version, but "https://::1" differs: a newer net/url rejects it,
-// and an older one reads the last group as a port. So a DSN host (ParseDSN strips the brackets) and a
-// bare WithServerHostname("::1") both reach the kernel path in the bracketed form.
-func bracketBareIPv6(raw string) string {
-	authority, rest := splitAuthority(raw)
-	start := strings.LastIndex(authority, "@") + 1
-	if host := authority[start:]; strings.Contains(host, ":") && net.ParseIP(host) != nil {
-		return authority[:start] + "[" + host + "]" + rest
-	}
-	return raw
-}
-
-// redactUserinfo replaces everything up to the last "@" of a host with "<redacted>". The whole string is
-// searched, not only the authority: a password may contain "/", "?" or "#" (e.g. "user:p/w@h"), which would
-// otherwise end the authority before the "@" and leave the password in the text.
-func redactUserinfo(raw string) string {
-	at := strings.LastIndex(raw, "@")
-	if at < 0 {
-		return raw
-	}
-	return "<redacted>@" + raw[at+1:]
-}
-
-// parseKernelHost parses cfg.Host (trailing "/" trimmed, bare IPv6 bracketed) as the authority of an https
-// URL, which is the form the kernel connects to. The fields are set only when the error is nil. The error
-// never carries the host or url.Parse's text: url.Parse quotes the whole URL, and an invalid escape quotes
-// the password itself, so a host with user info gets a generic reason.
-func parseKernelHost(host string) (kernelHost, error) {
-	raw := bracketBareIPv6(strings.TrimRight(host, "/"))
-	h := kernelHost{raw: raw, redacted: redactUserinfo(raw)}
-	u, err := url.Parse("https://" + raw)
-	if err != nil {
-		// The parser's reason can quote part of the userinfo (e.g. `invalid port ":p"` for "user:p/w@h"), so it
-		// is withheld whenever an "@" appears anywhere in the host.
-		reason := "it does not parse as a host"
-		var ue *url.Error
-		if !strings.Contains(raw, "@") && errors.As(err, &ue) {
-			reason = ue.Err.Error()
-		}
-		return h, errors.New(reason)
-	}
-	h.name = u.Hostname()
-	h.port = u.Port()
-	h.hasPort = h.port != "" || strings.HasSuffix(u.Host, ":")
-	h.hasPath = u.Path != "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || strings.Contains(h.raw, "#")
-	h.userinfo = u.User != nil
-	_, h.password = u.User.Password()
-	return h, nil
-}
-
-// validateKernelHostPort rejects an out-of-range WithPort, a host that net/url cannot parse, and a
-// non-default WithPort with a host that has a path, query, fragment or credentials. A password is
-// rejected at every port, except that the default port keeps a host with a path, query or fragment
-// unchanged (checked before the password, as before). It also rejects unbalanced brackets and an empty, out-of-range or malformed
-// port embedded in the host. An IPv6 literal may be bare or bracketed. WithDefaults fills 443 when no port
-// is set. A port embedded in the host wins over a differing WithPort, with a warning rather than an error.
-// Every error names the host with its credentials redacted, and wraps ErrInvalidKernelConfig. With a
-// non-default WithPort it also wraps ErrNotSupportedByKernel: before WithPort was honored, any non-default
-// port was that error on the kernel path, so a caller that falls back to the default backend on
-// errors.Is(err, ErrNotSupportedByKernel) still does.
-func validateKernelHostPort(host string, port int) error {
-	nonDefault := port != 0 && port != 443
-	reject := func(err error) error {
-		if nonDefault {
-			return fmt.Errorf("%w: %w", err, dbsqlerr.ErrNotSupportedByKernel)
-		}
-		return err
-	}
+// validateKernelPort checks the WithPort range the uint16 conversion needs. Everything
+// else about the port (the host it is folded into, an embedded port, credentials, a
+// path, an empty host) is the kernel's to validate when the session is opened. An
+// out-of-range port is never the default, so the rejection wraps ErrNotSupportedByKernel
+// as well as ErrInvalidKernelConfig.
+func validateKernelPort(port int) error {
 	if port < 0 || port > 65535 {
-		return reject(fmt.Errorf("databricks: WithPort %d is out of range (want 1..65535, or 0 for the default): %w", port, dbsqlerr.ErrInvalidKernelConfig))
-	}
-	// An empty host cannot take a port: it would reach the kernel as ":<port>".
-	if nonDefault && strings.TrimSpace(host) == "" {
-		return reject(fmt.Errorf("databricks: WithPort %d needs a host (WithServerHostname is empty): %w", port, dbsqlerr.ErrInvalidKernelConfig))
-	}
-	h, err := parseKernelHost(host)
-	if err != nil {
-		return reject(fmt.Errorf("databricks: host %q is not a valid host (want a host name, an IPv4 address or an IPv6 literal): %v: %w", h.redacted, err, dbsqlerr.ErrInvalidKernelConfig))
-	}
-	// A path, query or fragment is checked before the embedded-port parse. With the default port the
-	// host goes to the kernel unchanged, as before (the kernel appends its API paths after it). A
-	// non-default port cannot be folded into such a host, so reject it.
-	if h.hasPath {
-		if nonDefault {
-			return reject(fmt.Errorf("databricks: host %q has a path, query or fragment, so WithPort %d cannot be applied: %w",
-				h.redacted, port, dbsqlerr.ErrInvalidKernelConfig))
-		}
-		return nil
-	}
-	// Credentials are kept only at the default port: a non-default port would have to be folded in without them.
-	if h.userinfo && nonDefault {
-		return reject(fmt.Errorf("databricks: host %q carries credentials, so WithPort %d cannot be applied: %w",
-			h.redacted, port, dbsqlerr.ErrInvalidKernelConfig))
-	}
-	if h.password {
-		return reject(fmt.Errorf("databricks: host %q carries a password: %w", h.redacted, dbsqlerr.ErrInvalidKernelConfig))
-	}
-	// url.Parse accepts a stray "]" in a plain name, so brackets are checked on the parsed host name
-	// (IPv6 brackets are already removed from it).
-	if strings.ContainsAny(h.name, "[]") {
-		return reject(fmt.Errorf("databricks: host %q has unbalanced IPv6 brackets: %w", h.redacted, dbsqlerr.ErrInvalidKernelConfig))
-	}
-	if !h.hasPort {
-		return nil // no embedded port
-	}
-	embedded, err := strconv.Atoi(h.port)
-	if err != nil || embedded < 1 || embedded > 65535 {
-		return reject(fmt.Errorf("databricks: host %q carries an invalid port %q (want 1..65535): %w", h.redacted, h.port, dbsqlerr.ErrInvalidKernelConfig))
-	}
-	// The embedded port is used, as on the kernel path before WithPort was honored. An explicit 443 is
-	// the default and is not warned about.
-	if nonDefault && embedded != port {
-		logger.Warn().Msgf("databricks: the host carries port %d, which differs from WithPort %d; connecting to port %d from the host",
-			embedded, port, embedded)
+		return fmt.Errorf("databricks: WithPort %d is out of range (want 1..65535, or 0 for the default): %w: %w",
+			port, dbsqlerr.ErrInvalidKernelConfig, dbsqlerr.ErrNotSupportedByKernel)
 	}
 	return nil
-}
-
-// kernelHostWithPort returns the Host the kernel connects to. The kernel has no port setter but keeps a
-// `host:port` authority, so a non-default port is folded in with net.JoinHostPort, which brackets an IPv6
-// literal. A trailing "/" is trimmed first, and a bare IPv6 literal is bracketed. 0 and 443 add nothing. A host that already carries a port, a
-// path, query or fragment, or credentials is returned unchanged; validateKernelHostPort rejects the last
-// two with a non-default port before the kernel is built.
-func kernelHostWithPort(host string, port int) string {
-	h, err := parseKernelHost(host)
-	if err != nil || port == 0 || port == 443 || h.hasPort || h.hasPath || h.userinfo {
-		return h.raw
-	}
-	return net.JoinHostPort(h.name, strconv.Itoa(port))
 }
 
 func kernelTelemetryConfig(cfg *config.Config) *kernel.TelemetryConfig {

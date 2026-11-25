@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 
+	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
 	dbsqlerrint "github.com/databricks/databricks-sql-go/internal/errors"
 )
 
@@ -201,4 +202,29 @@ func toStatementError(err error) error {
 		return ke
 	}
 	return err
+}
+
+// kernelDefaultPort is the https default. The kernel accepts it and changes nothing.
+const kernelDefaultPort uint16 = 443
+
+// portRejection applies the WithPort error contract to a kernel rejection. The kernel
+// validates the port against the host (kernel_session_config_set_port, and the host
+// setters, which re-check it), so an InvalidArgument from any of those calls is the
+// kernel's verdict on the pair. A non-default port wraps both ErrInvalidKernelConfig
+// and ErrNotSupportedByKernel, so a caller can fall back to the default backend with
+// errors.Is. The default port wraps only ErrInvalidKernelConfig. Port 0 (unset), other
+// codes and non-kernel errors pass through unchanged. The kernel's message is already
+// redacted, so the wrapper adds no host text.
+func portRejection(port uint16, err error) error {
+	if err == nil || port == 0 {
+		return err
+	}
+	var ke *KernelError
+	if !errors.As(err, &ke) || ke.Code != statusInvalidArgument {
+		return err
+	}
+	if port == kernelDefaultPort {
+		return fmt.Errorf("%w: %w", err, dbsqlerr.ErrInvalidKernelConfig)
+	}
+	return fmt.Errorf("%w: %w: %w", err, dbsqlerr.ErrInvalidKernelConfig, dbsqlerr.ErrNotSupportedByKernel)
 }

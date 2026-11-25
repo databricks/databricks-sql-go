@@ -198,7 +198,7 @@ func (k *KernelBackend) OpenSession(ctx context.Context) error {
 		if err := call(func() C.KernelStatusCode {
 			return C.kernel_session_config_set_warehouse(cfg, host.c, wh.c)
 		}); err != nil {
-			return fmt.Errorf("kernel: set_warehouse: %w", toConnError(err))
+			return fmt.Errorf("kernel: set_warehouse: %w", portRejection(k.cfg.Port, toConnError(err)))
 		}
 	} else {
 		path := newCStr(k.cfg.HTTPPath)
@@ -206,7 +206,18 @@ func (k *KernelBackend) OpenSession(ctx context.Context) error {
 		if err := call(func() C.KernelStatusCode {
 			return C.kernel_session_config_set_http_path(cfg, host.c, path.c)
 		}); err != nil {
-			return fmt.Errorf("kernel: set_http_path: %w", toConnError(err))
+			return fmt.Errorf("kernel: set_http_path: %w", portRejection(k.cfg.Port, toConnError(err)))
+		}
+	}
+
+	// Connection port, after the host so the kernel validates the pair. The kernel folds
+	// a non-default port into the host it connects to; 0 means unset, so nothing is sent.
+	// A rejection here is the WithPort contract's InvalidArgument (see portRejection).
+	if k.cfg.Port != 0 {
+		if err := call(func() C.KernelStatusCode {
+			return C.kernel_session_config_set_port(cfg, C.uint16_t(k.cfg.Port))
+		}); err != nil {
+			return fmt.Errorf("kernel: set_port: %w", portRejection(k.cfg.Port, toConnError(err)))
 		}
 	}
 

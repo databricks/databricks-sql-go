@@ -2,8 +2,11 @@ package dbsql
 
 import (
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
+	"strconv"
+	"strings"
 
 	"github.com/databricks/databricks-sql-go/internal/config"
 )
@@ -22,6 +25,25 @@ import (
 // stdlib function the driver already relies on.
 func proxyForEndpoint(cfg *config.Config) string {
 	return proxyForEndpointFunc(cfg, http.ProxyFromEnvironment)
+}
+
+// kernelEndpointHost is the host:port the kernel dials, used only to pick the proxy
+// (HTTPS_PROXY / NO_PROXY). It applies the kernel's simple port rule without the
+// kernel's validation: a port of 0 or 443 leaves the host as given; a host that already
+// carries a port keeps it (an embedded port wins over WithPort, as in the kernel); any
+// other port is appended, bracketing an IPv6 literal. A trailing "/" is trimmed. A
+// malformed host is passed through, since the kernel rejects it at session open. It
+// returns no error and never echoes the host, so it cannot leak credentials.
+func kernelEndpointHost(host string, port int) string {
+	host = strings.TrimRight(host, "/")
+	if port == 0 || port == 443 {
+		return host
+	}
+	if _, _, err := net.SplitHostPort(host); err == nil {
+		return host
+	}
+	bare := strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
+	return net.JoinHostPort(bare, strconv.Itoa(port))
 }
 
 // proxyForEndpointFunc is the testable core: it builds the endpoint request and
@@ -43,9 +65,7 @@ func proxyForEndpointFunc(cfg *config.Config, resolve func(*http.Request) (*url.
 	if scheme == "" {
 		scheme = "https"
 	}
-	// Same authority the kernel connects to: an embedded port is not appended twice
-	// and an IPv6 literal is bracketed (kernelHostWithPort).
-	endpoint := fmt.Sprintf("%s://%s", scheme, kernelHostWithPort(cfg.Host, cfg.Port))
+	endpoint := fmt.Sprintf("%s://%s", scheme, kernelEndpointHost(cfg.Host, cfg.Port))
 	req, err := http.NewRequest(http.MethodPost, endpoint, nil)
 	if err != nil {
 		return ""

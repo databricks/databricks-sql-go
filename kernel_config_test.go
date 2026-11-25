@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"reflect"
-	"strings"
 	"testing"
 	"time"
 
@@ -445,7 +444,7 @@ var kernelConfigFieldDisposition = map[string]string{
 	// Rejected loudly by validateKernelConfig.
 	"QueryTimeout": "rejected",  // when > 0 (WithTimeout)
 	"Protocol":     "rejected",  // kernel is https-only; non-default rejected
-	"Port":         "forwarded", // folded into the kernel Host by kernelHostWithPort; validated by validateKernelHostPort
+	"Port":         "forwarded", // range-checked by validateKernelPort; passed to the kernel (set_port), which folds and validates it
 	"Transport":    "rejected",  // custom RoundTripper; kernel uses its own HTTP stack, so reject rather than drop
 
 	// Forwarded to the kernel's HTTP retry config via kernelRetryConfig →
@@ -973,134 +972,49 @@ func TestKernelRetryConfig(t *testing.T) {
 	})
 }
 
-// TestKernelCustomPort covers WithPort on the kernel backend: a non-default port is folded into the
-// kernel Host, 0 and 443 add nothing, a port embedded in the host wins, a trailing "/" is trimmed,
-// and a host with a path passes through unchanged unless a non-default port would be folded into it.
-// Host parsing uses net/url. A bare IPv6 literal is bracketed before it is parsed, so it folds the same
-// way as its bracketed form on every Go version. An out-of-range port or unbalanced IPv6 brackets are
-// rejected with ErrInvalidKernelConfig.
-func TestKernelCustomPort(t *testing.T) {
-	cases := []struct {
-		name     string
-		host     string
-		port     int
-		wantHost string // kernelHostWithPort result for an accepted pair
-		wantErr  bool
-	}{
-		{"default 443 adds nothing", "h.databricks.com", 443, "h.databricks.com", false},
-		{"unset port adds nothing", "h.databricks.com", 0, "h.databricks.com", false},
-		{"custom port", "h.databricks.com", 8443, "h.databricks.com:8443", false},
-		{"IPv4 literal", "127.0.0.1", 8443, "127.0.0.1:8443", false},
-		{"bare IPv6 is bracketed and folded", "::1", 8443, "[::1]:8443", false},
-		{"bare IPv6, full form", "2001:db8::1", 8443, "[2001:db8::1]:8443", false},
-		{"bare IPv6, trailing slash", "::1/", 8443, "[::1]:8443", false},
-		{"bare IPv6, default port: bracketed", "::1", 443, "[::1]", false},
-		{"bare IPv6, unset port: bracketed", "::1", 0, "[::1]", false},
-		{"bare IPv6, default port, trailing slash", "::1/", 443, "[::1]", false},
-		{"bracketed IPv6", "[::1]", 8443, "[::1]:8443", false},
-		{"bracketed IPv6, default port: unchanged", "[::1]", 443, "[::1]", false},
-		{"port 1", "h.databricks.com", 1, "h.databricks.com:1", false},
-		{"port 65535", "h.databricks.com", 65535, "h.databricks.com:65535", false},
-		{"embedded port equal", "h.databricks.com:8443", 8443, "h.databricks.com:8443", false},
-		{"embedded port equal, IPv6", "[::1]:8443", 8443, "[::1]:8443", false},
-		{"443 with embedded 443", "h.databricks.com:443", 443, "h.databricks.com:443", false},
-		{"443 with embedded port: embedded wins", "h.databricks.com:8443", 443, "h.databricks.com:8443", false},
-		{"embedded port differs: embedded wins", "h.databricks.com:7000", 8443, "h.databricks.com:7000", false},
-		{"embedded port differs, IPv6: embedded wins", "[::1]:7000", 8443, "[::1]:7000", false},
-		{"trailing slash on bare host", "h.databricks.com/", 8443, "h.databricks.com:8443", false},
-		{"trailing slash on bare host, default port", "h.databricks.com/", 443, "h.databricks.com", false},
-		{"trailing slash with embedded port, default port", "h.databricks.com:8443/", 443, "h.databricks.com:8443", false},
-		{"trailing slash with embedded port, equal port", "h.databricks.com:8443/", 8443, "h.databricks.com:8443", false},
-		{"trailing slash, IPv6", "[::1]/", 8443, "[::1]:8443", false},
-		{"path, default port: unchanged", "h.databricks.com/x", 443, "h.databricks.com/x", false},
-		{"path, unset port: unchanged", "h.databricks.com/x", 0, "h.databricks.com/x", false},
-		{"path with colon, default port: unchanged", "h.io/path:8443", 443, "h.io/path:8443", false},
-		{"path with custom port", "h.databricks.com/x", 8443, "", true},
-		{"path with colon and custom port", "h.io/path:8443", 8443, "", true},
-		{"query with colon and custom port", "h.io?q=1:8443", 8443, "", true},
-		{"query with custom port", "h.databricks.com?x", 8443, "", true},
-		{"fragment with custom port", "h.databricks.com#x", 8443, "", true},
-		{"negative port", "h.databricks.com", -1, "", true},
-		{"port above range", "h.databricks.com", 65536, "", true},
-		{"embedded port not a number", "h.databricks.com:notaport", 8443, "", true},
-		{"embedded port out of range", "h.databricks.com:70000", 0, "", true},
-		{"embedded port zero", "h.databricks.com:0", 0, "", true},
-		{"unclosed IPv6 bracket", "[::1", 8443, "", true},
-		{"text after IPv6 bracket", "[::1]x", 8443, "", true},
-		{"stray closing bracket", "h.databricks.com]", 8443, "", true},
-		{"stray closing bracket, default port", "h.databricks.com]", 443, "", true},
-		{"text after IPv6 bracket, default port", "[::1]x", 443, "", true},
-		{"unclosed IPv6 bracket, default port", "[::1", 443, "", true},
-		// net/url rules: an empty port, credentials, an empty fragment and an IPv6 zone.
-		{"empty port after colon", "h:", 8443, "", true},
-		{"empty port after colon, default port", "h:", 443, "", true},
-		{"bare IPv6 with zone is rejected", "fe80::1%eth0", 8443, "", true},
-		{"bare IPv6 with zone, default port: rejected", "fe80::1%eth0", 443, "", true},
-		{"userinfo with bare IPv6, custom port: rejected", "user@::1", 8443, "", true},
-		{"userinfo with bare IPv6, default port: bracketed", "user@::1", 443, "user@[::1]", false},
-		{"userinfo, default port: unchanged", "user@h", 443, "user@h", false},
-		{"userinfo, custom port: rejected", "user@h", 8443, "", true},
-		{"userinfo with an embedded port, custom port: rejected", "user@h:8443", 9443, "", true},
-		{"userinfo with an embedded port, default port: unchanged", "user@h:8443", 443, "user@h:8443", false},
-		{"password, default port: rejected", "user:pw@h", 443, "", true},
-		{"password, custom port: rejected", "user:pw@h", 8443, "", true},
-		{"password with a path, default port: unchanged (path check runs first)", "user:pw@h/x", 443, "user:pw@h/x", false},
-		{"password with a path, custom port: rejected", "user:pw@h/x", 8443, "", true},
-		{"empty fragment, custom port: rejected (h#)", "h#", 8443, "", true},
-		{"empty fragment, default port: unchanged (h#)", "h#", 443, "h#", false},
-		{"embedded port out of range (h:70000)", "h:70000", 8443, "", true},
-		{"embedded port not a number (h:abc)", "h:abc", 8443, "", true},
-		{"mixed-case host is kept (custom port)", "H.Example.COM", 8443, "H.Example.COM:8443", false},
-		{"mixed-case host is kept (default port)", "H.Example.COM", 443, "H.Example.COM", false},
-		{"trailing slash after embedded port", "h:8443/", 8443, "h:8443", false},
-		{"path with custom port (h/x)", "h/x", 8443, "", true},
-		{"path, default port: unchanged (h/x)", "h/x", 443, "h/x", false},
-		{"query with custom port (h?q)", "h?q", 8443, "", true},
-		{"query, default port: unchanged (h?q)", "h?q", 443, "h?q", false},
-		{"fragment with custom port (h#f)", "h#f", 8443, "", true},
-		{"fragment, default port: unchanged (h#f)", "h#f", 443, "h#f", false},
-		{"empty host, custom port: rejected", "", 8443, "", true},
-		{"empty host, unset port: unchanged", "", 0, "", false},
-		{"empty host, default port: unchanged", "", 443, "", false},
+// TestKernelPortPassThrough checks that the host reaches the kernel unchanged and the port
+// reaches the kernel config. The kernel folds a non-default port into the host and validates
+// the pair, so the driver adds no folding and no host validation. Credentials, paths and
+// bad embedded ports are the kernel's to reject at session open (see TestOpenSessionPortRejection).
+func TestKernelPortPassThrough(t *testing.T) {
+	hosts := []string{
+		"h.databricks.com",
+		"h.databricks.com/",
+		"h.databricks.com:8443",
+		"127.0.0.1",
+		"::1",
+		"[::1]",
+		"h.databricks.com/x",
+		"user:pw@h",
+		"",
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			err := validateKernelHostPort(tc.host, tc.port)
-			if tc.wantErr {
-				if !errors.Is(err, dbsqlerr.ErrInvalidKernelConfig) {
-					t.Errorf("err = %v, want ErrInvalidKernelConfig", err)
+	ports := []int{0, 443, 8443, 65535}
+	for _, host := range hosts {
+		for _, port := range ports {
+			t.Run(fmt.Sprintf("host %q port %d", host, port), func(t *testing.T) {
+				c := baseKernelConfig()
+				c.Host = host
+				c.Port = port
+				kauth, err := validateKernelConfig(c)
+				if err != nil {
+					t.Fatalf("validateKernelConfig: %v", err)
 				}
-				// Before WithPort was honored, a non-default port was ErrNotSupportedByKernel on the kernel
-				// path, so a rejection with one still wraps it; a default-port rejection does not.
-				nonDefault := tc.port != 0 && tc.port != 443
-				if got := errors.Is(err, dbsqlerr.ErrNotSupportedByKernel); got != nonDefault {
-					t.Errorf("errors.Is(err, ErrNotSupportedByKernel) = %v, want %v (err %v)", got, nonDefault, err)
+				kc := buildKernelConfig(c, kauth)
+				if kc.Host != host {
+					t.Errorf("kernel Host = %q, want the host unchanged", kc.Host)
 				}
-				return
-			}
-			if err != nil {
-				t.Errorf("unexpected err %v", err)
-			}
-			if got := kernelHostWithPort(tc.host, tc.port); got != tc.wantHost {
-				t.Errorf("kernelHostWithPort(%q, %d) = %q, want %q", tc.host, tc.port, got, tc.wantHost)
-			}
-		})
+				if kc.Port != uint16(port) {
+					t.Errorf("kernel Port = %d, want %d", kc.Port, port)
+				}
+			})
+		}
 	}
+}
 
-	t.Run("explicit WithPort(443) differing from an embedded port connects to the embedded port", func(t *testing.T) {
-		c := baseKernelConfig()
-		c.Host = "h.databricks.com:8443"
-		WithPort(443)(c)
-		kauth, err := validateKernelConfig(c)
-		if err != nil {
-			t.Fatalf("unexpected err %v", err)
-		}
-		if got := buildKernelConfig(c, kauth).Host; got != "h.databricks.com:8443" {
-			t.Errorf("kernel Host = %q, want the embedded port h.databricks.com:8443", got)
-		}
-	})
-
-	t.Run("WithServerHostname with a trailing slash plus WithPort folds to host:port", func(t *testing.T) {
+// TestKernelPortFromOptions checks the connector options that set the host and port: WithServerHostname
+// and WithPort reach the kernel config as given, and a port embedded in the host is left for the kernel.
+func TestKernelPortFromOptions(t *testing.T) {
+	t.Run("WithServerHostname with a trailing slash plus WithPort", func(t *testing.T) {
 		c := baseKernelConfig()
 		WithServerHostname("https://h.databricks.com/")(c)
 		WithPort(8443)(c)
@@ -1108,50 +1022,63 @@ func TestKernelCustomPort(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected err %v", err)
 		}
-		if got := buildKernelConfig(c, kauth).Host; got != "h.databricks.com:8443" {
-			t.Errorf("kernel Host = %q, want h.databricks.com:8443", got)
+		kc := buildKernelConfig(c, kauth)
+		if kc.Host != "h.databricks.com/" || kc.Port != 8443 {
+			t.Errorf("kernel Host=%q Port=%d, want h.databricks.com/ and 8443", kc.Host, kc.Port)
 		}
 	})
 
-	t.Run("WithServerHostname with an embedded port and a trailing slash is still accepted", func(t *testing.T) {
+	t.Run("embedded port with WithPort(443) is passed through for the kernel to resolve", func(t *testing.T) {
 		c := baseKernelConfig()
-		WithServerHostname("https://h.databricks.com:8443/")(c)
+		c.Host = "h.databricks.com:8443"
+		WithPort(443)(c)
 		kauth, err := validateKernelConfig(c)
 		if err != nil {
 			t.Fatalf("unexpected err %v", err)
 		}
-		if got := buildKernelConfig(c, kauth).Host; got != "h.databricks.com:8443" {
-			t.Errorf("kernel Host = %q, want h.databricks.com:8443", got)
-		}
-	})
-
-	t.Run("kernel Host: unset port keeps the embedded port, custom port folds in", func(t *testing.T) {
-		c := baseKernelConfig()
-		c.Host = "h.databricks.com:8443"
-		kauth, err := validateKernelConfig(c)
-		if err != nil || buildKernelConfig(c, kauth).Host != "h.databricks.com:8443" {
-			t.Errorf("embedded port: err=%v host=%q", err, buildKernelConfig(c, kauth).Host)
-		}
-		c = baseKernelConfig()
-		WithPort(8443)(c)
-		kauth, err = validateKernelConfig(c)
-		if err != nil || buildKernelConfig(c, kauth).Host != "h.databricks.com:8443" {
-			t.Errorf("WithPort(8443): err=%v host=%q", err, buildKernelConfig(c, kauth).Host)
+		kc := buildKernelConfig(c, kauth)
+		if kc.Host != "h.databricks.com:8443" || kc.Port != 443 {
+			t.Errorf("kernel Host=%q Port=%d, want h.databricks.com:8443 and 443", kc.Host, kc.Port)
 		}
 	})
 }
 
-// TestKernelIPv6FromDSN checks that a DSN IPv6 host reaches the kernel the same way as its bracketed form.
-// ParseDSN strips the brackets (url.Hostname), so the kernel path gets a bare "::1" and the port separately.
-func TestKernelIPv6FromDSN(t *testing.T) {
+// TestKernelPortRange checks the driver's only port check, the uint16 range. Both bounds of the
+// rejection wrap ErrInvalidKernelConfig and ErrNotSupportedByKernel, since an out-of-range port is
+// never the default.
+func TestKernelPortRange(t *testing.T) {
+	for _, port := range []int{-1, 65536} {
+		c := baseKernelConfig()
+		c.Port = port
+		_, err := validateKernelConfig(c)
+		if !errors.Is(err, dbsqlerr.ErrInvalidKernelConfig) {
+			t.Errorf("WithPort(%d): err = %v, want ErrInvalidKernelConfig", port, err)
+		}
+		if !errors.Is(err, dbsqlerr.ErrNotSupportedByKernel) {
+			t.Errorf("WithPort(%d): err = %v, want ErrNotSupportedByKernel", port, err)
+		}
+	}
+	for _, port := range []int{0, 1, 443, 65535} {
+		c := baseKernelConfig()
+		c.Port = port
+		if _, err := validateKernelConfig(c); err != nil {
+			t.Errorf("WithPort(%d): unexpected err %v", port, err)
+		}
+	}
+}
+
+// TestKernelDSNHostAndPort checks that a DSN IPv6 host reaches the kernel as the bare address with
+// the port alongside it. ParseDSN strips the brackets (url.Hostname); the kernel folds the port.
+func TestKernelDSNHostAndPort(t *testing.T) {
 	cases := []struct {
 		name     string
 		dsn      string
 		wantHost string
+		wantPort uint16
 	}{
-		{"bracketed IPv6 with custom port", "token:x@[::1]:8443/sql/1.0/warehouses/abc", "[::1]:8443"},
-		{"bracketed IPv6 with default port", "token:x@[::1]:443/sql/1.0/warehouses/abc", "[::1]"},
-		{"IPv4 with custom port", "token:x@10.0.0.1:8443/sql/1.0/warehouses/abc", "10.0.0.1:8443"},
+		{"bracketed IPv6 with custom port", "token:x@[::1]:8443/sql/1.0/warehouses/abc", "::1", 8443},
+		{"bracketed IPv6 with default port", "token:x@[::1]:443/sql/1.0/warehouses/abc", "::1", 443},
+		{"IPv4 with custom port", "token:x@10.0.0.1:8443/sql/1.0/warehouses/abc", "10.0.0.1", 8443},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1171,69 +1098,10 @@ func TestKernelIPv6FromDSN(t *testing.T) {
 			if err != nil {
 				t.Fatalf("validateKernelConfig: %v", err)
 			}
-			if got := buildKernelConfig(coni.cfg, kauth).Host; got != tc.wantHost {
-				t.Errorf("kernel Host = %q, want %q", got, tc.wantHost)
+			kc := buildKernelConfig(coni.cfg, kauth)
+			if kc.Host != tc.wantHost || kc.Port != tc.wantPort {
+				t.Errorf("kernel Host=%q Port=%d, want %q and %d", kc.Host, kc.Port, tc.wantHost, tc.wantPort)
 			}
 		})
 	}
-}
-
-// TestKernelHostErrorsRedactCredentials checks that no host error carries the password or the user part.
-// The password includes a bad escape, so url.Parse's own text would quote it; that text is withheld when
-// the host has user info. Every error still names the host with the credentials replaced by <redacted>.
-func TestKernelHostErrorsRedactCredentials(t *testing.T) {
-	const secret = "pSecret"
-	cases := []struct {
-		name string
-		host string
-		port int
-	}{
-		{"password with a bad escape, default port (url.Parse fails)", "user:" + secret + "%zz@h", 443},
-		{"password with a bad escape, custom port (url.Parse fails)", "user:" + secret + "%zz@h", 8443},
-		{"password, custom port", "user:" + secret + "@h", 8443},
-		{"password, default port", "user:" + secret + "@h", 443},
-		{"password with an embedded port", "user:" + secret + "@h:8443", 443},
-		{"password with an invalid embedded port", "user:" + secret + "@h:bad", 443},
-		{"password with unbalanced bracket", "user:" + secret + "@h]", 443},
-		{"password with a path, custom port", "user:" + secret + "@h/x", 8443},
-		{"password with a query, custom port", "user:" + secret + "@h?x", 8443},
-		{"password with an IPv6 literal", "user:" + secret + "@[::1]", 443},
-		{"password with a bad IPv6 bracket", "user:" + secret + "@[::1", 443},
-		{"password with a bare IPv6 literal", "user:" + secret + "@::1", 443},
-		// A "/", "?" or "#" inside the password ends the authority before the "@", so redaction must not rely
-		// on the authority split.
-		{"password containing a slash, default port", "user:" + secret + "/part@h", 443},
-		{"password containing a slash, custom port", "user:" + secret + "/part@h", 8443},
-		{"password containing a question mark", "user:" + secret + "?part@h", 443},
-		{"password containing a hash", "user:" + secret + "#part@h", 8443},
-	}
-	check := func(t *testing.T, err error) {
-		t.Helper()
-		if err == nil {
-			t.Fatal("expected an error")
-		}
-		if !errors.Is(err, dbsqlerr.ErrInvalidKernelConfig) {
-			t.Errorf("err = %v, want ErrInvalidKernelConfig", err)
-		}
-		msg := err.Error()
-		for _, leak := range []string{"Secret", "%zz", "user:", "user@"} {
-			if strings.Contains(msg, leak) {
-				t.Errorf("error %q leaks %q", msg, leak)
-			}
-		}
-		if !strings.Contains(msg, "<redacted>@") {
-			t.Errorf("error %q does not name the redacted host", msg)
-		}
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			check(t, validateKernelHostPort(tc.host, tc.port))
-		})
-	}
-	t.Run("through validateKernelConfig", func(t *testing.T) {
-		c := baseKernelConfig()
-		c.Host = "user:" + secret + "@h"
-		_, err := validateKernelConfig(c)
-		check(t, err)
-	})
 }

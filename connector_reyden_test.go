@@ -221,15 +221,15 @@ func TestReydenReactiveRecovery(t *testing.T) {
 		defer warehouse_cache.ClearCache()
 
 		tt := NewTestReydenFallback()
-		var kernelHost string
+		var kernelCfg kernel.Config
 		conn := tt.makeConnector(
 			func(ctx context.Context, cfg *config.Config, client *http.Client) (backend.Backend, error) {
 				return &fakeThriftBackend{openSessionErr: dbsqlerrint.NewReydenThriftUnsupportedError(
 					"Lakehouse/RT is not supported for Thrift protocol")}, nil
 			},
 			func(ctx context.Context, cfg *config.Config) (backend.Backend, error) {
-				require.NoError(t, validateKernelHostPort(cfg.Host, cfg.Port))
-				kernelHost = buildKernelConfig(cfg, kernel.Auth{Mode: kernel.AuthPAT, Token: "test-token"}).Host
+				require.NoError(t, validateKernelPort(cfg.Port))
+				kernelCfg = buildKernelConfig(cfg, kernel.Auth{Mode: kernel.AuthPAT, Token: "test-token"})
 				return &fakeKernelBackend{}, nil
 			},
 		)
@@ -237,7 +237,9 @@ func TestReydenReactiveRecovery(t *testing.T) {
 
 		_, _, err := conn.openSessionWithReydenFallback(context.Background())
 		require.NoError(t, err)
-		assert.Equal(t, "reyden.example.com:8443", kernelHost)
+		// The host is passed through; the port reaches the kernel, which folds it.
+		assert.Equal(t, "reyden.example.com", kernelCfg.Host)
+		assert.Equal(t, uint16(8443), kernelCfg.Port)
 	})
 }
 
