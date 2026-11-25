@@ -207,14 +207,15 @@ func toStatementError(err error) error {
 // kernelDefaultPort is the https default. The kernel accepts it and changes nothing.
 const kernelDefaultPort uint16 = 443
 
-// portRejection applies the WithPort error contract to a kernel rejection. The kernel
-// validates the port against the host (kernel_session_config_set_port, and the host
-// setters, which re-check it), so an InvalidArgument from any of those calls is the
-// kernel's verdict on the pair. A non-default port wraps both ErrInvalidKernelConfig
-// and ErrNotSupportedByKernel, so a caller can fall back to the default backend with
-// errors.Is. The default port wraps only ErrInvalidKernelConfig. Port 0 (unset), other
-// codes and non-kernel errors pass through unchanged. The kernel's message is already
-// redacted, so the wrapper adds no host text.
+// portRejection applies the WithPort error contract to a kernel_session_config_set_port
+// rejection. The kernel validates the port against the host already set, so an
+// InvalidArgument there is the kernel's verdict on the pair. A non-default port wraps both
+// ErrInvalidKernelConfig and ErrNotSupportedByKernel, so a caller can fall back to the
+// default backend with errors.Is. The kernel accepts the default port without validation;
+// were it rejected, only ErrInvalidKernelConfig is wrapped. Port 0 (unset), other codes and
+// non-kernel errors pass through unchanged. Host setter errors are not passed here: they
+// run before the port is set. The kernel's message is already redacted, so the wrapper
+// adds no host text.
 func portRejection(port uint16, err error) error {
 	if err == nil || port == 0 {
 		return err

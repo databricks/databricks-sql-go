@@ -198,7 +198,7 @@ func (k *KernelBackend) OpenSession(ctx context.Context) error {
 		if err := call(func() C.KernelStatusCode {
 			return C.kernel_session_config_set_warehouse(cfg, host.c, wh.c)
 		}); err != nil {
-			return fmt.Errorf("kernel: set_warehouse: %w", portRejection(k.cfg.Port, toConnError(err)))
+			return fmt.Errorf("kernel: set_warehouse: %w", toConnError(err))
 		}
 	} else {
 		path := newCStr(k.cfg.HTTPPath)
@@ -206,7 +206,7 @@ func (k *KernelBackend) OpenSession(ctx context.Context) error {
 		if err := call(func() C.KernelStatusCode {
 			return C.kernel_session_config_set_http_path(cfg, host.c, path.c)
 		}); err != nil {
-			return fmt.Errorf("kernel: set_http_path: %w", portRejection(k.cfg.Port, toConnError(err)))
+			return fmt.Errorf("kernel: set_http_path: %w", toConnError(err))
 		}
 	}
 

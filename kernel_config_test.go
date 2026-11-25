@@ -1003,7 +1003,7 @@ func TestKernelPortPassThrough(t *testing.T) {
 				if kc.Host != host {
 					t.Errorf("kernel Host = %q, want the host unchanged", kc.Host)
 				}
-				if kc.Port != uint16(port) {
+				if int(kc.Port) != port {
 					t.Errorf("kernel Port = %d, want %d", kc.Port, port)
 				}
 			})
