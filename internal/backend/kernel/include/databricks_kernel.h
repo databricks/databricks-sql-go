@@ -253,7 +253,8 @@ KernelStatusCode kernel_session_config_set_http_path(KernelSessionConfig* config
  * The host must not carry userinfo (`user:pw@host`), a path, a query or a
  * fragment, and must not be empty. A port already embedded in the host
  * (`host:N` or `[v6]:N`) is kept and wins over this one; the kernel logs a
- * warning when the two differ. Validation is eager: a bad combination returns
+ * warning when a non-default port differs from it (the scheme default never
+ * warns). Validation is eager: a bad combination returns
  * KernelStatusCode_InvalidArgument from whichever of this call or the host
  * setter came second, and leaves the config unchanged. Error text never
  * includes credentials. */
