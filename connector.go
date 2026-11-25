@@ -531,6 +531,7 @@ func WithAuthenticator(authr auth.Authenticator) ConnOption {
 }
 
 // WithTransport sets up the transport configuration to be used by the httpclient.
+// Thrift CloudFetch downloads also use this transport, with ClientTimeout bounding each attempt.
 func WithTransport(t http.RoundTripper) ConnOption {
 	return func(c *config.Config) {
 		c.Transport = t
