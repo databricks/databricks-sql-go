@@ -431,6 +431,10 @@ func (downloadErr redactedCloudFetchError) Unwrap() error {
 	return downloadErr.cause
 }
 
+func (downloadErr redactedCloudFetchError) Cause() error {
+	return downloadErr.cause
+}
+
 // fetchBatchBytes downloads a single CloudFetch result link and returns the
 // raw response body, still compressed if the server used LZ4. Connection-time
 // failures, retryable HTTP statuses, and mid-stream body read failures are

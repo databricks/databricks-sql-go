@@ -2,6 +2,7 @@ package arrowbased
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/databricks/databricks-sql-go/v2/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/v2/internal/config"
+	pkgerrors "github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -105,6 +107,28 @@ func TestCloudFetchDownloadErrorsRedactQuery(t *testing.T) {
 	require.Error(t, nextErr)
 	assert.ErrorIs(t, nextErr, context.DeadlineExceeded)
 	assert.ErrorContains(t, nextErr, server.URL+"/file")
+	assert.NotContains(t, nextErr.Error(), "SECRET_SIGNATURE")
+}
+
+func TestCloudFetchDownloadErrorsPreserveCause(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Length", "100")
+		_, _ = io.WriteString(response, "short")
+	}))
+	defer server.Close()
+	cfg := config.WithDefaults()
+	cfg.RetryMax = 0
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	iterator, err := NewCloudIPCStreamIterator(ctx, []*cli_service.TSparkArrowResultLink{{
+		FileLink: server.URL + "/file?sig=SECRET_SIGNATURE", ExpiryTime: time.Now().Add(time.Hour).Unix(), RowCount: 1,
+	}}, 0, cfg, nil)
+	require.NoError(t, err)
+	defer iterator.Close()
+	_, nextErr := iterator.Next()
+	require.Error(t, nextErr)
+	assert.ErrorIs(t, nextErr, io.ErrUnexpectedEOF)
+	assert.Equal(t, io.ErrUnexpectedEOF, pkgerrors.Cause(nextErr))
 	assert.NotContains(t, nextErr.Error(), "SECRET_SIGNATURE")
 }
 
