@@ -1,5 +1,11 @@
 # Release History
 
+## Unreleased
+
+### Driver changes
+
+- **Behavior change:** Bound each whole-transfer Thrift CloudFetch download attempt, including `WithTransport`, by the existing 900s `ClientTimeout`, and omit the link's presigned query string from download errors (databricks/databricks-sql-go#475).
+
 ## v2.0.0 (2026-11-23)
 
 ### Breaking changes

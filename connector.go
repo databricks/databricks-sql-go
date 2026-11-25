@@ -171,6 +171,9 @@ func NewConnector(options ...ConnOption) (driver.Connector, error) {
 	for _, opt := range options {
 		opt(cfg)
 	}
+	if cfg.HTTPClient == nil && cfg.Transport != nil {
+		cfg.HTTPClient = &http.Client{Transport: cfg.Transport, Timeout: cfg.ClientTimeout}
+	}
 	// Covers the DSN path too, which applies ParseDSN's UserConfig as an option.
 	if cfg.MaxDownloadThreads <= 0 {
 		logger.Warn().Msgf("databricks: maxDownloadThreads (WithMaxDownloadThreads) value %d is not positive; using the default %d",
@@ -528,15 +531,10 @@ func WithAuthenticator(authr auth.Authenticator) ConnOption {
 }
 
 // WithTransport sets up the transport configuration to be used by the httpclient.
+// Thrift CloudFetch downloads also use this transport, with ClientTimeout bounding each attempt.
 func WithTransport(t http.RoundTripper) ConnOption {
 	return func(c *config.Config) {
 		c.Transport = t
-
-		if c.HTTPClient == nil {
-			c.HTTPClient = &http.Client{
-				Transport: t,
-			}
-		}
 	}
 }
 
