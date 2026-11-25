@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
+	dbsqlerr "github.com/databricks/databricks-sql-go/v2/errors"
 )
 
 const portTestSecret = "pSecretPw"

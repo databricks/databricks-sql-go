@@ -15,7 +15,7 @@ import (
 	"context"
 	"database/sql/driver"
 
-	dbsqlrows "github.com/databricks/databricks-sql-go/internal/rows"
+	dbsqlrows "github.com/databricks/databricks-sql-go/v2/internal/rows"
 )
 
 // Backend is the per-connection execution backend. Exactly one Backend backs one

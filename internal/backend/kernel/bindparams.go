@@ -4,7 +4,7 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/databricks/databricks-sql-go/internal/backend"
+	"github.com/databricks/databricks-sql-go/v2/internal/backend"
 )
 
 // This file is intentionally NOT behind the `cgo && databricks_kernel` build tag.

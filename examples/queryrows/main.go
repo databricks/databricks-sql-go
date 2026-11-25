@@ -8,7 +8,7 @@ import (
 	"os"
 	"strconv"
 
-	dbsql "github.com/databricks/databricks-sql-go"
+	dbsql "github.com/databricks/databricks-sql-go/v2"
 	"github.com/joho/godotenv"
 )
 

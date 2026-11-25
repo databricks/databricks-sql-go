@@ -23,11 +23,11 @@ import (
 
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/arrow-go/v18/arrow/cdata"
-	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
-	"github.com/databricks/databricks-sql-go/internal/arrowscan"
-	context2 "github.com/databricks/databricks-sql-go/internal/compat/context"
-	dbsqlrows "github.com/databricks/databricks-sql-go/internal/rows"
-	dbrows "github.com/databricks/databricks-sql-go/rows"
+	dbsqlerr "github.com/databricks/databricks-sql-go/v2/errors"
+	"github.com/databricks/databricks-sql-go/v2/internal/arrowscan"
+	context2 "github.com/databricks/databricks-sql-go/v2/internal/compat/context"
+	dbsqlrows "github.com/databricks/databricks-sql-go/v2/internal/rows"
+	dbrows "github.com/databricks/databricks-sql-go/v2/rows"
 )
 
 // kernelRows implements the same optional column-type interfaces the Thrift path

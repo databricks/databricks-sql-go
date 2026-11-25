@@ -11,7 +11,7 @@ import (
 	"github.com/apache/arrow-go/v18/arrow/memory"
 	"github.com/stretchr/testify/require"
 
-	"github.com/databricks/databricks-sql-go/internal/arrowscan"
+	"github.com/databricks/databricks-sql-go/v2/internal/arrowscan"
 )
 
 func TestTimeColumns(t *testing.T) {

@@ -3,8 +3,8 @@ package client
 import (
 	"fmt"
 
-	"github.com/databricks/databricks-sql-go/internal/agent"
-	"github.com/databricks/databricks-sql-go/internal/config"
+	"github.com/databricks/databricks-sql-go/v2/internal/agent"
+	"github.com/databricks/databricks-sql-go/v2/internal/config"
 )
 
 // BuildUserAgent constructs the User-Agent header value used by the driver

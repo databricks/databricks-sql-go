@@ -16,12 +16,12 @@ import (
 
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/arrow-go/v18/arrow/ipc"
-	"github.com/databricks/databricks-sql-go/internal/backend"
-	thriftbackend "github.com/databricks/databricks-sql-go/internal/backend/thrift"
-	"github.com/databricks/databricks-sql-go/internal/cli_service"
-	"github.com/databricks/databricks-sql-go/internal/client"
-	"github.com/databricks/databricks-sql-go/internal/config"
-	dbsqlrows "github.com/databricks/databricks-sql-go/rows"
+	"github.com/databricks/databricks-sql-go/v2/internal/backend"
+	thriftbackend "github.com/databricks/databricks-sql-go/v2/internal/backend/thrift"
+	"github.com/databricks/databricks-sql-go/v2/internal/cli_service"
+	"github.com/databricks/databricks-sql-go/v2/internal/client"
+	"github.com/databricks/databricks-sql-go/v2/internal/config"
+	dbsqlrows "github.com/databricks/databricks-sql-go/v2/rows"
 	"github.com/stretchr/testify/require"
 )
 

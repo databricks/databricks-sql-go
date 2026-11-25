@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
-	"github.com/databricks/databricks-sql-go/internal/cli_service"
-	"github.com/databricks/databricks-sql-go/internal/config"
-	dbsqlerrint "github.com/databricks/databricks-sql-go/internal/errors"
+	dbsqlerr "github.com/databricks/databricks-sql-go/v2/errors"
+	"github.com/databricks/databricks-sql-go/v2/internal/cli_service"
+	"github.com/databricks/databricks-sql-go/v2/internal/config"
+	dbsqlerrint "github.com/databricks/databricks-sql-go/v2/internal/errors"
 	"github.com/stretchr/testify/assert"
 )
 

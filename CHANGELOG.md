@@ -1,27 +1,48 @@
 # Release History
 
-## Unreleased (v2.0.0 prototype)
+## Unreleased
+
+### Driver changes
 
 - Honor `WithPort` / DSN port on the kernel backend, including the automatic Reyden recovery onto the kernel, instead of rejecting a non-default port. The kernel applies the port (`kernel_session_config_set_port`), and the driver passes the host through unchanged. Rules: a port of `0` or the scheme default `443` leaves the host unchanged and unvalidated; any other port becomes `host:port`, with a bare IPv6 literal bracketed (`[::1]:8443`); a port already in the host wins over a differing `WithPort`, and the kernel logs a warning. The kernel rejects credentials, an empty host, a path, query or fragment, and a bad embedded port with `InvalidArgument`, at connect. The driver checks only that `WithPort` is in `0..65535` (`ErrInvalidKernelConfig` and `ErrNotSupportedByKernel`). A kernel `InvalidArgument` for a non-default port wraps both sentinels, so a fallback to the default backend on `ErrNotSupportedByKernel` still works. For the default port it wraps only `ErrInvalidKernelConfig`. Errors never include credentials; the kernel redacts its messages. With OAuth and a non-default port, the kernel uses the same `host:port` for OAuth; Thrift keeps OAuth on the bare host (documented, not guarded).
-- Upgrade the SQL kernel bindings to v1.5.0.
-- Fix leaked HTTP connections after failed or retry-exhausted requests, which could exhaust a connector's connection pool. Remove the MPL-2.0 go-retryablehttp and go-cleanhttp dependencies while preserving first-send bodies, streaming trailers and retry behavior (databricks/databricks-sql-go#177).
-- Fix OAuth M2M token requests hanging indefinitely when the token endpoint stops responding. Each request now uses a copy of `http.DefaultClient` with a timeout of at most 60s; `WithRetries` repeats failed fetches (databricks/databricks-sql-go#475).
-- **Behavior change:** Top-level GEOMETRY and GEOGRAPHY columns report server SQL names including SRIDs on Thrift and SEA. With `WithEnableGeoSpatialSupport(true)` (`enableGeoSpatialSupport=true`, available since v1.17.0), previously bare `GEOMETRY` / `GEOGRAPHY` names now include the declared SRID, such as `GEOMETRY(0)`, `GEOGRAPHY(4326)` or `GEOMETRY(ANY)`; match the family before `(` when selecting a decoder. String mode previously reported `STRING`; values, scan types, lengths and raw Arrow schemas are unchanged, and Thrift retains `STRING` without a readable Arrow schema (databricks/databricks-sql-go#474).
-- Render non-finite FLOAT / DOUBLE values inside ARRAY / MAP / STRUCT results as the JSON strings `"NaN"`, `"Infinity"`, and `"-Infinity"` on both backends instead of failing row iteration. SQL NULL remains `null`; top-level floats remain numeric (databricks/databricks-sql-go#573).
-- **Behavior change:** Non-finite floating-point MAP keys use the same spellings as values on both backends. On the kernel backend, keys previously rendered as `"+Inf"` and `"-Inf"` now render as `"Infinity"` and `"-Infinity"`; `"NaN"` is unchanged. On Thrift, these keys previously failed row iteration (databricks/databricks-sql-go#573).
-- Fix the module-root package conflict when building, linting, or running Gazelle with the `tools` build tag (databricks/databricks-sql-go#162).
-- **Behavior change:** Report declared DECIMAL precision and scale through `sql.ColumnType.DecimalSize()` on Thrift and SEA, including zero-row results. Tools such as ORM migrators can now act on these qualifiers (databricks/databricks-sql-go#500).
-- **Behavior change:** Support Arrow TIME results on Thrift and SEA as UTC `time.Time` values on `0001-01-01`, preserving precision and using clock-only nested JSON. TIME metadata now reports `TIME`/`time.Time` with no length, including empty and NULL-only results; previously Thrift reported `STRING`/`string` with unbounded length, and SEA reported an empty name with `*interface{}` (databricks/databricks-sql-go#505).
-- **Behavior change:** Explicit `WithMaxDownloadThreads` / `maxDownloadThreads` settings tuned for Thrift also control kernel buffering and can change memory use and throughput. The kernel window defaults to 16 when unset; explicit chunk-setting overrides take precedence.
-- **Breaking change:** Upgrade Apache Arrow Go from v12 to v18.8.0 (`github.com/apache/arrow-go/v18`). The public `rows.ArrowBatchIterator` now uses v18 `arrow.RecordBatch` and `*arrow.Schema` types; callers using Arrow batches must migrate their Arrow imports and dependent code. This requires a major driver release (v2.0.0), including a `/v2` driver module path before publication.
-- Fix CloudFetch reads failing with `row number 0 is not contained in any arrow batch: EOF` when `WithMaxDownloadThreads` / `maxDownloadThreads` is 0 or negative. Such values now log a warning and use the default of 10 (databricks/databricks-sql-go#439).
-- **Behavior change:** On the Thrift backend, `ExecuteStatement` is now retried (per `WithRetries`) when the connection to the server or proxy can't be opened, for example connection refused or a connect timeout, because the statement was never sent. Failures after the connection exists are still not retried, so a statement never runs twice. With default retry settings, a refused connection now fails after about 15 seconds instead of immediately (databricks/databricks-sql-go#423).
-- Honor `WithCloudFetch(false)` / `useCloudFetch=false` on the kernel backend to fetch complete results without cloud-storage downloads. The option overrides conflicting session configuration and remains effective after automatic backend recovery. Servers without paged inline support return a configuration error; the driver does not fall back to storage downloads.
-- **Behavior change:** After `Close`, a raw `driver.Conn` now fails `Prepare`, `PrepareContext`, `ExecContext` and `QueryContext` immediately with a `driver.ErrBadConn` ("connection is closed") and sends no request. Previously `Prepare` returned a statement and the failure came from the server or kernel at execute. `database/sql` users are unaffected (databricks/databricks-sql-go#521).
-- Report `statement_type` (`SQL`, as on the kernel backend) and the result delivery format (`INLINE_ARROW`, `EXTERNAL_LINKS` or `COLUMNAR_INLINE`) in Thrift statement telemetry. The format is reported when the driver already has the result metadata (databricks/databricks-sql-go#454).
-- **Behavior change:** The DSN `timeout` param now rejects values outside ±9223372036 seconds with an error naming `timeout`. These values previously overflowed `time.Duration` and silently became a different, often negative, timeout. Negative values within range are still accepted (databricks/databricks-sql-go#490).
+- **Behavior change:** Bound each whole-transfer Thrift CloudFetch download attempt, including `WithTransport`, by the existing 900s `ClientTimeout`, and omit the link's presigned query string from download errors (databricks/databricks-sql-go#475).
+
+## v2.0.0 (2026-11-23)
+
+### Breaking changes
+
+- The module path is now `github.com/databricks/databricks-sql-go/v2`. Add `/v2` to driver and subpackage imports.
+- Upgrade Apache Arrow Go from v12 to v18.8.0 (`github.com/apache/arrow-go/v18`). The public `rows.ArrowBatchIterator` now uses v18 `arrow.RecordBatch` and `*arrow.Schema`; update Arrow imports and code that uses batches.
+
+### Driver changes
+
+- Fix HTTP connection leaks after failed requests or exhausted retries. Remove the MPL-2.0 `go-retryablehttp` and `go-cleanhttp` dependencies (databricks/databricks-sql-go#177).
+- Cap OAuth M2M token requests at 60 seconds and retry failures according to `WithRetries`, preventing indefinite hangs (databricks/databricks-sql-go#475).
+- Top-level GEOMETRY and GEOGRAPHY type names now include SRIDs, such as `GEOMETRY(0)`, `GEOGRAPHY(4326)` or `GEOMETRY(ANY)`, in both string mode and `WithEnableGeoSpatialSupport(true)` mode. Match the family before `(` when choosing a decoder. Values and scan types are unchanged; Thrift still reports `STRING` without a readable Arrow schema (databricks/databricks-sql-go#474).
+- Render non-finite FLOAT / DOUBLE values and MAP keys inside ARRAY / MAP / STRUCT results as JSON strings `"NaN"`, `"Infinity"` and `"-Infinity"` on both backends. This fixes Thrift row-iteration errors and changes kernel MAP keys from `"+Inf"` / `"-Inf"`. SQL NULL remains `null`; top-level floats remain numeric (databricks/databricks-sql-go#573).
+- Report declared DECIMAL precision and scale through `sql.ColumnType.DecimalSize()` on both backends, including empty results (databricks/databricks-sql-go#500).
+- Return Arrow TIME values as UTC `time.Time` on `0001-01-01`, preserving precision and using clock-only nested JSON. Both backends now report `TIME`/`time.Time` with no length, including empty and NULL-only results, replacing Thrift's `STRING`/`string` and SEA's empty type name/`*interface{}` (databricks/databricks-sql-go#505).
+- Top-level VARIANT columns now report `VARIANT` instead of `STRING` from `sql.ColumnType.DatabaseTypeName()`. Values remain JSON text with scan type `string` and unchanged length. Thrift still reports `STRING` without a server-supplied Arrow schema (databricks/databricks-sql-go#576).
+- Explicit `WithMaxDownloadThreads` / `maxDownloadThreads` settings now also control kernel buffering, affecting memory use and throughput. Unset defaults remain 10 for Thrift and 16 for the kernel; explicit kernel chunk settings take precedence. Zero or negative values warn and use 10, fixing CloudFetch EOF errors (databricks/databricks-sql-go#439).
+- Retry Thrift `ExecuteStatement` according to `WithRetries` only when a connection to the server or proxy cannot be opened, before the statement is sent. Failures after connecting are still not retried. With default settings, a refused connection now fails after about 15 seconds (databricks/databricks-sql-go#423).
+- After `Close`, raw `driver.Conn` calls to `Prepare`, `PrepareContext`, `ExecContext` and `QueryContext` now immediately return `driver.ErrBadConn` ("connection is closed"). `database/sql` users are unaffected (databricks/databricks-sql-go#521).
+- Reject DSN `timeout` values outside ±9223372036 seconds instead of silently overflowing `time.Duration`. Negative values within range remain valid (databricks/databricks-sql-go#490).
 - Avoid redundant Thrift result fetches when direct results specify `hasMoreRows=false` (databricks/databricks-sql-go#539).
-- **Behavior change:** Top-level VARIANT columns report `VARIANT` from `sql.ColumnType.DatabaseTypeName()` on Thrift and SEA instead of `STRING`, matching the Python and JDBC drivers. Values stay JSON text, and the scan type (`string`) and length are unchanged. Nested VARIANT is not reported by name. On Thrift, this requires the server-supplied Arrow result schema; without it, VARIANT still reports `STRING` (databricks/databricks-sql-go#576).
+- Add `statement_type=SQL` and the result delivery format (`INLINE_ARROW`, `EXTERNAL_LINKS` or `COLUMNAR_INLINE`, when known) to Thrift statement telemetry (databricks/databricks-sql-go#454).
+- Fix the module-root package conflict when building, linting or running Gazelle with the `tools` build tag (databricks/databricks-sql-go#162).
+
+### SQL kernel v1.5.0
+
+Upgrade the kernel bindings to [v1.5.0](https://github.com/databricks/databricks-sql-kernel/blob/v1.5.0/CHANGELOG.md) with these changes for the kernel backend:
+
+- Fix CloudFetch prefetching across result pages, share in-flight page requests, honor cancellation and return cached final chunks before EOF.
+- Fetch all inline result pages with `WithCloudFetch(false)` / `useCloudFetch=false`. This option overrides conflicting session settings and survives automatic backend recovery. Servers without paged inline support return a configuration error instead of downloading from cloud storage.
+- Release transport, HTTP client and runtime resources on session close, including resources retained by OAuth providers.
+- Authenticate once before resolving feature flags; fail session open immediately if OAuth token retrieval fails.
+- Fail TLS certificate verification errors after one attempt and report the underlying cause, including CloudFetch downloads.
+- Omit signed URL query strings and signatures from CloudFetch errors and debug logs.
+- Avoid redundant telemetry flush tasks during event bursts.
+- Update Rust Arrow to 59.3.2 and QUIC dependencies for security fixes.
 
 ## v1.19.0 (2026-11-04)
 - Upgrade the SQL kernel bindings to v1.4.0.

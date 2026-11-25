@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"testing"
 
-	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
-	dbsqlerrint "github.com/databricks/databricks-sql-go/internal/errors"
+	dbsqlerr "github.com/databricks/databricks-sql-go/v2/errors"
+	dbsqlerrint "github.com/databricks/databricks-sql-go/v2/internal/errors"
 )
 
 // These guard the safety contract (which errors may trigger database/sql's

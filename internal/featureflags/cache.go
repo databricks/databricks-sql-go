@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/databricks/databricks-sql-go/internal/client"
+	"github.com/databricks/databricks-sql-go/v2/internal/client"
 	"golang.org/x/sync/singleflight"
 )
 

@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/databricks/databricks-sql-go/auth"
-	"github.com/databricks/databricks-sql-go/logger"
+	"github.com/databricks/databricks-sql-go/v2/auth"
+	"github.com/databricks/databricks-sql-go/v2/logger"
 )
 
 // TokenProviderAuthenticator implements auth.Authenticator using a TokenProvider.

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/databricks/databricks-sql-go/internal/client"
+	"github.com/databricks/databricks-sql-go/v2/internal/client"
 	"github.com/pkg/errors"
 )
 

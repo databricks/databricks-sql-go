@@ -9,6 +9,7 @@ standard `database/sql` interface.
 ## Contents
 
 - [Quick start](#quick-start)
+- [Migrating from v1](#migrating-from-v1)
 - [Cloning the repository](#cloning-the-repository)
 - [Choosing a backend (Thrift vs SEA/kernel)](#choosing-a-backend-thrift-vs-seakernel)
 - [Building](#building)
@@ -31,7 +32,7 @@ standard `database/sql` interface.
 import (
   "context"
   "database/sql"
-  _ "github.com/databricks/databricks-sql-go"
+  _ "github.com/databricks/databricks-sql-go/v2"
 )
 
 db, err := sql.Open("databricks", "token:********@********.databricks.com:443/sql/1.0/endpoints/********")
@@ -48,9 +49,20 @@ See [`doc.go`](./doc.go) for full package documentation or the Databricks docume
 for the [SQL Driver for Go](https://docs.databricks.com/dev-tools/go-sql-driver.html).
 
 > **Using the driver in your own project?** Add it with `go get
-> github.com/databricks/databricks-sql-go` and `go build` — you never clone this repo.
+> github.com/databricks/databricks-sql-go/v2` and `go build` — you never clone this repo.
 > A default Thrift build pulls **no** kernel binaries. The "Cloning" section below is
 > only for contributors working in this repo directly.
+
+## Migrating from v1
+
+Install v2 with `go get github.com/databricks/databricks-sql-go/v2@v2.0.0` and
+add `/v2` to all driver import paths, including subpackages such as `auth` and
+`rows`.
+
+If you use the Arrow batch API, migrate Arrow imports from
+`github.com/apache/arrow/go/v12` to `github.com/apache/arrow-go/v18`.
+`rows.ArrowBatchIterator` now returns v18 `arrow.RecordBatch` values and
+`*arrow.Schema` metadata.
 
 ## Cloning the repository
 
@@ -193,7 +205,7 @@ You can also connect with a connector object built from functional options:
 ```go
 import (
   "database/sql"
-  dbsql "github.com/databricks/databricks-sql-go"
+  dbsql "github.com/databricks/databricks-sql-go/v2"
 )
 
 connector, err := dbsql.NewConnector(

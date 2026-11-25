@@ -6,11 +6,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/databricks/databricks-sql-go/auth/pat"
-	"github.com/databricks/databricks-sql-go/auth/tokenprovider"
-	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
-	"github.com/databricks/databricks-sql-go/internal/backend/kernel"
-	"github.com/databricks/databricks-sql-go/internal/config"
+	"github.com/databricks/databricks-sql-go/v2/auth/pat"
+	"github.com/databricks/databricks-sql-go/v2/auth/tokenprovider"
+	dbsqlerr "github.com/databricks/databricks-sql-go/v2/errors"
+	"github.com/databricks/databricks-sql-go/v2/internal/backend/kernel"
+	"github.com/databricks/databricks-sql-go/v2/internal/config"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -167,7 +167,7 @@ func TestNewConnector(t *testing.T) {
 			MaxFilesInMemory:             10,
 			MinTimeToExpiry:              0 * time.Second,
 			CloudFetchSpeedThresholdMbps: 0.1,
-			HTTPClient:                   &http.Client{Transport: roundTripper},
+			HTTPClient:                   &http.Client{Transport: roundTripper, Timeout: 900 * time.Second},
 		}
 		expectedUserConfig := config.UserConfig{
 			Host:             host,

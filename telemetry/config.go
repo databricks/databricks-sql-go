@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/databricks/databricks-sql-go/internal/featureflags"
+	"github.com/databricks/databricks-sql-go/v2/internal/featureflags"
 )
 
 // Config holds telemetry configuration.

@@ -3,7 +3,7 @@ package kernel
 import (
 	"testing"
 
-	"github.com/databricks/databricks-sql-go/logger"
+	"github.com/databricks/databricks-sql-go/v2/logger"
 	"github.com/rs/zerolog"
 )
 

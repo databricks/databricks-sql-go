@@ -6,8 +6,8 @@ import (
 	"net/url"
 	"testing"
 
-	"github.com/databricks/databricks-sql-go/internal/backend/kernel"
-	"github.com/databricks/databricks-sql-go/internal/config"
+	"github.com/databricks/databricks-sql-go/v2/internal/backend/kernel"
+	"github.com/databricks/databricks-sql-go/v2/internal/config"
 )
 
 // proxyForEndpointFunc maps the injected resolver's decision to a proxy URL

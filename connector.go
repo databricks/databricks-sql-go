@@ -12,21 +12,21 @@ import (
 	"strings"
 	"time"
 
-	"github.com/databricks/databricks-sql-go/auth"
-	"github.com/databricks/databricks-sql-go/auth/oauth/m2m"
-	"github.com/databricks/databricks-sql-go/auth/pat"
-	"github.com/databricks/databricks-sql-go/auth/tokenprovider"
-	"github.com/databricks/databricks-sql-go/driverctx"
-	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
-	"github.com/databricks/databricks-sql-go/internal/backend"
-	"github.com/databricks/databricks-sql-go/internal/backend/thrift"
-	"github.com/databricks/databricks-sql-go/internal/client"
-	"github.com/databricks/databricks-sql-go/internal/config"
-	"github.com/databricks/databricks-sql-go/internal/debuglog"
-	"github.com/databricks/databricks-sql-go/internal/featureflags"
-	"github.com/databricks/databricks-sql-go/internal/warehouse_cache"
-	"github.com/databricks/databricks-sql-go/logger"
-	"github.com/databricks/databricks-sql-go/telemetry"
+	"github.com/databricks/databricks-sql-go/v2/auth"
+	"github.com/databricks/databricks-sql-go/v2/auth/oauth/m2m"
+	"github.com/databricks/databricks-sql-go/v2/auth/pat"
+	"github.com/databricks/databricks-sql-go/v2/auth/tokenprovider"
+	"github.com/databricks/databricks-sql-go/v2/driverctx"
+	dbsqlerr "github.com/databricks/databricks-sql-go/v2/errors"
+	"github.com/databricks/databricks-sql-go/v2/internal/backend"
+	"github.com/databricks/databricks-sql-go/v2/internal/backend/thrift"
+	"github.com/databricks/databricks-sql-go/v2/internal/client"
+	"github.com/databricks/databricks-sql-go/v2/internal/config"
+	"github.com/databricks/databricks-sql-go/v2/internal/debuglog"
+	"github.com/databricks/databricks-sql-go/v2/internal/featureflags"
+	"github.com/databricks/databricks-sql-go/v2/internal/warehouse_cache"
+	"github.com/databricks/databricks-sql-go/v2/logger"
+	"github.com/databricks/databricks-sql-go/v2/telemetry"
 )
 
 // backendFactory is a function type for creating kernel backends. This seam allows
@@ -170,6 +170,9 @@ func NewConnector(options ...ConnOption) (driver.Connector, error) {
 
 	for _, opt := range options {
 		opt(cfg)
+	}
+	if cfg.HTTPClient == nil && cfg.Transport != nil {
+		cfg.HTTPClient = &http.Client{Transport: cfg.Transport, Timeout: cfg.ClientTimeout}
 	}
 	// Covers the DSN path too, which applies ParseDSN's UserConfig as an option.
 	if cfg.MaxDownloadThreads <= 0 {
@@ -528,15 +531,10 @@ func WithAuthenticator(authr auth.Authenticator) ConnOption {
 }
 
 // WithTransport sets up the transport configuration to be used by the httpclient.
+// Thrift CloudFetch downloads also use this transport, with ClientTimeout bounding each attempt.
 func WithTransport(t http.RoundTripper) ConnOption {
 	return func(c *config.Config) {
 		c.Transport = t
-
-		if c.HTTPClient == nil {
-			c.HTTPClient = &http.Client{
-				Transport: t,
-			}
-		}
 	}
 }
 

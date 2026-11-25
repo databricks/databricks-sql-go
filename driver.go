@@ -5,15 +5,15 @@ import (
 	"database/sql"
 	"database/sql/driver"
 
-	"github.com/databricks/databricks-sql-go/internal/config"
-	_ "github.com/databricks/databricks-sql-go/logger"
+	"github.com/databricks/databricks-sql-go/v2/internal/config"
+	_ "github.com/databricks/databricks-sql-go/v2/logger"
 )
 
 func init() {
 	sql.Register("databricks", &databricksDriver{})
 }
 
-var DriverVersion = "1.19.0" // update version before each release
+var DriverVersion = "2.0.0" // update version before each release
 
 type databricksDriver struct{}
 

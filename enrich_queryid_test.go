@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/databricks/databricks-sql-go/driverctx"
+	"github.com/databricks/databricks-sql-go/v2/driverctx"
 	"github.com/stretchr/testify/assert"
 )
 

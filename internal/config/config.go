@@ -12,17 +12,17 @@ import (
 	"sync"
 	"time"
 
-	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
+	dbsqlerr "github.com/databricks/databricks-sql-go/v2/errors"
 	"github.com/pkg/errors"
 
-	"github.com/databricks/databricks-sql-go/auth"
-	"github.com/databricks/databricks-sql-go/auth/noop"
-	"github.com/databricks/databricks-sql-go/auth/oauth/m2m"
-	"github.com/databricks/databricks-sql-go/auth/oauth/u2m"
-	"github.com/databricks/databricks-sql-go/auth/pat"
-	"github.com/databricks/databricks-sql-go/internal/cli_service"
-	dbsqlerrint "github.com/databricks/databricks-sql-go/internal/errors"
-	"github.com/databricks/databricks-sql-go/logger"
+	"github.com/databricks/databricks-sql-go/v2/auth"
+	"github.com/databricks/databricks-sql-go/v2/auth/noop"
+	"github.com/databricks/databricks-sql-go/v2/auth/oauth/m2m"
+	"github.com/databricks/databricks-sql-go/v2/auth/oauth/u2m"
+	"github.com/databricks/databricks-sql-go/v2/auth/pat"
+	"github.com/databricks/databricks-sql-go/v2/internal/cli_service"
+	dbsqlerrint "github.com/databricks/databricks-sql-go/v2/internal/errors"
+	"github.com/databricks/databricks-sql-go/v2/logger"
 )
 
 // Each deprecated DSN telemetry param logs at most one warning per process.

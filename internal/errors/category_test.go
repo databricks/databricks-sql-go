@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"testing"
 
-	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
+	dbsqlerr "github.com/databricks/databricks-sql-go/v2/errors"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 )

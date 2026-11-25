@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/apache/arrow-go/v18/arrow/ipc"
-	dbsql "github.com/databricks/databricks-sql-go"
-	dbsqlrows "github.com/databricks/databricks-sql-go/rows"
+	dbsql "github.com/databricks/databricks-sql-go/v2"
+	dbsqlrows "github.com/databricks/databricks-sql-go/v2/rows"
 	"github.com/joho/godotenv"
 )
 

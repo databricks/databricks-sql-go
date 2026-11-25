@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/databricks/databricks-sql-go/logger"
+	"github.com/databricks/databricks-sql-go/v2/logger"
 )
 
 // The forward path enqueues an owned record onto the bounded channel. (The cgo

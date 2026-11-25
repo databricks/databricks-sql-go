@@ -1,6 +1,6 @@
 package thrift_protocol
 
-import "github.com/databricks/databricks-sql-go/internal/cli_service"
+import "github.com/databricks/databricks-sql-go/v2/internal/cli_service"
 
 // Feature checks
 // SupportsDirectResults checks if the server protocol version supports direct results

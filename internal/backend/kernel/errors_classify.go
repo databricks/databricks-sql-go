@@ -4,8 +4,8 @@ import (
 	"errors"
 	"fmt"
 
-	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
-	dbsqlerrint "github.com/databricks/databricks-sql-go/internal/errors"
+	dbsqlerr "github.com/databricks/databricks-sql-go/v2/errors"
+	dbsqlerrint "github.com/databricks/databricks-sql-go/v2/internal/errors"
 )
 
 // This file is intentionally NOT behind the `cgo && databricks_kernel` build tag.

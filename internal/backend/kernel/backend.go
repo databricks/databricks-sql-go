@@ -72,8 +72,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
-	"github.com/databricks/databricks-sql-go/internal/backend"
+	dbsqlerr "github.com/databricks/databricks-sql-go/v2/errors"
+	"github.com/databricks/databricks-sql-go/v2/internal/backend"
 )
 
 // kernelSessionSeq is a process-wide monotonic counter for kernel session ids.

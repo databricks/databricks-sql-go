@@ -34,8 +34,8 @@ import (
 
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/arrow-go/v18/arrow/array"
-	"github.com/databricks/databricks-sql-go/internal/decimalfmt"
-	"github.com/databricks/databricks-sql-go/internal/jsonfmt"
+	"github.com/databricks/databricks-sql-go/v2/internal/decimalfmt"
+	"github.com/databricks/databricks-sql-go/v2/internal/jsonfmt"
 )
 
 // ScanCell extracts one cell as a driver.Value. Scalars map to their Go value:

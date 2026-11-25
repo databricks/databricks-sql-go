@@ -5,12 +5,13 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/url"
 	"strings"
 	"time"
 
-	"github.com/databricks/databricks-sql-go/internal/config"
-	"github.com/databricks/databricks-sql-go/internal/retry"
-	"github.com/databricks/databricks-sql-go/internal/rows/rowscanner"
+	"github.com/databricks/databricks-sql-go/v2/internal/config"
+	"github.com/databricks/databricks-sql-go/v2/internal/retry"
+	"github.com/databricks/databricks-sql-go/v2/internal/rows/rowscanner"
 	"github.com/pierrec/lz4/v4"
 	"github.com/pkg/errors"
 
@@ -19,10 +20,10 @@ import (
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/arrow-go/v18/arrow/array"
 	"github.com/apache/arrow-go/v18/arrow/ipc"
-	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
-	"github.com/databricks/databricks-sql-go/internal/cli_service"
-	dbsqlerrint "github.com/databricks/databricks-sql-go/internal/errors"
-	"github.com/databricks/databricks-sql-go/logger"
+	dbsqlerr "github.com/databricks/databricks-sql-go/v2/errors"
+	"github.com/databricks/databricks-sql-go/v2/internal/cli_service"
+	dbsqlerrint "github.com/databricks/databricks-sql-go/v2/internal/errors"
+	"github.com/databricks/databricks-sql-go/v2/logger"
 )
 
 type IPCStreamIterator interface {
@@ -59,9 +60,13 @@ func NewCloudIPCStreamIterator(
 	cfg *config.Config,
 	onFileDownloaded func(downloadMs int64),
 ) (IPCStreamIterator, dbsqlerr.DBError) {
-	httpClient := http.DefaultClient
-	if cfg.HTTPClient != nil {
-		httpClient = cfg.HTTPClient
+	httpClient := cfg.HTTPClient
+	if httpClient == nil {
+		client := *http.DefaultClient
+		if cfg.ClientTimeout > 0 && (client.Timeout <= 0 || client.Timeout > cfg.ClientTimeout) {
+			client.Timeout = cfg.ClientTimeout
+		}
+		httpClient = &client
 	}
 
 	bi := &cloudIPCStreamIterator{
@@ -399,6 +404,37 @@ func logCloudFetchSpeed(fullURL string, contentLength int64, duration time.Durat
 	}
 }
 
+func redactCloudFetchError(err error) error {
+	urlErr, ok := err.(*url.Error)
+	if !ok {
+		return err
+	}
+	redacted := *urlErr
+	redacted.URL, _, _ = strings.Cut(urlErr.URL, "?")
+	redacted.Err = redactCloudFetchError(urlErr.Err)
+	return &redacted
+}
+
+type redactedCloudFetchError struct {
+	cause    error
+	rawQuery string
+}
+
+func (downloadErr redactedCloudFetchError) Error() string {
+	if downloadErr.rawQuery == "" {
+		return downloadErr.cause.Error()
+	}
+	return strings.ReplaceAll(downloadErr.cause.Error(), downloadErr.rawQuery, "[REDACTED]")
+}
+
+func (downloadErr redactedCloudFetchError) Unwrap() error {
+	return downloadErr.cause
+}
+
+func (downloadErr redactedCloudFetchError) Cause() error {
+	return downloadErr.cause
+}
+
 // fetchBatchBytes downloads a single CloudFetch result link and returns the
 // raw response body, still compressed if the server used LZ4. Connection-time
 // failures, retryable HTTP statuses, and mid-stream body read failures are
@@ -421,6 +457,8 @@ func fetchBatchBytes(
 	if retryMax < 0 {
 		retryMax = 0
 	}
+	_, rawQuery, _ := strings.Cut(link.FileLink, "?")
+	rawQuery, _, _ = strings.Cut(rawQuery, "#")
 
 	var (
 		lastErr        error
@@ -455,7 +493,7 @@ func fetchBatchBytes(
 
 		req, err := http.NewRequestWithContext(ctx, "GET", link.FileLink, nil)
 		if err != nil {
-			return nil, err
+			return nil, redactedCloudFetchError{cause: redactCloudFetchError(err), rawQuery: rawQuery}
 		}
 		if link.HttpHeaders != nil {
 			for key, value := range link.HttpHeaders {
@@ -471,7 +509,7 @@ func fetchBatchBytes(
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
 			}
-			lastErr = err
+			lastErr = redactedCloudFetchError{cause: redactCloudFetchError(err), rawQuery: rawQuery}
 			lastStatus = 0
 			lastRetryAfter = ""
 			continue
@@ -486,7 +524,7 @@ func fetchBatchBytes(
 				if ctx.Err() != nil {
 					return nil, ctx.Err()
 				}
-				lastErr = readErr
+				lastErr = redactedCloudFetchError{cause: redactCloudFetchError(readErr), rawQuery: rawQuery}
 				lastStatus = 0
 				lastRetryAfter = ""
 				continue

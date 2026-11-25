@@ -14,9 +14,9 @@ import (
 	"testing"
 	"time"
 
-	dbsqlerr "github.com/databricks/databricks-sql-go/errors"
-	"github.com/databricks/databricks-sql-go/internal/cli_service"
-	"github.com/databricks/databricks-sql-go/internal/config"
+	dbsqlerr "github.com/databricks/databricks-sql-go/v2/errors"
+	"github.com/databricks/databricks-sql-go/v2/internal/cli_service"
+	"github.com/databricks/databricks-sql-go/v2/internal/config"
 	"github.com/pkg/errors"
 
 	"github.com/apache/arrow-go/v18/arrow"
@@ -328,7 +328,7 @@ func TestCloudFetchIterator(t *testing.T) {
 		assert.NotNil(t, sab)
 	})
 
-	t.Run("should fallback to http.DefaultClient when HTTPClient is nil", func(t *testing.T) {
+	t.Run("should use a bounded default client when HTTPClient is nil", func(t *testing.T) {
 		handler = func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
 			_, err := w.Write(generateMockArrowBytes(generateArrowRecord()))
@@ -360,7 +360,8 @@ func TestCloudFetchIterator(t *testing.T) {
 		assert.Nil(t, err)
 
 		cbi := bi.(*batchIterator).ipcIterator.(*cloudIPCStreamIterator)
-		assert.Equal(t, http.DefaultClient, cbi.httpClient)
+		assert.NotSame(t, http.DefaultClient, cbi.httpClient)
+		assert.Equal(t, cfg.ClientTimeout, cbi.httpClient.Timeout)
 
 		// Verify fetch works with default client
 		sab, nextErr := bi.Next()

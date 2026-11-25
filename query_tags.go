@@ -1,6 +1,6 @@
 package dbsql
 
-import "github.com/databricks/databricks-sql-go/internal/querytags"
+import "github.com/databricks/databricks-sql-go/v2/internal/querytags"
 
 // SerializeQueryTags converts a map of query tags to the wire format string.
 // The format is comma-separated key:value pairs (e.g., "team:engineering,app:etl").
