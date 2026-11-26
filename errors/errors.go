@@ -56,6 +56,9 @@ var DriverError error = errors.New("Driver Error")
 // value to be used with errors.Is() to determine if an error chain contains an execution error
 var ExecutionError error = errors.New("Execution Error")
 
+// ErrRowsAffectedUnknown indicates that the server reported no count; match it with errors.Is.
+var ErrRowsAffectedUnknown = errors.New("rows affected is unknown")
+
 // value to be used with errors.Is() to determine if an error chain contains any databricks error
 var DatabricksError error = errors.New("Databricks Error")
 

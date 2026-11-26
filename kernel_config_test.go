@@ -438,6 +438,8 @@ var kernelConfigFieldDisposition = map[string]string{
 	// Folded into SessionConf by config.EffectiveSessionParams (metric-view conf),
 	// sent identically on both backends.
 	"EnableMetricViewMetadata": "forwarded",
+	// Applied by shared conn.ExecContext, not native kernel.Config.
+	"ReportUnknownRowsAffected": "forwarded",
 	// Applied post-connect via USE CATALOG / USE SCHEMA (no kernel config setter).
 	"Catalog": "forwarded",
 	"Schema":  "forwarded",

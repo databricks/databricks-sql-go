@@ -22,6 +22,29 @@ import (
 	"github.com/databricks/databricks-sql-go/v2/logger"
 )
 
+func TestKernelOpAffectedRowsKnown(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		raw   int64
+		count int64
+		known bool
+	}{
+		{"unknown", -1, 0, false},
+		{"negative", -42, 0, false},
+		{"zero", 0, 0, true},
+		{"positive", 42, 42, true},
+		{"large", 1<<53 + 1, 1<<53 + 1, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			op := &kernelOp{affectedRows: test.raw, closed: true}
+			var reporter backend.AffectedRowsReporter = op
+			if op.AffectedRows() != test.count || reporter.AffectedRowsKnown() != test.known {
+				t.Fatalf("raw %d: count=%d known=%t, want %d/%t", test.raw, op.AffectedRows(), reporter.AffectedRowsKnown(), test.count, test.known)
+			}
+		})
+	}
+}
+
 func TestStatementExecuteTimeoutRouting(t *testing.T) {
 	err := tryStatementExecuteRoute(nil)
 	if err == nil || !strings.Contains(err.Error(), "kernel_statement_execute: stmt must not be null") {

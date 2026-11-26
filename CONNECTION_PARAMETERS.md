@@ -102,6 +102,7 @@ Notes for the SEA/kernel backend:
 | *(via session param)* | `WithQueryTags` | ✅ | ✅ | | Session-level query tags (serialized into `QUERY_TAGS`). |
 | `timezone` | `WithSessionParams(timezone=…)` | ✅ | ✅ | | Session time zone (e.g. `America/Los_Angeles`). |
 | `enableMetricViewMetadata` | `WithEnableMetricViewMetadata` | ✅ | ⚠️ | `false` | Enables metric-view metadata (sets `spark.sql.thriftserver.metadata.metricview.enabled=true`). Both paths forward the identical conf. Whether it takes effect on the SEA/kernel path depends on server-side SEA support (PECOBLR-4142). |
+| `reportUnknownRowsAffected` | `WithReportUnknownRowsAffected` | ✅ | ✅ | `false` | `RowsAffected()` returns `(0, errors.ErrRowsAffectedUnknown)` for an absent count; reported counts (including 0) and `LastInsertId()` are unchanged. Client-side only. |
 
 ### Kernel session confs
 

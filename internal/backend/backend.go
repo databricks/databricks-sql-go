@@ -107,6 +107,11 @@ type Operation interface {
 	ExecutionError(ctx context.Context, cause error) error
 }
 
+// AffectedRowsReporter distinguishes a reported zero from an absent count.
+type AffectedRowsReporter interface {
+	AffectedRowsKnown() bool
+}
+
 // ResultFormatReporter is optionally implemented by an Operation that can report
 // its telemetry execution_result from metadata it already holds, without I/O.
 type ResultFormatReporter interface {

@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"sync"
@@ -27,6 +28,21 @@ import (
 func kernelTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 	return kernelTestDBWith(t)
+}
+
+func TestKernelE2EReportUnknownRowsAffected(t *testing.T) {
+	skipOnReyden(t, "rows-affected matrix requires DDL and DML on a writable warehouse")
+	for _, report := range []bool{false, true} {
+		t.Run(fmt.Sprintf("report=%t", report), func(t *testing.T) {
+			db := kernelTestDBWith(t, WithReportUnknownRowsAffected(report), WithInitialNamespace("peco", "default"))
+			t.Cleanup(func() {
+				if err := db.Close(); err != nil {
+					t.Error(err)
+				}
+			})
+			testRowsAffectedMatrix(t, db, report)
+		})
+	}
 }
 
 func TestKernelE2EDecimalMetadata(t *testing.T) {

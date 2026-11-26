@@ -697,6 +697,35 @@ func TestParseConfig(t *testing.T) {
 	}
 }
 
+func TestParseDSNReportUnknownRowsAffected(t *testing.T) {
+	base := "token:supersecret@example.cloud.databricks.com:443/sql/1.0/endpoints/abc"
+	for _, test := range []struct {
+		query string
+		want  bool
+	}{
+		{"", false},
+		{"?reportUnknownRowsAffected=true", true},
+		{"?reportUnknownRowsAffected=false", false},
+		{"?reportUnknownRowsAffected=1", true},
+	} {
+		t.Run(test.query, func(t *testing.T) {
+			cfg, err := ParseDSN(base + test.query)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.ReportUnknownRowsAffected != test.want || cfg.DeepCopy().ReportUnknownRowsAffected != test.want {
+				t.Fatalf("ReportUnknownRowsAffected = %t, want %t (including DeepCopy)", cfg.ReportUnknownRowsAffected, test.want)
+			}
+			if _, leaked := cfg.SessionParams["reportUnknownRowsAffected"]; leaked {
+				t.Fatal("client option leaked into session parameters")
+			}
+		})
+	}
+	if _, err := ParseDSN(base + "?reportUnknownRowsAffected=notabool"); err == nil {
+		t.Fatal("malformed reportUnknownRowsAffected must fail DSN parsing")
+	}
+}
+
 func TestParseDSNEnableGeoSpatialSupport(t *testing.T) {
 	base := "token:supersecret@example.cloud.databricks.com:443/sql/1.0/endpoints/abc"
 	for _, tc := range []struct {
