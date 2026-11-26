@@ -871,7 +871,37 @@ func (r *rows) GetArrowBatches(ctx context.Context) (dbsqlrows.ArrowBatchIterato
 		return r.RowScanner.GetArrowBatches(iterCtx, *r.config, r.ResultPageIterator)
 	}
 
-	return arrowbased.NewArrowRecordIterator(iterCtx, r.ResultPageIterator, nil, nil, *r.config), nil
+	return arrowbased.NewArrowRecordIterator(iterCtx, r.ResultPageIterator, nil, nil, *r.config, r.arrowSchemaLoader(iterCtx)), nil
+}
+
+// arrowSchemaLoader uses cached result metadata or retrieves it without fetching data.
+func (r *rows) arrowSchemaLoader(ctx context.Context) func() ([]byte, bool, error) {
+	pages, cachedMetadata := r.ResultPageIterator, r.resultSetMetadata
+	metadataClient, operationHandle := r.client, r.opHandle
+	arrowConfig, logger := r.config.ArrowConfig, r.logger()
+	validationErr := isValidRows(r)
+	return func() ([]byte, bool, error) {
+		metadata := cachedMetadata
+		if metadata == nil {
+			metadata = pages.ResultSetMetadata()
+		}
+		if metadata == nil {
+			if validationErr != nil {
+				return nil, false, validationErr
+			}
+			var err error
+			metadata, err = metadataClient.GetResultSetMetadata(ctx, &cli_service.TGetResultSetMetadataReq{OperationHandle: operationHandle})
+			if err != nil {
+				logger.Err(err).Msg(err.Error())
+				if ctx.Err() != nil {
+					return nil, false, dbsqlerr_int.NewRequestError(ctx, errRowsMetadataFetchFailed, err)
+				}
+				return nil, false, dbsqlerr_int.NewRequestError(ctx, errRowsMetadataFetchFailed, err).WithCategory(dbsqlerr_int.CategoryResultSet)
+			}
+		}
+		schemaBytes, err := arrowbased.GetArrowSchemaBytes(ctx, metadata, arrowConfig)
+		return schemaBytes, len(metadata.ArrowSchema) == 0, err
+	}
 }
 
 func (r *rows) GetArrowIPCStreams(ctx context.Context) (dbsqlrows.ArrowIPCStreamIterator, error) {
@@ -885,5 +915,5 @@ func (r *rows) GetArrowIPCStreams(ctx context.Context) (dbsqlrows.ArrowIPCStream
 		return r.RowScanner.GetArrowIPCStreams(iterCtx, *r.config, r.ResultPageIterator)
 	}
 
-	return arrowbased.NewArrowIPCStreamIterator(iterCtx, r.ResultPageIterator, nil, nil, *r.config), nil
+	return arrowbased.NewArrowIPCStreamIterator(iterCtx, r.ResultPageIterator, nil, nil, *r.config, r.arrowSchemaLoader(iterCtx)), nil
 }

@@ -15,13 +15,16 @@ import (
 	"github.com/databricks/databricks-sql-go/v2/rows"
 )
 
-func NewArrowRecordIterator(ctx context.Context, rpi rowscanner.ResultPageIterator, bi BatchIterator, arrowSchemaBytes []byte, cfg config.Config) rows.ArrowBatchIterator {
+func NewArrowRecordIterator(ctx context.Context, rpi rowscanner.ResultPageIterator, bi BatchIterator, arrowSchemaBytes []byte, cfg config.Config, loadSchema ...func() ([]byte, bool, error)) rows.ArrowBatchIterator {
 	ari := arrowRecordIterator{
 		cfg:                cfg,
 		batchIterator:      bi,
 		resultPageIterator: rpi,
 		ctx:                ctx,
 		arrowSchemaBytes:   arrowSchemaBytes,
+	}
+	if len(loadSchema) > 0 {
+		ari.loadSchema = loadSchema[0]
 	}
 
 	return &ari
@@ -38,6 +41,8 @@ type arrowRecordIterator struct {
 	isFinished         bool
 	arrowSchemaBytes   []byte
 	arrowSchema        *arrow.Schema
+	schemaInferred     bool
+	loadSchema         func() ([]byte, bool, error)
 	// err holds a page-fetch error detected while advancing the result page
 	// iterator. It must be surfaced through Next() rather than being masked as
 	// a normal end-of-results (io.EOF). See issue #507. Once captured the
@@ -101,6 +106,7 @@ func (ri *arrowRecordIterator) HasNext() bool {
 // reports HasNext()==false and Next()==io.EOF.
 func (ri *arrowRecordIterator) Close() {
 	ri.err = nil
+	ri.loadSchema = nil
 	ri.release()
 }
 
@@ -205,7 +211,7 @@ func (ri *arrowRecordIterator) getBatchIterator() error {
 			return dbsqlerr.NewDriverError(ri.ctx, errArrowRowsNotArrowFormat, nil)
 		}
 
-		if ri.arrowSchemaBytes == nil {
+		if len(ri.arrowSchemaBytes) == 0 && len(resp.ResultSetMetadata.ArrowSchema) > 0 {
 			ri.arrowSchemaBytes = resp.ResultSetMetadata.ArrowSchema
 		}
 
@@ -225,8 +231,21 @@ func (ri *arrowRecordIterator) getBatchIterator() error {
 func (ri *arrowRecordIterator) newBatchIterator(fr *cli_service.TFetchResultsResp) (BatchIterator, error) {
 	rowSet := fr.Results
 	if len(rowSet.ResultLinks) > 0 {
-		return NewCloudBatchIterator(ri.ctx, rowSet.ResultLinks, rowSet.StartRowOffset, ri.arrowSchemaBytes, &ri.cfg, nil)
+		schemaBytes := ri.arrowSchemaBytes
+		// Only schemas inferred by the loader or inline conversion omit the override.
+		if ri.schemaInferred {
+			schemaBytes = nil
+		}
+		return NewCloudBatchIterator(ri.ctx, rowSet.ResultLinks, rowSet.StartRowOffset, schemaBytes, &ri.cfg, nil)
 	} else {
+		if len(ri.arrowSchemaBytes) == 0 && ri.loadSchema != nil && fr.ResultSetMetadata != nil {
+			schemaBytes, err := GetArrowSchemaBytes(ri.ctx, fr.ResultSetMetadata, ri.cfg.ArrowConfig)
+			if err != nil {
+				return nil, err
+			}
+			ri.arrowSchemaBytes = schemaBytes
+			ri.schemaInferred = len(fr.ResultSetMetadata.ArrowSchema) == 0
+		}
 		return NewLocalBatchIterator(ri.ctx, rowSet.ArrowBatches, rowSet.StartRowOffset, ri.arrowSchemaBytes, &ri.cfg)
 	}
 }
@@ -238,8 +257,16 @@ func (ri *arrowRecordIterator) Schema() (*arrow.Schema, error) {
 		return ri.arrowSchema, nil
 	}
 
+	if len(ri.arrowSchemaBytes) == 0 && ri.loadSchema != nil {
+		schemaBytes, inferred, err := ri.loadSchema()
+		if err != nil {
+			return nil, err
+		}
+		ri.arrowSchemaBytes, ri.schemaInferred = schemaBytes, inferred
+	}
+
 	// Try to get schema bytes if not already available
-	if ri.arrowSchemaBytes == nil {
+	if len(ri.arrowSchemaBytes) == 0 {
 		if ri.HasNext() {
 			// A pending page-fetch error is reported here (once) rather than
 			// via getCurrentBatch, so a later Next() does not repeat it.
@@ -252,7 +279,7 @@ func (ri *arrowRecordIterator) Schema() (*arrow.Schema, error) {
 		}
 
 		// If still no schema bytes, we can't create a schema
-		if ri.arrowSchemaBytes == nil {
+		if len(ri.arrowSchemaBytes) == 0 {
 			return nil, fmt.Errorf("no schema available")
 		}
 	}

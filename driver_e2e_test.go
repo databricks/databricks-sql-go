@@ -20,8 +20,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/apache/arrow-go/v18/arrow"
+	"github.com/apache/arrow-go/v18/arrow/ipc"
 	"github.com/databricks/databricks-sql-go/v2/driverctx"
 	dbsqlerr "github.com/databricks/databricks-sql-go/v2/errors"
+	"github.com/databricks/databricks-sql-go/v2/internal/backend"
+	thriftbackend "github.com/databricks/databricks-sql-go/v2/internal/backend/thrift"
 	"github.com/databricks/databricks-sql-go/v2/internal/cli_service"
 	"github.com/databricks/databricks-sql-go/v2/internal/client"
 	"github.com/databricks/databricks-sql-go/v2/internal/config"
@@ -339,6 +343,158 @@ func TestWorkflowExample(t *testing.T) {
 			rowIdx++
 		}
 	}
+}
+
+type schemaMetadataClient struct {
+	cli_service.TCLIService
+	noDirectResults   bool
+	hadDirectResults  bool
+	hadDirectMetadata bool
+	metadataCalls     int
+	metadataLatency   time.Duration
+	metadataHasArrow  bool
+	fetchCalls        int
+	hadCloudFetch     bool
+}
+
+func (c *schemaMetadataClient) ExecuteStatement(ctx context.Context, request *cli_service.TExecuteStatementReq) (*cli_service.TExecuteStatementResp, error) {
+	if c.noDirectResults {
+		request.GetDirectResults = nil
+	}
+	response, err := c.TCLIService.ExecuteStatement(ctx, request)
+	c.hadDirectResults = response != nil && response.DirectResults != nil
+	c.hadDirectMetadata = c.hadDirectResults && response.DirectResults.ResultSetMetadata != nil
+	return response, err
+}
+
+func (c *schemaMetadataClient) GetResultSetMetadata(ctx context.Context, request *cli_service.TGetResultSetMetadataReq) (*cli_service.TGetResultSetMetadataResp, error) {
+	c.metadataCalls++
+	started := time.Now()
+	response, err := c.TCLIService.GetResultSetMetadata(ctx, request)
+	c.metadataLatency += time.Since(started)
+	c.metadataHasArrow = response != nil && len(response.ArrowSchema) > 0
+	return response, err
+}
+
+func (c *schemaMetadataClient) FetchResults(ctx context.Context, request *cli_service.TFetchResultsReq) (*cli_service.TFetchResultsResp, error) {
+	c.fetchCalls++
+	response, err := c.TCLIService.FetchResults(ctx, request)
+	c.hadCloudFetch = c.hadCloudFetch || (response != nil && response.Results != nil && len(response.Results.ResultLinks) > 0)
+	return response, err
+}
+
+func TestE2EArrowSchemaBeforeFetching(t *testing.T) {
+	host, httpPath, token := pecoTestingCreds(t)
+	type schemaCase struct {
+		accessor string
+		direct   bool
+		rows     int64
+	}
+	var cases []schemaCase
+	for _, accessor := range []string{"ipc", "batches"} {
+		for _, direct := range []bool{false, true} {
+			for _, count := range []int64{0, 1} {
+				cases = append(cases, schemaCase{accessor, direct, count})
+			}
+		}
+	}
+	cases = append(cases, schemaCase{"batches", false, 100000})
+	for _, scenario := range cases {
+		t.Run(fmt.Sprintf("%s/direct=%t/rows=%d", scenario.accessor, scenario.direct, scenario.rows), func(t *testing.T) {
+			cloudFetch := scenario.rows > 1
+			driverConnector, err := NewConnector(WithServerHostname(host), WithHTTPPath(httpPath), WithAccessToken(token), WithCloudFetch(cloudFetch))
+			require.NoError(t, err)
+			var capture *schemaMetadataClient
+			driverConnector.(*connector).thriftBackendFactory = func(ctx context.Context, cfg *config.Config, httpClient *http.Client) (backend.Backend, error) {
+				wireClient, err := client.InitThriftClient(cfg, httpClient)
+				if err != nil {
+					return nil, err
+				}
+				capture = &schemaMetadataClient{TCLIService: wireClient, noDirectResults: !scenario.direct}
+				return thriftbackend.NewForTest(capture, nil, cfg), nil
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			defer cancel()
+			connection, err := driverConnector.Connect(ctx)
+			require.NoError(t, err)
+			defer func() { require.NoError(t, connection.Close()) }()
+			query := fmt.Sprintf("SELECT CAST(9007199254740993 AS BIGINT) AS value, array(1, 2) AS items, TIMESTAMP'2024-01-01 12:34:56' AS ts, repeat(sha2(CAST(id AS STRING), 256), 4) AS pad FROM range(%d)", scenario.rows)
+			result, err := connection.(driver.QueryerContext).QueryContext(ctx, query, nil)
+			require.NoError(t, err)
+			defer func() { require.NoError(t, result.Close()) }()
+			wantCalls := 1
+			if capture.hadDirectMetadata {
+				wantCalls = 0
+			}
+			schema, count := readArrowE2EResult(t, result.(dbsqlrows.Rows), scenario.accessor, func() {
+				require.Equal(t, wantCalls, capture.metadataCalls)
+				require.Zero(t, capture.fetchCalls)
+			})
+			require.Equal(t, scenario.direct, capture.hadDirectResults)
+			require.Equal(t, wantCalls, capture.metadataCalls)
+			require.Equal(t, scenario.rows, count)
+			require.Equal(t, arrow.LIST, schema.Field(1).Type.ID())
+			require.Equal(t, cloudFetch, capture.hadCloudFetch)
+			t.Logf("direct=%t directMetadata=%t metadataCalls=%d", capture.hadDirectResults, capture.hadDirectMetadata, capture.metadataCalls)
+			if wantCalls > 0 {
+				require.True(t, capture.metadataHasArrow)
+				t.Logf("GetResultSetMetadata latency: %s", capture.metadataLatency)
+			}
+		})
+	}
+}
+
+func readArrowE2EResult(t *testing.T, result dbsqlrows.Rows, accessor string, ready func()) (*arrow.Schema, int64) {
+	t.Helper()
+	var schema *arrow.Schema
+	var count int64
+	checkRecord := func(record arrow.RecordBatch) {
+		require.True(t, schema.Equal(record.Schema()), "metadata=%s record=%s", schema, record.Schema())
+		count += record.NumRows()
+	}
+	if accessor == "ipc" {
+		iterator, err := result.GetArrowIPCStreams(context.Background())
+		require.NoError(t, err)
+		defer iterator.Close()
+		schemaBytes, err := iterator.SchemaBytes()
+		require.NoError(t, err)
+		reader, err := ipc.NewReader(bytes.NewReader(schemaBytes))
+		require.NoError(t, err)
+		schema = reader.Schema()
+		reader.Release()
+		ready()
+		for {
+			stream, err := iterator.Next()
+			if err == io.EOF {
+				break
+			}
+			require.NoError(t, err)
+			reader, err := ipc.NewReader(stream)
+			require.NoError(t, err)
+			for reader.Next() {
+				checkRecord(reader.RecordBatch())
+			}
+			require.NoError(t, reader.Err())
+			reader.Release()
+		}
+	} else {
+		iterator, err := result.GetArrowBatches(context.Background())
+		require.NoError(t, err)
+		defer iterator.Close()
+		schema, err = iterator.Schema()
+		require.NoError(t, err)
+		ready()
+		for {
+			record, err := iterator.Next()
+			if err == io.EOF {
+				break
+			}
+			require.NoError(t, err)
+			checkRecord(record)
+			record.Release()
+		}
+	}
+	return schema, count
 }
 
 func TestE2EArrowBatchesSurviveQueryContextCancellation(t *testing.T) {

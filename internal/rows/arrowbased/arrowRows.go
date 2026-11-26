@@ -529,6 +529,25 @@ func tColumnDescToArrowField(columnDesc *cli_service.TColumnDesc, arrowConfig *c
 	return arrowField, nil
 }
 
+// GetArrowSchemaBytes returns the server Arrow schema or converts the Thrift schema.
+func GetArrowSchemaBytes(ctx context.Context, metadata *cli_service.TGetResultSetMetadataResp, cfg config.ArrowConfig) ([]byte, error) {
+	if metadata.IsSetResultFormat() && metadata.GetResultFormat() != cli_service.TSparkRowSetType_ARROW_BASED_SET && metadata.GetResultFormat() != cli_service.TSparkRowSetType_URL_BASED_SET {
+		return nil, dbsqlerrint.NewDriverError(ctx, errArrowRowsNotArrowFormat, nil)
+	}
+	if len(metadata.ArrowSchema) > 0 {
+		return metadata.ArrowSchema, nil
+	}
+	arrowSchema, err := tTableSchemaToArrowSchema(metadata.Schema, &cfg)
+	if err != nil {
+		return nil, dbsqlerrint.NewDriverError(ctx, errArrowRowsConvertSchema, err).WithCategory(dbsqlerrint.CategoryArrowSchemaParsing)
+	}
+	schemaBytes, err := getArrowSchemaBytes(arrowSchema, ctx)
+	if err != nil {
+		return nil, dbsqlerrint.NewDriverError(ctx, errArrowRowsSerializeSchema, err).WithCategory(dbsqlerrint.CategoryArrowSchemaParsing)
+	}
+	return schemaBytes, nil
+}
+
 // Build a slice of columnInfo using the arrow schema and the thrift schema
 func getColumnInfo(arrowSchema *arrow.Schema, schema *cli_service.TTableSchema) []colInfo {
 	if arrowSchema == nil || schema == nil {

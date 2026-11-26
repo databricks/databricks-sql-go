@@ -24,6 +24,8 @@ type ArrowBatchIterator interface {
 	Close()
 
 	// Return the schema of the records.
+	// This may retrieve result metadata and return request or schema-conversion errors.
+	// Without server ArrowSchema, inferred schemas may differ from CloudFetch file schemas.
 	Schema() (*arrow.Schema, error)
 }
 
@@ -39,5 +41,7 @@ type ArrowIPCStreamIterator interface {
 	Close()
 
 	// Return the Arrow schema bytes for the streams.
+	// This may retrieve result metadata and return request or schema-conversion errors.
+	// Without server ArrowSchema, inferred schemas may differ from CloudFetch file schemas.
 	SchemaBytes() ([]byte, error)
 }
