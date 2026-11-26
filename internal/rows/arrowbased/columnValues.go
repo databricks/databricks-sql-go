@@ -1,7 +1,6 @@
 package arrowbased
 
 import (
-	"strings"
 	"time"
 
 	"github.com/apache/arrow-go/v18/arrow"
@@ -202,6 +201,7 @@ func (cv *columnValuesTyped[X, T]) SetValueArray(colData arrow.ArrayData) error 
 var _ columnValues = (*columnValuesTyped[*array.Int16, int16])(nil)
 
 type listValueContainer struct {
+	scratch       []byte
 	listArray     array.ListLike
 	values        columnValues
 	complexValue  bool
@@ -210,43 +210,59 @@ type listValueContainer struct {
 
 var _ columnValues = (*listValueContainer)(nil)
 
+type complexValueAppender interface {
+	appendValue([]byte, int) ([]byte, error)
+}
+
+// maxRetainedScratch bounds the render buffer a container keeps between values.
+const maxRetainedScratch = 64 << 10
+
+func renderComplexValue(container complexValueAppender, scratch *[]byte, row int) (any, error) {
+	value, err := container.appendValue((*scratch)[:0], row)
+	if err != nil {
+		return nil, err
+	}
+	if cap(value) <= maxRetainedScratch {
+		*scratch = value
+	}
+	return string(value), nil
+}
+
+func appendColumnValue(dst []byte, holder columnValues, complex bool, row int) ([]byte, error) {
+	if holder.IsNull(row) {
+		return append(dst, "null"...), nil
+	}
+	if complex {
+		return holder.(complexValueAppender).appendValue(dst, row)
+	}
+	value, err := holder.Value(row)
+	if err != nil {
+		return nil, err
+	}
+	return marshalScalar(dst, holder, row, value)
+}
+
 func (lvc *listValueContainer) Value(i int) (any, error) {
 	if i < lvc.listArray.Len() {
-		var scratch [64]byte
-		r := "["
-		s, e := lvc.listArray.ValueOffsets(i)
-		len := int(e - s)
-
-		for i := 0; i < len; i++ {
-			if lvc.values.IsNull(i + int(s)) {
-				r = r + "null"
-			} else {
-
-				val, err := lvc.values.Value(i + int(s))
-				if err != nil {
-					return nil, err
-				}
-
-				if !lvc.complexValue {
-					vb, err := marshalScalar(scratch[:0], lvc.values, i+int(s), val)
-					if err != nil {
-						return nil, err
-					}
-					r = r + string(vb)
-				} else {
-					r = r + val.(string)
-				}
-			}
-
-			if i < len-1 {
-				r = r + ","
-			}
-		}
-
-		r = r + "]"
-		return r, nil
+		return renderComplexValue(lvc, &lvc.scratch, i)
 	}
 	return nil, nil
+}
+
+func (lvc *listValueContainer) appendValue(dst []byte, row int) ([]byte, error) {
+	dst = append(dst, '[')
+	start, end := lvc.listArray.ValueOffsets(row)
+	for index := start; index < end; index++ {
+		if index > start {
+			dst = append(dst, ',')
+		}
+		var err error
+		dst, err = appendColumnValue(dst, lvc.values, lvc.complexValue, int(index))
+		if err != nil {
+			return nil, err
+		}
+	}
+	return append(dst, ']'), nil
 }
 
 func (lvc *listValueContainer) IsNull(i int) bool {
@@ -254,6 +270,7 @@ func (lvc *listValueContainer) IsNull(i int) bool {
 }
 
 func (lvc *listValueContainer) Release() {
+	lvc.scratch = nil
 	if lvc.listArray != nil {
 		lvc.listArray.Release()
 	}
@@ -264,6 +281,7 @@ func (lvc *listValueContainer) Release() {
 }
 
 func (lvc *listValueContainer) SetValueArray(colData arrow.ArrayData) error {
+	lvc.scratch = nil
 	lvc.listArray = array.NewListData(colData)
 	lvs := lvc.listArray.ListValues()
 	err := lvc.values.SetValueArray(lvs.Data())
@@ -272,9 +290,11 @@ func (lvc *listValueContainer) SetValueArray(colData arrow.ArrayData) error {
 }
 
 type mapValueContainer struct {
+	scratch      []byte
 	mapArray     *array.Map
 	keys         columnValues
 	values       columnValues
+	complexKey   bool
 	complexValue bool
 	mapArrayType *arrow.MapType
 }
@@ -283,55 +303,54 @@ var _ columnValues = (*mapValueContainer)(nil)
 
 func (mvc *mapValueContainer) Value(i int) (any, error) {
 	if i < mvc.mapArray.Len() {
-		s, e := mvc.mapArray.ValueOffsets(i)
-		len := e - s
-		var keyScratch, scratch [64]byte
-		r := "{"
-		for i := int64(0); i < len; i++ {
-			k, err := mvc.keys.Value(int(i + s))
-			if err != nil {
-				return nil, err
-			}
-
-			key, err := marshalScalar(keyScratch[:0], mvc.keys, int(i+s), k)
-			if err != nil {
-				return nil, err
-			}
-
-			v, err := mvc.values.Value(int(i + s))
-			if err != nil {
-				return nil, err
-			}
-
-			var b string
-			if mvc.values.IsNull(int(i + s)) {
-				b = "null"
-			} else if mvc.complexValue {
-				b = v.(string)
-			} else {
-				vb, err := marshalScalar(scratch[:0], mvc.values, int(i+s), v)
-				if err != nil {
-					return nil, err
-				}
-				b = string(vb)
-			}
-
-			if !strings.HasPrefix(string(key), "\"") {
-				r = r + "\"" + string(key) + "\":"
-			} else {
-				r = r + string(key) + ":"
-			}
-
-			r = r + b
-			if i < len-1 {
-				r = r + ","
-			}
-		}
-		r = r + "}"
-
-		return r, nil
+		return renderComplexValue(mvc, &mvc.scratch, i)
 	}
 	return nil, nil
+}
+
+func (mvc *mapValueContainer) appendValue(dst []byte, row int) ([]byte, error) {
+	dst = append(dst, '{')
+	start, end := mvc.mapArray.ValueOffsets(row)
+	var keyScratch [64]byte
+	for index := start; index < end; index++ {
+		if index > start {
+			dst = append(dst, ',')
+		}
+		var err error
+		if mvc.complexKey {
+			// Render the key in place, then quote it as marshalScalar quotes a string.
+			mark := len(dst)
+			if dst, err = mvc.keys.(complexValueAppender).appendValue(dst, int(index)); err != nil {
+				return nil, err
+			}
+			if dst, err = jsonfmt.Append(dst[:mark], string(dst[mark:])); err != nil {
+				return nil, err
+			}
+		} else {
+			var value any
+			if value, err = mvc.keys.Value(int(index)); err != nil {
+				return nil, err
+			}
+			var key []byte
+			if key, err = marshalScalar(keyScratch[:0], mvc.keys, int(index), value); err != nil {
+				return nil, err
+			}
+			quoted := len(key) > 0 && key[0] == '"'
+			if !quoted {
+				dst = append(dst, '"')
+			}
+			dst = append(dst, key...)
+			if !quoted {
+				dst = append(dst, '"')
+			}
+		}
+		dst = append(dst, ':')
+		dst, err = appendColumnValue(dst, mvc.values, mvc.complexValue, int(index))
+		if err != nil {
+			return nil, err
+		}
+	}
+	return append(dst, '}'), nil
 }
 
 func (mvc *mapValueContainer) IsNull(i int) bool {
@@ -339,6 +358,7 @@ func (mvc *mapValueContainer) IsNull(i int) bool {
 }
 
 func (mvc *mapValueContainer) Release() {
+	mvc.scratch = nil
 	if mvc.mapArray != nil {
 		mvc.mapArray.Release()
 	}
@@ -353,6 +373,8 @@ func (mvc *mapValueContainer) Release() {
 }
 
 func (mvc *mapValueContainer) SetValueArray(colData arrow.ArrayData) error {
+	mvc.scratch = nil
+	_, mvc.complexKey = mvc.keys.(complexValueAppender)
 	mvc.mapArray = array.NewMapData(colData)
 	err := mvc.values.SetValueArray(mvc.mapArray.Items().Data())
 	if err != nil {
@@ -364,6 +386,7 @@ func (mvc *mapValueContainer) SetValueArray(colData arrow.ArrayData) error {
 }
 
 type structValueContainer struct {
+	scratch         []byte
 	structArray     *array.Struct
 	fieldKeys       []string // precomputed JSON-escaped `"name":` prefixes, one per field
 	complexValue    []bool
@@ -378,46 +401,25 @@ var _ columnValues = (*structValueContainer)(nil)
 // byte-identically — internal/rows/arrowbased/arrowscan_parity_test.go guards it.
 func (svc *structValueContainer) Value(i int) (any, error) {
 	if i < svc.structArray.Len() {
-		var scratch [64]byte
-		r := "{"
-		for j := range svc.fieldValues {
-			// fieldKeys[j] is the precomputed JSON-escaped `"name":` prefix (built
-			// once at construction). Escaping matters — a raw `"` + name + `"` concat
-			// produces invalid JSON for a name with a quote/backslash/control char
-			// (`a"b` → `{"a"b":...}`) — but doing it per row would re-marshal the same
-			// constant strings N_rows × N_fields times on this hot path.
-			r = r + svc.fieldKeys[j]
-
-			if svc.fieldValues[j].IsNull(int(i)) {
-				r = r + "null"
-			} else {
-				v, err := svc.fieldValues[j].Value(int(i))
-				if err != nil {
-					return nil, err
-				}
-
-				var b string
-				if svc.complexValue[j] {
-					b = v.(string)
-				} else {
-					vb, err := marshalScalar(scratch[:0], svc.fieldValues[j], int(i), v)
-					if err != nil {
-						return nil, err
-					}
-					b = string(vb)
-				}
-
-				r = r + b
-			}
-			if j < len(svc.fieldValues)-1 {
-				r = r + ","
-			}
-		}
-		r = r + "}"
-
-		return r, nil
+		return renderComplexValue(svc, &svc.scratch, i)
 	}
 	return nil, nil
+}
+
+func (svc *structValueContainer) appendValue(dst []byte, row int) ([]byte, error) {
+	dst = append(dst, '{')
+	for index, holder := range svc.fieldValues {
+		if index > 0 {
+			dst = append(dst, ',')
+		}
+		dst = append(dst, svc.fieldKeys[index]...)
+		var err error
+		dst, err = appendColumnValue(dst, holder, svc.complexValue[index], row)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return append(dst, '}'), nil
 }
 
 func (svc *structValueContainer) IsNull(i int) bool {
@@ -425,6 +427,7 @@ func (svc *structValueContainer) IsNull(i int) bool {
 }
 
 func (svc *structValueContainer) Release() {
+	svc.scratch = nil
 	if svc.structArray != nil {
 		svc.structArray.Release()
 	}
@@ -437,6 +440,7 @@ func (svc *structValueContainer) Release() {
 }
 
 func (svc *structValueContainer) SetValueArray(colData arrow.ArrayData) error {
+	svc.scratch = nil
 	svc.structArray = array.NewStructData(colData)
 	for i := range svc.fieldValues {
 		err := svc.fieldValues[i].SetValueArray(svc.structArray.Field(i).Data())
