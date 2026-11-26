@@ -85,7 +85,7 @@ func TestCloudFetchClientTimeout(t *testing.T) {
 			require.NoError(t, json.Unmarshal(fixture, &execute))
 			direct := execute.DirectResults
 			direct.ResultSet.Results.ArrowBatches = nil
-			expiry := time.Now().Add(time.Hour).Unix()
+			expiry := time.Now().Add(time.Hour).UnixMilli()
 			direct.ResultSet.Results.ResultLinks = []*cli_service.TSparkArrowResultLink{
 				{FileLink: server.URL + "/file?sig=SECRET_SIGNATURE", ExpiryTime: expiry, RowCount: 1},
 				{FileLink: server.URL + "/file?sig=SECRET_SIGNATURE", ExpiryTime: expiry, RowCount: 1, StartRowOffset: 1},

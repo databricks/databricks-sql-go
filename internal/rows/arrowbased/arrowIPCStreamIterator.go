@@ -130,6 +130,9 @@ func (ri *arrowIPCStreamIterator) Close() {
 		ri.ipcStreamIterator.Close()
 		ri.ipcStreamIterator = nil
 	}
+	if !ri.isFinished && ri.resultPageIterator != nil {
+		ri.resultPageIterator.Close() //nolint:errcheck,gosec // G104: close in cleanup
+	}
 	ri.isFinished = true
 }
 

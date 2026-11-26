@@ -41,7 +41,7 @@ func TestSQLRowsDirectResultsPreserveCloseSemantics(t *testing.T) {
 	page := func(offset int64) *cli_service.TRowSet {
 		return &cli_service.TRowSet{StartRowOffset: offset, ResultLinks: []*cli_service.TSparkArrowResultLink{{
 			FileLink: server.URL, StartRowOffset: offset, RowCount: 2,
-			ExpiryTime: time.Now().Add(time.Hour).Unix(),
+			ExpiryTime: time.Now().Add(time.Hour).UnixMilli(),
 		}}}
 	}
 	metadata := &cli_service.TGetResultSetMetadataResp{

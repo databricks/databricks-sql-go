@@ -19,7 +19,7 @@ func BenchmarkCloudFetchDownload(b *testing.B) {
 		_, _ = w.Write(payload)
 	}))
 	defer server.Close()
-	links := []*cli_service.TSparkArrowResultLink{{FileLink: server.URL, ExpiryTime: time.Now().Add(time.Hour).Unix(), RowCount: 1}}
+	links := []*cli_service.TSparkArrowResultLink{{FileLink: server.URL, ExpiryTime: time.Now().Add(time.Hour).UnixMilli(), RowCount: 1}}
 	for _, transport := range []string{"default", "WithTransport"} {
 		b.Run(transport, func(b *testing.B) {
 			var options []ConnOption

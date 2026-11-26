@@ -51,7 +51,7 @@ func TestCloudFetchDefaultClientTransportHonored(t *testing.T) {
 	cfg.UseLz4Compression = false
 	cfg.RetryMax = 0
 	iterator, driverErr := NewCloudBatchIterator(context.Background(), []*cli_service.TSparkArrowResultLink{{
-		FileLink: server.URL + "/redirect", ExpiryTime: time.Now().Add(time.Hour).Unix(), RowCount: 6,
+		FileLink: server.URL + "/redirect", ExpiryTime: time.Now().Add(time.Hour).UnixMilli(), RowCount: 6,
 	}}, 0, nil, cfg, nil)
 	require.NoError(t, driverErr)
 	defer iterator.Close()
@@ -99,7 +99,7 @@ func TestCloudFetchDownloadErrorsRedactQuery(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	iterator, err := NewCloudIPCStreamIterator(ctx, []*cli_service.TSparkArrowResultLink{{
-		FileLink: server.URL + "/file?sig=SECRET_SIGNATURE", ExpiryTime: time.Now().Add(time.Hour).Unix(), RowCount: 1,
+		FileLink: server.URL + "/file?sig=SECRET_SIGNATURE", ExpiryTime: time.Now().Add(time.Hour).UnixMilli(), RowCount: 1,
 	}}, 0, cfg, nil)
 	require.NoError(t, err)
 	defer iterator.Close()
@@ -121,7 +121,7 @@ func TestCloudFetchDownloadErrorsPreserveCause(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	iterator, err := NewCloudIPCStreamIterator(ctx, []*cli_service.TSparkArrowResultLink{{
-		FileLink: server.URL + "/file?sig=SECRET_SIGNATURE", ExpiryTime: time.Now().Add(time.Hour).Unix(), RowCount: 1,
+		FileLink: server.URL + "/file?sig=SECRET_SIGNATURE", ExpiryTime: time.Now().Add(time.Hour).UnixMilli(), RowCount: 1,
 	}}, 0, cfg, nil)
 	require.NoError(t, err)
 	defer iterator.Close()
@@ -156,7 +156,7 @@ func TestCloudFetchDownloadErrorsRedactLocation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	iterator, err := NewCloudIPCStreamIterator(ctx, []*cli_service.TSparkArrowResultLink{{
-		FileLink: server.URL + "/file?sig=SECRET_SIGNATURE", ExpiryTime: time.Now().Add(time.Hour).Unix(), RowCount: 1,
+		FileLink: server.URL + "/file?sig=SECRET_SIGNATURE", ExpiryTime: time.Now().Add(time.Hour).UnixMilli(), RowCount: 1,
 	}}, 0, cfg, nil)
 	require.NoError(t, err)
 	defer iterator.Close()
@@ -196,7 +196,7 @@ func TestCloudFetchClientTimeoutRetries(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			defer cancel()
 			iterator, err := NewCloudBatchIterator(ctx, []*cli_service.TSparkArrowResultLink{{
-				FileLink: server.URL, ExpiryTime: time.Now().Add(time.Hour).Unix(), RowCount: 6,
+				FileLink: server.URL, ExpiryTime: time.Now().Add(time.Hour).UnixMilli(), RowCount: 6,
 			}}, 0, nil, cfg, nil)
 			require.NoError(t, err)
 			defer iterator.Close()
