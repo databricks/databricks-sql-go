@@ -131,6 +131,19 @@ func TestWithClientQueryTimeout(t *testing.T) {
 	})
 }
 
+func TestWithReportUnknownRowsAffected(t *testing.T) {
+	for _, report := range []bool{false, true} {
+		cfg := config.WithDefaults()
+		require.False(t, cfg.ReportUnknownRowsAffected)
+		WithReportUnknownRowsAffected(report)(cfg)
+		require.Equal(t, report, cfg.ReportUnknownRowsAffected)
+		require.False(t, cfg.UseKernel)
+		require.Equal(t, report, cfg.DeepCopy().ReportUnknownRowsAffected)
+		WithReportUnknownRowsAffected(!report)(cfg)
+		require.Equal(t, !report, cfg.ReportUnknownRowsAffected)
+	}
+}
+
 func TestNewConnector(t *testing.T) {
 	t.Run("Connector initialized with functional options should have all options set", func(t *testing.T) {
 		host := "databricks-host"

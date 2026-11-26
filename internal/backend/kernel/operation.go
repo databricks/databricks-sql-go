@@ -235,8 +235,7 @@ func (k *KernelBackend) execute(ctx context.Context, req backend.ExecRequest) (b
 	// Capture the modified-row count and server query id now, while exec is live —
 	// the operation is closed (nulling exec) before these are read on the
 	// ExecContext path, and the query-id pointer is only valid while exec lives.
-	// normalizeAffectedRows folds the C ABI's -1 sentinel to 0 for Thrift parity.
-	op.affectedRows = normalizeAffectedRows(int64(C.kernel_executed_statement_num_modified_rows(exec)))
+	op.affectedRows = int64(C.kernel_executed_statement_num_modified_rows(exec))
 	// A nil execErr means the statement reached a terminal state server-side (it
 	// committed). We deliberately do NOT re-check ctx.Err() here to convert a
 	// completed statement into a cancellation: for a non-idempotent DML that would
@@ -332,9 +331,7 @@ type kernelOp struct {
 	stmt    *C.kernel_statement_t
 	exec    *C.kernel_executed_statement_t
 	closed  bool
-	// affectedRows is the modified-row count captured at execute time. It is
-	// cached (not read live from exec) because the caller closes the operation —
-	// which nulls exec — before reading AffectedRows (see conn.ExecContext).
+	// affectedRows caches the raw C ABI count (-1 when unknown) before close nulls exec.
 	affectedRows int64
 	// statementID is the server query id, captured at execute time. Cached (not
 	// read live) because kernel_executed_statement_query_id returns a pointer
@@ -350,6 +347,7 @@ type kernelOp struct {
 }
 
 var _ backend.Operation = (*kernelOp)(nil)
+var _ backend.AffectedRowsReporter = (*kernelOp)(nil)
 
 // StatementID returns the server query id — captured at execute time on success,
 // or from the KernelError on an execute failure (empty only when the server
@@ -361,7 +359,11 @@ func (o *kernelOp) StatementID() string { return o.statementID }
 // cached at execute time, so it is correct even after the operation is closed
 // (the ExecContext path closes the op before reading this).
 func (o *kernelOp) AffectedRows() int64 {
-	return o.affectedRows
+	return normalizeAffectedRows(o.affectedRows)
+}
+
+func (o *kernelOp) AffectedRowsKnown() bool {
+	return o.affectedRows >= 0
 }
 
 // Results builds the driver.Rows over the executed statement's result stream.

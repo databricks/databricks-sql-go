@@ -284,12 +284,13 @@ type UserConfig struct {
 	// Telemetry configuration
 	// Uses config overlay pattern: client > server > default.
 	// Unset = check server feature flag; explicitly true/false overrides the server.
-	EnableTelemetry          ConfigValue[bool]
-	TelemetryBatchSize       int           // 0 = use default (200)
-	TelemetryFlushInterval   time.Duration // 0 = use default (30s)
-	Transport                http.RoundTripper
-	UseLz4Compression        bool
-	EnableMetricViewMetadata bool
+	EnableTelemetry           ConfigValue[bool]
+	TelemetryBatchSize        int           // 0 = use default (200)
+	TelemetryFlushInterval    time.Duration // 0 = use default (30s)
+	Transport                 http.RoundTripper
+	UseLz4Compression         bool
+	EnableMetricViewMetadata  bool
+	ReportUnknownRowsAffected bool
 	// UseArrowNativeDecimalDSN is a DSN-only carrier for the useArrowNativeDecimal
 	// parameter. The authoritative setting lives on ArrowConfig; ParseDSN records
 	// the DSN value here (because it can only return a UserConfig) and the
@@ -339,33 +340,34 @@ func (ucfg UserConfig) DeepCopy() UserConfig {
 	}
 
 	result := UserConfig{
-		Protocol:                 ucfg.Protocol,
-		Host:                     ucfg.Host,
-		Port:                     ucfg.Port,
-		HTTPPath:                 ucfg.HTTPPath,
-		Catalog:                  ucfg.Catalog,
-		Schema:                   ucfg.Schema,
-		Authenticator:            ucfg.Authenticator,
-		AccessToken:              ucfg.AccessToken,
-		MaxRows:                  ucfg.MaxRows,
-		QueryTimeout:             ucfg.QueryTimeout,
-		UserAgentEntry:           ucfg.UserAgentEntry,
-		Location:                 loccp,
-		SessionParams:            sessionParams,
-		RetryWaitMin:             ucfg.RetryWaitMin,
-		RetryWaitMax:             ucfg.RetryWaitMax,
-		RetryMax:                 ucfg.RetryMax,
-		Transport:                ucfg.Transport,
-		UseLz4Compression:        ucfg.UseLz4Compression,
-		EnableMetricViewMetadata: ucfg.EnableMetricViewMetadata,
-		UseArrowNativeDecimalDSN: ucfg.UseArrowNativeDecimalDSN,
-		CloudFetchConfig:         ucfg.CloudFetchConfig,
-		EnableTelemetry:          ucfg.EnableTelemetry,
-		TelemetryBatchSize:       ucfg.TelemetryBatchSize,
-		TelemetryFlushInterval:   ucfg.TelemetryFlushInterval,
-		UseKernel:                ucfg.UseKernel,
-		WarehouseID:              ucfg.WarehouseID,
-		TokenCacheEnabledDSN:     ucfg.TokenCacheEnabledDSN,
+		Protocol:                  ucfg.Protocol,
+		Host:                      ucfg.Host,
+		Port:                      ucfg.Port,
+		HTTPPath:                  ucfg.HTTPPath,
+		Catalog:                   ucfg.Catalog,
+		Schema:                    ucfg.Schema,
+		Authenticator:             ucfg.Authenticator,
+		AccessToken:               ucfg.AccessToken,
+		MaxRows:                   ucfg.MaxRows,
+		QueryTimeout:              ucfg.QueryTimeout,
+		UserAgentEntry:            ucfg.UserAgentEntry,
+		Location:                  loccp,
+		SessionParams:             sessionParams,
+		RetryWaitMin:              ucfg.RetryWaitMin,
+		RetryWaitMax:              ucfg.RetryWaitMax,
+		RetryMax:                  ucfg.RetryMax,
+		Transport:                 ucfg.Transport,
+		UseLz4Compression:         ucfg.UseLz4Compression,
+		EnableMetricViewMetadata:  ucfg.EnableMetricViewMetadata,
+		ReportUnknownRowsAffected: ucfg.ReportUnknownRowsAffected,
+		UseArrowNativeDecimalDSN:  ucfg.UseArrowNativeDecimalDSN,
+		CloudFetchConfig:          ucfg.CloudFetchConfig,
+		EnableTelemetry:           ucfg.EnableTelemetry,
+		TelemetryBatchSize:        ucfg.TelemetryBatchSize,
+		TelemetryFlushInterval:    ucfg.TelemetryFlushInterval,
+		UseKernel:                 ucfg.UseKernel,
+		WarehouseID:               ucfg.WarehouseID,
+		TokenCacheEnabledDSN:      ucfg.TokenCacheEnabledDSN,
 	}
 	if ucfg.EnableGeoSpatialSupportDSN != nil {
 		enabled := *ucfg.EnableGeoSpatialSupportDSN
@@ -523,6 +525,13 @@ func ParseDSN(dsn string) (UserConfig, error) {
 			return UserConfig{}, err
 		}
 		ucfg.EnableMetricViewMetadata = enableMetricViewMetadata
+	}
+
+	if reportUnknownRowsAffected, ok, err := params.extractAsBool("reportUnknownRowsAffected"); ok {
+		if err != nil {
+			return UserConfig{}, err
+		}
+		ucfg.ReportUnknownRowsAffected = reportUnknownRowsAffected
 	}
 
 	// Arrow parameters

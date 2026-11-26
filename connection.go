@@ -244,9 +244,7 @@ func (c *conn) ExecContext(ctx context.Context, query string, args []driver.Name
 		return nil, op.ExecutionError(ctx, stagingErr)
 	}
 
-	res := result{AffectedRows: op.AffectedRows()}
-
-	return &res, nil
+	return newResult(op, c.cfg.ReportUnknownRowsAffected), nil
 }
 
 // chunkTimingAccumulator aggregates per-chunk fetch latencies for telemetry.

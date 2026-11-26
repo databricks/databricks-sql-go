@@ -559,6 +559,13 @@ func WithMaxDownloadThreads(numThreads int) ConnOption {
 	}
 }
 
+// WithReportUnknownRowsAffected opts into (0, [dbsqlerr.ErrRowsAffectedUnknown]) for absent counts on either backend; default false. Reported counts and LastInsertId are unchanged.
+func WithReportUnknownRowsAffected(report bool) ConnOption {
+	return func(c *config.Config) {
+		c.ReportUnknownRowsAffected = report
+	}
+}
+
 // WithEnableMetricViewMetadata enables metric view metadata support. Default is false.
 // When enabled, adds spark.sql.thriftserver.metadata.metricview.enabled=true to session configuration.
 func WithEnableMetricViewMetadata(enable bool) ConnOption {

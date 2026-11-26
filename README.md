@@ -270,6 +270,7 @@ session parameter on both backends.
 | *(via session param)* | `WithQueryTags` | Both | | Session-level query tags (serialized into `QUERY_TAGS`). |
 | `timezone` | `WithSessionParams(timezone=…)` | Both | | Session time zone (e.g. `America/Los_Angeles`). |
 | `enableMetricViewMetadata` | `WithEnableMetricViewMetadata` | Both | `false` | Enables metric-view metadata (`spark.sql.thriftserver.metadata.metricview.enabled=true`). |
+| `reportUnknownRowsAffected` | `WithReportUnknownRowsAffected` | Both | `false` | `RowsAffected()` returns `(0, errors.ErrRowsAffectedUnknown)` when no count is reported; reported counts (including 0) and `LastInsertId()` are unchanged. |
 
 ### Retry / backoff
 

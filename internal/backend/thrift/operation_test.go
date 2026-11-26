@@ -148,8 +148,7 @@ func TestOperationStatementID(t *testing.T) {
 // the value is read from opStatusResp.NumModifiedRows via the Thrift getter,
 // which returns 0 when the field is unset. AffectedRows is defined only on
 // the success path (per backend.Operation), where runQuery has guaranteed a
-// non-nil opStatusResp, so a nil-opStatusResp input is out of contract and
-// not tested.
+// non-nil opStatusResp. TestOperationAffectedRowsKnown also covers nil status.
 func TestOperationAffectedRows(t *testing.T) {
 	be := NewForTest(&client.TestClient{}, getTestSession(), config.WithDefaults())
 
@@ -169,6 +168,32 @@ func TestOperationAffectedRows(t *testing.T) {
 		)
 		assert.Equal(t, int64(0), op.AffectedRows())
 	})
+}
+
+func TestOperationAffectedRowsKnown(t *testing.T) {
+	be := NewForTest(&client.TestClient{}, getTestSession(), config.WithDefaults())
+	zero, count := int64(0), int64(42)
+	for _, test := range []struct {
+		name   string
+		status *cli_service.TGetOperationStatusResp
+		known  bool
+		count  int64
+	}{
+		{"nil status", nil, false, 0},
+		{"unset count", &cli_service.TGetOperationStatusResp{}, false, 0},
+		{"reported zero", &cli_service.TGetOperationStatusResp{NumModifiedRows: &zero}, true, 0},
+		{"reported count", &cli_service.TGetOperationStatusResp{NumModifiedRows: &count}, true, 42},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			op := be.OperationForTest(nil, test.status)
+			reporter, ok := any(op).(interface{ AffectedRowsKnown() bool })
+			if !ok {
+				t.Fatal("operation discards whether the server reported a count")
+			}
+			assert.Equal(t, test.known, reporter.AffectedRowsKnown())
+			assert.Equal(t, test.count, op.AffectedRows())
+		})
+	}
 }
 
 // TestOperationClose_Idempotency pins the interface contract: a second Close

@@ -36,6 +36,7 @@ type thriftOperation struct {
 
 var _ backend.Operation = (*thriftOperation)(nil)
 var _ backend.ResultFormatReporter = (*thriftOperation)(nil)
+var _ backend.AffectedRowsReporter = (*thriftOperation)(nil)
 
 // hasHandle reports whether the server returned an operation handle. Every
 // accessor tolerates its absence so the non-nil-Operation contract holds even on
@@ -60,7 +61,14 @@ func (o *thriftOperation) StatementID() string {
 // AffectedRows is the modified-row count for ExecContext, from the terminal
 // status response.
 func (o *thriftOperation) AffectedRows() int64 {
+	if o.opStatusResp == nil {
+		return 0
+	}
 	return o.opStatusResp.GetNumModifiedRows()
+}
+
+func (o *thriftOperation) AffectedRowsKnown() bool {
+	return o.opStatusResp != nil && o.opStatusResp.NumModifiedRows != nil
 }
 
 // Results builds the driver.Rows for the operation's result set by delegating to

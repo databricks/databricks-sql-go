@@ -37,6 +37,119 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestExecContextReportUnknownRowsAffected(t *testing.T) {
+	zero, count := int64(0), int64(5)
+	for _, report := range []bool{false, true} {
+		for _, direct := range []bool{false, true} {
+			for _, modified := range []*int64{nil, &zero, &count} {
+				name := "unset"
+				if modified != nil {
+					name = strconv.FormatInt(*modified, 10)
+				}
+				t.Run(fmt.Sprintf("report=%t/direct=%t/count=%s", report, direct, name), func(t *testing.T) {
+					state := &callState{}
+					loadTestData(t, "OpenSessionSuccess.json", &state.openSessionResp)
+					loadTestData(t, "CloseSessionSuccess.json", &state.closeSessionResp)
+					loadTestData(t, "CloseOperationSuccess.json", &state.closeOperationResp)
+					loadTestData(t, "GetResultSetMetadataNotStaging.json", &state.getResultSetMetadataResp)
+					loadTestData(t, "ExecuteStatement1.json", &state.executeStatementResp)
+					loadTestData(t, "GetOperationStatusFinished.json", &state.getOperationStatusResp)
+					state.getOperationStatusResp.NumModifiedRows = modified
+					if direct {
+						state.executeStatementResp.DirectResults.OperationStatus = &state.getOperationStatusResp
+					} else {
+						state.executeStatementResp.DirectResults = nil
+					}
+					server := getServer(state)
+					t.Cleanup(server.Close)
+					address, err := url.Parse(server.URL)
+					require.NoError(t, err)
+					port, err := strconv.Atoi(address.Port())
+					require.NoError(t, err)
+					connector, err := NewConnector(WithServerHostname("localhost"), WithPort(port), WithHTTPPath(""), WithAccessToken(""), WithReportUnknownRowsAffected(report), func(cfg *config.Config) {
+						cfg.EnableTelemetry = config.NewConfigValue(false)
+					})
+					require.NoError(t, err)
+					db := sql.OpenDB(connector)
+					t.Cleanup(func() { require.NoError(t, db.Close()) })
+					res, err := db.ExecContext(context.Background(), "SELECT 1")
+					require.NoError(t, err)
+					got, err := res.RowsAffected()
+					if modified == nil {
+						require.Zero(t, got)
+					} else {
+						require.Equal(t, *modified, got)
+					}
+					if report && modified == nil {
+						require.ErrorIs(t, err, dbsqlerr.ErrRowsAffectedUnknown)
+					} else {
+						require.NoError(t, err)
+					}
+					require.Equal(t, 1, state.executeStatementCalls)
+				})
+			}
+		}
+	}
+}
+
+func TestE2EReportUnknownRowsAffected(t *testing.T) {
+	host, httpPath, token := pecoTestingCreds(t)
+	for _, report := range []bool{false, true} {
+		t.Run(fmt.Sprintf("report=%t", report), func(t *testing.T) {
+			connector, err := NewConnector(WithServerHostname(host), WithHTTPPath(httpPath), WithAccessToken(token), WithReportUnknownRowsAffected(report), WithInitialNamespace("peco", "default"))
+			require.NoError(t, err)
+			db := sql.OpenDB(connector)
+			t.Cleanup(func() { require.NoError(t, db.Close()) })
+			testRowsAffectedMatrix(t, db, report)
+		})
+	}
+}
+
+func testRowsAffectedMatrix(t *testing.T, db *sql.DB, report bool) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	table := fmt.Sprintf("issue588_go588_%d", time.Now().UnixNano())
+	view := table + "_view"
+	for _, query := range []string{"DROP TABLE IF EXISTS " + table, "DROP VIEW IF EXISTS " + view} {
+		t.Cleanup(func() {
+			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cleanupCancel()
+			_, err := db.ExecContext(cleanupCtx, query)
+			require.NoError(t, err)
+		})
+	}
+	for _, test := range []struct {
+		name, query string
+		want        int64
+		unknown     bool
+	}{
+		{"create_table", "CREATE TABLE " + table + " (id BIGINT) USING DELTA", 0, true},
+		{"create_view", "CREATE VIEW " + view + " AS SELECT 1 AS id", 0, true},
+		{"drop_view", "DROP VIEW " + view, 0, true},
+		{"set", "SET TIME ZONE 'UTC'", 0, true},
+		{"select", "SELECT 1", 0, true},
+		{"update_zero", "UPDATE " + table + " SET id = 2 WHERE id = 999", 0, false},
+		{"insert_three", "INSERT INTO " + table + " VALUES (1), (2), (3)", 3, false},
+		{"merge", "MERGE INTO " + table + " t USING (SELECT 4 AS id) s ON t.id = s.id WHEN NOT MATCHED THEN INSERT (id) VALUES (s.id)", 1, false},
+		{"merge_zero", "MERGE INTO " + table + " t USING (SELECT 999 AS id) s ON t.id = s.id WHEN MATCHED THEN UPDATE SET id = s.id", 0, false},
+	} {
+		res, err := db.ExecContext(ctx, test.query)
+		require.NoError(t, err, test.name)
+		count, err := res.RowsAffected()
+		t.Logf("%s report=%t: (%d, %v)", test.name, report, count, err)
+		require.Equal(t, test.want, count, test.name)
+		if report && test.unknown {
+			require.ErrorIs(t, err, dbsqlerr.ErrRowsAffectedUnknown, test.name)
+		} else {
+			require.NoError(t, err, test.name)
+		}
+		insertID, err := res.LastInsertId()
+		require.NoError(t, err)
+		require.Zero(t, insertID)
+	}
+}
+
 func TestE2EDecimalMetadata(t *testing.T) {
 	host, httpPath, token := pecoTestingCreds(t)
 	for _, native := range []bool{false, true} {
