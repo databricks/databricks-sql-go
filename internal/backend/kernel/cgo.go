@@ -38,7 +38,9 @@ import "C"
 import (
 	"context"
 	"fmt"
+	"os"
 	"runtime"
+	"syscall"
 	"unsafe"
 
 	"github.com/databricks/databricks-sql-go/v2/driverctx"
@@ -178,6 +180,11 @@ func lastError(code C.KernelStatusCode) *KernelError {
 	if e.query_id != nil {
 		ke.QueryID = C.GoString(e.query_id)
 	}
+	ke.ErrorCode = C.GoString(C.kernel_get_last_error_code())
+	if code := C.kernel_get_last_error_local_os_error(); code != 0 {
+		// The C ABI reports a path and errno without a syscall name.
+		ke.cause = &os.PathError{Op: "file", Path: C.GoString(C.kernel_get_last_error_local_path()), Err: syscall.Errno(code)}
+	}
 	klog("kernel error: code=%d sqlstate=%q vendor=%d http=%d retryable=%v msg=%q",
 		ke.Code, ke.SQLState, ke.VendorCode, ke.HTTPStatus, ke.Retryable, ke.Message)
 	// Also emit through the driver's logger — no SQL text or PII, just the
@@ -188,7 +195,7 @@ func lastError(code C.KernelStatusCode) *KernelError {
 	// User/query faults (bad SQL, bad argument) are routine and log at Debug so they
 	// don't inflate the WARN rate on-call alerts key on; infra codes stay at Warn.
 	msg := "databricks: kernel call failed: code=%d sqlstate=%q vendor=%d http=%d retryable=%v queryId=%q"
-	if isUserFault(ke.Code) {
+	if isUserFault(ke.Code, ke.ErrorCode) {
 		logger.Logger.Debug().Msgf(msg, ke.Code, ke.SQLState, ke.VendorCode, ke.HTTPStatus, ke.Retryable, ke.QueryID)
 	} else {
 		logger.Logger.Warn().Msgf(msg, ke.Code, ke.SQLState, ke.VendorCode, ke.HTTPStatus, ke.Retryable, ke.QueryID)

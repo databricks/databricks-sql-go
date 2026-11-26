@@ -50,7 +50,11 @@ type KernelError struct {
 	HTTPStatus uint16
 	Retryable  bool
 	QueryID    string
+	ErrorCode  string
+	cause      error
 }
+
+func (e *KernelError) Unwrap() error { return e.cause }
 
 func (e *KernelError) Error() string {
 	// Append the server query id when present — it is the one correlation handle
@@ -134,6 +138,9 @@ func isBadConnection(code int) bool {
 // invalid session handles are fatal; other missing resources or invalid
 // arguments leave the session usable.
 func isSessionFatal(ke *KernelError) bool {
+	if ke.ErrorCode == "VOLUME_STORAGE_HTTP_ERROR" || ke.ErrorCode == "VOLUME_STORAGE_NETWORK_ERROR" {
+		return false
+	}
 	switch ke.Code {
 	case statusUnauthenticated, statusUnavailable, statusNetworkError:
 		return true
@@ -146,20 +153,19 @@ func isSessionFatal(ke *KernelError) bool {
 	}
 }
 
-// isUserFault reports whether a status code is a user/query fault (a bad SQL
-// statement or a bad argument) rather than an infrastructure problem. Used to
+// isUserFault reports whether a kernel error is a user fault (bad SQL, a bad
+// argument or a local file error) rather than an infrastructure problem. Used to
 // pick the log level for a kernel-call failure: user faults are routine — a
 // fat-fingered query should not raise the driver's WARN rate and page on-call —
 // so they log at Debug, while infra codes (Unavailable / NetworkError / Timeout /
 // Unauthenticated) stay at Warn. Mirrors the Thrift path, which keeps user SQL
 // errors out of operational-noise logging.
-func isUserFault(code int) bool {
+func isUserFault(code int, errorCode string) bool {
 	switch code {
 	case statusSqlError, statusInvalidArgument:
 		return true
-	default:
-		return false
 	}
+	return errorCode == "VOLUME_LOCAL_FILE_ERROR"
 }
 
 // toConnError classifies a kernel error on a SESSION-lifecycle path (open/close/

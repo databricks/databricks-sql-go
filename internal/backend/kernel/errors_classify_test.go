@@ -49,6 +49,14 @@ func TestIsSessionFatal(t *testing.T) {
 			t.Errorf("code %d should not be session-fatal", code)
 		}
 	}
+	for _, err := range []*KernelError{
+		{Code: statusUnauthenticated, ErrorCode: "VOLUME_STORAGE_HTTP_ERROR"},
+		{Code: statusNetworkError, ErrorCode: "VOLUME_STORAGE_NETWORK_ERROR"},
+	} {
+		if isSessionFatal(err) {
+			t.Errorf("storage error %s should not be session-fatal", err.ErrorCode)
+		}
+	}
 }
 
 func expiredSessionError() *KernelError {
@@ -137,15 +145,21 @@ func TestExpiredSessionDoesNotTriggerReplay(t *testing.T) {
 func TestIsUserFault(t *testing.T) {
 	faults := []int{statusSqlError, statusInvalidArgument}
 	for _, code := range faults {
-		if !isUserFault(code) {
+		if !isUserFault(code, "") {
 			t.Errorf("code %d should be a user fault (log at Debug)", code)
 		}
 	}
 	infra := []int{statusUnavailable, statusNetworkError, statusTimeout, statusUnauthenticated}
 	for _, code := range infra {
-		if isUserFault(code) {
+		if isUserFault(code, "") {
 			t.Errorf("code %d is infra-side and should NOT be a user fault (stays Warn)", code)
 		}
+	}
+	if !isUserFault(statusNotFound, "VOLUME_LOCAL_FILE_ERROR") {
+		t.Error("a local file error should be a user fault (log at Debug)")
+	}
+	if isUserFault(statusNotFound, "VOLUME_STORAGE_HTTP_ERROR") {
+		t.Error("a storage HTTP error should not be a user fault (stays Warn)")
 	}
 }
 

@@ -821,6 +821,12 @@ func (c *conn) execStagingOperation(
 	}
 
 	if len(driverctx.StagingPathsFromContext(ctx)) != 0 {
+		if native, ok := op.(backend.StagingCompleter); ok {
+			if err := native.CompleteStaging(ctx); err != nil {
+				return dbsqlerrint.NewDriverError(ctx, "error performing staging operation", err)
+			}
+			return nil
+		}
 		// Telemetry callback for staging operation row fetching (chunk timing not tracked for staging ops).
 		telemetryUpdate := func(chunkCount int, bytesDownloaded int64, chunkIndex int, chunkLatencyMs int64, totalChunksPresent int32) {
 			if c.telemetry != nil {

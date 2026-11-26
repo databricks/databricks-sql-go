@@ -9,9 +9,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -552,33 +554,6 @@ func TestExecuteHandleLessOpContract(t *testing.T) {
 	}
 }
 
-// TestExecuteRejectsStaging drives Execute with a staging statement (not just the
-// isStagingStatement detector in isolation) to pin the detector→Execute wiring: a
-// refactor that dropped or reordered the check would silently reopen the
-// silent-no-op data-loss path. Mirrors TestExecuteRejectsParams.
-func TestExecuteRejectsStaging(t *testing.T) {
-	k := &KernelBackend{valid: true}
-	op, err := k.Execute(context.Background(), backend.ExecRequest{
-		Query: "PUT '/tmp/f' INTO '/Volumes/main/s/e/f.csv'",
-	})
-	if err == nil {
-		t.Fatal("expected an error for a staging statement, got nil")
-	}
-	if !errors.Is(err, dbsqlerr.ErrNotSupportedByKernel) {
-		t.Errorf("staging rejection should wrap ErrNotSupportedByKernel, got %v", err)
-	}
-	if op == nil {
-		t.Fatal("Execute must return a non-nil Operation per the Backend contract")
-	}
-	closed, closeErr := op.Close(context.Background())
-	if closeErr != nil {
-		t.Errorf("Close error = %v, want nil", closeErr)
-	}
-	if closed {
-		t.Error("Close on a handle-less op must report closed=false (no CLOSE_STATEMENT)")
-	}
-}
-
 // ExecutionError must satisfy the same public contract as the Thrift path so the
 // errors.Is → errors.As → SqlState()/QueryId() recipe documented in doc.go works
 // on the kernel backend too (it previously returned a bare *KernelError that
@@ -590,7 +565,8 @@ func TestExecutionErrorContract(t *testing.T) {
 		t.Errorf("ExecutionError(nil) = %v, want nil", got)
 	}
 
-	cause := &KernelError{Code: statusSqlError, Message: "boom", SQLState: "42000", QueryID: "q-123"}
+	cause := &KernelError{Code: statusSqlError, Message: "boom", SQLState: "42000", QueryID: "q-123",
+		cause: &os.PathError{Op: "file", Path: "missing.bin", Err: syscall.ENOENT}}
 	err := o.ExecutionError(context.Background(), cause)
 	if err == nil {
 		t.Fatal("ExecutionError(cause) should not be nil")
@@ -615,6 +591,9 @@ func TestExecutionErrorContract(t *testing.T) {
 	var ke *KernelError
 	if !errors.As(err, &ke) {
 		t.Error("the *KernelError cause should remain reachable via errors.As")
+	}
+	if !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("local file error should match fs.ErrNotExist; got %v", err)
 	}
 }
 
