@@ -73,18 +73,16 @@ func validateKernelConfigContext(ctx context.Context, cfg *config.Config) (kerne
 	// folds its server conf (spark.sql.thriftserver.metadata.metricview.enabled=true)
 	// into SessionConf backend-neutrally, so the kernel path sends the identical conf
 	// the Thrift path does. No per-backend handling needed here.
-	// Port / Protocol: the kernel C ABI takes only a bare host and connects over
-	// https:443; it has no port or scheme setter. The Thrift path honors a custom
-	// port/scheme via ToEndpointURL, so a non-default value here would be silently
-	// ignored on the kernel path (it would just hit 443) — reject it instead, per
-	// the "nothing silently ignored" contract. Defaults (https/443) are fine.
+	// Protocol: the kernel always connects over https, so a non-https value would be ignored.
 	if cfg.Protocol != "" && cfg.Protocol != "https" {
 		return kernel.Auth{}, fmt.Errorf("databricks: a non-https protocol is %w "+
 			"(it connects over https); use the default (Thrift) backend", dbsqlerr.ErrNotSupportedByKernel)
 	}
-	if cfg.Port != 0 && cfg.Port != 443 {
-		return kernel.Auth{}, fmt.Errorf("databricks: a non-default port (WithPort) is %w "+
-			"(it connects on 443); omit it or use the default (Thrift) backend", dbsqlerr.ErrNotSupportedByKernel)
+	// Port: only the uint16 range is checked here. The kernel folds a non-default port into
+	// the host and validates the host/port pair itself (kernel_session_config_set_port), and
+	// its InvalidArgument reaches the caller with the same sentinels (see portRejection).
+	if err := validateKernelPort(cfg.Port); err != nil {
+		return kernel.Auth{}, err
 	}
 	// Transport (WithTransport, a custom http.RoundTripper carrying a custom CA
 	// bundle / mTLS / proxy): the kernel uses its own Rust HTTP stack below the C
@@ -155,7 +153,9 @@ func validateKernelConfigContext(ctx context.Context, cfg *config.Config) (kerne
 // with newKernelBackend's kernel.Config assembly.
 func buildKernelConfig(cfg *config.Config, kauth kernel.Auth) kernel.Config {
 	kc := kernel.Config{
+		// The host goes through unchanged; the kernel applies Port (set_port).
 		Host:        cfg.Host,
+		Port:        uint16(cfg.Port), //nolint:gosec // G115: range-checked by validateKernelPort before this runs
 		HTTPPath:    cfg.HTTPPath,
 		WarehouseID: cfg.WarehouseID,
 		Auth:        kauth,
@@ -237,6 +237,19 @@ func buildKernelConfig(cfg *config.Config, kauth kernel.Auth) kernel.Config {
 	// nil leaves the kernel's own default policy in place.
 	kc.Retry = kernelRetryConfig(cfg)
 	return kc
+}
+
+// validateKernelPort checks the WithPort range the uint16 conversion needs. Everything
+// else about the port (the host it is folded into, an embedded port, credentials, a
+// path, an empty host) is the kernel's to validate when the session is opened. An
+// out-of-range port is never the default, so the rejection wraps ErrNotSupportedByKernel
+// as well as ErrInvalidKernelConfig.
+func validateKernelPort(port int) error {
+	if port < 0 || port > 65535 {
+		return fmt.Errorf("databricks: WithPort %d is out of range (want 1..65535, or 0 for the default): %w: %w",
+			port, dbsqlerr.ErrInvalidKernelConfig, dbsqlerr.ErrNotSupportedByKernel)
+	}
+	return nil
 }
 
 func kernelTelemetryConfig(cfg *config.Config) *kernel.TelemetryConfig {

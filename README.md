@@ -252,7 +252,7 @@ session parameter on both backends.
 |---|---|---|---|---|
 | *(host)* | `WithServerHostname` | Both | *(required)* | Workspace hostname. |
 | *(path)* | `WithHTTPPath` | Both | *(required)* | Warehouse/endpoint HTTP path. |
-| *(port)* | `WithPort` | Thrift only | `443` | Kernel connects on **443 only** and rejects any other port. |
+| *(port)* | `WithPort` | Both | `443` | The kernel applies the port: a port of `0` or `443` leaves the host unchanged and unvalidated; any other port connects to `host:port`, with a bare IPv6 literal bracketed (`[::1]:8443`). A port already in the host wins over a differing `WithPort` (the kernel logs a warning). The kernel rejects credentials, an empty host, a path, query or fragment, and a bad embedded port with `InvalidArgument` at connect. The driver rejects only a `WithPort` outside `0..65535`. A non-default port's rejection wraps both `ErrInvalidKernelConfig` and `ErrNotSupportedByKernel`. Errors never include credentials. With OAuth the kernel uses the same `host:port` for its OAuth endpoints; Thrift keeps OAuth on the bare host. |
 | `warehouseId` | `WithWarehouseID` | SEA only | | Bare warehouse id; the kernel routes by it (preferred over the HTTP path). **The Thrift backend ignores it.** |
 | `catalog` | `WithInitialNamespace` | Both | | Initial catalog. Kernel applies it post-connect via `USE CATALOG`. |
 | `schema` | `WithInitialNamespace` | Both | | Initial schema. Kernel applies it post-connect via `USE SCHEMA`. |

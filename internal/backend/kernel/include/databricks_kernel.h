@@ -245,6 +245,22 @@ KernelStatusCode kernel_session_config_set_http_path(KernelSessionConfig* config
                                                      const char* host,
                                                      const char* http_path);
 
+/* Connection port — optional, may be set before or after the host; last call
+ * wins. `0` (the default) means unset. The scheme default (443 for https, 80
+ * for http) is accepted and changes nothing. Any other port is folded into the
+ * host at kernel_session_open, so the kernel connects to host:port.
+ *
+ * The host must not carry userinfo (`user:pw@host`), a path, a query or a
+ * fragment, and must not be empty. A port already embedded in the host
+ * (`host:N` or `[v6]:N`) is kept and wins over this one; the kernel logs a
+ * warning when a non-default port differs from it (the scheme default never
+ * warns). Validation is eager: a bad combination returns
+ * KernelStatusCode_InvalidArgument from whichever of this call or the host
+ * setter came second, and leaves the config unchanged. Error text never
+ * includes credentials. */
+KernelStatusCode kernel_session_config_set_port(KernelSessionConfig* config,
+                                                uint16_t port);
+
 /* Authentication — call exactly one; the last one wins. */
 KernelStatusCode kernel_session_config_set_auth_pat(KernelSessionConfig* config,
                                                     const char* token);

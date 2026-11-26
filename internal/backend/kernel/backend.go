@@ -211,6 +211,17 @@ func (k *KernelBackend) OpenSession(ctx context.Context) error {
 		}
 	}
 
+	// Connection port, after the host so the kernel validates the pair. The kernel folds
+	// a non-default port into the host it connects to; 0 means unset, so nothing is sent.
+	// A rejection here is the WithPort contract's InvalidArgument (see portRejection).
+	if k.cfg.Port != 0 {
+		if err := call(func() C.KernelStatusCode {
+			return C.kernel_session_config_set_port(cfg, C.uint16_t(k.cfg.Port))
+		}); err != nil {
+			return fmt.Errorf("kernel: set_port: %w", portRejection(k.cfg.Port, toConnError(err)))
+		}
+	}
+
 	if err := k.setAuth(cfg); err != nil {
 		return err
 	}

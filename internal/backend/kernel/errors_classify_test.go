@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"testing"
 
+	dbsqlerr "github.com/databricks/databricks-sql-go/v2/errors"
 	dbsqlerrint "github.com/databricks/databricks-sql-go/v2/internal/errors"
 )
 
@@ -295,6 +296,51 @@ func TestKernelErrorCategoryThroughWrap(t *testing.T) {
 	if got := dbsqlerrint.CategoryFromError(wrapped); got != dbsqlerrint.CategoryExecuteStatement {
 		t.Errorf("wrapped kernel error: CategoryFromError = %q, want %q", got, dbsqlerrint.CategoryExecuteStatement)
 	}
+}
+
+// portRejection is the WithPort error contract for a kernel rejection. A non-default port wraps
+// both ErrInvalidKernelConfig and ErrNotSupportedByKernel, the default port only
+// ErrInvalidKernelConfig, and port 0 or another code passes through untouched. The kernel's own
+// message is kept as is and nothing is added to it, so no host text is introduced here.
+func TestPortRejection(t *testing.T) {
+	const kernelMsg = "kernel: host is not valid for the port"
+	invalid := &KernelError{Code: statusInvalidArgument, Message: kernelMsg}
+
+	t.Run("non-default port wraps both sentinels", func(t *testing.T) {
+		for _, port := range []uint16{1, 8443, 65535} {
+			err := portRejection(port, invalid)
+			if !errors.Is(err, dbsqlerr.ErrInvalidKernelConfig) || !errors.Is(err, dbsqlerr.ErrNotSupportedByKernel) {
+				t.Errorf("port %d: err = %v, want both sentinels", port, err)
+			}
+			var ke *KernelError
+			if !errors.As(err, &ke) || ke.Message != kernelMsg {
+				t.Errorf("port %d: kernel error not preserved: %v", port, err)
+			}
+		}
+	})
+
+	t.Run("default port wraps only ErrInvalidKernelConfig", func(t *testing.T) {
+		err := portRejection(kernelDefaultPort, invalid)
+		if !errors.Is(err, dbsqlerr.ErrInvalidKernelConfig) {
+			t.Errorf("err = %v, want ErrInvalidKernelConfig", err)
+		}
+		if errors.Is(err, dbsqlerr.ErrNotSupportedByKernel) {
+			t.Errorf("default-port rejection must not wrap ErrNotSupportedByKernel: %v", err)
+		}
+	})
+
+	t.Run("unset port and other codes pass through unchanged", func(t *testing.T) {
+		if err := portRejection(0, invalid); err != invalid {
+			t.Errorf("port 0: err = %v, want the input unchanged", err)
+		}
+		unavailable := &KernelError{Code: statusUnavailable, Message: "gone"}
+		if err := portRejection(8443, unavailable); err != unavailable {
+			t.Errorf("non-InvalidArgument: err = %v, want the input unchanged", err)
+		}
+		if err := portRejection(8443, nil); err != nil {
+			t.Errorf("nil: err = %v, want nil", err)
+		}
+	})
 }
 
 func contains(s, sub string) bool { return len(s) >= len(sub) && (s == sub || indexOf(s, sub) >= 0) }

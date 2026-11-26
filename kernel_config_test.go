@@ -121,7 +121,6 @@ func TestValidateKernelConfig(t *testing.T) {
 	}{
 		{"query timeout", func(c *config.Config) { c.QueryTimeout = 30 * time.Second }},
 		{"non-https protocol", func(c *config.Config) { c.Protocol = "http" }},
-		{"non-default port", func(c *config.Config) { c.Port = 8443 }},
 		{"custom transport", func(c *config.Config) { c.Transport = http.DefaultTransport }},
 	}
 	for _, tc := range rejections {
@@ -443,10 +442,10 @@ var kernelConfigFieldDisposition = map[string]string{
 	"Schema":  "forwarded",
 
 	// Rejected loudly by validateKernelConfig.
-	"QueryTimeout": "rejected", // when > 0 (WithTimeout)
-	"Protocol":     "rejected", // kernel is https-only; non-default rejected
-	"Port":         "rejected", // kernel connects on 443; non-default rejected
-	"Transport":    "rejected", // custom RoundTripper; kernel uses its own HTTP stack, so reject rather than drop
+	"QueryTimeout": "rejected",  // when > 0 (WithTimeout)
+	"Protocol":     "rejected",  // kernel is https-only; non-default rejected
+	"Port":         "forwarded", // range-checked by validateKernelPort; passed to the kernel (set_port), which folds and validates it
+	"Transport":    "rejected",  // custom RoundTripper; kernel uses its own HTTP stack, so reject rather than drop
 
 	// Forwarded to the kernel's HTTP retry config via kernelRetryConfig →
 	// set_retry_config (WithRetries: backoff bounds + max attempts, incl. disable).
@@ -971,4 +970,138 @@ func TestKernelRetryConfig(t *testing.T) {
 			t.Errorf("MaxRetries = %d, want 5 (attempt count preserved)", r.MaxRetries)
 		}
 	})
+}
+
+// TestKernelPortPassThrough checks that the host reaches the kernel unchanged and the port
+// reaches the kernel config. The kernel folds a non-default port into the host and validates
+// the pair, so the driver adds no folding and no host validation. Credentials, paths and
+// bad embedded ports are the kernel's to reject at session open (see TestOpenSessionPortRejection).
+func TestKernelPortPassThrough(t *testing.T) {
+	hosts := []string{
+		"h.databricks.com",
+		"h.databricks.com/",
+		"h.databricks.com:8443",
+		"127.0.0.1",
+		"::1",
+		"[::1]",
+		"h.databricks.com/x",
+		"user:pw@h",
+		"",
+	}
+	ports := []int{0, 443, 8443, 65535}
+	for _, host := range hosts {
+		for _, port := range ports {
+			t.Run(fmt.Sprintf("host %q port %d", host, port), func(t *testing.T) {
+				c := baseKernelConfig()
+				c.Host = host
+				c.Port = port
+				kauth, err := validateKernelConfig(c)
+				if err != nil {
+					t.Fatalf("validateKernelConfig: %v", err)
+				}
+				kc := buildKernelConfig(c, kauth)
+				if kc.Host != host {
+					t.Errorf("kernel Host = %q, want the host unchanged", kc.Host)
+				}
+				if int(kc.Port) != port {
+					t.Errorf("kernel Port = %d, want %d", kc.Port, port)
+				}
+			})
+		}
+	}
+}
+
+// TestKernelPortFromOptions checks the connector options that set the host and port: WithServerHostname
+// and WithPort reach the kernel config as given, and a port embedded in the host is left for the kernel.
+func TestKernelPortFromOptions(t *testing.T) {
+	t.Run("WithServerHostname with a trailing slash plus WithPort", func(t *testing.T) {
+		c := baseKernelConfig()
+		WithServerHostname("https://h.databricks.com/")(c)
+		WithPort(8443)(c)
+		kauth, err := validateKernelConfig(c)
+		if err != nil {
+			t.Fatalf("unexpected err %v", err)
+		}
+		kc := buildKernelConfig(c, kauth)
+		if kc.Host != "h.databricks.com/" || kc.Port != 8443 {
+			t.Errorf("kernel Host=%q Port=%d, want h.databricks.com/ and 8443", kc.Host, kc.Port)
+		}
+	})
+
+	t.Run("embedded port with WithPort(443) is passed through for the kernel to resolve", func(t *testing.T) {
+		c := baseKernelConfig()
+		c.Host = "h.databricks.com:8443"
+		WithPort(443)(c)
+		kauth, err := validateKernelConfig(c)
+		if err != nil {
+			t.Fatalf("unexpected err %v", err)
+		}
+		kc := buildKernelConfig(c, kauth)
+		if kc.Host != "h.databricks.com:8443" || kc.Port != 443 {
+			t.Errorf("kernel Host=%q Port=%d, want h.databricks.com:8443 and 443", kc.Host, kc.Port)
+		}
+	})
+}
+
+// TestKernelPortRange checks the driver's only port check, the uint16 range. Both bounds of the
+// rejection wrap ErrInvalidKernelConfig and ErrNotSupportedByKernel, since an out-of-range port is
+// never the default.
+func TestKernelPortRange(t *testing.T) {
+	for _, port := range []int{-1, 65536} {
+		c := baseKernelConfig()
+		c.Port = port
+		_, err := validateKernelConfig(c)
+		if !errors.Is(err, dbsqlerr.ErrInvalidKernelConfig) {
+			t.Errorf("WithPort(%d): err = %v, want ErrInvalidKernelConfig", port, err)
+		}
+		if !errors.Is(err, dbsqlerr.ErrNotSupportedByKernel) {
+			t.Errorf("WithPort(%d): err = %v, want ErrNotSupportedByKernel", port, err)
+		}
+	}
+	for _, port := range []int{0, 1, 443, 65535} {
+		c := baseKernelConfig()
+		c.Port = port
+		if _, err := validateKernelConfig(c); err != nil {
+			t.Errorf("WithPort(%d): unexpected err %v", port, err)
+		}
+	}
+}
+
+// TestKernelDSNHostAndPort checks that a DSN IPv6 host reaches the kernel as the bare address with
+// the port alongside it. ParseDSN strips the brackets (url.Hostname); the kernel folds the port.
+func TestKernelDSNHostAndPort(t *testing.T) {
+	cases := []struct {
+		name     string
+		dsn      string
+		wantHost string
+		wantPort uint16
+	}{
+		{"bracketed IPv6 with custom port", "token:x@[::1]:8443/sql/1.0/warehouses/abc", "::1", 8443},
+		{"bracketed IPv6 with default port", "token:x@[::1]:443/sql/1.0/warehouses/abc", "::1", 443},
+		{"IPv4 with custom port", "token:x@10.0.0.1:8443/sql/1.0/warehouses/abc", "10.0.0.1", 8443},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ucfg, err := config.ParseDSN(tc.dsn)
+			if err != nil {
+				t.Fatalf("ParseDSN: %v", err)
+			}
+			con, err := NewConnector(withUserConfig(ucfg))
+			if err != nil {
+				t.Fatalf("NewConnector: %v", err)
+			}
+			coni, ok := con.(*connector)
+			if !ok {
+				t.Fatalf("connector type = %T", con)
+			}
+			kauth, err := validateKernelConfig(coni.cfg)
+			if err != nil {
+				t.Fatalf("validateKernelConfig: %v", err)
+			}
+			kc := buildKernelConfig(coni.cfg, kauth)
+			if kc.Host != tc.wantHost || kc.Port != tc.wantPort {
+				t.Errorf("kernel Host=%q Port=%d, want %q and %d", kc.Host, kc.Port, tc.wantHost, tc.wantPort)
+			}
+		})
+	}
 }

@@ -15,7 +15,8 @@ import (
 // fills it from the driver's config so the user-facing options are unchanged.
 // Zero-valued fields are simply not applied unless documented otherwise.
 type Config struct {
-	Host        string // workspace hostname, no scheme
+	Host        string // workspace hostname, no scheme; passed to the kernel unchanged
+	Port        uint16 // connection port; 0 leaves the host as given. Applied with kernel_session_config_set_port, which folds it into the host
 	HTTPPath    string // e.g. /sql/1.0/warehouses/abc123 (carries ?o= org routing)
 	WarehouseID string // bare warehouse id; preferred over HTTPPath when set
 	Auth        Auth   // PAT / OAuth M2M / OAuth U2M
