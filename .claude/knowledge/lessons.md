@@ -1,6 +1,6 @@
 # Lessons
 
-<!-- distilled-through: 2026-11-18 -->
+<!-- distilled-through: 2026-11-26 -->
 
 ## Configuration and authentication
 - L-0001 (1×, #446): Verify kernel session parameters and proxies separately from Thrift: kernel allowlists configuration keys and supports HTTP(S) proxies, while Thrift may accept additional keys/schemes.
@@ -25,6 +25,8 @@
 - L-0020 (1×, #556): Check integer duration values against MinInt64/unit and MaxInt64/unit before multiplication; report overflow with the parameter name.
 - L-0060 [phase=review] (1×, #566): Kernel applies case variants of client-only session-conf keys in sorted byte order, so the canonical lowercase key wins; check pinned session.rs before flagging map-order nondeterminism.
 - L-0061 (1×, #566): Forwarding a formerly inert option to a backend is a behavior change: label it so in CHANGELOG, explain the effect of existing tuned values, and test set values, not only unset.
+- L-0078 (1×, #595): Classify session-fatal errors by generic code (NotFound/InvalidArgument) plus case-insensitive message match; test lookalikes such as missing table/statement or SqlError echoing the text.
+- L-0079 (1×, #587): Build state combining several functional options in the constructor after all options apply, never inside one option; test both orders. Copy global clients like http.DefaultClient, never mutate/share.
 
 ## Native boundaries and lifecycle
 - L-0021 (1×, #450): Never place fabricated Go pointers or cgo.Handle values into C pointer slots. Use NULL with a global sink or a real C allocation.
@@ -33,7 +35,7 @@
 - L-0024 (1×, #450): Swappable writer proxies must preserve richer interfaces such as zerolog.LevelWriter and delegate when supported.
 - L-0025 (1×, #450): Surface queue overflow, sampling and truncation through bounded warnings so consumers can distinguish dropped output from no output.
 - L-0026 (2×, #440 #479): Keep build-tag constraints aligned across real shims, unsupported guards and stub tests; missing terms can silently select no implementation.
-- L-0027 (1×, #479): Verify errors.Is/errors.As through the production-shaped wrapping chain; bare-sentinel fakes do not test real error matching.
+- L-0027 (2×, #587 #479): New error wrappers implement both Unwrap and Cause. Verify errors.Is/errors.As and pkg/errors.Cause through the production-shaped wrapping chain; bare-sentinel fakes do not test real matching.
 - L-0028 (1×, #484): Handle lifetime independence across cgo objects must be confirmed against the pinned kernel ABI/tests and recorded as a load-bearing ownership assumption.
 - L-0029 (1×, #484): Pin Go constants mirrored from C macros with compile-time drift assertions rather than optional tagged runtime tests.
 - L-0030 (2×, #497): New ABI symbols require released bindings pins in go.mod/go.sum, not only KERNEL_REV. Hand-mirrored layouts must match the published header field order, types and size.
@@ -41,6 +43,8 @@
 - L-0032 (1×, #496): Shared singleflight fetches need detached, bounded contexts; individual waiters honor their own cancellation without aborting shared work.
 - L-0033 (1×, #295 #371): Result downloads deliberately outlive QueryContext cancellation. Preserve the detached rows-fetch contract and bound downloads with explicit timeouts/client options.
 - L-0034 (1×, #555): Retry non-idempotent RPCs on proven pre-send dial failures only; generic transport failures and redirected attempts may have delivered the request.
+- L-0076 (1×, #595): On session death, keep the failing statement's error free of driver.ErrBadConn (avoids replay); the next Execute returns ErrBadConn locally before sending, since pinned sql.Conn skips Validator.
+- L-0077 (1×, #595): Track definite server-side session loss in its own flag, separate from transient eviction signals (Unavailable/network/auth), or document and test permanent rejection for the shared codes.
 
 ## Arrow results and metadata
 - L-0035 (2×, #492): Malformed server rows must return wrapped errors, not panic. Keep ColumnType metadata consistent with produced values and use physical-type fallback when logical conversion is unavailable.
