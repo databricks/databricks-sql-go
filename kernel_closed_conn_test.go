@@ -5,6 +5,7 @@ package dbsql
 import (
 	"context"
 	"crypto/tls"
+	"database/sql"
 	"database/sql/driver"
 	"io"
 	"net"
@@ -90,4 +91,83 @@ func TestKernelClosedConnRejectsStatementsWithoutRequests(t *testing.T) {
 	require.NoError(t, s.Close())
 	require.NoError(t, b.Close())
 	assert.Equal(t, int32(0), statements.Load())
+}
+
+func TestKernelDeadSessionRejectsPinnedConnWithoutRequests(t *testing.T) {
+	cases := []struct {
+		name    string
+		status  int
+		body    string
+		message string
+	}{
+		{"timed out session", http.StatusBadRequest, `{"error_code":"BAD_REQUEST","message":"Invalid SessionHandle: test-session"}`, "Invalid SessionHandle"},
+		{"missing session", http.StatusNotFound, `{"error_code":"NOT_FOUND","message":"Session does not exist: test-session"}`, "Session does not exist"},
+	}
+	for _, tc := range cases {
+		for _, nextCall := range []string{"exec", "query"} {
+			t.Run(tc.name+"/"+nextCall, func(t *testing.T) {
+				ca, caKey, caPEM := makeMTLSTestCA(t)
+				serverCert := makeMTLSTestLeaf(t, ca, caKey, "127.0.0.1", net.ParseIP("127.0.0.1"))
+				var statements atomic.Int32
+				srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					path := strings.TrimSuffix(r.URL.Path, "/")
+					w.Header().Set("Content-Type", "application/json")
+					switch {
+					case r.Method == http.MethodPost && strings.HasSuffix(path, "/sessions"):
+						_, _ = io.WriteString(w, `{"session_id":"test-session"}`)
+					case r.Method == http.MethodDelete && strings.HasSuffix(path, "/sessions/test-session"):
+						_, _ = io.WriteString(w, `{}`)
+					case strings.Contains(path, "/statements"):
+						statements.Add(1)
+						w.WriteHeader(tc.status)
+						_, _ = io.WriteString(w, tc.body)
+					default:
+						http.NotFound(w, r)
+					}
+				}))
+				srv.TLS = &tls.Config{Certificates: []tls.Certificate{serverCert.tlsCert}, MinVersion: tls.VersionTLS12}
+				srv.StartTLS()
+				t.Cleanup(srv.Close)
+
+				connector, err := NewConnector(
+					WithServerHostname(srv.Listener.Addr().String()),
+					WithHTTPPath("/sql/1.0/warehouses/hermetic"),
+					WithAccessToken("dapi-hermetic-placeholder"),
+					WithUseKernel(true),
+					WithRetries(-1, 0, 0),
+					WithKernelTrustedCerts(caPEM),
+				)
+				require.NoError(t, err)
+				db := sql.OpenDB(connector)
+				t.Cleanup(func() { _ = db.Close() })
+				ctx := context.Background()
+				pinned, err := db.Conn(ctx)
+				require.NoError(t, err)
+				t.Cleanup(func() { _ = pinned.Close() })
+
+				_, err = pinned.ExecContext(ctx, "UPDATE test SET value = value + 1")
+				require.ErrorContains(t, err, tc.message)
+				require.NotErrorIs(t, err, driver.ErrBadConn)
+				require.Equal(t, int32(1), statements.Load(), "the failed statement must not be replayed")
+				require.NoError(t, pinned.Raw(func(dc any) error {
+					require.False(t, dc.(driver.Validator).IsValid())
+					return nil
+				}))
+
+				if nextCall == "exec" {
+					_, err = pinned.ExecContext(ctx, "SELECT 1")
+				} else {
+					var rows *sql.Rows
+					rows, err = pinned.QueryContext(ctx, "SELECT 1")
+					if rows != nil {
+						_ = rows.Close()
+					}
+				}
+				require.ErrorIs(t, err, driver.ErrBadConn)
+				require.Equal(t, int32(1), statements.Load(), "the invalid connection must reject requests locally")
+				_, err = pinned.ExecContext(ctx, "SELECT 1")
+				require.ErrorIs(t, err, sql.ErrConnDone)
+			})
+		}
+	}
 }

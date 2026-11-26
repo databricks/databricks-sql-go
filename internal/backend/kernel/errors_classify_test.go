@@ -39,15 +39,95 @@ func TestIsBadConnection(t *testing.T) {
 func TestIsSessionFatal(t *testing.T) {
 	fatal := []int{statusUnauthenticated, statusUnavailable, statusNetworkError}
 	for _, code := range fatal {
-		if !isSessionFatal(code) {
+		if !isSessionFatal(&KernelError{Code: code}) {
 			t.Errorf("code %d should be session-fatal", code)
 		}
 	}
-	notFatal := []int{statusInvalidArgument, statusSqlError, statusTimeout}
+	notFatal := []int{statusInvalidArgument, statusSqlError, statusTimeout, statusNotFound}
 	for _, code := range notFatal {
-		if isSessionFatal(code) {
+		if isSessionFatal(&KernelError{Code: code}) {
 			t.Errorf("code %d should not be session-fatal", code)
 		}
+	}
+}
+
+func expiredSessionError() *KernelError {
+	return &KernelError{
+		Code:       statusNotFound,
+		Message:    "HTTP 404: Session does not exist: test-session; error_code=NOT_FOUND",
+		HTTPStatus: 404,
+	}
+}
+
+func invalidSessionHandleError() *KernelError {
+	return &KernelError{
+		Code:       statusInvalidArgument,
+		Message:    "HTTP 400: Invalid SessionHandle: test-session; error_code=BAD_REQUEST",
+		HTTPStatus: 400,
+	}
+}
+
+func TestIsSessionFatalInvalidSessionHandle(t *testing.T) {
+	cases := []struct {
+		name string
+		err  *KernelError
+		want bool
+	}{
+		{"invalid session handle", invalidSessionHandleError(), true},
+		{"case insensitive", &KernelError{Code: statusInvalidArgument, Message: "HTTP 400: invalid sessionhandle: test-session"}, true},
+		{"invalid argument", &KernelError{Code: statusInvalidArgument, Message: "invalid parameter value"}, false},
+		{"no detail", &KernelError{Code: statusInvalidArgument}, false},
+		{"SQL error echoes message", &KernelError{Code: statusSqlError, Message: "Invalid SessionHandle"}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isSessionFatal(tc.err); got != tc.want {
+				t.Errorf("isSessionFatal(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestIsSessionFatalNotFound(t *testing.T) {
+	cases := []struct {
+		name string
+		err  *KernelError
+		want bool
+	}{
+		{"expired session", expiredSessionError(), true},
+		{"case insensitive", &KernelError{Code: statusNotFound, Message: "HTTP 404: session does not exist: test-session"}, true},
+		{"missing statement", &KernelError{Code: statusNotFound, Message: "HTTP 404: Statement does not exist: test-statement; error_code=NOT_FOUND"}, false},
+		{"missing table", &KernelError{Code: statusNotFound, Message: "[TABLE_OR_VIEW_NOT_FOUND] The table or view cannot be found.", SQLState: "42P01"}, false},
+		{"missing volume path", &KernelError{Code: statusNotFound, Message: "volume path does not exist"}, false},
+		{"no detail", &KernelError{Code: statusNotFound}, false},
+		{"SQL error echoes message", &KernelError{Code: statusSqlError, Message: "Session does not exist"}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isSessionFatal(tc.err); got != tc.want {
+				t.Errorf("isSessionFatal(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestExpiredSessionDoesNotTriggerReplay(t *testing.T) {
+	for _, ke := range []*KernelError{expiredSessionError(), invalidSessionHandleError()} {
+		t.Run(fmt.Sprintf("status=%d", ke.HTTPStatus), func(t *testing.T) {
+			for name, err := range map[string]error{
+				"statement":  toStatementError(ke),
+				"connection": toConnError(ke),
+			} {
+				t.Run(name, func(t *testing.T) {
+					if err != ke {
+						t.Errorf("got %v, want the original kernel error", err)
+					}
+					if errors.Is(err, driver.ErrBadConn) {
+						t.Error("an expired-session error must not trigger automatic replay")
+					}
+				})
+			}
+		})
 	}
 }
 

@@ -3,6 +3,7 @@ package kernel
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	dbsqlerrint "github.com/databricks/databricks-sql-go/v2/internal/errors"
 )
@@ -129,17 +130,17 @@ func isBadConnection(code int) bool {
 	}
 }
 
-// isSessionFatal reports whether a status code means the server-side session is no
-// longer usable, so the conn must be evicted from the pool rather than reused for
-// the next query. Broader than isBadConnection: it also covers Unauthenticated (an
-// expired/revoked token kills the session) — but unlike isBadConnection it is NOT
-// used to produce driver.ErrBadConn on the statement path, so eviction happens
-// without database/sql replaying the statement (see toStatementError + the
-// KernelBackend.markSessionDead call sites).
-func isSessionFatal(code int) bool {
-	switch code {
+// isSessionFatal reports whether the connection must be evicted. Missing or
+// invalid session handles are fatal; other missing resources or invalid
+// arguments leave the session usable.
+func isSessionFatal(ke *KernelError) bool {
+	switch ke.Code {
 	case statusUnauthenticated, statusUnavailable, statusNetworkError:
 		return true
+	case statusNotFound:
+		return strings.Contains(strings.ToLower(ke.Message), "session does not exist")
+	case statusInvalidArgument:
+		return strings.Contains(strings.ToLower(ke.Message), "invalid sessionhandle")
 	default:
 		return false
 	}
