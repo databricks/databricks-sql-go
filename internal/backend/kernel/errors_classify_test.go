@@ -39,7 +39,7 @@ func TestIsBadConnection(t *testing.T) {
 func TestIsSessionFatal(t *testing.T) {
 	fatal := []int{statusUnauthenticated, statusUnavailable, statusNetworkError}
 	for _, code := range fatal {
-		if !isSessionFatal(fmt.Errorf("call: %w", &KernelError{Code: code})) {
+		if !isSessionFatal(&KernelError{Code: code}) {
 			t.Errorf("code %d should be session-fatal", code)
 		}
 	}
