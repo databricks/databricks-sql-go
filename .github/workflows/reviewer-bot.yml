@@ -59,7 +59,7 @@ jobs:
     steps:
       # Run trusted workflow code; inspect the resolved PR head separately.
       - name: Checkout trusted workflow source
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           ref: ${{ github.event.pull_request.base.sha || github.sha }}
           fetch-depth: 0
@@ -121,7 +121,7 @@ jobs:
           { echo "pr_number=$RAW_PR"; echo "head_sha=$HEAD_SHA"; echo "base_sha=$BASE_SHA"; echo "dry_run=$DRY_RUN"; } >> "$GITHUB_OUTPUT"
 
       - name: Checkout reviewed PR (read-only)
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           ref: ${{ steps.inputs.outputs.head_sha }}
           path: review-content
