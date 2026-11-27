@@ -16,11 +16,10 @@ type CellScanner func(row int) (driver.Value, error)
 // BindCellScanner resolves a column's scalar reader and null bitmap once per
 // batch. Like ScanCellCachedWithOptions, loc is authoritative for timestamps.
 func BindCellScanner(col arrow.Array, loc *time.Location, keys *StructKeyCache, options ScanOptions) CellScanner {
-	generic := func(row int) (driver.Value, error) {
-		return scanCell(col, row, loc, keys, options)
-	}
 	if options.GeospatialBinary {
-		return generic
+		return func(row int) (driver.Value, error) {
+			return scanCell(col, row, loc, keys, options)
+		}
 	}
 	var read CellScanner
 	switch column := col.(type) {
@@ -60,9 +59,11 @@ func BindCellScanner(col arrow.Array, loc *time.Location, keys *StructKeyCache, 
 	case *array.Binary:
 		read = func(row int) (driver.Value, error) { return column.Value(row), nil }
 	default:
-		return generic
+		return func(row int) (driver.Value, error) {
+			return scanCell(col, row, loc, keys, options)
+		}
 	}
-	if col.NullN() == 0 {
+	if col.NullN() == 0 || len(col.NullBitmapBytes()) == 0 {
 		return read
 	}
 	bitmap, offset := col.NullBitmapBytes(), col.Data().Offset()

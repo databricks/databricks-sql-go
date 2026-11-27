@@ -105,6 +105,26 @@ func TestBoundRowsDecimalOption(t *testing.T) {
 	}
 }
 
+func TestBoundRowsSchemaColumns(t *testing.T) {
+	builder := array.NewInt32Builder(memory.DefaultAllocator)
+	builder.Append(12345)
+	column := builder.NewArray()
+	builder.Release()
+	defer column.Release()
+	schema := arrow.NewSchema([]arrow.Field{
+		{Name: "value", Type: arrow.PrimitiveTypes.Int32},
+		{Name: "extra", Type: arrow.PrimitiveTypes.Int32},
+	}, nil)
+	record := array.NewRecordBatch(schema, []arrow.Array{column, column}, 1)
+	defer record.Release()
+	rows := &kernelRows{cur: record, op: &kernelOp{},
+		cols: []string{"value"}, ntz: []bool{false}, geoBinary: []bool{false}}
+	destination := make([]driver.Value, 1)
+	require.NoError(t, rows.Next(destination))
+	require.Equal(t, []driver.Value{int32(12345)}, destination)
+	require.Len(t, rows.cells, 1)
+}
+
 func TestBoundRowsFallbackError(t *testing.T) {
 	builder := array.NewFixedSizeBinaryBuilder(memory.DefaultAllocator, &arrow.FixedSizeBinaryType{ByteWidth: 1})
 	builder.AppendNull()

@@ -280,8 +280,8 @@ func (r *kernelRows) next(dest []driver.Value) error {
 }
 
 func (r *kernelRows) bindCells() {
-	if len(r.cells) != int(r.cur.NumCols()) {
-		r.cells = make([]arrowscan.CellScanner, r.cur.NumCols())
+	if len(r.cells) != len(r.cols) {
+		r.cells = make([]arrowscan.CellScanner, len(r.cols))
 	}
 	for column := range r.cells {
 		location := r.op.location

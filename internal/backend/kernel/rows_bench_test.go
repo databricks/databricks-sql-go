@@ -78,6 +78,10 @@ func BenchmarkKernelRows(b *testing.B) {
 				record := benchmarkRecord(b, scenario.types, 4096, nulls)
 				defer record.Release()
 				destination := make([]driver.Value, len(scenario.types))
+				columns := make([]string, len(scenario.types))
+				for column := range columns {
+					columns[column] = record.ColumnName(column)
+				}
 				ntz := make([]bool, len(scenario.types))
 				geoBinary := make([]bool, len(scenario.types))
 				operation := &kernelOp{location: time.UTC}
@@ -85,7 +89,7 @@ func BenchmarkKernelRows(b *testing.B) {
 				b.ReportAllocs()
 				b.ResetTimer()
 				for b.Loop() {
-					rows := kernelRows{cur: record, op: operation, ntz: ntz, geoBinary: geoBinary, keyCache: keys}
+					rows := kernelRows{cur: record, op: operation, cols: columns, ntz: ntz, geoBinary: geoBinary, keyCache: keys}
 					for row := 0; row < 4096; row++ {
 						if err := rows.next(destination); err != nil {
 							b.Fatal(err)

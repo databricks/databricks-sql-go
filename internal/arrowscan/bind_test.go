@@ -94,6 +94,26 @@ func TestBoundCellParity(t *testing.T) {
 	}
 }
 
+func TestBoundCellNoValidityBitmap(t *testing.T) {
+	builder := array.NewInt32Builder(memory.DefaultAllocator)
+	builder.AppendValues([]int32{12345, -67890}, nil)
+	column := builder.NewArray()
+	builder.Release()
+	defer column.Release()
+
+	data := column.Data()
+	buffers := append([]*memory.Buffer(nil), data.Buffers()...)
+	buffers[0] = nil
+	withoutBitmap := array.NewData(data.DataType(), data.Len(), buffers, data.Children(), 1, data.Offset())
+	defer withoutBitmap.Release()
+	noBitmap := array.MakeFromData(withoutBitmap)
+	defer noBitmap.Release()
+	if noBitmap.NullN() != 1 || len(noBitmap.NullBitmapBytes()) != 0 {
+		t.Fatal("expected a nonzero null count without a validity bitmap")
+	}
+	checkBoundParity(t, noBitmap)
+}
+
 func TestBoundGeospatialParity(t *testing.T) {
 	dataType := arrow.StructOf(
 		arrow.Field{Name: "srid", Type: arrow.PrimitiveTypes.Int32, Nullable: true},

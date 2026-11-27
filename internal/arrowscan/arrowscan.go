@@ -121,8 +121,8 @@ func ScanCellCached(col arrow.Array, row int, loc *time.Location, keys *StructKe
 // fieldlessLocation applies IsTimestampNTZField's zone-less fallback for the
 // entry points that receive only an array, not its schema Field: a top-level
 // timestamp with an empty TimeZone is treated as TIMESTAMP_NTZ and scanned in
-// UTC. Callers that know the Field (the kernel rows via
-// ScanCellCachedWithOptions) decide NTZ from its metadata and pass loc directly.
+// UTC. Callers that know the Field (the kernel rows via BindCellScanner) decide
+// NTZ from its metadata and pass loc directly.
 func fieldlessLocation(col arrow.Array, loc *time.Location) *time.Location {
 	if IsTimestampNTZField(arrow.Field{Type: col.DataType()}) {
 		return time.UTC
@@ -146,8 +146,8 @@ type ScanOptions struct {
 	GeospatialBinary bool
 }
 
-// ScanCellCachedWithOptions is the full scanner entry point used by the kernel
-// rows implementation. Callers that do not need result-specific adaptations
+// ScanCellCachedWithOptions is the one-shot counterpart to BindCellScanner,
+// which the kernel rows implementation uses. Callers without result adaptations
 // should continue to use ScanCellCached. Unlike the field-less entry points, loc
 // is authoritative here: the caller decides TIMESTAMP_NTZ from the schema Field
 // (IsTimestampNTZField) and passes time.UTC for an NTZ column.
@@ -165,6 +165,7 @@ func scanCell(col arrow.Array, row int, loc *time.Location, keys *StructKeyCache
 	switch c := col.(type) {
 	case *array.Null:
 		return nil, nil
+	// Keep scalar results in sync with the bound readers in bind.go.
 	case *array.Boolean:
 		return c.Value(row), nil
 	case *array.Int8:
