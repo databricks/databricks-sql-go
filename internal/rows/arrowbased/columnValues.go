@@ -14,35 +14,18 @@ import (
 	"github.com/pkg/errors"
 )
 
-// Abstraction for holding the values for a set of rows
-type RowValues interface {
-	rowscanner.Delimiter
-	Close()
-	NColumns() int
-	SetColumnValues(columnIndex int, values arrow.ArrayData) error
-	IsNull(columnIndex int, rowNumber int64) bool
-	Value(columnIndex int, rowNumber int64) (any, error)
-	// DecimalStringValue returns a native-Arrow DECIMAL column value as a
-	// lossless, scale-applied string. ok is false when the column is not backed
-	// by a decimal128 holder, in which case the caller should fall back to
-	// Value. Used only for top-level DECIMAL columns when native decimal is
-	// enabled; see databricks/databricks-sql-go#274.
-	DecimalStringValue(columnIndex int, rowNumber int64) (value string, ok bool)
-	SetDelimiter(d rowscanner.Delimiter)
-}
-
-func NewRowValues(d rowscanner.Delimiter, holders []columnValues) RowValues {
+func NewRowValues(d rowscanner.Delimiter, holders []columnValues) *rowValues {
 	return &rowValues{Delimiter: d, columnValueHolders: holders}
 }
 
 type rowValues struct {
 	rowscanner.Delimiter
 	columnValueHolders []columnValues
+	readers            []columnReader
 }
 
-var _ RowValues = (*rowValues)(nil)
-
 func (rv *rowValues) Close() {
+	rv.readers = nil
 	// release any retained arrow arrays
 	for i := range rv.columnValueHolders {
 		if rv.columnValueHolders[i] != nil {
@@ -59,34 +42,6 @@ func (rv *rowValues) SetColumnValues(columnIndex int, values arrow.ArrayData) er
 	}
 	return err
 }
-
-func (rv *rowValues) IsNull(columnIndex int, rowNumber int64) bool {
-	b := true
-	if columnIndex < len(rv.columnValueHolders) {
-		b = rv.columnValueHolders[columnIndex].IsNull(int(rowNumber - rv.Start()))
-	}
-	return b
-}
-
-func (rv *rowValues) Value(columnIndex int, rowNumber int64) (any, error) {
-	var err error
-	var value any
-	if columnIndex < len(rv.columnValueHolders) {
-		value, err = rv.columnValueHolders[columnIndex].Value(int(rowNumber - rv.Start()))
-	}
-	return value, err
-}
-
-func (rv *rowValues) DecimalStringValue(columnIndex int, rowNumber int64) (string, bool) {
-	if columnIndex < len(rv.columnValueHolders) {
-		if d, ok := rv.columnValueHolders[columnIndex].(*decimal128Container); ok {
-			return d.ValueString(int(rowNumber - rv.Start())), true
-		}
-	}
-	return "", false
-}
-
-func (rv *rowValues) NColumns() int { return len(rv.columnValueHolders) }
 
 func (rv *rowValues) SetDelimiter(d rowscanner.Delimiter) { rv.Delimiter = d }
 
