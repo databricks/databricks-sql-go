@@ -298,6 +298,11 @@ func (r *kernelRows) nextBatch() error {
 	var carr C.struct_ArrowArray
 	var csch C.struct_ArrowSchema
 	if err := call(func() C.KernelStatusCode {
+		var ready C.bool
+		status := C.kernel_result_stream_try_next_batch(r.stream, &ready, &carr, &csch)
+		if status != C.KernelStatusCode_Success || bool(ready) {
+			return status
+		}
 		return C.kernel_result_stream_next_batch(r.stream, &carr, &csch)
 	}); err != nil {
 		r.op.backend.evictIfSessionFatal(err)
