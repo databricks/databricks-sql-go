@@ -144,6 +144,7 @@ func ScanCellCachedDecimalFloat(col arrow.Array, row int, loc *time.Location, ke
 type ScanOptions struct {
 	DecimalAsFloat   bool
 	GeospatialBinary bool
+	DecimalStrings   *decimalfmt.Arena
 }
 
 // ScanCellCachedWithOptions is the full scanner entry point used by the kernel
@@ -254,6 +255,9 @@ func scanCell(col arrow.Array, row int, loc *time.Location, keys *StructKeyCache
 		if options.DecimalAsFloat {
 			// Lossy fast path: float64, no per-cell string. Opt-in only.
 			return c.Value(row).ToFloat64(dt.Scale), nil
+		}
+		if options.DecimalStrings != nil {
+			return options.DecimalStrings.ExactString(c.Value(row), dt.Scale), nil
 		}
 		return decimalfmt.ExactString(c.Value(row), dt.Scale), nil
 	case *array.Duration:
