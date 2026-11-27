@@ -64,7 +64,7 @@ type arrowRowScanner struct {
 	currentBatch SparkArrowBatch
 
 	// Currently loaded field values for a set of rows
-	rowValues RowValues
+	rowValues *rowValues
 
 	// function to convert arrow timestamp when using native arrow format
 	toTimestampFn timeStampFn
@@ -207,6 +207,7 @@ func (ars *arrowRowScanner) ScanRow(
 	if ars.location == nil {
 		ars.location = time.UTC
 	}
+	rowIndex := int(rowNumber - ars.rowValues.Start())
 
 	// loop over the destination slice filling in values
 	for i := range destination {
@@ -215,37 +216,15 @@ func (ars *arrowRowScanner) ScanRow(
 
 		// if there is a corresponding column and the value for the specified row
 		// is not null we put the value in the destination
-		if !ars.rowValues.IsNull(i, rowNumber) {
-
-			col := ars.colInfo[i]
-			dbType := col.dbType
-
-			if isIntervalType(dbType) && ars.UseArrowNativeIntervalTypes {
-				//	not yet fully supported
-				ars.Error().Msg(errArrowRowsUnsupportedNativeType(dbType.String()))
-				return dbsqlerrint.NewDriverError(ars.ctx, errArrowRowsUnsupportedNativeType(dbType.String()), nil)
-			}
-
-			// A top-level native-arrow DECIMAL column is returned as a lossless,
-			// scale-applied string so precision beyond float64 is preserved.
-			// Gated on the requested config (not merely the holder type) so that
-			// disabling native decimal keeps the prior float64 behavior even if
-			// the server-provided arrow schema carries a decimal128. Decimals
-			// nested in complex types take a different path: the complex
-			// container renders them losslessly via marshalScalar during JSON
-			// serialization, independent of this config gate.
-			// See databricks/databricks-sql-go#274 and #253.
-			if dbType == cli_service.TTypeId_DECIMAL_TYPE && ars.UseArrowNativeDecimal {
-				if s, ok := ars.rowValues.DecimalStringValue(i, rowNumber); ok {
-					destination[i] = s
-					continue
-				}
-			}
-
-			// get the value from the column values holder
+		if i < len(ars.rowValues.readers) {
 			var err1 error
-			destination[i], err1 = ars.rowValues.Value(i, rowNumber)
+			destination[i], err1 = ars.rowValues.readers[i](rowIndex)
 			if err1 != nil {
+				col := ars.colInfo[i]
+				if err1 == errNativeInterval {
+					ars.Error().Msg(errArrowRowsUnsupportedNativeType(col.dbType.String()))
+					return dbsqlerrint.NewDriverError(ars.ctx, errArrowRowsUnsupportedNativeType(col.dbType.String()), nil)
+				}
 				err = dbsqlerrint.NewDriverError(ars.ctx, errArrowRowsColumnValue(col.name), err1)
 			}
 		}
@@ -331,6 +310,7 @@ func (ars *arrowRowScanner) loadBatchFor(rowNumber int64) dbsqlerr.DBError {
 
 	// Update the delimiter in rowValues to reflect the currently loaded set of rows
 	ars.rowValues.SetDelimiter(rowscanner.NewDelimiter(sar.Start(), sar.Count()))
+	ars.rowValues.bindReaders(ars.colInfo, ars.ArrowConfig, sar.Columns())
 	return nil
 }
 

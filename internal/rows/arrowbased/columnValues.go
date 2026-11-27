@@ -31,18 +31,20 @@ type RowValues interface {
 	SetDelimiter(d rowscanner.Delimiter)
 }
 
-func NewRowValues(d rowscanner.Delimiter, holders []columnValues) RowValues {
+func NewRowValues(d rowscanner.Delimiter, holders []columnValues) *rowValues {
 	return &rowValues{Delimiter: d, columnValueHolders: holders}
 }
 
 type rowValues struct {
 	rowscanner.Delimiter
 	columnValueHolders []columnValues
+	readers            []columnReader
 }
 
 var _ RowValues = (*rowValues)(nil)
 
 func (rv *rowValues) Close() {
+	rv.readers = nil
 	// release any retained arrow arrays
 	for i := range rv.columnValueHolders {
 		if rv.columnValueHolders[i] != nil {

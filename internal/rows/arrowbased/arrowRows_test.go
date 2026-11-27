@@ -249,8 +249,7 @@ func TestArrowRowScanner(t *testing.T) {
 
 		var ok bool
 
-		rowValues, ok := ars.rowValues.(*rowValues)
-		assert.True(t, ok)
+		rowValues := ars.rowValues
 
 		_, ok = rowValues.columnValueHolders[0].(*columnValuesTyped[*array.Boolean, bool])
 		assert.True(t, ok)
@@ -325,8 +324,7 @@ func TestArrowRowScanner(t *testing.T) {
 
 		var ok bool
 
-		rowValues, ok := ars.rowValues.(*rowValues)
-		assert.True(t, ok)
+		rowValues := ars.rowValues
 
 		// timestamp
 		_, ok = rowValues.columnValueHolders[8].(*timestampValueContainer)
