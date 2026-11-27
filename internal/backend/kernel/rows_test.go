@@ -68,8 +68,6 @@ func newBatchTestRows(test testing.TB, payload []byte, nextChunk http.HandlerFun
 	require.NoError(test, reader.Err())
 	reader.Release()
 	server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		// Narrow the native SIGPIPE window until databricks-sql-kernel#509 reaches the bindings.
-		time.Sleep(time.Millisecond)
 		writer.Header().Set("Content-Type", "application/json")
 		switch {
 		case request.Method == http.MethodPost && strings.HasSuffix(request.URL.Path, "/sessions"):
@@ -127,6 +125,37 @@ func countBlockingFetches(rows *kernelRows) (*atomic.Int32, <-chan struct{}) {
 	return &count, blocking
 }
 
+func guardedBatchTestCleanup(test *testing.T) (func(func()), *bool) {
+	skip := new(bool)
+	return func(cleanup func()) {
+		test.Cleanup(func() {
+			if !*skip {
+				cleanup()
+			}
+		})
+	}, skip
+}
+
+func TestKernelRowsGuardedCleanup(test *testing.T) {
+	for _, scenario := range []struct {
+		name string
+		skip bool
+	}{{name: "joined"}, {name: "worker_stuck", skip: true}} {
+		var cleaned []int
+		test.Run(scenario.name, func(test *testing.T) {
+			registerCleanup, skipCleanup := guardedBatchTestCleanup(test)
+			registerCleanup(func() { cleaned = append(cleaned, 1) })
+			registerCleanup(func() { cleaned = append(cleaned, 2) })
+			*skipCleanup = scenario.skip
+		})
+		if scenario.skip {
+			require.Empty(test, cleaned)
+		} else {
+			require.Equal(test, []int{2, 1}, cleaned)
+		}
+	}
+}
+
 func TestKernelRowsBufferedBatches(test *testing.T) {
 	var chunks []int
 	var closedChunks int
@@ -170,17 +199,19 @@ func TestKernelRowsPendingBatch(test *testing.T) {
 			releaseChunk := sync.OnceFunc(func() { close(release) })
 			done := make(chan struct{})
 			started := false
+			registerCleanup, skipCleanup := guardedBatchTestCleanup(test)
 			defer func() {
 				releaseChunk()
 				if started {
 					select {
 					case <-done:
 					case <-time.After(6 * time.Second):
-						test.Error("fetch goroutine did not exit")
+						*skipCleanup = true
+						test.Fatal("fetch goroutine did not exit")
 					}
 				}
 			}()
-			rows := openBatchTestRows(test, payload, func(writer http.ResponseWriter, request *http.Request) {
+			rows := newBatchTestRows(test, payload, func(writer http.ResponseWriter, request *http.Request) {
 				select {
 				case <-release:
 				case <-request.Context().Done():
@@ -192,7 +223,7 @@ func TestKernelRowsPendingBatch(test *testing.T) {
 					return
 				}
 				_ = json.NewEncoder(writer).Encode(map[string]any{"chunk_index": 1, "row_offset": 3, "row_count": 3, "attachment": base64.StdEncoding.EncodeToString(payload)})
-			}, nil)
+			}, nil, registerCleanup)
 			blockingFetches, blocking := countBlockingFetches(rows)
 			for row := 0; row < 3; row++ {
 				require.NoError(test, rows.Next(make([]driver.Value, 3)))
@@ -253,19 +284,12 @@ func TestKernelRowsTryNextError(test *testing.T) {
 	require.False(test, rows.eof)
 }
 
-func TestKernelRowsPrefetchError(test *testing.T) {
-	prefetchResponded := make(chan struct{})
-	var responseOnce sync.Once
+func TestKernelRowsPrefetchErrorOnEitherPath(test *testing.T) {
 	rows := openBatchTestRows(test, batchTestIPC(test, 1), func(writer http.ResponseWriter, _ *http.Request) {
-		defer responseOnce.Do(func() { close(prefetchResponded) })
 		writer.WriteHeader(http.StatusBadRequest)
 		_, _ = io.WriteString(writer, `{"error_code":"BAD_REQUEST","message":"Invalid SessionHandle: batch-session"}`)
 	}, nil)
-	select {
-	case <-prefetchResponded:
-	case <-time.After(5 * time.Second):
-		test.Fatal("background prefetch did not return its error response")
-	}
+	blockingFetches, _ := countBlockingFetches(rows)
 	for row := 0; row < 3; row++ {
 		require.NoError(test, rows.Next(make([]driver.Value, 3)))
 	}
@@ -275,6 +299,7 @@ func TestKernelRowsPrefetchError(test *testing.T) {
 	require.Equal(test, statusInvalidArgument, kernelErr.Code)
 	require.NotErrorIs(test, err, driver.ErrBadConn)
 	require.False(test, rows.op.backend.SessionValid())
+	require.LessOrEqual(test, blockingFetches.Load(), int32(1))
 }
 
 type batchTestConnection struct{ rows *kernelRows }
@@ -302,30 +327,32 @@ func TestKernelRowsCloseDuringFallback(test *testing.T) {
 	release := make(chan struct{})
 	releaseChunk := sync.OnceFunc(func() { close(release) })
 	var workers []<-chan struct{}
+	registerCleanup, skipCleanup := guardedBatchTestCleanup(test)
 	defer func() {
 		releaseChunk()
 		for _, worker := range workers {
 			select {
 			case <-worker:
 			case <-time.After(6 * time.Second):
-				test.Error("rows worker did not exit")
+				*skipCleanup = true
+				test.Fatal("rows worker did not exit")
 			}
 		}
 	}()
-	rows := openBatchTestRows(test, payload, func(writer http.ResponseWriter, request *http.Request) {
+	rows := newBatchTestRows(test, payload, func(writer http.ResponseWriter, request *http.Request) {
 		select {
 		case <-release:
 		case <-request.Context().Done():
 			return
 		}
 		_ = json.NewEncoder(writer).Encode(map[string]any{"chunk_index": 1, "row_offset": 3, "row_count": 3, "attachment": base64.StdEncoding.EncodeToString(payload)})
-	}, nil)
+	}, nil, registerCleanup)
 	blockingFetches, blocking := countBlockingFetches(rows)
 	database := sql.OpenDB(batchTestConnection{rows: rows})
-	test.Cleanup(func() { require.NoError(test, database.Close()) })
+	registerCleanup(func() { require.NoError(test, database.Close()) })
 	result, err := database.QueryContext(context.Background(), "SELECT buffered")
 	require.NoError(test, err)
-	test.Cleanup(func() { require.NoError(test, result.Close()) })
+	registerCleanup(func() { require.NoError(test, result.Close()) })
 	for row := 0; row < 3; row++ {
 		require.True(test, result.Next())
 	}

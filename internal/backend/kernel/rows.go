@@ -47,13 +47,14 @@ var (
 )
 
 // kernelRows implements driver.Rows over the kernel result stream. It pulls one
-// Arrow RecordBatch at a time via kernel_result_stream_next_batch (inline and
-// CloudFetch are transparent below the C ABI), imports it zero-copy through the
-// Arrow C Data Interface, and scans rows out on demand.
+// Arrow RecordBatch at a time: nextBatch tries kernel_result_stream_try_next_batch
+// first and uses kernel_result_stream_next_batch only as the blocking fallback.
+// Inline and CloudFetch are transparent below the C ABI; batches are imported
+// zero-copy through the Arrow C Data Interface and scanned on demand.
 //
-// The batch/row split mirrors the kernel's own ResultStream: next_batch does the
-// per-batch network/decode work once; row reads walk the already-imported
-// arrow.RecordBatch with O(1) indexing.
+// The batch/row split mirrors the kernel's own ResultStream: nextBatch imports
+// each batch once; row reads walk the already-imported arrow.RecordBatch with
+// O(1) indexing.
 type kernelRows struct {
 	// ctx is detached from the caller's QueryContext (via context2.WithoutCancel)
 	// so a submit-gating deadline can't truncate a large CloudFetch stream, matching
