@@ -25,8 +25,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func batchTestIPC(t testing.TB, batches int) []byte {
-	t.Helper()
+func batchTestIPC(test testing.TB, batches int) []byte {
+	test.Helper()
 	schema := arrow.NewSchema([]arrow.Field{
 		{Name: "boolean", Type: arrow.FixedWidthTypes.Boolean, Nullable: true},
 		{Name: "float", Type: arrow.PrimitiveTypes.Float32, Nullable: true},
@@ -42,21 +42,21 @@ func batchTestIPC(t testing.TB, batches int) []byte {
 	var buffer bytes.Buffer
 	writer := ipc.NewWriter(&buffer, ipc.WithSchema(schema))
 	for batch := 0; batch < batches; batch++ {
-		require.NoError(t, writer.Write(record))
+		require.NoError(test, writer.Write(record))
 	}
-	require.NoError(t, writer.Close())
+	require.NoError(test, writer.Close())
 	return buffer.Bytes()
 }
 
-func openBatchTestRows(t testing.TB, payload []byte, nextChunk http.HandlerFunc, callbacks *dbsqlrows.TelemetryCallbacks) *kernelRows {
-	t.Helper()
+func openBatchTestRows(test testing.TB, payload []byte, nextChunk http.HandlerFunc, callbacks *dbsqlrows.TelemetryCallbacks) *kernelRows {
+	test.Helper()
 	reader, err := ipc.NewReader(bytes.NewReader(payload))
-	require.NoError(t, err)
+	require.NoError(test, err)
 	rowCount := int64(0)
 	for reader.Next() {
 		rowCount += reader.RecordBatch().NumRows()
 	}
-	require.NoError(t, reader.Err())
+	require.NoError(test, reader.Err())
 	reader.Release()
 	server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		time.Sleep(time.Millisecond)
@@ -88,60 +88,61 @@ func openBatchTestRows(t testing.TB, payload []byte, nextChunk http.HandlerFunc,
 			_, _ = io.WriteString(writer, `{}`)
 		}
 	}))
-	t.Cleanup(server.Close)
+	test.Cleanup(server.Close)
 	enabled := false
 	kernelBackend := New(Config{
 		Host: server.URL, HTTPPath: "/sql/1.0/warehouses/batches", Auth: Auth{Mode: AuthPAT, Token: "batch-test-token"},
 		TLSSkipVerify: true, Retry: &RetryConfig{MinWait: time.Millisecond, MaxWait: time.Millisecond}, RequestTimeout: 5 * time.Second,
 		Telemetry: &TelemetryConfig{Enabled: &enabled},
 	})
-	require.NoError(t, kernelBackend.OpenSession(context.Background()))
-	t.Cleanup(func() { require.NoError(t, kernelBackend.CloseSession(context.Background())) })
+	require.NoError(test, kernelBackend.OpenSession(context.Background()))
+	test.Cleanup(func() { require.NoError(test, kernelBackend.CloseSession(context.Background())) })
 	operation, err := kernelBackend.Execute(context.Background(), backend.ExecRequest{Query: "SELECT boolean, float, double FROM batches"})
-	require.NoError(t, err)
-	t.Cleanup(func() { _, closeErr := operation.Close(context.Background()); require.NoError(t, closeErr) })
+	require.NoError(test, err)
+	test.Cleanup(func() { _, closeErr := operation.Close(context.Background()); require.NoError(test, closeErr) })
 	rows, err := operation.Results(context.Background(), callbacks)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, rows.Close()) })
+	require.NoError(test, err)
+	test.Cleanup(func() { require.NoError(test, rows.Close()) })
 	return rows.(*kernelRows)
 }
 
-func TestKernelRowsBufferedBatches(t *testing.T) {
+func TestKernelRowsBufferedBatches(test *testing.T) {
 	var chunks []int
 	var closedChunks int
-	rows := openBatchTestRows(t, batchTestIPC(t, 3), nil, &dbsqlrows.TelemetryCallbacks{
+	rows := openBatchTestRows(test, batchTestIPC(test, 3), nil, &dbsqlrows.TelemetryCallbacks{
 		OnChunkFetched: func(count int, _ int64, _ int, _ int64, _ int32) { chunks = append(chunks, count) },
 		OnClose: func(_ int64, count int, iterationErr, closeErr error) {
 			closedChunks = count
-			require.NoError(t, iterationErr)
-			require.NoError(t, closeErr)
+			require.NoError(test, iterationErr)
+			require.NoError(test, closeErr)
 		},
 	})
 	want := [][]driver.Value{{true, float32(1.25), math.Inf(1)}, {false, float32(-2.5), math.SmallestNonzeroFloat64}, {nil, nil, nil}}
 	values := make([]driver.Value, 3)
 	for batch := 0; batch < 3; batch++ {
 		for _, expected := range want {
-			require.NoError(t, rows.Next(values))
-			require.Equal(t, expected, values)
+			require.NoError(test, rows.Next(values))
+			require.Equal(test, expected, values)
 		}
 	}
-	require.ErrorIs(t, rows.Next(values), io.EOF)
-	require.True(t, rows.eof)
-	require.ErrorIs(t, rows.Next(values), io.EOF)
-	require.Equal(t, []int{1, 2, 3}, chunks)
-	require.NoError(t, rows.Close())
-	require.NoError(t, rows.Close())
-	require.Equal(t, 3, closedChunks)
+	require.ErrorIs(test, rows.Next(values), io.EOF)
+	require.True(test, rows.eof)
+	require.Nil(test, rows.cur)
+	require.ErrorIs(test, rows.Next(values), io.EOF)
+	require.Equal(test, []int{1, 2, 3}, chunks)
+	require.NoError(test, rows.Close())
+	require.NoError(test, rows.Close())
+	require.Equal(test, 3, closedChunks)
 }
 
-func TestKernelRowsPendingBatch(t *testing.T) {
+func TestKernelRowsPendingBatch(test *testing.T) {
 	for _, scenario := range []struct {
 		name   string
 		fail   bool
 		cancel bool
 	}{{name: "batch"}, {name: "error", fail: true}, {name: "cancel", cancel: true}} {
-		t.Run(scenario.name, func(t *testing.T) {
-			payload := batchTestIPC(t, 1)
+		test.Run(scenario.name, func(test *testing.T) {
+			payload := batchTestIPC(test, 1)
 			entered := make(chan struct{})
 			release := make(chan struct{})
 			done := make(chan struct{})
@@ -152,11 +153,11 @@ func TestKernelRowsPendingBatch(t *testing.T) {
 					select {
 					case <-done:
 					case <-time.After(6 * time.Second):
-						t.Error("fetch goroutine did not exit")
+						test.Error("fetch goroutine did not exit")
 					}
 				}
 			}()
-			rows := openBatchTestRows(t, payload, func(writer http.ResponseWriter, request *http.Request) {
+			rows := openBatchTestRows(test, payload, func(writer http.ResponseWriter, request *http.Request) {
 				close(entered)
 				select {
 				case <-release:
@@ -171,7 +172,7 @@ func TestKernelRowsPendingBatch(t *testing.T) {
 				_ = json.NewEncoder(writer).Encode(map[string]any{"chunk_index": 1, "row_offset": 3, "row_count": 3, "attachment": base64.StdEncoding.EncodeToString(payload)})
 			}, nil)
 			for row := 0; row < 3; row++ {
-				require.NoError(t, rows.Next(make([]driver.Value, 3)))
+				require.NoError(test, rows.Next(make([]driver.Value, 3)))
 			}
 			finished := make(chan error, 1)
 			started = true
@@ -182,11 +183,11 @@ func TestKernelRowsPendingBatch(t *testing.T) {
 			select {
 			case <-entered:
 			case <-time.After(5 * time.Second):
-				t.Fatal("pending fetch never requested the next chunk")
+				test.Fatal("pending fetch never requested the next chunk")
 			}
 			select {
 			case err := <-finished:
-				t.Fatalf("pending fetch returned before provider progress: %v", err)
+				test.Fatalf("pending fetch returned before provider progress: %v", err)
 			case <-time.After(20 * time.Millisecond):
 			}
 			if scenario.cancel {
@@ -196,61 +197,61 @@ func TestKernelRowsPendingBatch(t *testing.T) {
 			select {
 			case err := <-finished:
 				if scenario.fail {
-					require.ErrorContains(t, err, "kernel: next_batch:")
-					require.ErrorContains(t, err, "Invalid SessionHandle")
-					require.NotErrorIs(t, err, driver.ErrBadConn)
-					require.False(t, rows.op.backend.SessionValid())
+					require.ErrorContains(test, err, "kernel: next_batch:")
+					require.ErrorContains(test, err, "Invalid SessionHandle")
+					require.NotErrorIs(test, err, driver.ErrBadConn)
+					require.False(test, rows.op.backend.SessionValid())
 				} else {
-					require.NoError(t, err)
-					require.EqualValues(t, 3, rows.cur.NumRows())
+					require.NoError(test, err)
+					require.EqualValues(test, 3, rows.cur.NumRows())
 				}
 			case <-time.After(5 * time.Second):
-				t.Fatal("blocking fallback did not finish")
+				test.Fatal("blocking fallback did not finish")
 			}
 			if scenario.cancel {
-				require.ErrorIs(t, rows.nextBatch(), context.Canceled)
+				require.ErrorIs(test, rows.nextBatch(), context.Canceled)
 			}
 		})
 	}
 }
 
-func TestKernelRowsTryNextError(t *testing.T) {
+func TestKernelRowsTryNextError(test *testing.T) {
 	rows := &kernelRows{op: &kernelOp{backend: &KernelBackend{}}}
 	err := rows.nextBatch()
-	require.ErrorContains(t, err, "kernel: next_batch:")
-	require.ErrorContains(t, err, "try_next_batch: pointers must not be null")
-	require.NotErrorIs(t, err, driver.ErrBadConn)
-	require.False(t, rows.eof)
+	require.ErrorContains(test, err, "kernel: next_batch:")
+	require.ErrorContains(test, err, "try_next_batch: pointers must not be null")
+	require.NotErrorIs(test, err, driver.ErrBadConn)
+	require.False(test, rows.eof)
 }
 
-func TestKernelRowsCancelBeforeBufferedBatch(t *testing.T) {
-	rows := openBatchTestRows(t, batchTestIPC(t, 3), nil, nil)
-	require.NoError(t, rows.nextBatch())
+func TestKernelRowsCancelBeforeBufferedBatch(test *testing.T) {
+	rows := openBatchTestRows(test, batchTestIPC(test, 3), nil, nil)
+	require.NoError(test, rows.nextBatch())
 	current := rows.cur
 	rows.cancel()
-	require.ErrorIs(t, rows.nextBatch(), context.Canceled)
-	require.Same(t, current, rows.cur)
-	require.Equal(t, 1, rows.chunkCount)
-	require.NoError(t, rows.Close())
-	require.Nil(t, rows.cur)
-	require.ErrorIs(t, rows.Next(make([]driver.Value, 3)), io.EOF)
+	require.ErrorIs(test, rows.nextBatch(), context.Canceled)
+	require.Same(test, current, rows.cur)
+	require.Equal(test, 1, rows.chunkCount)
+	require.NoError(test, rows.Close())
+	require.Nil(test, rows.cur)
+	require.ErrorIs(test, rows.Next(make([]driver.Value, 3)), io.EOF)
 }
 
-func BenchmarkKernelRowsBuffered(b *testing.B) {
+func BenchmarkKernelRowsBuffered(benchmark *testing.B) {
 	const batches = 4096
-	payload := batchTestIPC(b, batches)
-	b.ReportAllocs()
-	b.ResetTimer()
-	for iteration := 0; iteration < b.N; iteration++ {
-		b.StopTimer()
-		rows := openBatchTestRows(b, payload, nil, nil)
-		b.StartTimer()
+	payload := batchTestIPC(benchmark, batches)
+	benchmark.ReportAllocs()
+	benchmark.ResetTimer()
+	for iteration := 0; iteration < benchmark.N; iteration++ {
+		benchmark.StopTimer()
+		rows := openBatchTestRows(benchmark, payload, nil, nil)
+		benchmark.StartTimer()
 		for batch := 0; batch < batches; batch++ {
-			require.NoError(b, rows.nextBatch())
+			require.NoError(benchmark, rows.nextBatch())
 		}
-		require.ErrorIs(b, rows.nextBatch(), io.EOF)
-		b.StopTimer()
-		require.NoError(b, rows.Close())
+		require.ErrorIs(benchmark, rows.nextBatch(), io.EOF)
+		benchmark.StopTimer()
+		require.NoError(benchmark, rows.Close())
 	}
-	b.ReportMetric(float64(b.Elapsed().Nanoseconds())/float64(b.N*batches), "ns/batch")
+	benchmark.ReportMetric(float64(benchmark.Elapsed().Nanoseconds())/float64(benchmark.N*batches), "ns/batch")
 }
