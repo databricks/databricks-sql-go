@@ -288,3 +288,88 @@ func TestBoundNullFreeSkipsBitmap(t *testing.T) {
 	require.Equal(t, int32(1234567), destination[0])
 	require.Zero(t, counter.reads)
 }
+
+func TestBoundUnknownNullCountWithoutBitmap(t *testing.T) {
+	pool := memory.NewCheckedAllocator(memory.DefaultAllocator)
+	defer pool.AssertSize(t, 0)
+	builder := array.NewInt32Builder(pool)
+	defer builder.Release()
+	for row := 0; row < 64; row++ {
+		builder.Append(int32(row))
+	}
+	full := builder.NewArray()
+	defer full.Release()
+	data := array.NewData(arrow.PrimitiveTypes.Int32, 64, []*memory.Buffer{nil, full.Data().Buffers()[1]}, nil, 5, 0)
+	defer data.Release()
+	sliced := array.NewSliceData(data, 7, 39)
+	defer sliced.Release()
+	values := array.NewInt32Data(sliced)
+	defer values.Release()
+	require.Equal(t, array.UnknownNullCount, values.Data().NullN())
+	require.Empty(t, values.NullBitmapBytes())
+	scanner := readerTestScanner([]arrow.Field{{Name: "number", Type: arrow.PrimitiveTypes.Int32, Nullable: true}}, []cli_service.TTypeId{cli_service.TTypeId_INT_TYPE}, config.ArrowConfig{}, time.UTC, []arrow.Array{values})
+	defer scanner.Close()
+	destination := make([]driver.Value, 1)
+	for row := int32(0); row < 32; row++ {
+		require.NotPanics(t, func() {
+			require.NoError(t, scanner.ScanRow(destination, 41+int64(row)))
+		})
+		require.Equal(t, 7+row, destination[0])
+	}
+}
+
+func TestBoundUnknownNullCountWithBitmap(t *testing.T) {
+	builder := array.NewInt32Builder(memory.DefaultAllocator)
+	defer builder.Release()
+	builder.AppendNull()
+	builder.Append(1234567)
+	full := builder.NewArray()
+	defer full.Release()
+	values := array.NewSlice(full, 1, 2)
+	defer values.Release()
+	require.Equal(t, array.UnknownNullCount, values.Data().NullN())
+	counter := &bitmapReadCounter{Array: values}
+	scanner := readerTestScanner([]arrow.Field{{Name: "number", Type: arrow.PrimitiveTypes.Int32}}, []cli_service.TTypeId{cli_service.TTypeId_INT_TYPE}, config.ArrowConfig{}, time.UTC, []arrow.Array{counter})
+	defer scanner.Close()
+	destination := make([]driver.Value, 1)
+	require.NoError(t, scanner.ScanRow(destination, 41))
+	require.Equal(t, int32(1234567), destination[0])
+	require.Equal(t, 1, counter.reads)
+}
+
+type missingBitmapArray struct {
+	arrow.Array
+}
+
+func (values *missingBitmapArray) NullBitmapBytes() []byte { return nil }
+
+func TestBoundMissingBitmapUsesHolderNulls(t *testing.T) {
+	builder := array.NewInt32Builder(memory.DefaultAllocator)
+	defer builder.Release()
+	builder.Append(1234567)
+	builder.AppendNull()
+	builder.Append(7654321)
+	values := builder.NewArray()
+	defer values.Release()
+	scanner := readerTestScanner([]arrow.Field{{Name: "number", Type: arrow.PrimitiveTypes.Int32, Nullable: true}}, []cli_service.TTypeId{cli_service.TTypeId_INT_TYPE}, config.ArrowConfig{}, time.UTC, []arrow.Array{&missingBitmapArray{Array: values}})
+	defer scanner.Close()
+	destination := []driver.Value{"stale"}
+	for row, expected := range []any{int32(1234567), nil, int32(7654321)} {
+		require.NoError(t, scanner.ScanRow(destination, 41+int64(row)))
+		require.Equal(t, expected, destination[0])
+	}
+}
+
+func TestBoundScanRowAfterCloseFails(t *testing.T) {
+	builder := array.NewInt32Builder(memory.DefaultAllocator)
+	defer builder.Release()
+	builder.Append(1234567)
+	builder.Append(7654321)
+	values := builder.NewArray()
+	defer values.Release()
+	scanner := readerTestScanner([]arrow.Field{{Name: "number", Type: arrow.PrimitiveTypes.Int32}}, []cli_service.TTypeId{cli_service.TTypeId_INT_TYPE}, config.ArrowConfig{}, time.UTC, []arrow.Array{values})
+	destination := make([]driver.Value, 1)
+	require.NoError(t, scanner.ScanRow(destination, 41))
+	scanner.Close()
+	require.Error(t, scanner.ScanRow(destination, 42))
+}

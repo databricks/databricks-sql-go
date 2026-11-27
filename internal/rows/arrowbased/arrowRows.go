@@ -158,6 +158,7 @@ func NewArrowRowScanner(resultSetMetadata *cli_service.TGetResultSetMetadataResp
 func (ars *arrowRowScanner) Close() {
 	if ars.rowValues != nil {
 		ars.rowValues.Close()
+		ars.rowValues.SetDelimiter(rowscanner.NewDelimiter(0, 0))
 	}
 
 	if ars.batchIterator != nil {

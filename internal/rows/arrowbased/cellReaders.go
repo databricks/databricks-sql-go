@@ -35,11 +35,15 @@ func (rv *rowValues) bindReaders(columns []colInfo, cfg config.ArrowConfig, arra
 		if cfg.UseArrowNativeIntervalTypes && isIntervalType(columns[column].dbType) {
 			read = func(int) (any, error) { return nil, errNativeInterval }
 		}
-		if values != nil && values.NullN() == 0 {
+		if values != nil && values.Data().NullN() == 0 {
 			rv.readers[column] = read
 			continue
 		}
 		if values != nil && len(values.NullBitmapBytes()) > 0 {
+			if values.NullN() == 0 {
+				rv.readers[column] = read
+				continue
+			}
 			bitmap, offset := values.NullBitmapBytes(), values.Data().Offset()
 			rv.readers[column] = func(row int) (any, error) {
 				if bitutil.BitIsNotSet(bitmap, offset+row) {
