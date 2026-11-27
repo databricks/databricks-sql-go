@@ -22,10 +22,9 @@ func (rv *rowValues) bindReaders(columns []colInfo, cfg config.ArrowConfig, arra
 		if holder == nil {
 			continue
 		}
-		read := columnReader(holder.Value)
+		read := scalarColumnReader(holder)
 		var values arrow.Array
 		if column < len(arrays) {
-			read = scalarColumnReader(holder)
 			values = arrays[column]
 		}
 		if cfg.UseArrowNativeDecimal && columns[column].dbType == cli_service.TTypeId_DECIMAL_TYPE {

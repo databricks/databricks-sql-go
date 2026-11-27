@@ -219,3 +219,54 @@ func TestBoundTimestampLocation(t *testing.T) {
 		})
 	}
 }
+
+func TestBoundDecimalRequiresDecimalColumn(t *testing.T) {
+	dataType := &arrow.Decimal128Type{Precision: 10, Scale: 2}
+	builder := array.NewDecimal128Builder(memory.DefaultAllocator, dataType)
+	defer builder.Release()
+	require.NoError(t, builder.AppendValueFromString("12.34"))
+	values := builder.NewArray()
+	defer values.Release()
+	scanner := readerTestScanner([]arrow.Field{{Name: "number", Type: dataType}}, []cli_service.TTypeId{cli_service.TTypeId_DOUBLE_TYPE}, config.ArrowConfig{UseArrowNativeDecimal: true}, time.UTC, []arrow.Array{values})
+	defer scanner.Close()
+	destination := make([]driver.Value, 1)
+	require.NoError(t, scanner.ScanRow(destination, 41))
+	require.Equal(t, values.(*array.Decimal128).Value(0).ToFloat64(2), destination[0])
+}
+
+func TestBoundNullType(t *testing.T) {
+	values := array.NewNull(2)
+	defer values.Release()
+	scanner := readerTestScanner([]arrow.Field{{Name: "null", Type: arrow.Null, Nullable: true}}, []cli_service.TTypeId{cli_service.TTypeId_NULL_TYPE}, config.ArrowConfig{}, time.UTC, []arrow.Array{values})
+	defer scanner.Close()
+	destination := []driver.Value{"stale"}
+	for row := int64(41); row < 43; row++ {
+		require.NoError(t, scanner.ScanRow(destination, row))
+		require.Nil(t, destination[0])
+	}
+}
+
+type bitmapReadCounter struct {
+	arrow.Array
+	reads int
+}
+
+func (counter *bitmapReadCounter) NullBitmapBytes() []byte {
+	counter.reads++
+	return counter.Array.NullBitmapBytes()
+}
+
+func TestBoundNullFreeSkipsBitmap(t *testing.T) {
+	builder := array.NewInt32Builder(memory.DefaultAllocator)
+	defer builder.Release()
+	builder.Append(1234567)
+	values := builder.NewArray()
+	defer values.Release()
+	counter := &bitmapReadCounter{Array: values}
+	scanner := readerTestScanner([]arrow.Field{{Name: "number", Type: arrow.PrimitiveTypes.Int32}}, []cli_service.TTypeId{cli_service.TTypeId_INT_TYPE}, config.ArrowConfig{}, time.UTC, []arrow.Array{counter})
+	defer scanner.Close()
+	destination := make([]driver.Value, 1)
+	require.NoError(t, scanner.ScanRow(destination, 41))
+	require.Equal(t, int32(1234567), destination[0])
+	require.Zero(t, counter.reads)
+}
