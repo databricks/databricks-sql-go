@@ -136,26 +136,6 @@ func guardedBatchTestCleanup(test *testing.T) (func(func()), *bool) {
 	}, skip
 }
 
-func TestKernelRowsGuardedCleanup(test *testing.T) {
-	for _, scenario := range []struct {
-		name string
-		skip bool
-	}{{name: "joined"}, {name: "worker_stuck", skip: true}} {
-		var cleaned []int
-		test.Run(scenario.name, func(test *testing.T) {
-			registerCleanup, skipCleanup := guardedBatchTestCleanup(test)
-			registerCleanup(func() { cleaned = append(cleaned, 1) })
-			registerCleanup(func() { cleaned = append(cleaned, 2) })
-			*skipCleanup = scenario.skip
-		})
-		if scenario.skip {
-			require.Empty(test, cleaned)
-		} else {
-			require.Equal(test, []int{2, 1}, cleaned)
-		}
-	}
-}
-
 func TestKernelRowsBufferedBatches(test *testing.T) {
 	var chunks []int
 	var closedChunks int

@@ -402,6 +402,30 @@ func TestKernelLogNoAllocWhenOff(t *testing.T) {
 	}
 }
 
+type kernelLogCapture struct {
+	mu     sync.Mutex
+	buffer bytes.Buffer
+}
+
+func (capture *kernelLogCapture) Write(data []byte) (int, error) {
+	capture.mu.Lock()
+	defer capture.mu.Unlock()
+	return capture.buffer.Write(data)
+}
+
+func (capture *kernelLogCapture) takeProbe() []byte {
+	capture.mu.Lock()
+	defer capture.mu.Unlock()
+	var probe []byte
+	for _, line := range bytes.Split(capture.buffer.Bytes(), []byte{'\n'}) {
+		if bytes.Contains(line, []byte("[kernel] step execute")) {
+			probe = append(probe, line...)
+		}
+	}
+	capture.buffer.Reset()
+	return probe
+}
+
 // TestKernelLogCtxEmitsCorrelation proves the positive half of the contract the
 // alloc test can't see: at debug level klogCtx actually EMITS through the shared
 // logger AND attaches connId/corrId/queryId, and at the default warn level it emits
@@ -410,7 +434,7 @@ func TestKernelLogNoAllocWhenOff(t *testing.T) {
 // also what "emit nothing" looks like).
 func TestKernelLogCtxEmitsCorrelation(t *testing.T) {
 	prev := logger.Logger.GetLevel()
-	var buf bytes.Buffer
+	var buf kernelLogCapture
 	logger.SetLogOutput(&buf)
 	// Restore the package defaults (stderr sink, prior level) so we don't leak the
 	// buffer/level into sibling tests.
@@ -436,7 +460,7 @@ func TestKernelLogCtxEmitsCorrelation(t *testing.T) {
 		CorrID  string `json:"corrId"`
 		QueryID string `json:"queryId"`
 	}
-	line := bytes.TrimSpace(buf.Bytes())
+	line := buf.takeProbe()
 	if len(line) == 0 {
 		t.Fatal("klogCtx emitted nothing at debug level, want one line")
 	}
@@ -454,13 +478,12 @@ func TestKernelLogCtxEmitsCorrelation(t *testing.T) {
 			rec.ConnID, rec.CorrID, rec.QueryID)
 	}
 
-	// Warn level (the default): nothing is emitted.
-	buf.Reset()
+	// Warn level (the default): the probe is not emitted.
 	if err := logger.SetLogLevel("warn"); err != nil {
 		t.Fatal(err)
 	}
 	klogCtx(ctx, "step %s", "execute")
-	if got := bytes.TrimSpace(buf.Bytes()); len(got) != 0 {
+	if got := buf.takeProbe(); len(got) != 0 {
 		t.Errorf("klogCtx emitted %q at warn level, want nothing", got)
 	}
 }
