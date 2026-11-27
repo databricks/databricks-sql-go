@@ -81,7 +81,9 @@ type kernelRows struct {
 	// keyCache memoizes struct field-name JSON keys for this result set so
 	// per-row rendering doesn't re-marshal constant names. Scoped to this Rows
 	// (freed with it) — not a process-global, which would leak.
-	keyCache *arrowscan.StructKeyCache
+	keyCache   *arrowscan.StructKeyCache
+	cells      []arrowscan.CellScanner
+	cellsBound bool
 }
 
 // newKernelRows fetches the schema up front (for Columns()) and returns the row
@@ -209,6 +211,8 @@ func (r *kernelRows) Close() error {
 		return nil
 	}
 	r.closed = true
+	r.cells = nil
+	r.cellsBound = false
 	closeStart := time.Now()
 	// Release the detached results context so an aborted Close doesn't leak it.
 	if r.cancel != nil {
@@ -261,16 +265,11 @@ func (r *kernelRows) next(dest []driver.Value) error {
 			return err
 		}
 	}
-	rec := r.cur
+	if !r.cellsBound {
+		r.bindCells()
+	}
 	for c := 0; c < len(dest); c++ {
-		location := r.op.location
-		if r.ntz[c] {
-			location = time.UTC
-		}
-		v, err := arrowscan.ScanCellCachedWithOptions(rec.Column(c), r.rowInCur, location, r.keyCache, arrowscan.ScanOptions{
-			DecimalAsFloat:   r.op.decimalAsFloat,
-			GeospatialBinary: r.geoBinary[c],
-		})
+		v, err := r.cells[c](r.rowInCur)
 		if err != nil {
 			return fmt.Errorf("kernel: scan col %d (%s): %w", c, r.cols[c], err)
 		}
@@ -280,9 +279,28 @@ func (r *kernelRows) next(dest []driver.Value) error {
 	return nil
 }
 
+func (r *kernelRows) bindCells() {
+	if len(r.cells) != len(r.cols) {
+		r.cells = make([]arrowscan.CellScanner, len(r.cols))
+	}
+	for column := range r.cells {
+		location := r.op.location
+		if r.ntz[column] {
+			location = time.UTC
+		}
+		r.cells[column] = arrowscan.BindCellScanner(r.cur.Column(column), location, r.keyCache, arrowscan.ScanOptions{
+			DecimalAsFloat:   r.op.decimalAsFloat,
+			GeospatialBinary: r.geoBinary[column],
+		})
+	}
+	r.cellsBound = true
+}
+
 // nextBatch pulls the next Arrow batch. A released array (release==NULL) is the
 // kernel's end-of-stream sentinel.
 func (r *kernelRows) nextBatch() error {
+	clear(r.cells)
+	r.cellsBound = false
 	// Stop pulling once Close cancels r.ctx; r.ctx is detached from the caller's
 	// deadline, so this fires on abort, not on a submit-gating timeout. It does NOT
 	// interrupt an in-flight C fetch (the kernel exposes no per-download timeout).
