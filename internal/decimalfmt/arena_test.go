@@ -44,12 +44,12 @@ func TestArenaStringsSurviveRolloverAndReset(test *testing.T) {
 	stringsKept := make([]string, 20000)
 	for index := range stringsKept {
 		stringsKept[index] = arena.ExactString(decimal128.FromI64(int64(index)-10000), 38)
-		require.Equal(test, arenaChunkSize, arena.buffer.Cap())
-		require.LessOrEqual(test, arena.buffer.Len(), arenaChunkSize)
+		require.Equal(test, arenaChunkSize, cap(arena.buffer))
+		require.LessOrEqual(test, len(arena.buffer), arenaChunkSize)
 	}
 	arena.Reset()
-	require.Zero(test, arena.buffer.Cap())
-	require.Zero(test, arena.buffer.Len())
+	require.Zero(test, cap(arena.buffer))
+	require.Zero(test, len(arena.buffer))
 	for index := 0; index < 20000; index++ {
 		_ = arena.ExactString(decimal128.FromI64(-1), 38)
 	}
@@ -66,4 +66,38 @@ func TestArenaAmortizesAllocations(test *testing.T) {
 		benchSink = arena.ExactString(decimal128.FromI64(-12345), 2)
 	})
 	require.Less(test, allocations, 0.01)
+}
+
+func TestArenaOversizedScaleFallback(test *testing.T) {
+	var arena Arena
+	number := decimal128.FromI64(-7)
+	require.Equal(test, ExactString(number, decMaxLen-2), arena.ExactString(number, decMaxLen-2))
+	require.Nil(test, arena.buffer)
+	require.Equal(test, ExactString(number, decMaxLen-3), arena.ExactString(number, decMaxLen-3))
+	require.Equal(test, arenaChunkSize, cap(arena.buffer))
+	used := len(arena.buffer)
+	require.Equal(test, ExactString(number, 40000), arena.ExactString(number, 40000))
+	require.Equal(test, used, len(arena.buffer))
+}
+
+func TestArenaStringsReadDuringRendering(test *testing.T) {
+	var arena Arena
+	kept := arena.ExactString(decimal128.FromI64(-12345), 2)
+	readResult := make(chan bool, 1)
+	go func() {
+		for iteration := 0; iteration < 20000; iteration++ {
+			if kept != "-123.45" {
+				readResult <- false
+				return
+			}
+		}
+		readResult <- true
+	}()
+	for iteration := 0; iteration < 20000; iteration++ {
+		_ = arena.ExactString(decimal128.FromI64(int64(iteration)), 38)
+		if iteration%100 == 0 {
+			arena.Reset()
+		}
+	}
+	require.True(test, <-readResult)
 }

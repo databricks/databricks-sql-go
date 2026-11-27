@@ -21,10 +21,11 @@ func TestKernelE2EDecimalArenaLifetime(test *testing.T) {
 			defer cancel()
 			query := "SELECT CAST(CASE WHEN id % 31 = 0 THEN NULL ELSE id - 35000 END AS DECIMAL(10,2)) FROM range(70000) ORDER BY id"
 			rowCount := 70000
-			if mode == "limit" {
+			switch mode {
+			case "limit":
 				query += " LIMIT 17"
 				rowCount = 17
-			} else if mode == "early_close" || mode == "cancel" {
+			case "early_close", "cancel":
 				rowCount = 37
 			}
 			result, err := database.QueryContext(ctx, query)

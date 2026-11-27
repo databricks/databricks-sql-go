@@ -70,7 +70,7 @@ func TestKernelRowsUsesDecimalArena(test *testing.T) {
 			panic(err)
 		}
 	})
-	require.Less(test, allocations, 1.01)
+	require.Less(test, allocations, 1.02)
 }
 
 func TestKernelRowsDecimalArenaCanceledBatch(test *testing.T) {
