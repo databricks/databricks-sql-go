@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -51,6 +52,11 @@ func batchTestIPC(test testing.TB, batches int) []byte {
 }
 
 func openBatchTestRows(test testing.TB, payload []byte, nextChunk http.HandlerFunc, callbacks *dbsqlrows.TelemetryCallbacks) *kernelRows {
+	test.Helper()
+	return newBatchTestRows(test, payload, nextChunk, callbacks, test.Cleanup)
+}
+
+func newBatchTestRows(test testing.TB, payload []byte, nextChunk http.HandlerFunc, callbacks *dbsqlrows.TelemetryCallbacks, registerCleanup func(func())) *kernelRows {
 	test.Helper()
 	reader, err := ipc.NewReader(bytes.NewReader(payload))
 	require.NoError(test, err)
@@ -90,7 +96,7 @@ func openBatchTestRows(test testing.TB, payload []byte, nextChunk http.HandlerFu
 			_, _ = io.WriteString(writer, `{}`)
 		}
 	}))
-	test.Cleanup(server.Close)
+	registerCleanup(server.Close)
 	enabled := false
 	kernelBackend := New(Config{
 		Host: server.URL, HTTPPath: "/sql/1.0/warehouses/batches", Auth: Auth{Mode: AuthPAT, Token: "batch-test-token"},
@@ -98,13 +104,13 @@ func openBatchTestRows(test testing.TB, payload []byte, nextChunk http.HandlerFu
 		Telemetry: &TelemetryConfig{Enabled: &enabled},
 	})
 	require.NoError(test, kernelBackend.OpenSession(context.Background()))
-	test.Cleanup(func() { require.NoError(test, kernelBackend.CloseSession(context.Background())) })
+	registerCleanup(func() { require.NoError(test, kernelBackend.CloseSession(context.Background())) })
 	operation, err := kernelBackend.Execute(context.Background(), backend.ExecRequest{Query: "SELECT boolean, float, double FROM batches"})
 	require.NoError(test, err)
-	test.Cleanup(func() { _, closeErr := operation.Close(context.Background()); require.NoError(test, closeErr) })
+	registerCleanup(func() { _, closeErr := operation.Close(context.Background()); require.NoError(test, closeErr) })
 	rows, err := operation.Results(context.Background(), callbacks)
 	require.NoError(test, err)
-	test.Cleanup(func() { require.NoError(test, rows.Close()) })
+	registerCleanup(func() { require.NoError(test, rows.Close()) })
 	return rows.(*kernelRows)
 }
 
@@ -145,7 +151,8 @@ func TestKernelRowsPendingBatch(test *testing.T) {
 	}{{name: "batch"}, {name: "error", fail: true}, {name: "cancel", cancel: true}} {
 		test.Run(scenario.name, func(test *testing.T) {
 			payload := batchTestIPC(test, 1)
-			entered := make(chan struct{})
+			prefetchStarted := make(chan struct{})
+			var prefetchOnce sync.Once
 			release := make(chan struct{})
 			done := make(chan struct{})
 			started := false
@@ -160,7 +167,7 @@ func TestKernelRowsPendingBatch(test *testing.T) {
 				}
 			}()
 			rows := openBatchTestRows(test, payload, func(writer http.ResponseWriter, request *http.Request) {
-				close(entered)
+				prefetchOnce.Do(func() { close(prefetchStarted) })
 				select {
 				case <-release:
 				case <-request.Context().Done():
@@ -178,14 +185,15 @@ func TestKernelRowsPendingBatch(test *testing.T) {
 			}
 			finished := make(chan error, 1)
 			started = true
+			// Chunk 1 remains blocked until release, so consuming the first batch reaches the fallback.
 			go func() {
 				defer close(done)
 				finished <- rows.nextBatch()
 			}()
 			select {
-			case <-entered:
+			case <-prefetchStarted:
 			case <-time.After(5 * time.Second):
-				test.Fatal("pending fetch never requested the next chunk")
+				test.Fatal("background prefetch did not request chunk 1")
 			}
 			select {
 			case err := <-finished:
@@ -199,8 +207,9 @@ func TestKernelRowsPendingBatch(test *testing.T) {
 			select {
 			case err := <-finished:
 				if scenario.fail {
-					require.ErrorContains(test, err, "kernel: next_batch:")
-					require.ErrorContains(test, err, "Invalid SessionHandle")
+					var kernelErr *KernelError
+					require.ErrorAs(test, err, &kernelErr)
+					require.Equal(test, statusInvalidArgument, kernelErr.Code)
 					require.NotErrorIs(test, err, driver.ErrBadConn)
 					require.False(test, rows.op.backend.SessionValid())
 				} else {
@@ -220,10 +229,35 @@ func TestKernelRowsPendingBatch(test *testing.T) {
 func TestKernelRowsTryNextError(test *testing.T) {
 	rows := &kernelRows{op: &kernelOp{backend: &KernelBackend{}}}
 	err := rows.nextBatch()
-	require.ErrorContains(test, err, "kernel: next_batch:")
-	require.ErrorContains(test, err, "try_next_batch: pointers must not be null")
+	var kernelErr *KernelError
+	require.ErrorAs(test, err, &kernelErr)
+	require.Equal(test, statusInvalidArgument, kernelErr.Code)
 	require.NotErrorIs(test, err, driver.ErrBadConn)
 	require.False(test, rows.eof)
+}
+
+func TestKernelRowsPrefetchError(test *testing.T) {
+	prefetchResponded := make(chan struct{})
+	var responseOnce sync.Once
+	rows := openBatchTestRows(test, batchTestIPC(test, 1), func(writer http.ResponseWriter, _ *http.Request) {
+		defer responseOnce.Do(func() { close(prefetchResponded) })
+		writer.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(writer, `{"error_code":"BAD_REQUEST","message":"Invalid SessionHandle: batch-session"}`)
+	}, nil)
+	select {
+	case <-prefetchResponded:
+	case <-time.After(5 * time.Second):
+		test.Fatal("background prefetch did not return its error response")
+	}
+	for row := 0; row < 3; row++ {
+		require.NoError(test, rows.Next(make([]driver.Value, 3)))
+	}
+	err := rows.nextBatch()
+	var kernelErr *KernelError
+	require.ErrorAs(test, err, &kernelErr)
+	require.Equal(test, statusInvalidArgument, kernelErr.Code)
+	require.NotErrorIs(test, err, driver.ErrBadConn)
+	require.False(test, rows.op.backend.SessionValid())
 }
 
 type batchTestConnection struct{ rows *kernelRows }
@@ -248,7 +282,8 @@ func (connection batchTestConnection) QueryContext(context.Context, string, []dr
 
 func TestKernelRowsCloseDuringFallback(test *testing.T) {
 	payload := batchTestIPC(test, 1)
-	entered := make(chan struct{})
+	prefetchStarted := make(chan struct{})
+	var prefetchOnce sync.Once
 	release := make(chan struct{})
 	var workers []<-chan struct{}
 	defer func() {
@@ -262,7 +297,7 @@ func TestKernelRowsCloseDuringFallback(test *testing.T) {
 		}
 	}()
 	rows := openBatchTestRows(test, payload, func(writer http.ResponseWriter, request *http.Request) {
-		close(entered)
+		prefetchOnce.Do(func() { close(prefetchStarted) })
 		select {
 		case <-release:
 		case <-request.Context().Done():
@@ -280,14 +315,15 @@ func TestKernelRowsCloseDuringFallback(test *testing.T) {
 	}
 	fetched := make(chan struct{})
 	workers = append(workers, fetched)
+	// Chunk 1 remains blocked until release, so Next must use the blocking fallback.
 	go func() {
 		defer close(fetched)
 		result.Next()
 	}()
 	select {
-	case <-entered:
+	case <-prefetchStarted:
 	case <-time.After(5 * time.Second):
-		test.Fatal("fallback did not request the next chunk")
+		test.Fatal("background prefetch did not request chunk 1")
 	}
 	closed := make(chan struct{})
 	closeError := make(chan error, 1)
@@ -331,18 +367,31 @@ func TestKernelRowsCancelBeforeBufferedBatch(test *testing.T) {
 func BenchmarkKernelRowsBuffered(benchmark *testing.B) {
 	const batches = 4096
 	payload := batchTestIPC(benchmark, batches)
+	var cleanups []func()
+	cleanup := func() {
+		for len(cleanups) > 0 {
+			index := len(cleanups) - 1
+			closeResource := cleanups[index]
+			cleanups[index] = nil
+			cleanups = cleanups[:index]
+			closeResource()
+		}
+	}
+	defer cleanup()
 	benchmark.ReportAllocs()
 	benchmark.ResetTimer()
 	for iteration := 0; iteration < benchmark.N; iteration++ {
 		benchmark.StopTimer()
-		rows := openBatchTestRows(benchmark, payload, nil, nil)
+		rows := newBatchTestRows(benchmark, payload, nil, nil, func(closeResource func()) {
+			cleanups = append(cleanups, closeResource)
+		})
 		benchmark.StartTimer()
 		for batch := 0; batch < batches; batch++ {
 			require.NoError(benchmark, rows.nextBatch())
 		}
 		require.ErrorIs(benchmark, rows.nextBatch(), io.EOF)
 		benchmark.StopTimer()
-		require.NoError(benchmark, rows.Close())
+		cleanup()
 	}
 	benchmark.ReportMetric(float64(benchmark.Elapsed().Nanoseconds())/float64(benchmark.N*batches), "ns/batch")
 }

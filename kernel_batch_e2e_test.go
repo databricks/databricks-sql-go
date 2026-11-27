@@ -10,10 +10,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestKernelE2EBufferedBatchLifecycle(test *testing.T) {
-	database := kernelTestDBWith(test, WithMaxRows(1))
+func TestKernelE2EResultLifecycleAndReuse(test *testing.T) {
+	database := kernelTestDB(test)
 	defer database.Close() //nolint:errcheck
 	database.SetMaxOpenConns(1)
+	// Abort after roughly 8K rows; this is a lifecycle sample, not a batch-boundary assertion.
+	const rowsBeforeAbort = 8193
 	const query = `SELECT id,
 		IF(id % 3 = 0, NULL, id % 2 = 0) AS boolean_value,
 		IF(id % 3 = 0, NULL, CAST(id / 4 AS FLOAT)) AS float_value,
@@ -46,7 +48,7 @@ func TestKernelE2EBufferedBatchLifecycle(test *testing.T) {
 					require.EqualValues(test, float64(index)/8, double)
 				}
 				count++
-				if count == 8193 && mode != "limit" {
+				if count == rowsBeforeAbort && mode != "limit" {
 					if mode == "cancel" {
 						cancel()
 						for result.Next() {
@@ -60,7 +62,7 @@ func TestKernelE2EBufferedBatchLifecycle(test *testing.T) {
 				require.NoError(test, result.Err())
 				require.EqualValues(test, 10000, count)
 			} else {
-				require.EqualValues(test, 8193, count)
+				require.EqualValues(test, rowsBeforeAbort, count)
 			}
 			require.NoError(test, result.Close())
 			var value int
