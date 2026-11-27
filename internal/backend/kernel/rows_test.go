@@ -16,6 +16,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -67,7 +68,6 @@ func newBatchTestRows(test testing.TB, payload []byte, nextChunk http.HandlerFun
 	require.NoError(test, reader.Err())
 	reader.Release()
 	server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		time.Sleep(time.Millisecond)
 		writer.Header().Set("Content-Type", "application/json")
 		switch {
 		case request.Method == http.MethodPost && strings.HasSuffix(request.URL.Path, "/sessions"):
@@ -114,6 +114,17 @@ func newBatchTestRows(test testing.TB, payload []byte, nextChunk http.HandlerFun
 	return rows.(*kernelRows)
 }
 
+func countBlockingFetches(rows *kernelRows) (*atomic.Int32, <-chan struct{}) {
+	var count atomic.Int32
+	blocking := make(chan struct{})
+	var once sync.Once
+	rows.beforeBlockingFetch = func() {
+		count.Add(1)
+		once.Do(func() { close(blocking) })
+	}
+	return &count, blocking
+}
+
 func TestKernelRowsBufferedBatches(test *testing.T) {
 	var chunks []int
 	var closedChunks int
@@ -125,6 +136,7 @@ func TestKernelRowsBufferedBatches(test *testing.T) {
 			require.NoError(test, closeErr)
 		},
 	})
+	blockingFetches, _ := countBlockingFetches(rows)
 	want := [][]driver.Value{{true, float32(1.25), math.Inf(1)}, {false, float32(-2.5), math.SmallestNonzeroFloat64}, {nil, nil, nil}}
 	values := make([]driver.Value, 3)
 	for batch := 0; batch < 3; batch++ {
@@ -137,6 +149,7 @@ func TestKernelRowsBufferedBatches(test *testing.T) {
 	require.True(test, rows.eof)
 	require.Nil(test, rows.cur)
 	require.ErrorIs(test, rows.Next(values), io.EOF)
+	require.Zero(test, blockingFetches.Load(), "buffered batches and EOF must come from try_next_batch")
 	require.Equal(test, []int{1, 2, 3}, chunks)
 	require.NoError(test, rows.Close())
 	require.NoError(test, rows.Close())
@@ -151,13 +164,12 @@ func TestKernelRowsPendingBatch(test *testing.T) {
 	}{{name: "batch"}, {name: "error", fail: true}, {name: "cancel", cancel: true}} {
 		test.Run(scenario.name, func(test *testing.T) {
 			payload := batchTestIPC(test, 1)
-			prefetchStarted := make(chan struct{})
-			var prefetchOnce sync.Once
 			release := make(chan struct{})
+			releaseChunk := sync.OnceFunc(func() { close(release) })
 			done := make(chan struct{})
 			started := false
 			defer func() {
-				close(release)
+				releaseChunk()
 				if started {
 					select {
 					case <-done:
@@ -167,7 +179,6 @@ func TestKernelRowsPendingBatch(test *testing.T) {
 				}
 			}()
 			rows := openBatchTestRows(test, payload, func(writer http.ResponseWriter, request *http.Request) {
-				prefetchOnce.Do(func() { close(prefetchStarted) })
 				select {
 				case <-release:
 				case <-request.Context().Done():
@@ -180,9 +191,11 @@ func TestKernelRowsPendingBatch(test *testing.T) {
 				}
 				_ = json.NewEncoder(writer).Encode(map[string]any{"chunk_index": 1, "row_offset": 3, "row_count": 3, "attachment": base64.StdEncoding.EncodeToString(payload)})
 			}, nil)
+			blockingFetches, blocking := countBlockingFetches(rows)
 			for row := 0; row < 3; row++ {
 				require.NoError(test, rows.Next(make([]driver.Value, 3)))
 			}
+			require.Zero(test, blockingFetches.Load())
 			finished := make(chan error, 1)
 			started = true
 			// Chunk 1 remains blocked until release, so consuming the first batch reaches the fallback.
@@ -191,9 +204,9 @@ func TestKernelRowsPendingBatch(test *testing.T) {
 				finished <- rows.nextBatch()
 			}()
 			select {
-			case <-prefetchStarted:
+			case <-blocking:
 			case <-time.After(5 * time.Second):
-				test.Fatal("background prefetch did not request chunk 1")
+				test.Fatal("nextBatch did not fall back to the blocking fetch")
 			}
 			select {
 			case err := <-finished:
@@ -203,7 +216,7 @@ func TestKernelRowsPendingBatch(test *testing.T) {
 			if scenario.cancel {
 				rows.cancel()
 			}
-			release <- struct{}{}
+			releaseChunk()
 			select {
 			case err := <-finished:
 				if scenario.fail {
@@ -219,6 +232,7 @@ func TestKernelRowsPendingBatch(test *testing.T) {
 			case <-time.After(5 * time.Second):
 				test.Fatal("blocking fallback did not finish")
 			}
+			require.EqualValues(test, 1, blockingFetches.Load())
 			if scenario.cancel {
 				require.ErrorIs(test, rows.nextBatch(), context.Canceled)
 			}
@@ -232,6 +246,7 @@ func TestKernelRowsTryNextError(test *testing.T) {
 	var kernelErr *KernelError
 	require.ErrorAs(test, err, &kernelErr)
 	require.Equal(test, statusInvalidArgument, kernelErr.Code)
+	require.ErrorContains(test, err, "try_next_batch: pointers must not be null")
 	require.NotErrorIs(test, err, driver.ErrBadConn)
 	require.False(test, rows.eof)
 }
@@ -282,12 +297,11 @@ func (connection batchTestConnection) QueryContext(context.Context, string, []dr
 
 func TestKernelRowsCloseDuringFallback(test *testing.T) {
 	payload := batchTestIPC(test, 1)
-	prefetchStarted := make(chan struct{})
-	var prefetchOnce sync.Once
 	release := make(chan struct{})
+	releaseChunk := sync.OnceFunc(func() { close(release) })
 	var workers []<-chan struct{}
 	defer func() {
-		close(release)
+		releaseChunk()
 		for _, worker := range workers {
 			select {
 			case <-worker:
@@ -297,7 +311,6 @@ func TestKernelRowsCloseDuringFallback(test *testing.T) {
 		}
 	}()
 	rows := openBatchTestRows(test, payload, func(writer http.ResponseWriter, request *http.Request) {
-		prefetchOnce.Do(func() { close(prefetchStarted) })
 		select {
 		case <-release:
 		case <-request.Context().Done():
@@ -305,6 +318,7 @@ func TestKernelRowsCloseDuringFallback(test *testing.T) {
 		}
 		_ = json.NewEncoder(writer).Encode(map[string]any{"chunk_index": 1, "row_offset": 3, "row_count": 3, "attachment": base64.StdEncoding.EncodeToString(payload)})
 	}, nil)
+	blockingFetches, blocking := countBlockingFetches(rows)
 	database := sql.OpenDB(batchTestConnection{rows: rows})
 	test.Cleanup(func() { require.NoError(test, database.Close()) })
 	result, err := database.QueryContext(context.Background(), "SELECT buffered")
@@ -313,6 +327,7 @@ func TestKernelRowsCloseDuringFallback(test *testing.T) {
 	for row := 0; row < 3; row++ {
 		require.True(test, result.Next())
 	}
+	require.Zero(test, blockingFetches.Load())
 	fetched := make(chan struct{})
 	workers = append(workers, fetched)
 	// Chunk 1 remains blocked until release, so Next must use the blocking fallback.
@@ -321,9 +336,9 @@ func TestKernelRowsCloseDuringFallback(test *testing.T) {
 		result.Next()
 	}()
 	select {
-	case <-prefetchStarted:
+	case <-blocking:
 	case <-time.After(5 * time.Second):
-		test.Fatal("background prefetch did not request chunk 1")
+		test.Fatal("Next did not fall back to the blocking fetch")
 	}
 	closed := make(chan struct{})
 	closeError := make(chan error, 1)
@@ -337,14 +352,19 @@ func TestKernelRowsCloseDuringFallback(test *testing.T) {
 		test.Fatalf("Close returned while native fetch was pending: %v", err)
 	case <-time.After(20 * time.Millisecond):
 	}
-	release <- struct{}{}
+	releaseChunk()
 	select {
 	case err := <-closeError:
 		require.NoError(test, err)
 	case <-time.After(5 * time.Second):
 		test.Fatal("Close did not finish after provider progress")
 	}
-	<-fetched
+	select {
+	case <-fetched:
+	case <-time.After(5 * time.Second):
+		test.Fatal("Next did not finish after provider progress")
+	}
+	require.EqualValues(test, 1, blockingFetches.Load())
 	require.True(test, rows.closed)
 	require.Nil(test, rows.cur)
 	require.False(test, result.Next())

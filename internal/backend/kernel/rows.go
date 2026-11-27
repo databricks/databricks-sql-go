@@ -63,6 +63,8 @@ type kernelRows struct {
 	op        *kernelOp
 	stream    *C.kernel_result_stream_t
 	callbacks *dbsqlrows.TelemetryCallbacks
+	// beforeBlockingFetch is a test hook; nil in production.
+	beforeBlockingFetch func()
 
 	cols       []string
 	colTypes   []arrowscan.ColumnTypeInfo // per-column type metadata (PECOBLR-3692)
@@ -302,6 +304,9 @@ func (r *kernelRows) nextBatch() error {
 		status := C.kernel_result_stream_try_next_batch(r.stream, &ready, &carr, &csch)
 		if status != C.KernelStatusCode_Success || bool(ready) {
 			return status
+		}
+		if r.beforeBlockingFetch != nil {
+			r.beforeBlockingFetch()
 		}
 		return C.kernel_result_stream_next_batch(r.stream, &carr, &csch)
 	}); err != nil {
