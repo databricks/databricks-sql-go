@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql/driver"
 	"io"
+	"strings"
 	"testing"
 	"time"
 
@@ -76,6 +77,32 @@ func TestBoundRowsLazyClose(t *testing.T) {
 	require.Nil(t, rows.cells)
 	require.NoError(t, rows.Close())
 	require.Nil(t, rows.cells)
+}
+
+func TestBoundRowsDecimalOption(t *testing.T) {
+	decimalType := &arrow.Decimal128Type{Precision: 5, Scale: 2}
+	decimal, _, err := array.FromJSON(memory.DefaultAllocator, decimalType, strings.NewReader(`["12.50",null]`))
+	require.NoError(t, err)
+	defer decimal.Release()
+	integer, _, err := array.FromJSON(memory.DefaultAllocator, arrow.PrimitiveTypes.Int32, strings.NewReader(`[12345,null]`))
+	require.NoError(t, err)
+	defer integer.Release()
+	schema := arrow.NewSchema([]arrow.Field{{Name: "decimal", Type: decimalType}, {Name: "integer", Type: arrow.PrimitiveTypes.Int32}}, nil)
+	record := array.NewRecordBatch(schema, []arrow.Array{decimal, integer}, 2)
+	defer record.Release()
+	for _, asFloat := range []bool{false, true} {
+		rows := &kernelRows{cur: record, op: &kernelOp{decimalAsFloat: asFloat},
+			cols: []string{"decimal", "integer"}, ntz: []bool{false, false}, geoBinary: []bool{false, false}}
+		destination := make([]driver.Value, 2)
+		require.NoError(t, rows.Next(destination))
+		var want driver.Value = "12.50"
+		if asFloat {
+			want = float64(12.5)
+		}
+		require.Equal(t, []driver.Value{want, int32(12345)}, destination)
+		require.NoError(t, rows.Next(destination))
+		require.Equal(t, []driver.Value{nil, nil}, destination)
+	}
 }
 
 func TestBoundRowsFallbackError(t *testing.T) {
