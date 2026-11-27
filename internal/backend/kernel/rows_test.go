@@ -68,6 +68,8 @@ func newBatchTestRows(test testing.TB, payload []byte, nextChunk http.HandlerFun
 	require.NoError(test, reader.Err())
 	reader.Release()
 	server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		// Narrow the native SIGPIPE window until databricks-sql-kernel#509 reaches the bindings.
+		time.Sleep(time.Millisecond)
 		writer.Header().Set("Content-Type", "application/json")
 		switch {
 		case request.Method == http.MethodPost && strings.HasSuffix(request.URL.Path, "/sessions"):
