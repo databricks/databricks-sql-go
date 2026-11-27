@@ -183,3 +183,20 @@ func TestBoundTimestampExtremes(t *testing.T) {
 		column.Release()
 	}
 }
+
+func TestBoundEmptyColumns(t *testing.T) {
+	for _, dataType := range []arrow.DataType{
+		arrow.FixedWidthTypes.Boolean, arrow.PrimitiveTypes.Int8,
+		arrow.PrimitiveTypes.Int16, arrow.PrimitiveTypes.Int32,
+		arrow.PrimitiveTypes.Int64, arrow.PrimitiveTypes.Float32,
+		arrow.PrimitiveTypes.Float64, arrow.BinaryTypes.String, arrow.BinaryTypes.Binary,
+		arrow.FixedWidthTypes.Date32, arrow.FixedWidthTypes.Date64,
+		&arrow.TimestampType{Unit: arrow.Microsecond},
+	} {
+		builder := array.NewBuilder(memory.DefaultAllocator, dataType)
+		column := builder.NewArray()
+		builder.Release()
+		checkBoundParity(t, column)
+		column.Release()
+	}
+}

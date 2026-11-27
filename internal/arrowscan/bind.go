@@ -19,7 +19,7 @@ func BindCellScanner(col arrow.Array, loc *time.Location, keys *StructKeyCache, 
 	generic := func(row int) (driver.Value, error) {
 		return scanCell(col, row, loc, keys, options)
 	}
-	if options.GeospatialBinary || options.DecimalAsFloat {
+	if options.GeospatialBinary {
 		return generic
 	}
 	var read CellScanner
