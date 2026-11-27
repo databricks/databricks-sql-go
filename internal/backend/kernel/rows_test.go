@@ -5,9 +5,11 @@ package kernel
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"database/sql/driver"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"math"
 	"net/http"
@@ -222,6 +224,95 @@ func TestKernelRowsTryNextError(test *testing.T) {
 	require.ErrorContains(test, err, "try_next_batch: pointers must not be null")
 	require.NotErrorIs(test, err, driver.ErrBadConn)
 	require.False(test, rows.eof)
+}
+
+type batchTestConnection struct{ rows *kernelRows }
+
+func (connection batchTestConnection) Driver() driver.Driver { return connection }
+func (connection batchTestConnection) Open(string) (driver.Conn, error) {
+	return connection, nil
+}
+func (connection batchTestConnection) Connect(context.Context) (driver.Conn, error) {
+	return connection, nil
+}
+func (connection batchTestConnection) Close() error { return nil }
+func (connection batchTestConnection) Prepare(string) (driver.Stmt, error) {
+	return nil, errors.ErrUnsupported
+}
+func (connection batchTestConnection) Begin() (driver.Tx, error) {
+	return nil, errors.ErrUnsupported
+}
+func (connection batchTestConnection) QueryContext(context.Context, string, []driver.NamedValue) (driver.Rows, error) {
+	return connection.rows, nil
+}
+
+func TestKernelRowsCloseDuringFallback(test *testing.T) {
+	payload := batchTestIPC(test, 1)
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var workers []<-chan struct{}
+	defer func() {
+		close(release)
+		for _, worker := range workers {
+			select {
+			case <-worker:
+			case <-time.After(6 * time.Second):
+				test.Error("rows worker did not exit")
+			}
+		}
+	}()
+	rows := openBatchTestRows(test, payload, func(writer http.ResponseWriter, request *http.Request) {
+		close(entered)
+		select {
+		case <-release:
+		case <-request.Context().Done():
+			return
+		}
+		_ = json.NewEncoder(writer).Encode(map[string]any{"chunk_index": 1, "row_offset": 3, "row_count": 3, "attachment": base64.StdEncoding.EncodeToString(payload)})
+	}, nil)
+	database := sql.OpenDB(batchTestConnection{rows: rows})
+	test.Cleanup(func() { require.NoError(test, database.Close()) })
+	result, err := database.QueryContext(context.Background(), "SELECT buffered")
+	require.NoError(test, err)
+	test.Cleanup(func() { require.NoError(test, result.Close()) })
+	for row := 0; row < 3; row++ {
+		require.True(test, result.Next())
+	}
+	fetched := make(chan struct{})
+	workers = append(workers, fetched)
+	go func() {
+		defer close(fetched)
+		result.Next()
+	}()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		test.Fatal("fallback did not request the next chunk")
+	}
+	closed := make(chan struct{})
+	closeError := make(chan error, 1)
+	workers = append(workers, closed)
+	go func() {
+		defer close(closed)
+		closeError <- result.Close()
+	}()
+	select {
+	case err := <-closeError:
+		test.Fatalf("Close returned while native fetch was pending: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	release <- struct{}{}
+	select {
+	case err := <-closeError:
+		require.NoError(test, err)
+	case <-time.After(5 * time.Second):
+		test.Fatal("Close did not finish after provider progress")
+	}
+	<-fetched
+	require.True(test, rows.closed)
+	require.Nil(test, rows.cur)
+	require.False(test, result.Next())
+	require.NoError(test, result.Err())
 }
 
 func TestKernelRowsCancelBeforeBufferedBatch(test *testing.T) {
