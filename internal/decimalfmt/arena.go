@@ -7,12 +7,20 @@ import (
 )
 
 const arenaChunkSize = 4 << 10
+const arenaInitialChunkSize = 64
+
+type noCopy struct{}
+
+func (*noCopy) Lock()   {}
+func (*noCopy) Unlock() {}
 
 // Arena renders exact decimals into append-only Go-owned string chunks.
 // Returned strings remain valid after Reset. An Arena must not be copied or
 // used concurrently; each retained string pins at most one chunk.
 type Arena struct {
-	buffer []byte
+	noCopy    noCopy
+	buffer    []byte
+	chunkSize int
 }
 
 // ExactString shares the current chunk instead of allocating per value.
@@ -21,7 +29,12 @@ func (arena *Arena) ExactString(number decimal128.Num, scale int32) string {
 		return ExactString(number, scale)
 	}
 	if cap(arena.buffer)-len(arena.buffer) < decMaxLen {
-		arena.buffer = make([]byte, 0, arenaChunkSize)
+		if arena.chunkSize == 0 {
+			arena.chunkSize = arenaInitialChunkSize
+		} else {
+			arena.chunkSize = min(arena.chunkSize*2, arenaChunkSize)
+		}
+		arena.buffer = make([]byte, 0, arena.chunkSize)
 	}
 	start := len(arena.buffer)
 	arena.buffer = Append(arena.buffer, number, scale)

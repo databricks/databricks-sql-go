@@ -4,7 +4,7 @@
 
 ### Driver changes
 
-- Reduce allocations when reading kernel-backend DECIMAL results by sharing bounded, Go-owned string chunks.
+- Reduce allocations when reading kernel-backend DECIMAL results by sharing bounded, Go-owned string chunks; a retained DECIMAL string can keep up to 4 KiB of other values from the same column alive, so callers keeping a few values from large results can use `strings.Clone`.
 - **Behavior change:** Bound each whole-transfer Thrift CloudFetch download attempt, including `WithTransport`, by the existing 900s `ClientTimeout`, and omit the link's presigned query string from download errors (databricks/databricks-sql-go#475).
 - **Behavior change:** Without direct results, `ArrowIPCStreamIterator.SchemaBytes()` and `ArrowBatchIterator.Schema()` now retrieve result metadata without fetching data and return the result schema, including for empty results, and can return request or schema-conversion errors. Schemas inferred from Thrift metadata may differ from CloudFetch file schemas when server ArrowSchema is absent (databricks/databricks-sql-go#312).
 - Evict kernel connections when SEA reports a missing or invalid session, and reject later requests locally without replaying the failed statement.

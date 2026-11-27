@@ -44,7 +44,8 @@ func TestArenaStringsSurviveRolloverAndReset(test *testing.T) {
 	stringsKept := make([]string, 20000)
 	for index := range stringsKept {
 		stringsKept[index] = arena.ExactString(decimal128.FromI64(int64(index)-10000), 38)
-		require.Equal(test, arenaChunkSize, cap(arena.buffer))
+		require.GreaterOrEqual(test, cap(arena.buffer), arenaInitialChunkSize)
+		require.LessOrEqual(test, cap(arena.buffer), arenaChunkSize)
 		require.LessOrEqual(test, len(arena.buffer), arenaChunkSize)
 	}
 	arena.Reset()
@@ -65,7 +66,7 @@ func TestArenaAmortizesAllocations(test *testing.T) {
 	allocations := testing.AllocsPerRun(10000, func() {
 		benchSink = arena.ExactString(decimal128.FromI64(-12345), 2)
 	})
-	require.Less(test, allocations, 0.01)
+	require.Zero(test, allocations)
 }
 
 func TestArenaOversizedScaleFallback(test *testing.T) {
@@ -74,10 +75,39 @@ func TestArenaOversizedScaleFallback(test *testing.T) {
 	require.Equal(test, ExactString(number, decMaxLen-2), arena.ExactString(number, decMaxLen-2))
 	require.Nil(test, arena.buffer)
 	require.Equal(test, ExactString(number, decMaxLen-3), arena.ExactString(number, decMaxLen-3))
-	require.Equal(test, arenaChunkSize, cap(arena.buffer))
+	require.Equal(test, arenaInitialChunkSize, cap(arena.buffer))
 	used := len(arena.buffer)
 	require.Equal(test, ExactString(number, 40000), arena.ExactString(number, 40000))
 	require.Equal(test, used, len(arena.buffer))
+}
+
+func TestArenaChunkGrowth(test *testing.T) {
+	var arena Arena
+	require.GreaterOrEqual(test, arenaInitialChunkSize, decMaxLen)
+	for size := arenaInitialChunkSize; size <= arenaChunkSize; size *= 2 {
+		_ = arena.ExactString(decimal128.FromI64(-12345), 2)
+		require.Equal(test, size, cap(arena.buffer))
+		require.Equal(test, size, arena.chunkSize)
+		for cap(arena.buffer)-len(arena.buffer) >= decMaxLen {
+			_ = arena.ExactString(decimal128.FromI64(-12345), 2)
+		}
+		arena.Reset()
+		require.Nil(test, arena.buffer)
+		require.Equal(test, size, arena.chunkSize)
+	}
+	_ = arena.ExactString(decimal128.FromI64(1), 0)
+	require.Equal(test, arenaChunkSize, cap(arena.buffer))
+}
+
+func TestArenaColdAllocation(test *testing.T) {
+	allocations := testing.AllocsPerRun(100, func() {
+		var arena Arena
+		benchSink = arena.ExactString(decimal128.FromI64(-12345), 2)
+		if cap(arena.buffer) != 64 {
+			panic("one value must start in a 64-byte chunk")
+		}
+	})
+	require.Equal(test, float64(1), allocations)
 }
 
 func TestArenaStringsReadDuringRendering(test *testing.T) {

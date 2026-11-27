@@ -83,7 +83,7 @@ type kernelRows struct {
 	// per-row rendering doesn't re-marshal constant names. Scoped to this Rows
 	// (freed with it) — not a process-global, which would leak.
 	keyCache       *arrowscan.StructKeyCache
-	decimalStrings decimalfmt.Arena
+	decimalStrings []*decimalfmt.Arena
 }
 
 // newKernelRows fetches the schema up front (for Columns()) and returns the row
@@ -211,7 +211,7 @@ func (r *kernelRows) Close() error {
 		return nil
 	}
 	r.closed = true
-	r.decimalStrings.Reset()
+	r.decimalStrings = nil
 	closeStart := time.Now()
 	// Release the detached results context so an aborted Close doesn't leak it.
 	if r.cancel != nil {
@@ -265,15 +265,22 @@ func (r *kernelRows) next(dest []driver.Value) error {
 		}
 	}
 	rec := r.cur
+	if r.decimalStrings == nil {
+		r.decimalStrings = decimalStringArenas(rec.Schema().Fields(), r.op.decimalAsFloat)
+	}
 	for c := 0; c < len(dest); c++ {
 		location := r.op.location
 		if r.ntz[c] {
 			location = time.UTC
 		}
+		var decimalStrings *decimalfmt.Arena
+		if c < len(r.decimalStrings) {
+			decimalStrings = r.decimalStrings[c]
+		}
 		v, err := arrowscan.ScanCellCachedWithOptions(rec.Column(c), r.rowInCur, location, r.keyCache, arrowscan.ScanOptions{
 			DecimalAsFloat:   r.op.decimalAsFloat,
 			GeospatialBinary: r.geoBinary[c],
-			DecimalStrings:   &r.decimalStrings,
+			DecimalStrings:   decimalStrings,
 		})
 		if err != nil {
 			return fmt.Errorf("kernel: scan col %d (%s): %w", c, r.cols[c], err)
@@ -284,10 +291,24 @@ func (r *kernelRows) next(dest []driver.Value) error {
 	return nil
 }
 
+func decimalStringArenas(fields []arrow.Field, asFloat bool) []*decimalfmt.Arena {
+	arenas := []*decimalfmt.Arena{}
+	if !asFloat {
+		for index, field := range fields {
+			if field.Type.ID() == arrow.DECIMAL128 {
+				if len(arenas) == 0 {
+					arenas = make([]*decimalfmt.Arena, len(fields))
+				}
+				arenas[index] = new(decimalfmt.Arena)
+			}
+		}
+	}
+	return arenas
+}
+
 // nextBatch pulls the next Arrow batch. A released array (release==NULL) is the
 // kernel's end-of-stream sentinel.
 func (r *kernelRows) nextBatch() error {
-	r.decimalStrings.Reset()
 	// Stop pulling once Close cancels r.ctx; r.ctx is detached from the caller's
 	// deadline, so this fires on abort, not on a submit-gating timeout. It does NOT
 	// interrupt an in-flight C fetch (the kernel exposes no per-download timeout).
