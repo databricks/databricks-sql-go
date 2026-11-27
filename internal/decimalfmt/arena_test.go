@@ -1,0 +1,133 @@
+package decimalfmt
+
+import (
+	"math/big"
+	"runtime"
+	"strings"
+	"testing"
+
+	"github.com/apache/arrow-go/v18/arrow/decimal128"
+	"github.com/stretchr/testify/require"
+)
+
+func TestArenaExactStringParity(test *testing.T) {
+	var arena Arena
+	for precision := 1; precision <= 38; precision++ {
+		maximum, ok := new(big.Int).SetString(strings.Repeat("9", precision), 10)
+		require.True(test, ok)
+		for _, magnitude := range []*big.Int{big.NewInt(0), big.NewInt(1), maximum} {
+			for _, sign := range []int64{1, -1} {
+				number := decimal128.FromBigInt(new(big.Int).Mul(magnitude, big.NewInt(sign)))
+				for scale := int32(0); scale <= int32(precision); scale++ {
+					require.Equal(test, ExactString(number, scale), arena.ExactString(number, scale), "precision=%d scale=%d number=%v", precision, scale, number)
+				}
+			}
+		}
+	}
+	for _, text := range []string{"18446744073709551615", "18446744073709551616", "170141183460469231731687303715884105727", "-170141183460469231731687303715884105728"} {
+		magnitude, ok := new(big.Int).SetString(text, 10)
+		require.True(test, ok)
+		var number decimal128.Num
+		if text[0] == '-' {
+			number = decimal128.New(-1<<63, 0)
+		} else {
+			number = decimal128.FromBigInt(magnitude)
+		}
+		for _, scale := range []int32{-1, 0, 1, 38, 64, 40000} {
+			require.Equal(test, ExactString(number, scale), arena.ExactString(number, scale))
+		}
+	}
+}
+
+func TestArenaStringsSurviveRolloverAndReset(test *testing.T) {
+	var arena Arena
+	stringsKept := make([]string, 20000)
+	for index := range stringsKept {
+		stringsKept[index] = arena.ExactString(decimal128.FromI64(int64(index)-10000), 38)
+		require.GreaterOrEqual(test, cap(arena.buffer), arenaInitialChunkSize)
+		require.LessOrEqual(test, cap(arena.buffer), arenaChunkSize)
+		require.LessOrEqual(test, len(arena.buffer), arenaChunkSize)
+	}
+	arena.Reset()
+	require.Zero(test, cap(arena.buffer))
+	require.Zero(test, len(arena.buffer))
+	for index := 0; index < 20000; index++ {
+		_ = arena.ExactString(decimal128.FromI64(-1), 38)
+	}
+	arena.Reset()
+	runtime.GC()
+	for index, value := range stringsKept {
+		require.Equal(test, ExactString(decimal128.FromI64(int64(index)-10000), 38), value)
+	}
+}
+
+func TestArenaAmortizesAllocations(test *testing.T) {
+	var arena Arena
+	allocations := testing.AllocsPerRun(10000, func() {
+		benchSink = arena.ExactString(decimal128.FromI64(-12345), 2)
+	})
+	require.Zero(test, allocations)
+}
+
+func TestArenaOversizedScaleFallback(test *testing.T) {
+	var arena Arena
+	number := decimal128.FromI64(-7)
+	require.Equal(test, ExactString(number, decMaxLen-2), arena.ExactString(number, decMaxLen-2))
+	require.Nil(test, arena.buffer)
+	require.Equal(test, ExactString(number, decMaxLen-3), arena.ExactString(number, decMaxLen-3))
+	require.Equal(test, arenaInitialChunkSize, cap(arena.buffer))
+	used := len(arena.buffer)
+	require.Equal(test, ExactString(number, 40000), arena.ExactString(number, 40000))
+	require.Equal(test, used, len(arena.buffer))
+}
+
+func TestArenaChunkGrowth(test *testing.T) {
+	var arena Arena
+	require.GreaterOrEqual(test, arenaInitialChunkSize, decMaxLen)
+	for size := arenaInitialChunkSize; size <= arenaChunkSize; size *= 2 {
+		_ = arena.ExactString(decimal128.FromI64(-12345), 2)
+		require.Equal(test, size, cap(arena.buffer))
+		require.Equal(test, size, arena.chunkSize)
+		for cap(arena.buffer)-len(arena.buffer) >= decMaxLen {
+			_ = arena.ExactString(decimal128.FromI64(-12345), 2)
+		}
+		arena.Reset()
+		require.Nil(test, arena.buffer)
+		require.Equal(test, size, arena.chunkSize)
+	}
+	_ = arena.ExactString(decimal128.FromI64(1), 0)
+	require.Equal(test, arenaChunkSize, cap(arena.buffer))
+}
+
+func TestArenaColdAllocation(test *testing.T) {
+	allocations := testing.AllocsPerRun(100, func() {
+		var arena Arena
+		benchSink = arena.ExactString(decimal128.FromI64(-12345), 2)
+		if cap(arena.buffer) != 64 {
+			panic("one value must start in a 64-byte chunk")
+		}
+	})
+	require.Equal(test, float64(1), allocations)
+}
+
+func TestArenaStringsReadDuringRendering(test *testing.T) {
+	var arena Arena
+	kept := arena.ExactString(decimal128.FromI64(-12345), 2)
+	readResult := make(chan bool, 1)
+	go func() {
+		for iteration := 0; iteration < 20000; iteration++ {
+			if kept != "-123.45" {
+				readResult <- false
+				return
+			}
+		}
+		readResult <- true
+	}()
+	for iteration := 0; iteration < 20000; iteration++ {
+		_ = arena.ExactString(decimal128.FromI64(int64(iteration)), 38)
+		if iteration%100 == 0 {
+			arena.Reset()
+		}
+	}
+	require.True(test, <-readResult)
+}
