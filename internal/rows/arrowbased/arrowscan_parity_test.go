@@ -550,7 +550,7 @@ func TestArrowbasedKernelVariantGeometryParity(t *testing.T) {
 //   - The Thrift *container* (decimal128Container.Value) converts a decimal128 to
 //     a lossy float64 — but that path is only reached when UseArrowNativeDecimal
 //     is on AND the value is read as a nested leaf. For a top-level column the
-//     scan uses DecimalStringValue (exact string) when the flag is on.
+//     scan uses ValueString (exact string) when the flag is on.
 //   - In the DEFAULT config the flag is off, so the server sends DECIMAL as a
 //     string column (DecimalAsArrow=false) — no decimal128 arrives at all, and the
 //     user gets the exact string.
@@ -582,14 +582,14 @@ func TestTopLevelDecimalRendering(t *testing.T) {
 	}
 
 	// Thrift container Value() is the lossy-float64 path (reached only with native
-	// decimal + nested read); DecimalStringValue is the exact top-level scan path.
+	// decimal + nested read); ValueString is the exact top-level scan path.
 	// Assert both so a change to either is caught.
 	holder := &decimal128Container{scale: dt.Scale}
 	if err := holder.SetValueArray(arr.Data()); err != nil {
 		t.Fatal(err)
 	}
 	if s := holder.ValueString(0); s != "1234567890123456.7890" {
-		t.Errorf("Thrift DecimalStringValue = %q, want exact string", s)
+		t.Errorf("Thrift ValueString = %q, want exact string", s)
 	}
 	// Value() is the lossy path: it returns a float64, and a 20-digit decimal
 	// cannot survive it — assert the actual rounded value, not just the type.

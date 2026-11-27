@@ -516,25 +516,25 @@ func TestArrowRowScanner(t *testing.T) {
 
 		err := ars.loadBatchFor(0)
 		assert.Nil(t, err)
-		assert.Equal(t, len(metadataResp.Schema.Columns), ars.rowValues.NColumns())
+		assert.Len(t, ars.rowValues.columnValueHolders, len(metadataResp.Schema.Columns))
 		assert.Equal(t, 1, callCount)
 		assert.Equal(t, 1, fbi.callCount)
 
 		err = ars.loadBatchFor(1)
 		assert.Nil(t, err)
-		assert.Equal(t, len(metadataResp.Schema.Columns), ars.rowValues.NColumns())
+		assert.Len(t, ars.rowValues.columnValueHolders, len(metadataResp.Schema.Columns))
 		assert.Equal(t, 1, callCount)
 		assert.Equal(t, 1, fbi.callCount)
 
 		err = ars.loadBatchFor(2)
 		assert.Nil(t, err)
-		assert.Equal(t, len(metadataResp.Schema.Columns), ars.rowValues.NColumns())
+		assert.Len(t, ars.rowValues.columnValueHolders, len(metadataResp.Schema.Columns))
 		assert.Equal(t, 1, callCount)
 		assert.Equal(t, 1, fbi.callCount)
 
 		err = ars.loadBatchFor(5)
 		assert.Nil(t, err)
-		assert.Equal(t, len(metadataResp.Schema.Columns), ars.rowValues.NColumns())
+		assert.Len(t, ars.rowValues.columnValueHolders, len(metadataResp.Schema.Columns))
 		assert.Equal(t, 1, callCount)
 		assert.Equal(t, 2, fbi.callCount)
 
@@ -2137,29 +2137,6 @@ func TestDecimal128ContainerNativeDecimal(t *testing.T) {
 		assert.Equal(t, float64(5.15), v)
 	})
 
-	t.Run("rowValues.DecimalStringValue returns lossless string for a decimal holder", func(t *testing.T) {
-		c := newDecimal128Container(t, 10, 2, []string{"5.15", ""})
-		rv := NewRowValues(rowscanner.NewDelimiter(0, 2), []columnValues{c})
-
-		assert.False(t, rv.IsNull(0, 0))
-		s, ok := rv.DecimalStringValue(0, 0)
-		assert.True(t, ok)
-		assert.Equal(t, "5.15", s)
-
-		// Value still returns the legacy float64 (used for nested rendering).
-		v, err := rv.Value(0, 0)
-		assert.NoError(t, err)
-		assert.Equal(t, float64(5.15), v)
-
-		assert.True(t, rv.IsNull(0, 1))
-	})
-
-	t.Run("rowValues.DecimalStringValue reports ok=false for non-decimal holders", func(t *testing.T) {
-		rv := NewRowValues(rowscanner.NewDelimiter(0, 1), []columnValues{&columnValuesTyped[*array.String, string]{}})
-		s, ok := rv.DecimalStringValue(0, 0)
-		assert.False(t, ok)
-		assert.Equal(t, "", s)
-	})
 }
 
 // TestScanRowNativeDecimal drives the full ScanRow path with a real

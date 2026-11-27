@@ -142,6 +142,24 @@ func TestBoundReadersRebindAndRelease(t *testing.T) {
 	require.Equal(t, int32(402), destination[0])
 }
 
+func TestBoundReadersSurviveRecordRelease(t *testing.T) {
+	pool := memory.NewCheckedAllocator(memory.DefaultAllocator)
+	defer pool.AssertSize(t, 0)
+	builder := array.NewInt32Builder(pool)
+	defer builder.Release()
+	builder.AppendNull()
+	builder.Append(1234567)
+	values := builder.NewArray()
+	scanner := readerTestScanner([]arrow.Field{{Name: "number", Type: arrow.PrimitiveTypes.Int32, Nullable: true}}, []cli_service.TTypeId{cli_service.TTypeId_INT_TYPE}, config.ArrowConfig{}, time.UTC, []arrow.Array{values})
+	values.Release()
+	defer scanner.Close()
+	destination := []driver.Value{"stale"}
+	require.NoError(t, scanner.ScanRow(destination, 41))
+	require.Nil(t, destination[0])
+	require.NoError(t, scanner.ScanRow(destination, 42))
+	require.Equal(t, int32(1234567), destination[0])
+}
+
 func TestBoundNativeIntervalNullAndError(t *testing.T) {
 	for _, dbType := range []cli_service.TTypeId{cli_service.TTypeId_INTERVAL_DAY_TIME_TYPE, cli_service.TTypeId_INTERVAL_YEAR_MONTH_TYPE} {
 		t.Run(dbType.String(), func(t *testing.T) {
