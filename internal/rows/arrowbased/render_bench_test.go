@@ -2,6 +2,7 @@ package arrowbased
 
 import (
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -132,5 +133,83 @@ func BenchmarkRenderNested(b *testing.B) {
 			}
 		})
 		arr.Release()
+	}
+}
+
+func BenchmarkRenderWideArray(b *testing.B) {
+	benchmarkRenderWide(b, "array")
+}
+
+func BenchmarkRenderWideMap(b *testing.B) {
+	benchmarkRenderWide(b, "map")
+}
+
+func BenchmarkRenderWideStruct(b *testing.B) {
+	benchmarkRenderWide(b, "struct")
+}
+
+func BenchmarkRenderWideNested(b *testing.B) {
+	benchmarkRenderWide(b, "struct_array")
+}
+
+func benchmarkRenderWide(b *testing.B, shape string) {
+	for _, width := range []int{0, 1, 2, 5, 50, 500, 1536, 5000} {
+		values := buildWideRenderValues(b, shape, width)
+		b.Run("thrift/"+strconv.Itoa(width), func(b *testing.B) {
+			holder, err := (&arrowValueContainerMaker{}).makeColumnValueContainer(values.DataType(), time.UTC, nil, nil)
+			if err != nil {
+				b.Fatal(err)
+			}
+			defer holder.Release()
+			if err := holder.SetValueArray(values.Data()); err != nil {
+				b.Fatal(err)
+			}
+			b.ReportAllocs()
+			b.ResetTimer()
+			for iteration := 0; iteration < b.N; iteration++ {
+				if _, err := holder.Value(0); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+		values.Release()
+	}
+}
+
+// BenchmarkRenderSmallAfterLarge times only a 16-byte ARRAY<STRING> value that
+// follows a large one in the same column; run it with a fixed -benchtime=Nx.
+func BenchmarkRenderSmallAfterLarge(b *testing.B) {
+	for _, size := range []int{100 << 10, 1 << 20, 4 << 20} {
+		builder := array.NewListBuilder(memory.NewGoAllocator(), arrow.BinaryTypes.String)
+		elements := builder.ValueBuilder().(*array.StringBuilder)
+		builder.Append(true)
+		elements.Append(strings.Repeat("a", size))
+		builder.Append(true)
+		elements.Append("0123456789ab")
+		values := builder.NewArray()
+		builder.Release()
+		b.Run("thrift/"+strconv.Itoa(size>>10)+"KiB", func(b *testing.B) {
+			holder, err := (&arrowValueContainerMaker{}).makeColumnValueContainer(values.DataType(), time.UTC, nil, nil)
+			if err != nil {
+				b.Fatal(err)
+			}
+			defer holder.Release()
+			if err := holder.SetValueArray(values.Data()); err != nil {
+				b.Fatal(err)
+			}
+			b.ReportAllocs()
+			b.ResetTimer()
+			for iteration := 0; iteration < b.N; iteration++ {
+				b.StopTimer()
+				if _, err := holder.Value(0); err != nil {
+					b.Fatal(err)
+				}
+				b.StartTimer()
+				if _, err := holder.Value(1); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+		values.Release()
 	}
 }

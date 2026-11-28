@@ -37,6 +37,37 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestE2EComplexRendering(t *testing.T) {
+	host, httpPath, token := pecoTestingCreds(t)
+	connector, err := NewConnector(WithServerHostname(host), WithHTTPPath(httpPath), WithAccessToken(token))
+	require.NoError(t, err)
+	db := sql.OpenDB(connector)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	result, err := db.QueryContext(ctx, `SELECT
+		transform(sequence(0, 1535), x -> CAST(x AS DOUBLE) / 7 - 0.5D),
+		map(1, array(1.25D, NULL), 2, array()),
+		named_struct('items', array(named_struct('id', 1, 'text', 'a"<>&')),
+		             'lookup', map('key', array(1, NULL, 3)))`)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, result.Close()) }()
+	require.True(t, result.Next(), "%v", result.Err())
+	var wide, mapping, nested string
+	require.NoError(t, result.Scan(&wide, &mapping, &nested))
+	values := make([]float64, 1536)
+	for index := range values {
+		values[index] = float64(index)/7 - 0.5
+	}
+	expected, err := json.Marshal(values)
+	require.NoError(t, err)
+	require.Equal(t, string(expected), wide)
+	require.Equal(t, `{"1":[1.25,null],"2":[]}`, mapping)
+	require.Equal(t, `{"items":[{"id":1,"text":"a\"\u003c\u003e\u0026"}],"lookup":{"key":[1,null,3]}}`, nested)
+	require.False(t, result.Next())
+	require.NoError(t, result.Err())
+}
+
 func TestE2EDecimalMetadata(t *testing.T) {
 	host, httpPath, token := pecoTestingCreds(t)
 	for _, native := range []bool{false, true} {

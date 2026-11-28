@@ -90,7 +90,7 @@ jobs:
           DATABRICKS_PECOTESTING_TOKEN_PERSONAL: ${{ secrets.DATABRICKS_PECOTESTING_TOKEN_PERSONAL }}
         run: |
           go test -tags e2e -count=1 -v -timeout 15m \
-            -run 'TestE2EArrow(SchemaBeforeFetching|BatchesSurviveQueryContextCancellation)|TestE2ECloudFetchExactRowCount|TestE2ECloudFetchNonPositiveMaxDownloadThreads|TestE2EDecimalMetadata|TestE2EVariantTypeName|TestE2EGeospatialTypeNames|^TestE2ETime(Results|ArrowResults)$|TestE2ERejectedRequestClosesResponse' .
+            -run 'TestE2EArrow(SchemaBeforeFetching|BatchesSurviveQueryContextCancellation)|TestE2ECloudFetchExactRowCount|TestE2ECloudFetchNonPositiveMaxDownloadThreads|TestE2EDecimalMetadata|TestE2EComplexRendering|TestE2EVariantTypeName|TestE2EGeospatialTypeNames|^TestE2ETime(Results|ArrowResults)$|TestE2ERejectedRequestClosesResponse' .
 
   kernel-e2e:
     name: E2E (kernel backend)
